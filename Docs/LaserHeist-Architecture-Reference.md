@@ -1,6 +1,8 @@
 # Laser Heist architecture reference
 
-This is the consolidated folder reference, updated on 29 October 2026 for LH-23. It describes the current file locations and the team's RealityKit rendering decision. Many files remain implementation placeholders.
+This responsibility reference was created for LH-23 and structurally aligned on 31 October 2026. The current lean structure is defined in [Game-Oriented Architecture](Architecture/Game-Oriented-Architecture.md). Many files remain placeholders. No feature or gameplay implementation is added by this migration.
+
+**Historical-contract notice:** earlier mechanics, mirroring, delivery and task-status explanations retained below are historical where superseded by approved current decisions and the [CP1 baseline](LH-00-Checkpoint-1-Contract-Proposal.md). Updating locations does not reopen or revise those decisions. LH-23 remains complete; LH-00 and other feature work remain paused.
 
 **Authority and review:** follow the source-precedence order in [TEAM_ALIGNMENT.md](TEAM_ALIGNMENT.md). Approved current team decisions and agreed contracts take precedence over this reference; earlier architecture drafts and prototype findings are historical context. The task breakdown is [LaserHeist-Cooperative-Active-Gameplay-DRAFT.md](LaserHeist-Cooperative-Active-Gameplay-DRAFT.md). Its v0.9 corrections and TEAM_ALIGNMENT are still labelled draft. This documentation update does not approve outstanding decisions or shared Swift interfaces on behalf of the team; Jevon and Kevin review their affected boundaries before integration.
 
@@ -8,112 +10,116 @@ The design has a simple purpose: screens display the experience, motion processi
 
 ## Complete structure
 
-The tree uses the current names and locations. `[optional]` means add the implementation when a confirmed mechanic needs it. It describes responsibilities, not implementation completion. The rendering renames and calibration move already exist on this branch; TEAM_ALIGNMENT's pending-decision labels still require reconciliation by their affected owners. This follow-up does not move or rename files.
+The tree is the completed lean filesystem layout; existing skeleton files are retained. Modules are logical folders inside the existing app target, not separate packages.
 
 ```text
-Sedactive/                                      # Repository
-├── Sedactive/                                  # App source
-│   ├── App/
-│   │   ├── SedactiveApp.swift                   # Starts the app
-│   │   ├── AppDependencies.swift                # Creates and connects services and engines
-│   │   └── RootView.swift                       # Chooses the app's current screen/flow
-│   │
-│   ├── Features/
-│   │   ├── Home/
-│   │   │   └── HomeView.swift                   # Home screen and Start action
-│   │   ├── Setup/
-│   │   │   ├── PlayerSetupView.swift            # Player assignment and readiness screen
-│   │   │   ├── PlayerSetupState.swift           # Data that the setup screen displays
-│   │   │   └── CalibrationView.swift            # Calibration instructions and progress; builder TBD
-│   │   ├── Session/
-│   │   │   ├── GameSessionCoordinator.swift     # Connects input, game, and session lifecycle
-│   │   │   ├── SessionState.swift               # Setup/countdown/play/pause/end state
-│   │   │   └── GameClock.swift                  # Active game time; freezes while paused
-│   │   ├── Play/
-│   │   │   └── PlayView.swift                   # Kevin: RealityKit presentation host and SwiftUI HUD
-│   │   └── Results/
-│   │       └── ResultsView.swift                # Displays the completed round's summary
-│   │
-│   ├── Domain/
-│   │   ├── Players/
-│   │   │   ├── Player.swift                     # Player identity, role, and assigned zone
-│   │   │   └── PlayerCalibration.swift          # Validated standing baseline for one player
-│   │   ├── BodyInput/
-│   │   │   ├── BodyGeometry.swift               # Crown/sole measurements and their validity
-│   │   │   ├── BodySnapshot.swift               # Timestamped body data keyed by player ID
-│   │   │   └── BodyInputProviding.swift         # Contract for live or replay body input
-│   │   └── LaserHeist/
-│   │       ├── LaserGame.swift                  # Applies rules, health changes, and scoring
-│   │       ├── LaserGameState.swift             # Authoritative current gameplay data
-│   │       ├── LaserEncounter.swift             # Laser targets, geometry, and encounter timing
-│   │       ├── LaserWaveDirector.swift          # Chooses and schedules encounters/sequences
-│   │       ├── LaserCollisionJudge.swift        # Evaluates player evidence against a laser
-│   │       └── RoundSummary.swift               # Immutable result of a completed round
-│   │
-│   ├── Motion/
-│   │   ├── PoseFrame.swift                      # Detected poses, joints/confidence, frame metadata
-│   │   ├── CalibrationSession.swift             # Edo: collects stable samples and produces calibration
-│   │   ├── MotionEngine.swift                   # Coordinates tracking and body measurement
-│   │   ├── PlayerTracker.swift                  # Matches detections to stable player identities
-│   │   ├── BodyMeasurementExtractor.swift       # Estimates geometry from pose and calibration
-│   │   ├── JumpDetector.swift                   # Required: validates airborne phase for low lasers
-│   │   └── SquatDetector.swift                  # [optional] Recognizes squat phases/repetitions
-│   │
-│   ├── Infrastructure/
-│   │   ├── BodyInputService.swift               # Runs the live input pipeline
-│   │   ├── Camera/
-│   │   │   ├── CameraPipeline.swift             # Captures frames and reports camera status
-│   │   │   └── FrameStore.swift                 # Safely hands off the latest bounded frame data
-│   │   ├── Vision/
-│   │   │   ├── PoseEstimator.swift              # Maps Vision results into plain pose values
-│   │   │   └── PersonSegmenter.swift            # Produces a mask separating people/background
-│   │   ├── Compositing/
-│   │   │   └── PlayerCutoutCompositor.swift     # Produces transparent player images from masks
-│   │   └── Audio/
-│   │       └── AudioService.swift               # Plays sound feedback from game/session events
-│   │
-│   ├── Rendering/
-│   │   └── LaserHeist/
-│   │       ├── LaserScene.swift                 # Kevin: RealityKit world and visual-entity integration
-│   │       ├── GameWorldMapping.swift           # Kevin: maps game geometry into RealityKit world space
-│   │       └── PlayerCutoutEntity.swift         # Kevin: live cutout presentation as a textured entity
-│   │
-│   └── Debug/
-│       ├── ReplayBodyInput.swift                # Supplies scripted snapshots without a camera
-│       └── PoseDebugOverlay.swift              # Kevin: rendering alignment and judgement debug view
-│
-├── SedactiveTests/                              # Separate unit-test target
-│   ├── TestTargetSmokeTests.swift               # Existing: verifies the test target imports the app
-│   ├── MotionTests/
-│   │   ├── PlayerTrackerTests.swift             # Identity assignment and tracking loss
-│   │   ├── BodyMeasurementExtractorTests.swift  # Valid/invalid crown and sole measurements
-│   │   └── JumpDetectorTests.swift              # Jump phases, jitter, and invalid/reacquired input
-│   ├── CollisionTests/
-│   │   ├── LaserCollisionJudgeTests.swift       # Geometry plus required movement evidence
-│   │   └── CollisionTimingTests.swift          # Crossing time, input freshness, and time mapping
-│   ├── GameLogicTests/
-│   │   ├── LaserGameTests.swift                 # Shared health, scoring, and duplicate prevention
-│   │   └── LaserWaveDirectorTests.swift         # Encounter order and scheduling
-│   └── SessionTests/
-│       ├── GameClockTests.swift                 # Time progression and pause behavior
-│       └── GameSessionCoordinatorTests.swift    # Start, pause/recover, exit, stale work
-│
-├── Docs/                                       # Architecture and team decisions
-└── Sedactive.xcodeproj/
+Sedactive/
+├── App/
+│   ├── AppDependencies.swift
+│   ├── RootView.swift
+│   └── SedactiveApp.swift
+├── Assets.xcassets/
+│   ├── AccentColor.colorset/
+│   │   └── Contents.json
+│   ├── AppIcon.appiconset/
+│   │   └── Contents.json
+│   └── Contents.json
+├── Games/
+│   └── LaserHeist/
+│       ├── Debug/
+│       │   └── PoseDebugOverlay.swift
+│       ├── Domain/
+│       │   ├── LaserCollisionJudge.swift
+│       │   ├── LaserEncounter.swift
+│       │   ├── LaserGame.swift
+│       │   ├── LaserGameState.swift
+│       │   ├── LaserWaveDirector.swift
+│       │   └── RoundSummary.swift
+│       ├── Rendering/
+│       │   ├── GameWorldMapping.swift
+│       │   ├── LaserScene.swift
+│       │   └── PlayerCutoutEntity.swift
+│       ├── Session/
+│       │   ├── GameSessionCoordinator.swift
+│       │   └── SessionState.swift
+│       └── UI/
+│           ├── CalibrationView.swift
+│           ├── HomeView.swift
+│           ├── PlayView.swift
+│           ├── PlayerSetupState.swift
+│           ├── PlayerSetupView.swift
+│           └── ResultsView.swift
+└── Shared/
+    ├── Audio/
+    │   └── AudioService.swift
+    ├── BodyTracking/
+    │   ├── Capture/
+    │   │   ├── CameraPipeline.swift
+    │   │   ├── FrameStore.swift
+    │   │   ├── PersonSegmenter.swift
+    │   │   ├── PlayerCutoutCompositor.swift
+    │   │   └── PoseEstimator.swift
+    │   ├── Models/
+    │   │   ├── BodyGeometry.swift
+    │   │   ├── BodyInputProviding.swift
+    │   │   ├── BodySnapshot.swift
+    │   │   ├── PlayerCalibration.swift
+    │   │   └── PoseFrame.swift
+    │   ├── Processing/
+    │   │   ├── BodyMeasurementExtractor.swift
+    │   │   ├── CalibrationSession.swift
+    │   │   ├── JumpDetector.swift
+    │   │   ├── MotionEngine.swift
+    │   │   └── PlayerTracker.swift
+    │   ├── BodyInputService.swift
+    │   └── ReplayBodyInput.swift
+    ├── GameRuntime/
+    │   └── GameClock.swift
+    └── Players/
+        └── Player.swift
+
+SedactiveTests/
+├── Games/
+│   └── LaserHeist/
+│       ├── DomainTests/
+│       │   ├── CollisionTimingTests.swift
+│       │   ├── LaserCollisionJudgeTests.swift
+│       │   ├── LaserGameTests.swift
+│       │   └── LaserWaveDirectorTests.swift
+│       └── SessionTests/
+│           └── GameSessionCoordinatorTests.swift
+├── Shared/
+│   ├── BodyTrackingTests/
+│   │   ├── Fixtures/
+│   │   │   ├── cooperative-v1.json
+│   │   │   └── reversed-selection-v1.json
+│   │   ├── BodyInputContractTests.swift
+│   │   ├── BodyInputDeliveryTests.swift
+│   │   ├── BodyInputLifecycleTests.swift
+│   │   ├── BodyMeasurementExtractorTests.swift
+│   │   ├── JumpDetectorTests.swift
+│   │   ├── PlayerTrackerTests.swift
+│   │   └── ReplayBodyInputTests.swift
+│   └── GameRuntimeTests/
+│       └── GameClockTests.swift
+└── TestTargetSmokeTests.swift
 ```
 
 ## Why these folders exist
 
 | Folder | Simple question it answers |
 |---|---|
-| `App` | How do we start and connect everything? |
-| `Features` | What does the user see and do on each screen? |
-| `Domain` | What data and rules define the game? |
-| `Motion` | What can we reliably understand about the players' bodies? |
-| `Infrastructure` | How do camera, Vision, image processing, and sound actually work? |
-| `Rendering` | How do we draw that game and those players? |
-| `Debug` | How do we inspect or reproduce behavior during development? |
-| `SedactiveTests` | How do we verify rules and processing without a live camera? |
+| `App/` | How do we start and connect everything? |
+| `Games/LaserHeist/Domain/` | What rules and state define Laser Heist? |
+| `Games/LaserHeist/Session/` | How does its lifecycle coordinate input and game logic? |
+| `Games/LaserHeist/UI/` | What does the player see and do? |
+| `Games/LaserHeist/Rendering/` and `Debug/` | How does RealityKit present and inspect the game? |
+| `Shared/Players/` | Which persistent family profiles are selected? |
+| `Shared/BodyTracking/Models/` | What shared evidence/interfaces/calibration values are exchanged? |
+| `Shared/BodyTracking/Processing/` | How are body observations interpreted? |
+| `Shared/BodyTracking/Capture/` | How do camera, Vision and cutout adapters work? |
+| `Shared/GameRuntime/` and `Shared/Audio/` | Which runtime/playback mechanisms are reusable? |
+| `SedactiveTests/Shared/` and `SedactiveTests/Games/` | How do we verify existing shared/game code? |
 
 The main architectural boundary is the domain: game rules do not depend on SwiftUI, RealityKit, Vision, AVFoundation, or Core Image. UI, live services, and rendering connect to the domain's values/contracts. Constructor injection in `AppDependencies` selects concrete implementations.
 
@@ -123,13 +129,13 @@ Paths below are relative to `Sedactive/`, except the test target. TEAM_ALIGNMENT
 
 | Owner | Responsibility and files | Integration boundary |
 |---|---|---|
-| **Edo — Tech Lead** | `Infrastructure/` except `Audio/`; `Motion/`, including `CalibrationSession`; `Domain/Players/`; `Domain/BodyInput/`; `Debug/ReplayBodyInput.swift`; project/test-target foundation | Produces body and cutout data. Maintains `App/` as a shared wiring hotspot; coordinates Jevon's and Kevin's wiring there. |
-| **Jevon** | `Domain/LaserHeist/`; `Features/Session/`, including `GameClock` and `GameSessionCoordinator` | Owns gameplay decisions, capture-time conversion, evidence selection, co-op/health/score, and running the calibration phase. |
-| **Kevin** | `Rendering/`; `Features/Play/`; `Debug/PoseDebugOverlay.swift` | Owns the RealityKit host, world mapping, visual entities, live-texture integration, rendering debug view, and frame-update integration with Jevon. |
+| **Edo — Tech Lead** | `Shared/BodyTracking/`, including `Processing/CalibrationSession.swift` and `ReplayBodyInput.swift`; `Shared/Players/`; project/test-target foundation | Produces body and cutout data. Maintains `App/` as a shared wiring hotspot; coordinates Jevon's and Kevin's wiring there. |
+| **Jevon** | `Games/LaserHeist/Domain/`; `Games/LaserHeist/Session/`; `Shared/GameRuntime/GameClock.swift` | Owns gameplay decisions, capture-time conversion, evidence selection, co-op/health/score, and running the calibration phase. |
+| **Kevin** | `Games/LaserHeist/Rendering/`; `Games/LaserHeist/UI/PlayView.swift`; `Games/LaserHeist/Debug/PoseDebugOverlay.swift` | Owns the RealityKit host, world mapping, visual entities, live-texture integration, rendering debug view, and frame-update integration with Jevon. |
 | **Theo** | UI/UX, art direction, assets and animation specifications | Delivers design/asset handoff to Kevin; asset formats and location are agreed together. |
-| **TBD** | Implementation of Home, Setup and Results screens; `Infrastructure/Audio/AudioService.swift`; document owner | Assign an owner before implementation. Jevon running the setup/calibration flow does not assign him the screen implementation. |
+| **TBD** | Implementation of Home, Setup and Results screens; `Shared/Audio/AudioService.swift`; document owner | Assign an owner before implementation. Jevon running the setup/calibration flow does not assign him the screen implementation. |
 
-Each owner adds tests for their own implementation. Edo owns motion/body-input/calibration tests; Jevon owns collision/game/session tests and the replay harness; Kevin owns world-mapping/rendering tests. The project-level smoke test is Edo's LH-23 foundation check.
+Each owner adds tests for their own implementation. Edo owns motion/body-input/calibration tests; Jevon owns collision/game/session tests and the gameplay replay harness; Edo owns the shared ReplayBodyInput producer and its tests; Kevin owns world-mapping/rendering tests. The project-level smoke test is Edo's LH-23 foundation check.
 
 Do not create duplicate body contracts or calibration baselines in consumers. Cross-owner, coordinate, timing and shared-contract changes follow TEAM_ALIGNMENT's proposal/agreement workflow. If Edo needs a camera debug view, he adds an Edo-owned file rather than editing Kevin's rendering overlay. Real debug implementations are guarded with `#if DEBUG`.
 
@@ -177,7 +183,7 @@ There is also an image path: camera frame → person mask → transparent per-pl
 
 `CalibrationSession` collects stable samples and validates them. Its output is `PlayerCalibration`, the baseline the rest of the system uses. `PlayerSetupState` exposes readiness, messages, and a progress projection for display; it does not independently calculate another calibration baseline.
 
-Edo implements this processing in `Motion/CalibrationSession.swift`. Jevon's session coordinator owns the active setup/calibration flow: start, progress, complete, fail and retry. It passes completed calibration values to the input/motion processing. Calibration values have one source of truth. The exact progress/result interfaces and calibration method are reviewed through LH-00/LH-22, not implemented by this documentation change.
+Edo implements this processing in `Shared/BodyTracking/Processing/CalibrationSession.swift`. Jevon's session coordinator owns the active setup/calibration flow: start, progress, complete, fail and retry. It passes completed calibration values to the input/motion processing. Calibration values have one source of truth. The exact progress/result interfaces and calibration method are reviewed through LH-00/LH-22, not implemented by this documentation change.
 
 ### Live service versus motion engine
 
@@ -199,7 +205,7 @@ The service handles asynchronous startup, errors, interruptions, and stopping. T
 
 Use a collection of active encounters so overlapping gates can be supported. Keep entity, transform and texture references out of domain encounter state. Related pattern, timing, target, and judgement types can initially live in `LaserEncounter.swift`; related team/player statistics can live in `LaserGameState.swift`, and game-event definitions can initially live in `LaserGame.swift`.
 
-**Confirmed ownership:** Jevon's `LaserGame` owns the bounded body-sample history. Evidence selection belongs in `Domain/LaserHeist/LaserCollisionJudge.swift` under LH-09. The coordinator converts capture time to game time but does not choose the crossing sample. Edo supplies evidence and reviews its interpretation; he does not build a second checker in Motion or the input service.
+**Confirmed ownership:** Jevon's `LaserGame` owns the bounded body-sample history. Evidence selection belongs in `Games/LaserHeist/Domain/LaserCollisionJudge.swift` under LH-09. The coordinator converts capture time to game time but does not choose the crossing sample. Edo supplies evidence and reviews its interpretation; he does not build a second checker in Motion or the input service.
 
 ## RealityKit rendering and live cutout boundary
 
@@ -213,7 +219,7 @@ Use a collection of active encounters so overlapping gates can be supported. Kee
 
 ### Edo → Kevin cutout handoff
 
-**Confirmed location/producer:** the image-carrying output type is defined in `Infrastructure/Compositing/PlayerCutoutCompositor.swift`, owned by Edo and reviewed with Kevin in LH-00 checkpoint 2. It does not live in Domain and is not defined or implemented by this follow-up.
+**Confirmed location/producer:** the image-carrying output type is defined in `Shared/BodyTracking/Capture/PlayerCutoutCompositor.swift`, owned by Edo and reviewed with Kevin in LH-00 checkpoint 2. It does not live in Domain and is not defined or implemented by this follow-up.
 
 Its required content is player ID, capture timestamp, source frame ID, calibration revision, an owned image handle, orientation/mirroring state, placement metadata compatible with game geometry, and an explicit unmatched-mask indication. Edo owns segmentation and mask-to-player matching. Kevin consumes the packet; he does not implement another segmenter or body identity model.
 
@@ -228,7 +234,9 @@ Following TEAM_ALIGNMENT §C:
 
 The renderer keeps live video moving; it does not freeze to the selected judgement frame. Source IDs let the team inspect the difference. **TBD:** association, acceptable lag and how feedback remains visually consistent; do not hard-code a lag before measurement.
 
-## Confirmed judgement and geometry contracts
+## Historical judgement and geometry notes
+
+This section records the earlier reference, not a new approval. The approved CP1 baseline supersedes its Crown-only wording and mirror/delivery proposals; follow the current decision source. No mechanics are modified by this structural edit.
 
 The current mechanics require:
 
@@ -260,7 +268,7 @@ The camera does not necessarily deliver a sample exactly at crossing. **Proposed
 ## Naming and scope decisions
 
 - Use **BodyMeasurementExtractor.swift**. Do not also create `BodyGeometryEstimator.swift`; these names previously referred to the same responsibility.
-- Keep the calibration data model only in **Domain/Players/PlayerCalibration.swift**. The active sampling process is **Motion/CalibrationSession.swift** on this branch.
+- Keep the calibration data model only in **Shared/BodyTracking/Models/PlayerCalibration.swift**. The active sampling process is **Shared/BodyTracking/Processing/CalibrationSession.swift** on this branch.
 - Use **BodySnapshot.swift** for the shared game-facing handoff; do not add a parallel `MotionSnapshot.swift` with the same data.
 - `JumpDetector` is required for low-laser airborne validation. `SquatDetector` is optional; high-laser clearance does not require a particular squat form or fresh squat.
 - A separate `SessionPhase.swift` is not required initially. Its lifecycle enum can live in `SessionState.swift`.
@@ -280,7 +288,9 @@ The key explains a future camera access request. Adding it does not start captur
 
 **Current configuration facts, not B2 approval:** Swift language mode `5.0`, default `MainActor` isolation, approachable concurrency enabled, deployment target `26.5`, and device families `1,2` remain unchanged. Project-wide `nonisolated`/`Sendable` conventions, Swift 6 migration, minimum supported iPadOS/device policy and supported orientation still require the team's decision. A render-host proposal does not silently change these settings.
 
-## Build and review order
+## Historical build and review order
+
+The following describes the earlier planning order. LH-23 is complete, existing CP1 code is preserved, and feature development is currently paused. This structural migration does not assert new feature/task completion.
 
 Finish LH-23 review/integration and the blocking team decisions before implementing shared contracts. In LH-00, Edo proposes the players/calibrations, body snapshots, input lifecycle and replay-fixture contracts for Jevon and Kevin to review. Jevon defines encounter/game types under LH-07 using the agreed body contracts. Replay then supports the first playable slice while Edo develops live input/calibration and Kevin develops RealityKit presentation. The cutout contract is reviewed separately before live cutout integration. This follow-up does not begin LH-00.
 
