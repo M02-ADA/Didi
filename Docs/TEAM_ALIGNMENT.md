@@ -7,7 +7,7 @@
 **Precedence:** when sources disagree, follow the first that applies.
 1. Approved current team decisions.
 2. This file and the agreed shared contracts.
-3. `Docs/LaserHeist-Architecture-Reference.md`, for structures that still apply. Its Domain, Motion and Infrastructure boundaries hold. Its **rendering** assumptions were written for SpriteKit — scene and node types, screen-space projection, per-frame callbacks, draw order, texture handling — so treat them as unverified under RealityKit.
+3. `Docs/Architecture/Game-Oriented-Architecture.md` for the current lean game-oriented folder structure; `Docs/LaserHeist-Architecture-Reference.md` for responsibility explanations subject to approved current contracts. Folder modules remain logical boundaries in the existing app target.
 4. `LaserHeist-Architecture-Draft.md`, `LaserHeist-Prototype-Comparison.md` and prototype findings: historical context only.
 
 ## A. Ownership
@@ -16,24 +16,24 @@ Paths are relative to `Sedactive/`.
 
 | Owner | Owns | Main folders |
 |---|---|---|
-| **Edo** (Codex) | Camera, Vision, segmentation, player tracking, calibration data processing, Motion, shared body-input contracts | `Infrastructure/` (except `Audio/`), `Motion/`, `Domain/BodyInput/`, `Domain/Players/`, `Features/Setup/CalibrationSession.swift` (calibration processing), `Debug/ReplayBodyInput.swift` |
-| **Jevon** (Codex) | Game rules, laser checker, encounters, `GameClock`, session lifecycle including running the calibration step, co-op scoring, round summary | `Domain/LaserHeist/`, `Features/Session/` |
-| **Kevin** (Claude Code) | RealityKit world, spatial positioning, laser visuals, live cutout presentation, HUD/VFX integration, rendering debug view, the rendering update mechanism | `Rendering/`, `Features/Play/`, `Debug/PoseDebugOverlay.swift` |
+| **Edo** (Codex) | Camera, Vision, segmentation, player tracking, calibration data processing, Motion, shared body-input contracts | `Shared/BodyTracking/` (Models, Processing, Capture and live/replay entry points), `Shared/Players/` |
+| **Jevon** (Codex) | Game rules, laser checker, encounters, `GameClock`, session lifecycle including running the calibration step, co-op scoring, round summary | `Games/LaserHeist/Domain/`, `Games/LaserHeist/Session/`, `Shared/GameRuntime/GameClock.swift` |
+| **Kevin** (Claude Code) | RealityKit world, spatial positioning, laser visuals, live cutout presentation, HUD/VFX integration, rendering debug view, the rendering update mechanism | `Games/LaserHeist/Rendering/`, `Games/LaserHeist/UI/PlayView.swift`, `Games/LaserHeist/Debug/PoseDebugOverlay.swift` |
 | **Theo** (design) | UI/UX, art direction, visual assets, animation specs, design handoff | Design files; where game assets live is TBD with Kevin |
 
 - **Rendering** (Confirmed): production LaserHeist rendering uses RealityKit, with mostly 2D assets placed in a virtual 3D space.
-- **Unowned until assigned:** the Home, Setup and Results screens, and `Infrastructure/Audio/AudioService.swift`.
+- **Unowned until assigned:** the Home, Setup and Results screens, and `Shared/Audio/AudioService.swift`.
 - **One owner per file.** To change another owner's file, propose it to that owner and change it only after they agree.
 - **Shared hotspot — `App/` (`AppDependencies.swift`, `RootView.swift`):** Edo maintains these files. Jevon and Kevin coordinate their wiring with Edo and keep each change small.
-- **Pending structure changes** (no file is moved or renamed until each is agreed):
-
-  | Change | Status | Who decides |
-  |---|---|---|
-  | Separate `SedactiveTests` target at the repo root | Confirmed | Edo implements |
-  | Rename rendering files (for example, `PlayerProjection` → `GameWorldMapping`, `PlayerCutoutNode` → `PlayerCutoutEntity`) | Proposed | **Kevin** decides names and timing. Others may propose. |
-  | Move `CalibrationSession.swift` to `Motion/` | Proposed | Edo and Jevon. Calibration processing (Edo) and the calibration screen and flow (Jevon's coordinator; screen builder TBD) stay separate either way. |
+- **Structural decision (31 October 2026):** Lean Game-Oriented Modular Architecture with Shared systems and game-specific RealityKit ECS is the Tech Lead-approved layout. See [the current structure](Architecture/Game-Oriented-Architecture.md) and [migration history](Architecture/Structural-Migration-Report.md).
+  - Edo explicitly authorized all structural relocations in this migration, including Jevon/Kevin files, without further owner approval solely for moves. This exception does not authorize functional edits, API/algorithm changes or changes of ownership.
+  - LH-23's separate root test target, `GameWorldMapping.swift` / `PlayerCutoutEntity.swift` names and calibration-processing separation are preserved. The calibration process now lives at `Shared/BodyTracking/Processing/CalibrationSession.swift`.
+  - App source has App, Games and Shared plus the existing Assets.xcassets. There is no global Features layer. Shared BodyTracking uses Models/Processing/Capture; existing source filenames remain unchanged.
+  - No packages/targets, gameplay features or B2 settings are added/changed. All feature work remains paused.
 
 ## B. Integration contracts
+
+Approved current body-input details are recorded in [the CP1 baseline](LH-00-Checkpoint-1-Contract-Proposal.md); the older summary below is not an exhaustive field list and does not override that baseline. This structural publication changes no contract or gameplay decision.
 
 The **producer** defines each contract type once. Consumers import it and do not redefine it. Every body-data and cutout contract carries **player ID, capture timestamp, frame ID and calibration revision**, using the coordinate rules in C. Field names and Swift interfaces stay TBD until the producer's contract change is agreed (see E).
 
@@ -52,7 +52,7 @@ The **producer** defines each contract type once. Consumers import it and do not
 - **Mirroring:** body data, game logic and replay data stay unmirrored. Display mirroring happens only in Kevin's world mapping. TBD — requires team approval.
 - **Body estimates:** Vision has no crown or sole landmarks, so crown and soles are estimates built from landmarks plus each player's standing calibration.
 - **Missing data:** missing, stale or invalid body data produces **UNAVAILABLE**, never CLEAR (Confirmed).
-- **Rendering boundary:** game logic (`Domain/`) imports no SwiftUI, RealityKit, Vision, AVFoundation or Core Image. The laser checker works only on game data, never on RealityKit entities, transforms or physics (Confirmed).
+- **Rendering boundary:** game logic (`Games/LaserHeist/Domain/`) imports no SwiftUI, RealityKit, Vision, AVFoundation or Core Image. The laser checker works only on game data, never on RealityKit entities, transforms or physics (Confirmed).
 - **Concurrency:** camera, Vision and segmentation work runs off the main actor. Only immutable values, or explicitly owned image handles, cross into main-actor code.
   - The project-wide convention (`nonisolated`/`Sendable` usage, Swift 6 mode) is TBD — requires team approval.
 
@@ -105,7 +105,7 @@ The **producer** defines each contract type once. Consumers import it and do not
 - **Small changes:** run targeted tests. **Contract changes:** add a cross-component integration test.
   - Gameplay: use deterministic replay data.
   - Camera, texture streaming, transparent cutouts and rendering performance: validate on a physical iPad.
-- **Before the test target exists:** the standard Xcode unit-test suite cannot run until the `SedactiveTests` target is configured. Builds and other available checks still apply. Report tests as passed only if they actually ran.
+- **Test foundation:** LH-23 provides the separate root `SedactiveTests` target. Shared tests live in `SedactiveTests/Shared/`; Laser Heist domain/session tests live in `SedactiveTests/Games/LaserHeist/`. Report tests as passed only if they actually ran.
 - **How far you got:** state which level you reached — **builds**, **tests pass**, **Simulator checked** or **device checked**.
 - **Privacy:** keep participant recordings, camera frames, biometric pose data and secrets out of the repository. Use only approved, consented test recordings.
 - **Report:** changed files, tests run and their results, skills used, known limitations, and integration work other owners need to do.

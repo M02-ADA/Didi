@@ -5,7 +5,7 @@
 Read `Docs/TEAM_ALIGNMENT.md` before your first change in a session. It is the team's single source of truth and takes precedence over this file. Follow its source-precedence order.
 
 - **Owner:** work as the owner named in the task, Edo or Jevon, within the areas listed for them in TEAM_ALIGNMENT §A. If the owner is unclear, ask. Edits to another owner's files follow the proposal step in §E.
-- **Before implementing:** read the relevant existing code, and the Architecture Reference sections the task touches.
+- **Before implementing:** read the relevant existing code and `Docs/Architecture/Game-Oriented-Architecture.md` for current paths, plus applicable Architecture Reference sections. Source folders are logical modules within the existing app target.
 - **Contracts:** use the shared contract types (§B) exactly as their producer defines them. Extend them through the contract workflow.
 - **Workflow:** follow the risk-based workflow in §E.
   - Small changes in your own area go straight through.
