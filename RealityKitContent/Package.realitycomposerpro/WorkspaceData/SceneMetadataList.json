@@ -1,0 +1,74 @@
+{
+  "BAEE8568-C926-4F06-85A5-4BBE64698FC3" : {
+    "objectMetadataList" : [
+      [
+        "BAEE8568-C926-4F06-85A5-4BBE64698FC3",
+        "Root"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "BAEE8568-C926-4F06-85A5-4BBE64698FC3",
+        "Root",
+        "Corridor",
+        "Floor"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "BAEE8568-C926-4F06-85A5-4BBE64698FC3",
+        "Root",
+        "Corridor"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "BAEE8568-C926-4F06-85A5-4BBE64698FC3",
+        "Root",
+        "Corridor",
+        "PlayerPads"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "BAEE8568-C926-4F06-85A5-4BBE64698FC3",
+        "Root",
+        "Corridor",
+        "WallArt",
+        "Left_1"
+      ],
+      {
+        "disallowsFraming" : false,
+        "isExpanded" : false,
+        "isLocked" : false
+      },
+      [
+        "BAEE8568-C926-4F06-85A5-4BBE64698FC3",
+        "Root",
+        "Anchors"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "BAEE8568-C926-4F06-85A5-4BBE64698FC3",
+        "Root",
+        "Corridor",
+        "WallArt"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      }
+    ]
+  }
+}

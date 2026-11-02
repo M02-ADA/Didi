@@ -6,6 +6,9 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		7120F451A4734D23A49182B8 /* RealityKitContent in Frameworks */ = {isa = PBXBuildFile; productRef = DA6C3BAFD0654607A4652841 /* RealityKitContent */; };
+/* End PBXBuildFile section */
 /* Begin PBXContainerItemProxy section */
 		FA2300000000000000000001 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -46,6 +49,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7120F451A4734D23A49182B8 /* RealityKitContent in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -113,6 +117,7 @@
 			);
 			name = Sedactive;
 			packageProductDependencies = (
+				DA6C3BAFD0654607A4652841 /* RealityKitContent */,
 			);
 			productName = Sedactive;
 			productReference = FAFDB8FE3084B8E100EC2199 /* Sedactive.app */;
@@ -146,6 +151,9 @@
 			);
 			mainGroup = FAFDB8F53084B8E100EC2199;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				BD2F697DF7C942608EF8885B /* XCLocalSwiftPackageReference "RealityKitContent" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = FAFDB8FF3084B8E100EC2199 /* Products */;
 			projectDirPath = "";
@@ -378,7 +386,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = PVFTHNYZFD;
+				DEVELOPMENT_TEAM = LG4M4S46YZ;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Sedactive uses the camera to track your movements and display you and your partner in the game.";
@@ -411,7 +419,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = PVFTHNYZFD;
+				DEVELOPMENT_TEAM = LG4M4S46YZ;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Sedactive uses the camera to track your movements and display you and your partner in the game.";
@@ -468,6 +476,20 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		BD2F697DF7C942608EF8885B /* XCLocalSwiftPackageReference "RealityKitContent" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = RealityKitContent;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		DA6C3BAFD0654607A4652841 /* RealityKitContent */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = RealityKitContent;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = FAFDB8F63084B8E100EC2199 /* Project object */;
 }
