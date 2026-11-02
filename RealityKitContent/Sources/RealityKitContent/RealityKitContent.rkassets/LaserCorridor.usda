@@ -2198,46 +2198,6 @@ def Xform "Root"
                     float outputs:outa
                 }
             }
-
-            def Material "Laser"
-            {
-                token outputs:mtlx:surface.connect = </Root/EditorPreviews/PreviewMaterials/Laser/Unlit.outputs:out>
-                token outputs:realitykit:vertex
-                token outputs:surface
-
-                def Shader "Unlit"
-                {
-                    uniform token info:id = "ND_realitykit_unlit_surfaceshader"
-                    bool inputs:applyPostProcessToneMap = 0
-                    color3f inputs:color.connect = </Root/EditorPreviews/PreviewMaterials/Laser/Color.outputs:out>
-                    float inputs:opacity.connect = </Root/EditorPreviews/PreviewMaterials/Laser/Channels.outputs:outa>
-                    token outputs:out
-                }
-
-                def Shader "Image"
-                {
-                    uniform token info:id = "ND_image_color4"
-                    asset inputs:file = @Textures/preview_laser.png@
-                    string inputs:filtertype = "linear"
-                    string inputs:uaddressmode = "clamp"
-                    string inputs:vaddressmode = "clamp"
-                    color4f outputs:out
-                }
-
-                def Shader "Color"
-                {
-                    uniform token info:id = "ND_convert_color4_color3"
-                    color4f inputs:in.connect = </Root/EditorPreviews/PreviewMaterials/Laser/Image.outputs:out>
-                    color3f outputs:out
-                }
-
-                def Shader "Channels"
-                {
-                    uniform token info:id = "ND_separate4_color4"
-                    color4f inputs:in.connect = </Root/EditorPreviews/PreviewMaterials/Laser/Image.outputs:out>
-                    float outputs:outa
-                }
-            }
         }
 
         def Mesh "ParentPreview" (
@@ -2282,25 +2242,62 @@ def Xform "Root"
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
 
-        def Mesh "LaserPreview" (
-            prepend apiSchemas = ["MaterialBindingAPI"]
+        def Xform "LaserPreview" (
+            doc = "Editor-only view of the runtime Option 1 gate. References LaserGate.usda and hides its non-active state layers here only."
+            prepend references = @LaserGate.usda@
         )
         {
-            int[] faceVertexCounts = [4]
-            int[] faceVertexIndices = [0, 1, 2, 3]
-            rel material:binding = </Root/EditorPreviews/PreviewMaterials/Laser>
-            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
-                interpolation = "vertex"
-            )
-            point3f[] points = [(-1.6, -0.044, 0), (1.6, -0.044, 0), (1.6, 0.044, 0), (-1.6, 0.044, 0)]
-            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
-                interpolation = "vertex"
-            )
-            uniform token subdivisionScheme = "none"
             quatf xformOp:orient = (1, 0, 0, 0)
             float3 xformOp:scale = (1, 1, 1)
-            float3 xformOp:translate = (0, 1.25, 0.02)
+            float3 xformOp:translate = (0, 0, 0.02)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+            over "Gate"
+            {
+                over "Beam"
+                {
+                    over "Warning"
+                    {
+                        token visibility = "invisible"
+                    }
+                }
+
+                over "EmitterLeft"
+                {
+                    over "Disabled"
+                    {
+                        token visibility = "invisible"
+                    }
+
+                    over "WarningRing"
+                    {
+                        token visibility = "invisible"
+                    }
+
+                    over "HitSpark"
+                    {
+                        token visibility = "invisible"
+                    }
+                }
+
+                over "EmitterRight"
+                {
+                    over "Disabled"
+                    {
+                        token visibility = "invisible"
+                    }
+
+                    over "WarningRing"
+                    {
+                        token visibility = "invisible"
+                    }
+
+                    over "HitSpark"
+                    {
+                        token visibility = "invisible"
+                    }
+                }
+            }
         }
     }
 }
