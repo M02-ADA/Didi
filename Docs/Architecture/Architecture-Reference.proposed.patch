@@ -1,0 +1,10 @@
+--- a/Docs/LaserHeist-Architecture-Reference.md
++++ b/Docs/LaserHeist-Architecture-Reference.md
+@@ -1,4 +1,6 @@
+-# Laser Heist architecture reference
++# Laser Heist architecture reference — historical layer-oriented layout
++
++> **Current structure:** see [Game-Oriented Architecture](Architecture/Game-Oriented-Architecture.md) and the [per-file migration map](Architecture/Structural-Migration-Report.md). The Tech Lead selected game-oriented logical modules on 31 October 2026. The old tree and path examples below describe the pre-migration layout; owner-gated moves remain pending. Use the approved CP1 baseline for current body-data/mechanics decisions. This historical text does not reopen LH-23 or supersede those decisions.
+ 
+ This is the consolidated folder reference, updated on 29 October 2026 for LH-23. It describes the current file locations and the team's RealityKit rendering decision. Many files remain implementation placeholders.
+ 

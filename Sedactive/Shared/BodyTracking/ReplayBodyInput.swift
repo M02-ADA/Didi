@@ -25,7 +25,6 @@ nonisolated struct ReplayRecord: Equatable, Sendable, Codable {
 
 nonisolated struct ReplayFixture: Equatable, Sendable, Codable {
     let schemaVersion: Int
-    let profiles: [Player]
     let configuration: BodyInputConfiguration
     let cameraGeometryRevision: UInt64
     let records: [ReplayRecord]
@@ -37,12 +36,8 @@ nonisolated struct ReplayFixture: Equatable, Sendable, Codable {
     }
 
     func validate() throws {
-        try requireBodyValue(schemaVersion == 1 && cameraGeometryRevision > 0, "fixture version/geometry")
+        try requireBodyValue(schemaVersion == 2 && cameraGeometryRevision > 0, "fixture version/geometry")
         try configuration.validate()
-        for profile in profiles { try profile.validate() }
-        let ids = Set(profiles.map(\.id))
-        try requireBodyValue(ids.count == profiles.count && Set(configuration.selectedPlayers.ids).isSubset(of: ids),
-                             "fixture profiles")
         var previousTime = 0.0
         var previousGeometry = cameraGeometryRevision
         // Finite fixture validation, not a growing runtime history or diagnostics archive.
@@ -66,6 +61,18 @@ nonisolated struct ReplayFixture: Equatable, Sendable, Codable {
                 observations[snapshot.sessionGeneration, default: [:]][snapshot.frameID] = snapshot
             }
         }
+    }
+}
+
+extension ReplayFixture {
+    nonisolated init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try container.decode(Int.self, forKey: .schemaVersion)
+        try requireBodyValue(version == 2, "unsupported replay schema version: \(version)")
+        schemaVersion = version
+        configuration = try container.decode(BodyInputConfiguration.self, forKey: .configuration)
+        cameraGeometryRevision = try container.decode(UInt64.self, forKey: .cameraGeometryRevision)
+        records = try container.decode([ReplayRecord].self, forKey: .records)
     }
 }
 
@@ -107,7 +114,6 @@ final class ReplayBodyInput: BodyInputProviding {
     var currentContext: BodyInputContext? {
         guard let configuration else { return nil }
         return BodyInputContext(sessionGeneration: configuration.sessionGeneration,
-                                selectedPlayers: configuration.selectedPlayers,
                                 cameraGeometryRevision: cameraRevision,
                                 calibrationRevisions: configuration.calibrations.mapValues(\.revision),
                                 cutovers: cutovers, isActive: active && status == .running)
@@ -149,6 +155,7 @@ final class ReplayBodyInput: BodyInputProviding {
         stopSource()
     }
 
+    /// Replace the entire accepted dictionary after validation; unchanged entries keep revisions/cutovers.
     @discardableResult
     func setCalibrations(_ values: [PlayerID: PlayerCalibration], generation: UUID) async throws -> BodyInputContext {
         try checkControl()
@@ -168,9 +175,10 @@ final class ReplayBodyInput: BodyInputProviding {
             .filter { $0.sessionGeneration == generation && $0.capturedAt <= now }
             .map(\.frameID).max() ?? 0
         var newCutovers = cutovers
-        for id in configuration.selectedPlayers.ids where configuration.calibrations[id] != values[id] {
+        for id in PlayerID.allCases where configuration.calibrations[id] != values[id] {
             newCutovers[id] = BodyInputCutover(frameID: max(watermark, values[id]?.sourceFrameID ?? 0), capturedAt: now)
         }
+        // Includes removals: the exact key set is accepted, while cutovers retain invalidation markers.
         self.configuration = replacement
         cutovers = newCutovers
         latestSnapshot = nil

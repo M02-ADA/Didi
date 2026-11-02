@@ -20,7 +20,7 @@ struct BodyInputDeliveryTests {
         for expected in (11 - capacity)...10 {
             let packet = try #require(await iterator.next())
             #expect(packet.frameID == UInt64(expected))
-            #expect(Set(packet.players.keys) == Set(config.selectedPlayers.ids))
+            #expect(Set(packet.players.keys) == Set(PlayerID.allCases))
         }
         try provider.releaseSnapshotSubscription(generation: config.sessionGeneration)
     }

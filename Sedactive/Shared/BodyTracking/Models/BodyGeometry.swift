@@ -62,9 +62,10 @@ nonisolated struct PlayerPlaneLayout: Equatable, Sendable, Codable {
         try requireBodyValue(gameUnitsPerImageHeight.isFinite && gameUnitsPerImageHeight > 0, "shared scale")
     }
 
-    func centerX(for playerID: PlayerID, selection: SelectedPlayers) throws -> Double {
-        if playerID == selection.firstID { return leftCenterX }
-        if playerID == selection.secondID { return rightCenterX }
-        throw BodyInputContractError.incompatibleContext
+    func centerX(for playerID: PlayerID) -> Double {
+        switch playerID {
+        case .player1: leftCenterX
+        case .player2: rightCenterX
+        }
     }
 }

@@ -6,7 +6,7 @@ nonisolated private final class LH00TestBundle: NSObject {}
 
 /// Shared synthetic builders. The JSON must be copied into the test bundle: no source-path fallback.
 nonisolated enum LH00TestData {
-    static func load(_ name: String = "cooperative-v1") throws -> ReplayFixture {
+    static func load(_ name: String = "cooperative-v2") throws -> ReplayFixture {
         let bundle = Bundle(for: LH00TestBundle.self)
         guard let url = bundle.url(forResource: name, withExtension: "json")
                 ?? bundle.url(forResource: name, withExtension: "json", subdirectory: "Fixtures") else {
@@ -17,7 +17,7 @@ nonisolated enum LH00TestData {
 
     static func fixture(_ records: [ReplayRecord], configuration: BodyInputConfiguration? = nil) throws -> ReplayFixture {
         let base = try load()
-        return ReplayFixture(schemaVersion: 1, profiles: base.profiles,
+        return ReplayFixture(schemaVersion: 2,
                              configuration: configuration ?? base.configuration,
                              cameraGeometryRevision: 1, records: records)
     }
@@ -26,7 +26,6 @@ nonisolated enum LH00TestData {
                               calibrations: [PlayerID: PlayerCalibration]? = nil,
                               capacity: Int = 8, policy: NoProgressPolicy = .disabled) -> BodyInputConfiguration {
         BodyInputConfiguration(sessionGeneration: generation ?? base.sessionGeneration,
-                               selectedPlayers: base.selectedPlayers,
                                calibrations: calibrations ?? base.calibrations,
                                playerPlaneLayout: base.playerPlaneLayout,
                                snapshotBufferCapacity: capacity, noProgressPolicy: policy)
@@ -43,10 +42,19 @@ nonisolated enum LH00TestData {
         })
     }
 
+    static func unavailableSample(_ id: PlayerID, tracking: TrackingStatus = .lost) throws -> PlayerBodySample {
+        let missing = try EstimatedScalar(value: nil, validity: .notCalibrated)
+        return PlayerBodySample(playerID: id, calibrationRevision: nil, trackingStatus: tracking,
+                                geometry: BodyGeometry(crownY: missing, leftWristY: missing, rightWristY: missing,
+                                                       leftSoleY: missing, rightSoleY: missing, centerX: missing),
+                                jumpState: JumpState(phase: .unknown, validity: .notCalibrated))
+    }
+
     static func calibration(_ original: PlayerCalibration, revision: UInt64,
-                            sourceFrameID: UInt64 = 0, capturedAt: Double = 0) -> PlayerCalibration {
-        PlayerCalibration(playerID: original.playerID, sessionGeneration: original.sessionGeneration,
-                          revision: revision, cameraGeometryRevision: original.cameraGeometryRevision,
+                            sourceFrameID: UInt64 = 0, capturedAt: Double = 0,
+                            generation: UUID? = nil, cameraRevision: UInt64? = nil) -> PlayerCalibration {
+        PlayerCalibration(playerID: original.playerID, sessionGeneration: generation ?? original.sessionGeneration,
+                          revision: revision, cameraGeometryRevision: cameraRevision ?? original.cameraGeometryRevision,
                           sourceFrameID: sourceFrameID, capturedAt: capturedAt,
                           standingCrownImageY: original.standingCrownImageY,
                           standingLeftSoleImageY: original.standingLeftSoleImageY,
@@ -61,27 +69,42 @@ nonisolated enum LH00TestData {
 }
 
 nonisolated struct BodyInputContractTests {
-    @Test func persistentProfilesAndReversedSelection() throws {
+    @Test func anonymousSlotsKeepFixedLanesAcrossDifferentGenerations() throws {
         let first = try LH00TestData.load()
-        let second = try LH00TestData.load("reversed-selection-v1")
-        #expect(first.profiles == second.profiles)
-        #expect(first.configuration.selectedPlayers.firstID == second.configuration.selectedPlayers.secondID)
+        let second = try LH00TestData.load("two-player-recovery-v2")
+        #expect(PlayerID.allCases == [.player1, .player2])
         #expect(first.configuration.sessionGeneration != second.configuration.sessionGeneration)
         for fixture in [first, second] {
-            let selected = fixture.configuration.selectedPlayers
             let packet = try #require(fixture.records[0].snapshot)
-            #expect(packet.players[selected.firstID]?.geometry.centerX.value == -0.65)
-            #expect(packet.players[selected.secondID]?.geometry.centerX.value == 0.65)
-            let firstCameraX = try #require(fixture.configuration.calibrations[selected.firstID]?.mapping.originImageX)
-            let secondCameraX = try #require(fixture.configuration.calibrations[selected.secondID]?.mapping.originImageX)
-            #expect(firstCameraX > secondCameraX) // Displayed-left binding in a mirrored calibration preview.
+            #expect(Set(packet.players.keys) == Set(PlayerID.allCases))
+            #expect(packet.players[.player1]?.geometry.centerX.value == -0.65)
+            #expect(packet.players[.player2]?.geometry.centerX.value == 0.65)
+            let p1CameraX = try #require(fixture.configuration.calibrations[.player1]?.mapping.originImageX)
+            let p2CameraX = try #require(fixture.configuration.calibrations[.player2]?.mapping.originImageX)
+            #expect(p1CameraX > p2CameraX) // Mirrored calibration binds displayed-left to P1.
         }
-        #expect(throws: BodyInputContractError.self) {
-            try SelectedPlayers(firstID: first.profiles[0].id, secondID: first.profiles[0].id).validate()
+    }
+
+    @Test func slotCodingUsesStringValuesAndObjectKeysWithoutProfileContext() throws {
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        #expect(String(decoding: try encoder.encode(PlayerID.player1), as: UTF8.self) == #""player1""#)
+        let values: [PlayerID: Int] = [.player1: 1, .player2: 2]
+        let data = try encoder.encode(values)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Int])
+        #expect(object == ["player1": 1, "player2": 2])
+        #expect(try decoder.decode([PlayerID: Int].self, from: data) == values)
+        for invalid in ["player3", "00000000-0000-4000-8000-000000000001"] {
+            #expect(throws: (any Error).self) {
+                try decoder.decode(PlayerID.self, from: encoder.encode(invalid))
+            }
+            let invalidKeys = try encoder.encode([invalid: 1])
+            #expect(throws: (any Error).self) { try decoder.decode([PlayerID: Int].self, from: invalidKeys) }
         }
-        #expect(throws: BodyInputContractError.self) {
-            try Player(id: first.profiles[0].id, name: "Kevin", weightKg: .nan).validate()
-        }
+        let config = try LH00TestData.load().configuration
+        let configObject = try #require(JSONSerialization.jsonObject(with: encoder.encode(config)) as? [String: Any])
+        #expect(Set(configObject.keys) == ["sessionGeneration", "calibrations", "playerPlaneLayout",
+                                          "snapshotBufferCapacity", "noProgressPolicy"])
     }
 
     @Test(arguments: EvidenceValidity.allCases.filter { $0 != .valid })
@@ -101,22 +124,22 @@ nonisolated struct BodyInputContractTests {
         }
     }
 
-    @Test func sharedScalePreservesHeightsAndSelectionDerivesLanes() throws {
+    @Test func sharedScalePreservesHeightsAndSlotsDeriveLanes() throws {
         let fixture = try LH00TestData.load()
         let config = fixture.configuration
-        let first = try #require(config.calibrations[config.selectedPlayers.firstID])
-        let second = try #require(config.calibrations[config.selectedPlayers.secondID])
+        let first = try #require(config.calibrations[.player1])
+        let second = try #require(config.calibrations[.player2])
         #expect(abs(first.mapping.gameY(imageY: first.standingCrownImageY, layout: config.playerPlaneLayout) - 1.6) < 1e-9)
         #expect(abs(second.mapping.gameY(imageY: second.standingCrownImageY, layout: config.playerPlaneLayout) - 1.05) < 1e-9)
         #expect(first.leftFootOffsetShare != first.rightFootOffsetShare)
         let standing = try #require(fixture.records[0].snapshot)
         #expect(standing.players[first.playerID]?.geometry.crownY.value == 1.6)
         #expect(standing.players[second.playerID]?.geometry.crownY.value == 1.05)
-        let x = try first.mapping.gameX(imageX: first.mapping.originImageX + 0.02, playerID: first.playerID,
-                                        selection: config.selectedPlayers, layout: config.playerPlaneLayout)
+        let x = first.mapping.gameX(imageX: first.mapping.originImageX + 0.02, playerID: first.playerID,
+                                        layout: config.playerPlaneLayout)
         #expect(abs(x - (-0.59)) < 1e-9) // Unmirrored displacement +0.06; display reflection belongs to Kevin.
-        let reversed = SelectedPlayers(firstID: second.playerID, secondID: first.playerID)
-        #expect(try config.playerPlaneLayout.centerX(for: first.playerID, selection: reversed) == 0.65)
+        #expect(config.playerPlaneLayout.centerX(for: .player1) == -0.65)
+        #expect(config.playerPlaneLayout.centerX(for: .player2) == 0.65)
         #expect(throws: BodyInputContractError.self) {
             try PlayerPlaneLayout(leftCenterX: 0, rightCenterX: 0, gameUnitsPerImageHeight: 2).validate()
         }
@@ -148,4 +171,46 @@ nonisolated struct BodyInputContractTests {
                                         trackingStatus: .uncertain, geometry: sample.geometry, jumpState: sample.jumpState)
         #expect(throws: BodyInputContractError.self) { try uncertain.validate() }
     }
+
+    @Test func fixedSnapshotKeysAndCalibrationIdentityAreValidated() throws {
+        let fixture = try LH00TestData.load()
+        let snapshot = try LH00TestData.snapshot(1)
+        let p1 = try #require(snapshot.players[.player1])
+        let invalidSets: [[PlayerID: PlayerBodySample]] = [[:], [.player1: p1], [.player1: p1, .player2: p1]]
+        for invalidPlayers in invalidSets {
+            let invalid = BodySnapshot(sessionGeneration: snapshot.sessionGeneration, frameID: 1, capturedAt: 1,
+                                       cameraGeometryRevision: 1, players: invalidPlayers)
+            #expect(throws: BodyInputContractError.self) { try invalid.validate() }
+        }
+        let unavailable = BodySnapshot(sessionGeneration: snapshot.sessionGeneration, frameID: 1, capturedAt: 1,
+                                       cameraGeometryRevision: 1,
+                                       players: [.player1: try LH00TestData.unavailableSample(.player1),
+                                                 .player2: try LH00TestData.unavailableSample(.player2)])
+        try unavailable.validate()
+        let baseline = try #require(fixture.configuration.calibrations[.player1])
+        #expect(throws: BodyInputContractError.self) {
+            try LH00TestData.configuration(fixture.configuration, calibrations: [.player2: baseline]).validate()
+        }
+    }
+
+    @Test func rawCandidatePermutationPreservesDataWithoutPretendingToTrackPeople() throws {
+        let generation = try LH00TestData.load().configuration.sessionGeneration
+        let leftInPreview = PoseCandidate(candidateID: 9, joints: [.leftWrist: PoseJoint(x: 0.75, y: 0.4, confidence: 0.9)],
+                                         maskTopImageY: nil, maskBottomImageY: nil, leftFootBottomImageY: nil,
+                                         rightFootBottomImageY: nil, maskAssociation: .matched)
+        let rightInPreview = PoseCandidate(candidateID: 2, joints: [.rightWrist: PoseJoint(x: 0.25, y: 0.6, confidence: 0.8)],
+                                          maskTopImageY: nil, maskBottomImageY: nil, leftFootBottomImageY: nil,
+                                          rightFootBottomImageY: nil, maskAssociation: .matched)
+        let first = PoseFrame(sessionGeneration: generation, frameID: 1, capturedAt: 1, cameraGeometryRevision: 1,
+                              imageWidth: 1920, imageHeight: 1280, candidates: [leftInPreview, rightInPreview])
+        let reordered = PoseFrame(sessionGeneration: generation, frameID: 1, capturedAt: 1, cameraGeometryRevision: 1,
+                                  imageWidth: 1920, imageHeight: 1280, candidates: [rightInPreview, leftInPreview])
+        try first.validate()
+        try reordered.validate()
+        #expect(Dictionary(uniqueKeysWithValues: first.candidates.map { ($0.candidateID, $0) })
+                == Dictionary(uniqueKeysWithValues: reordered.candidates.map { ($0.candidateID, $0) }))
+        #expect(first.candidates.first != reordered.candidates.first)
+        // This proves the raw schema preserves evidence. Live binding/reacquisition is later PlayerTracker work.
+    }
+
 }

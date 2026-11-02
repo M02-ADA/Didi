@@ -35,7 +35,7 @@ nonisolated struct PlayerBodySample: Equatable, Sendable, Codable {
     }
 }
 
-/// One capture, two explicit selected-player samples. Delivery time is deliberately absent.
+/// One capture, explicit P1/P2 samples even before binding/calibration. No delivery time or game state.
 nonisolated struct BodySnapshot: Equatable, Sendable, Codable {
     let sessionGeneration: UUID
     let frameID: UInt64
@@ -45,7 +45,8 @@ nonisolated struct BodySnapshot: Equatable, Sendable, Codable {
 
     func validate() throws {
         try requireBodyValue(capturedAt.isFinite && capturedAt >= 0, "capturedAt")
-        try requireBodyValue(cameraGeometryRevision > 0 && players.count == 2, "snapshot envelope")
+        try requireBodyValue(cameraGeometryRevision > 0 && Set(players.keys) == Set(PlayerID.allCases),
+                             "snapshot requires player1 and player2")
         for (id, sample) in players {
             try requireBodyValue(id == sample.playerID, "sample dictionary identity")
             try sample.validate()
