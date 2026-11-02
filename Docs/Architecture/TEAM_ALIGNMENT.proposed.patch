@@ -1,0 +1,32 @@
+--- a/Docs/TEAM_ALIGNMENT.md
++++ b/Docs/TEAM_ALIGNMENT.md
+@@ -7,8 +7,10 @@
+ **Precedence:** when sources disagree, follow the first that applies.
+ 1. Approved current team decisions.
+ 2. This file and the agreed shared contracts.
+-3. `Docs/LaserHeist-Architecture-Reference.md`, for structures that still apply. Its Domain, Motion and Infrastructure boundaries hold. Its **rendering** assumptions were written for SpriteKit — scene and node types, screen-space projection, per-frame callbacks, draw order, texture handling — so treat them as unverified under RealityKit.
++3. `Docs/Architecture/Game-Oriented-Architecture.md`, for current migration paths and the approved game-oriented structure. `Docs/LaserHeist-Architecture-Reference.md` retains earlier architectural detail subject to current decisions and the migration map.
+ 4. `LaserHeist-Architecture-Draft.md`, `LaserHeist-Prototype-Comparison.md` and prototype findings: historical context only.
++
++**Approved structural direction:** Game-Oriented Modular Architecture with Shared systems and game-specific RealityKit ECS. These are logical folders in the existing app target. Owner approvals for pending physical moves remain required. Historical completed LH-23 moves are not reopened; no gameplay, contracts or B2 settings change in this migration.
+ 
+ ## A. Ownership
+ 
+@@ -16,13 +18,13 @@
+ 
+ | Owner | Owns | Main folders |
+ |---|---|---|
+-| **Edo** (Codex) | Camera, Vision, segmentation, player tracking, calibration data processing, Motion, shared body-input contracts | `Infrastructure/` (except `Audio/`), `Motion/`, `Domain/BodyInput/`, `Domain/Players/`, `Features/Setup/CalibrationSession.swift` (calibration processing), `Debug/ReplayBodyInput.swift` |
+-| **Jevon** (Codex) | Game rules, laser checker, encounters, `GameClock`, session lifecycle including running the calibration step, co-op scoring, round summary | `Domain/LaserHeist/`, `Features/Session/` |
+-| **Kevin** (Claude Code) | RealityKit world, spatial positioning, laser visuals, live cutout presentation, HUD/VFX integration, rendering debug view, the rendering update mechanism | `Rendering/`, `Features/Play/`, `Debug/PoseDebugOverlay.swift` |
++| **Edo** (Codex) | Camera, Vision, segmentation, player tracking, calibration data processing, Motion, shared body-input contracts | `Shared/BodyTracking/` and `Shared/Players/`; calibration data and processing live under `Shared/BodyTracking/Calibration/` |
++| **Jevon** (Codex) | Game rules, laser checker, encounters, `GameClock`, session lifecycle including running the calibration step, co-op scoring, round summary | `Games/LaserHeist/Domain/`, `Games/LaserHeist/Session/`, `Shared/GameRuntime/GameClock.swift` (moves pending Jevon agreement; see migration map) |
++| **Kevin** (Claude Code) | RealityKit world, spatial positioning, laser visuals, live cutout presentation, HUD/VFX integration, rendering debug view, the rendering update mechanism | `Games/LaserHeist/Rendering/`, `Games/LaserHeist/UI/Play/`, `Games/LaserHeist/Debug/PoseDebugOverlay.swift` (moves pending Kevin agreement) |
+ | **Theo** (design) | UI/UX, art direction, visual assets, animation specs, design handoff | Design files; where game assets live is TBD with Kevin |
+ 
+ - **Rendering** (Confirmed): production LaserHeist rendering uses RealityKit, with mostly 2D assets placed in a virtual 3D space.
+-- **Unowned until assigned:** the Home, Setup and Results screens, and `Infrastructure/Audio/AudioService.swift`.
++- **Unowned until assigned:** the Home, Setup and Results screens, and `Shared/Audio/AudioService.swift`.
+ - **One owner per file.** To change another owner's file, propose it to that owner and change it only after they agree.
+ - **Shared hotspot — `App/` (`AppDependencies.swift`, `RootView.swift`):** Edo maintains these files. Jevon and Kevin coordinate their wiring with Edo and keep each change small.
+ - **Pending structure changes** (no file is moved or renamed until each is agreed):

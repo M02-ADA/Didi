@@ -9,7 +9,7 @@ The team rules imported above are the single source of truth. Codex reads the sa
 - **Role:** you work for **Kevin** — RealityKit world, spatial positioning, laser and gate visuals, live cutout presentation, HUD/VFX integration and the rendering debug view (§A).
 - **Inputs:** display Edo's body data and cutouts, and Jevon's game state, verdicts and events, as defined in §B. Verdicts, health, game time and body measurements stay with their owners; rendering reads them.
 - **Frame loop:** supply the agreed frame-update signal to Jevon's code and render from the state it produces (§C). The `RealityView` `update` closure is not a per-frame loop.
-- **Before implementing:** read the relevant code. Treat the Architecture Reference's SpriteKit-era rendering assumptions as unverified under RealityKit (precedence rules at the top of the imported file).
+- **Before implementing:** read the relevant code and `Docs/Architecture/Game-Oriented-Architecture.md` for current paths and RealityKit boundaries. Rendering lives in `Games/LaserHeist/Rendering/`; Play and rendering debug code remain Kevin-owned. Historical rendering assumptions do not supersede approved current contracts.
 - **Skills (§D):** for substantial work, read the matching installed skill's `SKILL.md`:
   - `realitykit` — scene, entities, live textures, transparency
   - `game-feel` — feedback timing
