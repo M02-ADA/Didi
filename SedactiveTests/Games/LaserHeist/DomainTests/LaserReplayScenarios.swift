@@ -1,7 +1,7 @@
 import Foundation
 @testable import Sedactive
 
-/// Synthetic transport plus expected future LH-09/LH-10 outputs, not a second hit checker.
+/// Synthetic transport and LH-09/LH-10 expectations, not a second production hit checker.
 nonisolated struct LaserReplayExpectation: Equatable, Sendable {
     let playerID: PlayerID
     let selectedFrameID: UInt64?
@@ -96,7 +96,7 @@ nonisolated enum LaserReplayScenarios {
             try scenario("R3", [ReplayRecord(deliveredAt: 109.5, snapshot: packet(1, 9.5))],
                          expected: .unavailable(.stale), frame: nil),
             try scenario("R4", [ReplayRecord(deliveredAt: 110.5, snapshot: clear)],
-                         expected: .unavailable(.late), frame: nil),
+                         expected: .unavailable(.noSample), frame: nil),
             try scenario("R5", [ReplayRecord(deliveredAt: 110.02, snapshot: packet(1, 10, phase: .airborne, soles: 0.02)),
                                 ReplayRecord(deliveredAt: 110.12, snapshot: packet(2, 10.1, soles: 0.3))],
                          move: .jump, expected: .hit(.insufficientClearance)),
