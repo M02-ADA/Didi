@@ -37,6 +37,8 @@ Sedactive/
 │       │   └── RoundSummary.swift
 │       ├── Rendering/
 │       │   ├── GameWorldMapping.swift
+│       │   ├── LaserApproachPreview.swift
+│       │   ├── LaserGate.swift
 │       │   ├── LaserScene.swift
 │       │   └── PlayerCutoutEntity.swift
 │       ├── Session/

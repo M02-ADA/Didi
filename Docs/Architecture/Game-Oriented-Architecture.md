@@ -33,6 +33,8 @@ Sedactive/
 │       │   └── RoundSummary.swift
 │       ├── Rendering/
 │       │   ├── GameWorldMapping.swift
+│       │   ├── LaserApproachPreview.swift
+│       │   ├── LaserGate.swift
 │       │   ├── LaserScene.swift
 │       │   └── PlayerCutoutEntity.swift
 │       ├── Session/
@@ -164,7 +166,7 @@ The five Models files, Player.swift and ReplayBodyInput.swift contain the seven 
 
 ## RealityKit ECS boundary
 
-`LaserScene.swift`, `GameWorldMapping.swift` and `PlayerCutoutEntity.swift` sit directly in game Rendering. They retain their agreed names; all three are currently skeletons. Future ECS components/systems belong to this game's rendering implementation when actual code warrants them. No ECS architecture is implemented by moving folders.
+`LaserScene.swift`, `GameWorldMapping.swift` and `PlayerCutoutEntity.swift` sit directly in game Rendering. They retain their agreed names. LH-11 implemented the world, mapping and placeholder cutouts with the `RealityKitContent` corridor scene (live cutouts arrive with LH-14). LH-04 added `LaserGate.swift`, which presents the `LaserGate` Reality Composer Pro scene; `LaserApproachPreview.swift` is debug-only laser motion. Future ECS components/systems belong to this game's rendering implementation when actual code warrants them. No ECS architecture is implemented by moving folders.
 
 Authoritative collision, health, score and cooperative decisions remain in Domain/Session. RealityKit physics/events must not independently mutate those outcomes. Kevin maps shared game-plane geometry into the world; Edo's canonical evidence and Jevon's judged geometry keep their existing contracts. Preview/cutout mirroring, coordinates and timing rules are not changed here.
 
@@ -172,7 +174,7 @@ Authoritative collision, health, score and cooperative decisions remain in Domai
 
 The existing application/test targets use separate filesystem-synchronized root groups. All moves remain inside their original target root, so no `.pbxproj`, scheme, imports, Swift APIs or project settings needed changes. Test code stays out of the app target. Fixtures stay in the test root and are loaded from the built test bundle. The existing catalog compiles from `Sedactive/Assets.xcassets`; no Resources folder is added.
 
-App startup remains the starter ContentView flow. Most gameplay/rendering/session files and nine test files are skeletons, not completed features. The migration report records actual builds, test executions, byte-preservation checks and Xcode UI inspection. No physical-device gameplay or camera validation is claimed.
+App startup is the starter ContentView, which temporarily shows PlayView for LH-11. Most gameplay/session files and nine test files are skeletons, not completed features. The migration report records actual builds, test executions, byte-preservation checks and Xcode UI inspection. No physical-device gameplay or camera validation is claimed.
 
 ## Documentation and future review
 

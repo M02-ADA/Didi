@@ -36,7 +36,8 @@ struct LaserWorldLayout {
     var parentScale: Float = 1
     var childScale: Float = 1
 
-    // One horizontal laser.
+    // One horizontal laser. Height and thickness are preview values only; the
+    // judged band comes from Jevon's target geometry through `setLaserBand`.
     var laserHeightAboveFloor: Float = 1.25
     var laserSpawnZ: Float = -22
     var laserCoreThickness: Float = 0.022
@@ -57,6 +58,8 @@ final class LaserScene {
     /// Group of flat player and laser stand-ins that exist only for arranging
     /// the corridor in Reality Composer Pro. The runtime builds the real ones.
     static let editorPreviewsName = "EditorPreviews"
+    /// Option 1 laser gate artwork inside the `RealityKitContent` package.
+    static let laserGateSceneName = "LaserGate"
 
     let root = Entity()
     private(set) var layout: LaserWorldLayout
@@ -65,6 +68,12 @@ final class LaserScene {
     private(set) var environmentSource: EnvironmentSource?
     private let laser = Entity()
     private var laserEmitters: [Entity] = []
+    private var fallbackBeam: [Entity] = []
+    private var laserGate: LaserGate?
+    /// Wall mount x positions, from the authored `LaserMount_*` anchors when available.
+    private var laserSpan: ClosedRange<Float>
+    /// Judged band in game units above the floor; preview values until Jevon's targets exist.
+    private var laserBand: ClosedRange<Float>
 
     var laserWorldZ: Float { laser.position.z }
 
@@ -75,6 +84,9 @@ final class LaserScene {
     init(layout: LaserWorldLayout, mapping: GameWorldMapping) {
         self.layout = layout
         self.mapping = mapping
+        let mountX = layout.corridorWidth / 2 - 0.04
+        laserSpan = -mountX...mountX
+        laserBand = (layout.laserHeightAboveFloor - layout.laserCoreThickness / 2)...(layout.laserHeightAboveFloor + layout.laserCoreThickness / 2)
         root.name = "laserWorld"
         root.addChild(makeCamera())
         addPlayers()
@@ -85,11 +97,20 @@ final class LaserScene {
     /// Loads the corridor authored in Reality Composer Pro, or `nil` when the
     /// `RealityKitContent` package is not linked or the scene fails to load.
     static func loadAuthoredEnvironment() async -> Entity? {
+        await loadContent(named: authoredSceneName, fallback: "the code corridor")
+    }
+
+    /// Loads the Option 1 laser gate artwork, or `nil` to keep the code-built laser.
+    static func loadLaserGateArtwork() async -> Entity? {
+        await loadContent(named: laserGateSceneName, fallback: "the code-built laser")
+    }
+
+    private static func loadContent(named name: String, fallback: String) async -> Entity? {
         #if canImport(RealityKitContent)
         do {
-            return try await Entity(named: authoredSceneName, in: realityKitContentBundle)
+            return try await Entity(named: name, in: realityKitContentBundle)
         } catch {
-            print("LaserScene: \(authoredSceneName) failed to load, using the code corridor: \(error)")
+            print("LaserScene: \(name) failed to load, using \(fallback): \(error)")
             return nil
         }
         #else
@@ -119,10 +140,39 @@ final class LaserScene {
         root.addChild(environment)
     }
 
+    /// Replaces the code-built laser with the Option 1 gate artwork. Only one of
+    /// them is ever in the scene; missing artwork keeps the code-built laser.
+    func installLaserArtwork(_ artwork: Entity?) {
+        guard laserGate == nil, let artwork, let gate = LaserGate(artwork: artwork) else { return }
+        for part in laser.children.map({ $0 }) {
+            part.removeFromParent()
+        }
+        laserEmitters = []
+        fallbackBeam = []
+        laserGate = gate
+        laser.addChild(gate.root)
+        gate.setState(.active)
+        applyLaserGeometry()
+    }
+
     /// Moves the laser along the corridor. A future encounter state maps its
     /// timing to this depth; rendering never decides when a laser arrives.
     func setLaserDepth(_ worldZ: Float) {
-        laser.position = mapping.laserPosition(heightAboveFloor: layout.laserHeightAboveFloor, worldZ: worldZ)
+        let center = (laserBand.lowerBound + laserBand.upperBound) / 2
+        laser.position = mapping.laserPosition(heightAboveFloor: center, worldZ: worldZ)
+    }
+
+    /// Sets the judged band (game units above the floor). The visible solid core
+    /// spans exactly this band; the glow is decorative.
+    func setLaserBand(lowerEdge: Float, upperEdge: Float) {
+        laserBand = lowerEdge...upperEdge
+        setLaserDepth(laser.position.z)
+        applyLaserGeometry()
+    }
+
+    /// Presents a state decided elsewhere; the code-built fallback has no states.
+    func setLaserVisualState(_ state: LaserGate.VisualState) {
+        laserGate?.setState(state)
     }
 
     func setPlayerScale(_ lane: GameWorldMapping.Lane, _ scale: Float) {
@@ -148,10 +198,25 @@ final class LaserScene {
             layout.laserSpawnZ = spawn.z
             setLaserDepth(spawn.z)
         }
-        for (emitter, name) in zip(laserEmitters, ["LaserMount_Left", "LaserMount_Right"]) {
-            if let mount = anchor(name) {
-                emitter.position.x = mount.x
-            }
+        if let left = anchor("LaserMount_Left"), let right = anchor("LaserMount_Right") {
+            laserSpan = left.x...right.x
+            applyLaserGeometry()
+        }
+    }
+
+    /// Keeps the gate (or the code-built fallback) on the wall mounts and sized to the band.
+    private func applyLaserGeometry() {
+        let bandHeight = (laserBand.upperBound - laserBand.lowerBound) * mapping.metersPerGameUnit
+        if let laserGate {
+            laserGate.setSpan(leftX: laserSpan.lowerBound, rightX: laserSpan.upperBound)
+            laserGate.setBandHeight(bandHeight)
+            return
+        }
+        for (emitter, x) in zip(laserEmitters, [laserSpan.lowerBound, laserSpan.upperBound]) {
+            emitter.position.x = x
+        }
+        for part in fallbackBeam {
+            part.scale.y = bandHeight / layout.laserCoreThickness
         }
     }
 
@@ -261,12 +326,13 @@ final class LaserScene {
 
         laser.addChild(core)
         laser.addChild(glow)
-        for side: Float in [-1, 1] {
+        fallbackBeam = [core, glow]
+        for _ in 0..<2 {
             let emitter = ModelEntity(mesh: .generateBox(size: [0.08, 0.08, 0.08]), materials: [unlit(0x2B2766)])
-            emitter.position.x = side * (width / 2 - 0.04)
             laser.addChild(emitter)
             laserEmitters.append(emitter)
         }
+        applyLaserGeometry()
         root.addChild(laser)
     }
 

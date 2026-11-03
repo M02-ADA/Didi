@@ -1,0 +1,629 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def Scope "Materials"
+    {
+        def Material "EmitterLeft"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/EmitterLeft/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/EmitterLeft/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/EmitterLeft/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/laser_emitter_left.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/EmitterLeft/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/EmitterLeft/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+
+        def Material "EmitterRight"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/EmitterRight/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/EmitterRight/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/EmitterRight/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/laser_emitter_right.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/EmitterRight/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/EmitterRight/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+
+        def Material "DisabledLeft"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/DisabledLeft/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/DisabledLeft/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/DisabledLeft/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/laser_disabled_left.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/DisabledLeft/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/DisabledLeft/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+
+        def Material "DisabledRight"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/DisabledRight/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/DisabledRight/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/DisabledRight/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/laser_disabled_right.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/DisabledRight/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/DisabledRight/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+
+        def Material "BeamCore"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/BeamCore/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/BeamCore/Color.outputs:out>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/laser_beam_core.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/BeamCore/Image.outputs:out>
+                color3f outputs:out
+            }
+        }
+
+        def Material "BeamGlow"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/BeamGlow/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/BeamGlow/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/BeamGlow/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/laser_beam_glow.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/BeamGlow/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/BeamGlow/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+
+        def Material "Warning"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/Warning/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/Warning/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/Warning/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/laser_warning.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/Warning/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/Warning/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+
+        def Material "WarningRing"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/WarningRing/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/WarningRing/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/WarningRing/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/laser_warning_ring.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/WarningRing/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/WarningRing/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+
+        def Material "HitSpark"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/HitSpark/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/HitSpark/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/HitSpark/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/laser_hit_spark.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/HitSpark/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/HitSpark/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+    }
+
+    def Xform "Gate" (
+        doc = "Option 1 laser gate. Swift shows one state at a time and sizes Beam/Core to the judged band; Glow is decorative."
+    )
+    {
+        quatf xformOp:orient = (1, 0, 0, 0)
+        float3 xformOp:scale = (1, 1, 1)
+        float3 xformOp:translate = (0, 1.25, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+        def Xform "Beam"
+        {
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+            def Mesh "Glow" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                rel material:binding = </Root/Materials/BeamGlow>
+                normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                    interpolation = "vertex"
+                )
+                point3f[] points = [(-1.53, -0.06, 0), (1.53, -0.06, 0), (1.53, 0.06, 0), (-1.53, 0.06, 0)]
+                texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                    interpolation = "vertex"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                float3 xformOp:translate = (0, 0, -0.004)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Mesh "Core" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                rel material:binding = </Root/Materials/BeamCore>
+                normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                    interpolation = "vertex"
+                )
+                point3f[] points = [(-1.53, -0.011, 0), (1.53, -0.011, 0), (1.53, 0.011, 0), (-1.53, 0.011, 0)]
+                texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                    interpolation = "vertex"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                float3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Mesh "Warning" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                rel material:binding = </Root/Materials/Warning>
+                normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                    interpolation = "vertex"
+                )
+                point3f[] points = [(-1.53, -0.011, 0), (1.53, -0.011, 0), (1.53, 0.011, 0), (-1.53, 0.011, 0)]
+                texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                    interpolation = "vertex"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                float3 xformOp:translate = (0, 0, -0.001)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+        }
+
+        def Xform "EmitterLeft"
+        {
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:translate = (-1.53, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+            def Mesh "Active" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                rel material:binding = </Root/Materials/EmitterLeft>
+                normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                    interpolation = "vertex"
+                )
+                point3f[] points = [(-0.17264, -0.2275, 0), (0.08736, -0.2275, 0), (0.08736, 0.2275, 0), (-0.17264, 0.2275, 0)]
+                texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                    interpolation = "vertex"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                float3 xformOp:translate = (0.1, 0, 0.002)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Mesh "Disabled" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                rel material:binding = </Root/Materials/DisabledLeft>
+                normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                    interpolation = "vertex"
+                )
+                point3f[] points = [(-0.17264, -0.2275, 0), (0.08736, -0.2275, 0), (0.08736, 0.2275, 0), (-0.17264, 0.2275, 0)]
+                texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                    interpolation = "vertex"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                float3 xformOp:translate = (0.1, 0, 0.0015)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Mesh "WarningRing" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                rel material:binding = </Root/Materials/WarningRing>
+                normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                    interpolation = "vertex"
+                )
+                point3f[] points = [(-0.22, -0.22, 0), (0.22, -0.22, 0), (0.22, 0.22, 0), (-0.22, 0.22, 0)]
+                texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                    interpolation = "vertex"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                float3 xformOp:translate = (0.1, 0, 0.004)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Mesh "HitSpark" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                rel material:binding = </Root/Materials/HitSpark>
+                normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                    interpolation = "vertex"
+                )
+                point3f[] points = [(-0.19, -0.19, 0), (0.19, -0.19, 0), (0.19, 0.19, 0), (-0.19, 0.19, 0)]
+                texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                    interpolation = "vertex"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                float3 xformOp:translate = (0.1, 0, 0.006)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+        }
+
+        def Xform "EmitterRight"
+        {
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:translate = (1.53, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+            def Mesh "Active" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                rel material:binding = </Root/Materials/EmitterRight>
+                normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                    interpolation = "vertex"
+                )
+                point3f[] points = [(-0.08736, -0.2275, 0), (0.17264, -0.2275, 0), (0.17264, 0.2275, 0), (-0.08736, 0.2275, 0)]
+                texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                    interpolation = "vertex"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                float3 xformOp:translate = (-0.1, 0, 0.002)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Mesh "Disabled" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                rel material:binding = </Root/Materials/DisabledRight>
+                normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                    interpolation = "vertex"
+                )
+                point3f[] points = [(-0.08736, -0.2275, 0), (0.17264, -0.2275, 0), (0.17264, 0.2275, 0), (-0.08736, 0.2275, 0)]
+                texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                    interpolation = "vertex"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                float3 xformOp:translate = (-0.1, 0, 0.0015)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Mesh "WarningRing" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                rel material:binding = </Root/Materials/WarningRing>
+                normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                    interpolation = "vertex"
+                )
+                point3f[] points = [(-0.22, -0.22, 0), (0.22, -0.22, 0), (0.22, 0.22, 0), (-0.22, 0.22, 0)]
+                texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                    interpolation = "vertex"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                float3 xformOp:translate = (-0.1, 0, 0.004)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Mesh "HitSpark" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                rel material:binding = </Root/Materials/HitSpark>
+                normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                    interpolation = "vertex"
+                )
+                point3f[] points = [(-0.19, -0.19, 0), (0.19, -0.19, 0), (0.19, 0.19, 0), (-0.19, 0.19, 0)]
+                texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                    interpolation = "vertex"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                float3 xformOp:translate = (-0.1, 0, 0.006)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+        }
+    }
+}

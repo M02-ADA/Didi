@@ -27,6 +27,7 @@ struct PlayView: View {
             #else
             scene.installEnvironment(authored: authored)
             #endif
+            scene.installLaserArtwork(await LaserScene.loadLaserGateArtwork())
             content.add(scene.root)
             #if DEBUG
             // Launch with `-hideDebugOverlay` to review visuals without debug aids.
