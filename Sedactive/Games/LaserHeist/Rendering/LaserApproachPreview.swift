@@ -8,25 +8,66 @@ import Foundation
 import RealityKit
 import SwiftUI
 
-/// Developer-only motion for checking laser perspective and gate states (LH-11, LH-04).
+/// Developer-only laser encounters for checking perspective, gate states and
+/// player feedback (LH-11, LH-04, LH-05).
 ///
-/// Loops one laser from its spawn depth to just past the interaction plane and
-/// walks through the gate's visual states. This is not game time and decides
-/// nothing: the state timings are demo values, not warning leads or verdicts.
-/// Jevon's `GameClock` and encounter state replace it once the frame-update
-/// contract is agreed (TEAM_ALIGNMENT §C).
+/// Loops scripted sample encounters on RealityKit frame time. This is not game
+/// time and decides nothing: the timings are labelled candidates and the moves
+/// and verdicts are scripted. Jevon's `GameClock`, encounters and verdicts
+/// replace this once the frame-update contract is agreed (TEAM_ALIGNMENT §C);
+/// the `LaserScene` calls below stay the same.
 ///
-/// Launch with `-laserGateState <inactive|warning|active|hit|disabled>` to hold one
-/// state, and `-laserPreviewDepth <z>` to hold the laser at one world depth.
+/// Launch arguments:
+/// - `-laserGateState <inactive|warning|active|hit|disabled>` holds one gate state.
+/// - `-laserPreviewDepth <z>` holds the laser at one world depth.
+/// - `-laserPreviewScenario <0-3>` repeats one sample encounter.
+/// - `-laserPreviewTime <seconds>` freezes the encounter at a time relative to the crossing.
+/// - `-laserPreviewSpeed <factor>` slows or speeds the loop, e.g. `0.25`.
 @MainActor
 final class LaserApproachPreview {
-    var approachSeconds: Double = 4
-    var holdSeconds: Double = 0.8
-    var endZ: Float = 1.2
+    /// Sample timings in seconds relative to the crossing. The warning and cue
+    /// leads are the rules draft's candidates (at least 3 s, and 1.4 s), and the
+    /// verdict delay matches Jevon's LH-07 fixture values (0.25 s window plus
+    /// 0.10 s allowance). None of them is an approved constant.
+    struct SampleTimings {
+        var spawn: Double = -4.2
+        var warning: Double = -3.0
+        var cue: Double = -1.4
+        var verdict: Double = 0.35
+        /// End of the hit flash; without a HIT the gate powers down at the verdict.
+        var powerDown: Double = 0.65
+        var end: Double = 2.0
+    }
+
+    /// One scripted encounter: the move both players make, one band in game
+    /// units, and each player's verdict.
+    struct SampleEncounter {
+        let move: LaserFeedback.Move
+        let band: ClosedRange<Float>
+        let outcomes: [GameWorldMapping.Lane: LaserFeedback.Outcome]
+    }
+
+    static let encounters = [
+        SampleEncounter(move: .duck, band: 1.239...1.261, outcomes: [.parent: .clear, .child: .clear]),
+        SampleEncounter(move: .jump, band: 0.249...0.271, outcomes: [.parent: .hit, .child: .clear]),
+        SampleEncounter(move: .duck, band: 1.239...1.261, outcomes: [.parent: .clear, .child: .unavailable]),
+        SampleEncounter(move: .jump, band: 0.249...0.271, outcomes: [.parent: .hit, .child: .hit]),
+    ]
+
+    var timings = SampleTimings()
+    /// Where the laser comes to rest after passing the players, close enough
+    /// that it stays clear of the outcome badges.
+    var endZ: Float = 0.6
     private var elapsed: Double = 0
+    private var encounterIndex: Int?
+    private var lastTime: Double = .infinity
+    private var verdictShown = false
     private var subscription: EventSubscription?
     private let pinnedState = LaserApproachPreview.argument("-laserGateState").flatMap(LaserGate.VisualState.init(rawValue:))
     private let pinnedDepth = LaserApproachPreview.argument("-laserPreviewDepth").flatMap(Float.init)
+    private let pinnedEncounter = LaserApproachPreview.argument("-laserPreviewScenario").flatMap(Int.init)
+    private let frozenTime = LaserApproachPreview.argument("-laserPreviewTime").flatMap(Double.init)
+    private let speed = LaserApproachPreview.argument("-laserPreviewSpeed").flatMap(Double.init) ?? 1
 
     private static func argument(_ name: String) -> String? {
         let arguments = ProcessInfo.processInfo.arguments
@@ -41,25 +82,61 @@ final class LaserApproachPreview {
     }
 
     private func advance(by deltaTime: TimeInterval, scene: LaserScene) {
-        elapsed = (elapsed + deltaTime).truncatingRemainder(dividingBy: approachSeconds + holdSeconds)
-        let progress = Float(min(elapsed / approachSeconds, 1))
-        let spawnZ = scene.layout.laserSpawnZ
-        let worldZ = pinnedDepth ?? spawnZ + (endZ - spawnZ) * progress
-        scene.setLaserDepth(worldZ)
-        scene.setLaserVisualState(pinnedState ?? demoState(progress: progress, worldZ: worldZ, scene: scene))
+        let length = timings.end - timings.spawn
+        elapsed += deltaTime * speed
+        let count = Self.encounters.count
+        let index = ((pinnedEncounter ?? Int(elapsed / length)) % count + count) % count
+        let time = frozenTime ?? timings.spawn + elapsed.truncatingRemainder(dividingBy: length)
+        if index != encounterIndex || time < lastTime {
+            begin(index, scene: scene)
+        }
+        lastTime = time
+        let encounter = Self.encounters[index]
+
+        scene.setLaserDepth(pinnedDepth ?? depth(at: time, scene: scene))
+        scene.setLaserVisualState(pinnedState ?? state(at: time, hasHit: encounter.outcomes.values.contains(.hit)))
+        scene.setLaserWarningProgress(Float((time - timings.warning) / (timings.cue - timings.warning)))
+        // Preview of the move from the warning, action cue with countdown from the cue time.
+        let cueShown = time >= timings.warning && time < 0
+        scene.setMoveCue(cueShown ? encounter.move : nil, actionRemaining: time >= timings.cue ? Float(time / timings.cue) : nil)
+        if time >= timings.verdict, !verdictShown {
+            verdictShown = true
+            for (lane, outcome) in encounter.outcomes {
+                scene.presentOutcome(outcome, for: lane)
+            }
+        }
     }
 
-    /// Demo order only: dim at spawn, warning, active, a hit flash just after
-    /// the interaction plane, then disabled while holding past it.
-    private func demoState(progress: Float, worldZ: Float, scene: LaserScene) -> LaserGate.VisualState {
+    private func begin(_ index: Int, scene: LaserScene) {
+        encounterIndex = index
+        verdictShown = false
+        let band = Self.encounters[index].band
+        scene.setLaserBand(lowerEdge: band.lowerBound, upperEdge: band.upperBound)
+        scene.clearLaserFeedback()
+    }
+
+    /// Constant speed so the beam reaches the interaction plane exactly at the
+    /// crossing, then a cosmetic ease-out to rest just past the players.
+    private func depth(at time: Double, scene: LaserScene) -> Float {
+        let spawnZ = scene.layout.laserSpawnZ
         let planeZ = scene.mapping.interactionPlaneZ
-        switch progress {
-        case ..<0.08: return .inactive
-        case ..<0.35: return .warning
-        case ..<1 where worldZ < planeZ: return .active
-        case ..<1 where worldZ < planeZ + 0.5: return .hit
-        case ..<1: return .active
-        default: return .disabled
+        let approachSpeed = (planeZ - spawnZ) / Float(-timings.spawn)
+        guard time >= 0 else { return planeZ + approachSpeed * Float(time) }
+        // Starts at the approach speed and decelerates evenly to a stop at `endZ`.
+        let stopDuration = 2 * (endZ - planeZ) / approachSpeed
+        let progress = min(Float(time) / stopDuration, 1)
+        return planeZ + (endZ - planeZ) * (1 - (1 - progress) * (1 - progress))
+    }
+
+    /// Sample order: dim at spawn, warning, active from the action cue, then
+    /// power down at the verdict, after a short hit flash when anyone is hit.
+    private func state(at time: Double, hasHit: Bool) -> LaserGate.VisualState {
+        switch time {
+        case ..<timings.warning: .inactive
+        case ..<timings.cue: .warning
+        case ..<timings.verdict: .active
+        case ..<timings.powerDown where hasHit: .hit
+        default: .disabled
         }
     }
 }
