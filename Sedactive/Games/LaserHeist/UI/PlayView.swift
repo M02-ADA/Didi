@@ -12,9 +12,9 @@ import RealityKit
 /// not the device camera; live input arrives through Edo's pipeline instead.
 struct PlayView: View {
     @State private var scene = LaserScene()
-    #if DEBUG
-    @State private var preview = LaserApproachPreview()
-    #endif
+    @State private var presentation = LaserReplayPresentation()
+    @State private var session: GameSessionCoordinator?
+    @State private var startupError: String?
 
     var body: some View {
         RealityView { content in
@@ -29,16 +29,29 @@ struct PlayView: View {
             #endif
             scene.installLaserArtwork(await LaserScene.loadLaserGateArtwork())
             content.add(scene.root)
+            // Optional world-construction guides. Replay body markers live in the presentation adapter.
             #if DEBUG
-            // Launch with `-hideDebugOverlay` to review visuals without debug aids.
-            if !ProcessInfo.processInfo.arguments.contains("-hideDebugOverlay") {
+            if ProcessInfo.processInfo.arguments.contains("-showWorldGuides") {
                 content.add(PoseDebugOverlay.make(for: scene))
             }
-            preview.start(on: content, scene: scene)
             #endif
+            do {
+                let replay = GameSessionCoordinator(script: try LaserReplayScript.load())
+                session = replay
+                try await replay.start()
+                presentation.start(on: content, scene: scene, session: replay)
+            } catch { startupError = String(describing: error) }
         }
         .ignoresSafeArea()
         .background(.black)
+        .overlay(alignment: .topLeading) {
+            if let session { ReplaySliceHUD(session: session) }
+            if let startupError { Text("Replay could not start: \(startupError)").padding().background(.black).foregroundStyle(.white) }
+        }
+        .onDisappear {
+            presentation.stop()
+            Task { await session?.stop() }
+        }
     }
 }
 

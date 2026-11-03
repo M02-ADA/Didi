@@ -50,6 +50,10 @@ nonisolated struct LaserGame: Sendable {
     private var crossings: [LaserTargetKey: Crossing] = [:]
     private var blocked = false
     private var exited = false
+    private var effectEncounters: Set<UUID> = []
+    private var clearPoints = 100
+    private(set) var teamHealth = 5
+    private(set) var teamScore = 0
     private(set) var gameTime = 0.0
 
     /// Nil margin preserves evidence-only LH-09 usage. Supply round configuration to enable verdicts.
@@ -66,6 +70,8 @@ nonisolated struct LaserGame: Sendable {
     init(configuration: LaserRoundConfiguration, context: BodyInputContext, historyCapacityPerPlayer: Int) throws {
         try self.init(timing: configuration.evidenceTiming, context: context,
                       historyCapacityPerPlayer: historyCapacityPerPlayer, clearanceMargin: configuration.clearanceMargin)
+        teamHealth = configuration.initialTeamHealth
+        clearPoints = configuration.clearTargetPoints
     }
 
     var historyCount: Int { history.values.reduce(0) { $0 + $1.count } }
@@ -173,6 +179,17 @@ nonisolated struct LaserGame: Sendable {
             } else { verdict = nil }
             crossings[key]?.result = result
             crossings[key]?.judgement = verdict
+        }
+        // Minimal replay-slice aggregation: commit one pair of target results once per logical encounter.
+        for id in Set(crossings.keys.map(\.encounterID)) where !effectEncounters.contains(id) {
+            let pair = crossings.filter { $0.key.encounterID == id }
+            guard pair.count == 2, pair.values.allSatisfy({ $0.result != .pending && $0.result != .withdrawn }),
+                  pair.values.allSatisfy({ $0.judgement != nil }) else { continue }
+            let values = pair.values.compactMap(\.judgement)
+            effectEncounters.insert(id)
+            if values.contains(where: { if case .unavailable = $0 { true } else { false } }) { continue }
+            teamHealth = max(0, teamHealth - values.filter { if case .hit = $0 { true } else { false } }.count)
+            teamScore += values.filter { $0 == .clear }.count * clearPoints
         }
     }
 
