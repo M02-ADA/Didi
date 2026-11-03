@@ -14,6 +14,7 @@ struct PlayView: View {
     @State private var scene = LaserScene()
     #if DEBUG
     @State private var preview = LaserApproachPreview()
+    @State private var environmentPreview = EnvironmentPreview()
     #endif
 
     var body: some View {
@@ -28,13 +29,21 @@ struct PlayView: View {
             scene.installEnvironment(authored: authored)
             #endif
             scene.installLaserArtwork(await LaserScene.loadLaserGateArtwork())
+            scene.installVaultDoor(await LaserScene.loadVaultDoorArtwork())
+            scene.installDiamondArt(await LaserScene.loadDiamondArtwork())
             content.add(scene.root)
             #if DEBUG
             // Launch with `-hideDebugOverlay` to review visuals without debug aids.
             if !ProcessInfo.processInfo.arguments.contains("-hideDebugOverlay") {
                 content.add(PoseDebugOverlay.make(for: scene))
             }
-            preview.start(on: content, scene: scene)
+            // Launch with `-environmentPreview <mode>` to review the corridor,
+            // vault door and diamonds instead of the laser encounters.
+            if let mode = EnvironmentPreview.requestedMode {
+                environmentPreview.start(on: content, scene: scene, mode: mode)
+            } else {
+                preview.start(on: content, scene: scene)
+            }
             #endif
         }
         .ignoresSafeArea()
