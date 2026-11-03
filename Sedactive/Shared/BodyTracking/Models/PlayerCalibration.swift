@@ -23,9 +23,8 @@ nonisolated struct ImageToPlayerPlaneMapping: Equatable, Sendable, Codable {
         (imageY - floorImageY) * layout.gameUnitsPerImageHeight
     }
 
-    func gameX(imageX: Double, playerID: PlayerID, selection: SelectedPlayers,
-               layout: PlayerPlaneLayout) throws -> Double {
-        let center = try layout.centerX(for: playerID, selection: selection)
+    func gameX(imageX: Double, playerID: PlayerID, layout: PlayerPlaneLayout) -> Double {
+        let center = layout.centerX(for: playerID)
         return center + (imageX - originImageX) * imageAspectRatio * layout.gameUnitsPerImageHeight
     }
 }

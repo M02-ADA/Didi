@@ -5,19 +5,19 @@ import Testing
 @MainActor
 struct ReplayBodyInputTests {
     @Test func bundledVersionedFixturesDecodeAndRoundTrip() throws {
-        for name in ["cooperative-v1", "reversed-selection-v1"] {
+        for name in ["cooperative-v2", "two-player-recovery-v2"] {
             let fixture = try LH00TestData.load(name)
             let encoded = try JSONEncoder().encode(fixture)
             #expect(try ReplayFixture.decode(encoded) == fixture)
-            #expect(fixture.schemaVersion == 1)
-            #expect(fixture.records.count == 14)
+            #expect(fixture.schemaVersion == 2)
+            #expect(fixture.records.count == (name == "cooperative-v2" ? 14 : 17))
         }
     }
 
     @Test func missingWristAndSoleStayIndependentWithoutVerdictLogic() throws {
         let fixture = try LH00TestData.load()
-        let firstID = fixture.configuration.selectedPlayers.firstID
-        let secondID = fixture.configuration.selectedPlayers.secondID
+        let firstID = PlayerID.player1
+        let secondID = PlayerID.player2
         let clearInput = try #require(fixture.records[1].snapshot?.players[firstID])
         #expect(clearInput.geometry.crownY.validity == .valid)
         #expect(clearInput.geometry.leftWristY.value == 0.82)
@@ -43,8 +43,9 @@ struct ReplayBodyInputTests {
         #expect(fixture.records[9].snapshot?.players[secondID]?.geometry.crownY.validity == .stale)
     }
 
-    @Test func repeatedReplayHasIdenticalPacketsCacheCountersAndStatuses() async throws {
-        let fixture = try LH00TestData.load()
+    @Test(arguments: ["cooperative-v2", "two-player-recovery-v2"])
+    func repeatedReplayHasIdenticalPacketsCacheCountersAndStatuses(_ name: String) async throws {
+        let fixture = try LH00TestData.load(name)
         let first = try await run(fixture)
         let second = try await run(fixture)
         #expect(first.packets == second.packets)
@@ -52,7 +53,7 @@ struct ReplayBodyInputTests {
         #expect(first.diagnostics == second.diagnostics)
         #expect(first.events == second.events)
         #expect(first.packets.map(\.frameID) == fixture.records.compactMap { $0.snapshot?.frameID })
-        #expect(first.latest?.frameID == 13)
+        #expect(first.latest?.frameID == (name == "cooperative-v2" ? 13 : 14))
     }
 
     private func run(_ fixture: ReplayFixture) async throws -> (
@@ -66,9 +67,11 @@ struct ReplayBodyInputTests {
         var packets: [BodySnapshot] = []
         for record in fixture.records {
             try provider.advance(to: record.deliveredAt)
-            let packet = try #require(await iterator.next())
-            #expect(packet == record.snapshot)
-            packets.append(packet)
+            if let snapshot = record.snapshot {
+                let packet = try #require(await iterator.next())
+                #expect(packet == snapshot)
+                packets.append(packet)
+            }
         }
         let latest = provider.latestSnapshot
         try provider.releaseSnapshotSubscription(generation: fixture.configuration.sessionGeneration)
@@ -101,7 +104,7 @@ struct ReplayBodyInputTests {
 
     @Test func malformedVersionAndConflictingDuplicateAreRejected() throws {
         let base = try LH00TestData.load()
-        let badVersion = ReplayFixture(schemaVersion: 2, profiles: base.profiles,
+        let badVersion = ReplayFixture(schemaVersion: 99,
                                        configuration: base.configuration, cameraGeometryRevision: 1, records: [])
         #expect(throws: BodyInputContractError.self) { try ReplayBodyInput(fixture: badVersion) }
         let first = try LH00TestData.snapshot(1, capturedAt: 1)
@@ -128,4 +131,49 @@ struct ReplayBodyInputTests {
             #expect(sample["zone"] == nil)
         }
     }
+
+    @Test func schemaTwoRejectsLegacyResourcesAndUnknownSlotKeysExplicitly() throws {
+        for name in ["cooperative-v1", "reversed-selection-v1"] {
+            #expect(throws: BodyInputContractError.invalidValue("unsupported replay schema version: 1")) {
+                try LH00TestData.load(name)
+            }
+        }
+        let fixture = try LH00TestData.load()
+        let data = try JSONEncoder().encode(fixture)
+        var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(Set(object.keys) == ["schemaVersion", "configuration", "cameraGeometryRevision", "records"])
+        var configuration = try #require(object["configuration"] as? [String: Any])
+        var baselines = try #require(configuration["calibrations"] as? [String: Any])
+        baselines["00000000-0000-4000-8000-000000000001"] = baselines.removeValue(forKey: "player1")
+        configuration["calibrations"] = baselines
+        object["configuration"] = configuration
+        let malformed = try JSONSerialization.data(withJSONObject: object)
+        #expect(throws: (any Error).self) { try ReplayFixture.decode(malformed) }
+    }
+
+    @Test func anonymousRecoveryFixtureKeepsSlotsWhileStatusAndTrackingRecover() async throws {
+        let fixture = try LH00TestData.load("two-player-recovery-v2")
+        let provider = try ReplayBodyInput(fixture: fixture)
+        var events: [BodyInputStatusEvent] = []
+        let observer = try provider.statusUpdates { events.append($0) }
+        try await provider.start(configuration: fixture.configuration)
+        try provider.advance(to: 8)
+        #expect(provider.latestSnapshot?.players[.player2]?.trackingStatus == .uncertain)
+        try provider.advance(to: 9)
+        #expect(provider.latestSnapshot?.players[.player2]?.trackingStatus == .lost)
+        try provider.advance(to: 14)
+        #expect(provider.status == .interrupted(.system))
+        #expect(provider.latestSnapshot == nil)
+        try provider.advance(to: 16.2)
+        let recovered = try #require(provider.latestSnapshot)
+        #expect(provider.status == .running)
+        #expect(recovered.frameID == 14)
+        #expect(Set(recovered.players.keys) == Set(PlayerID.allCases))
+        #expect(recovered.players[.player2]?.trackingStatus == .reliable)
+        #expect(events.map(\.status).contains(.interrupted(.system)))
+        #expect(provider.currentContext?.accepts(recovered) == true)
+        try provider.removeStatusObserver(observer)
+        // Scripted evidence verifies transport/identity metadata, not real tracker reacquisition.
+    }
+
 }

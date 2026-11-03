@@ -42,17 +42,15 @@ nonisolated enum NoProgressPolicy: Equatable, Sendable, Codable {
 
 nonisolated struct BodyInputConfiguration: Equatable, Sendable, Codable {
     let sessionGeneration: UUID
-    let selectedPlayers: SelectedPlayers
     let calibrations: [PlayerID: PlayerCalibration]
     let playerPlaneLayout: PlayerPlaneLayout
     let snapshotBufferCapacity: Int
     let noProgressPolicy: NoProgressPolicy
 
-    init(sessionGeneration: UUID, selectedPlayers: SelectedPlayers,
+    init(sessionGeneration: UUID,
          calibrations: [PlayerID: PlayerCalibration], playerPlaneLayout: PlayerPlaneLayout,
          snapshotBufferCapacity: Int = 8, noProgressPolicy: NoProgressPolicy = .disabled) {
         self.sessionGeneration = sessionGeneration
-        self.selectedPlayers = selectedPlayers
         self.calibrations = calibrations
         self.playerPlaneLayout = playerPlaneLayout
         self.snapshotBufferCapacity = snapshotBufferCapacity
@@ -60,21 +58,20 @@ nonisolated struct BodyInputConfiguration: Equatable, Sendable, Codable {
     }
 
     func validate() throws {
-        try selectedPlayers.validate()
         try playerPlaneLayout.validate()
         try noProgressPolicy.validate()
         try requireBodyValue(snapshotBufferCapacity > 0, "snapshotBufferCapacity")
         for (id, calibration) in calibrations {
             try calibration.validate()
-            try requireBodyValue(id == calibration.playerID && selectedPlayers.ids.contains(id)
-                                 && calibration.sessionGeneration == sessionGeneration, "calibration identity")
+            try requireBodyValue(id == calibration.playerID && calibration.sessionGeneration == sessionGeneration, "calibration identity")
         }
         try requireBodyValue(Set(calibrations.values.map(\.cameraGeometryRevision)).count <= 1,
                              "mixed camera calibration geometry")
     }
 
+    /// Complete replacement: omitted slots lose acceptance; callers validate before committing.
     func replacingCalibrations(_ values: [PlayerID: PlayerCalibration]) -> Self {
-        Self(sessionGeneration: sessionGeneration, selectedPlayers: selectedPlayers, calibrations: values,
+        Self(sessionGeneration: sessionGeneration, calibrations: values,
              playerPlaneLayout: playerPlaneLayout, snapshotBufferCapacity: snapshotBufferCapacity,
              noProgressPolicy: noProgressPolicy)
     }
@@ -88,16 +85,16 @@ nonisolated struct BodyInputCutover: Equatable, Sendable {
 /// Read this AGAIN after suspension and before accepting evidence into gameplay history.
 nonisolated struct BodyInputContext: Equatable, Sendable {
     let sessionGeneration: UUID
-    let selectedPlayers: SelectedPlayers
     let cameraGeometryRevision: UInt64
     let calibrationRevisions: [PlayerID: UInt64]
     let cutovers: [PlayerID: BodyInputCutover]
+    /// Source/context activity only, never permission to begin countdown/gameplay.
     let isActive: Bool
 
     func accepts(_ snapshot: BodySnapshot, playerID: PlayerID) -> Bool {
         guard isActive, snapshot.sessionGeneration == sessionGeneration,
               snapshot.cameraGeometryRevision == cameraGeometryRevision,
-              selectedPlayers.ids.contains(playerID), let sample = snapshot.players[playerID],
+              let sample = snapshot.players[playerID],
               sample.playerID == playerID,
               sample.calibrationRevision == calibrationRevisions[playerID] else { return false }
         if let cutover = cutovers[playerID] {
@@ -107,8 +104,8 @@ nonisolated struct BodyInputContext: Equatable, Sendable {
     }
 
     func accepts(_ snapshot: BodySnapshot) -> Bool {
-        Set(snapshot.players.keys) == Set(selectedPlayers.ids)
-            && selectedPlayers.ids.allSatisfy { accepts(snapshot, playerID: $0) }
+        Set(snapshot.players.keys) == Set(PlayerID.allCases)
+            && PlayerID.allCases.allSatisfy { accepts(snapshot, playerID: $0) }
     }
 }
 
@@ -147,6 +144,8 @@ protocol BodyInputProviding: AnyObject {
     var diagnostics: BodyInputDiagnostics { get }
     func start(configuration: BodyInputConfiguration) async throws
     func stop() async
+    /// Atomic full replacement, not a merge. Empty/partial accepted sets are valid during calibration.
+    /// Jevon gates gameplay on both compatible baselines AND current tracking readiness.
     @discardableResult
     func setCalibrations(_ values: [PlayerID: PlayerCalibration], generation: UUID) async throws -> BodyInputContext
     func snapshotStream(generation: UUID) throws -> AsyncStream<BodySnapshot>
