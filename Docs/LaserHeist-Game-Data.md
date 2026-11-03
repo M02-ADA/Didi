@@ -2,6 +2,8 @@
 
 Implemented for review, 3 November 2026. Owner: Jevon. Consumers/reviewers: Edo and Kevin.
 
+**LH-09 follow-up:** production evidence selection and clock/history tests now live in [LaserHeist-Evidence-Selection.md](LaserHeist-Evidence-Selection.md). The LH-07-only verification notes below describe the earlier checkpoint; LH-10 production clearance remains separate. R4's reason is corrected to noSample at the deadline, since a future late arrival cannot be known yet.
+
 ## Contract and ownership
 
 The current layout is [Games/LaserHeist and Shared](Architecture/Game-Oriented-Architecture.md). Domain consumes the existing anonymous `PlayerID.player1/player2`, shared calibration and body snapshot types directly. No shared types or project settings are modified. Functional work here is limited to the user's explicit LH-07 authorization, not resumption of other paused features.
@@ -24,7 +26,7 @@ Cases come from [LH-09 in the cooperative backlog](LaserHeist-Cooperative-Active
 | R1 | Valid clearing sample on time; expected CLEAR at finalization |
 | R2 | Nearest valid sample overlaps; expected HIT |
 | R3 | Only pre-window samples; expected UNAVAILABLE/stale |
-| R4 | Eligible capture delivered after finalization; expected UNAVAILABLE/late without another candidate |
+| R4 | Eligible capture delivered after finalization; expected UNAVAILABLE/noSample at the deadline without another candidate; later delivery cannot revise it |
 | R5 | Airborne/low-feet and grounded/high-feet are distinct samples; expected HIT from the nearest sample, never mixed evidence |
 | R6 | Same frame delivered twice; input preserves duplicate transport, expected one selected observation/effect |
 | R7 | Pause after crossing but before finalization; expected no finalized verdict, recovery required |

@@ -73,7 +73,7 @@ nonisolated enum LaserEvidenceRequirement: String, Equatable, Sendable {
 }
 
 nonisolated enum LaserUnavailableReason: Equatable, Sendable {
-    case noSample, stale, late, incompatibleContext
+    case noSample, stale, late, incompatibleContext, historyOverflow
     case invalidEvidence(LaserEvidenceRequirement, EvidenceValidity)
 }
 
