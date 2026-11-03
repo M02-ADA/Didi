@@ -2,7 +2,7 @@
 
 Implemented for review, 3 November 2026. Owner: Jevon. Consumers/reviewers: Edo and Kevin.
 
-**LH-09 follow-up:** production evidence selection and clock/history tests now live in [LaserHeist-Evidence-Selection.md](LaserHeist-Evidence-Selection.md). The LH-07-only verification notes below describe the earlier checkpoint; LH-10 production clearance remains separate. R4's reason is corrected to noSample at the deadline, since a future late arrival cannot be known yet.
+**Follow-ups:** production selection/clock/history are documented in [LH-09](LaserHeist-Evidence-Selection.md), and production clearance/cached verdicts in [LH-10](LaserHeist-Hit-Checker.md). Historical LH-07 verification notes below describe the earlier checkpoint. R4 expects noSample at the deadline because a future late arrival cannot be known yet.
 
 ## Contract and ownership
 
@@ -13,7 +13,7 @@ The current layout is [Games/LaserHeist and Shared](Architecture/Game-Oriented-A
 - `LaserGameState.swift`, `LaserGame.swift`, `RoundSummary.swift`: immutable state/event/summary shapes, one team score, explicit event sequence and round outcomes. No engine, selector, hit checker, clock conversion, wrist collision or renderer is implemented here.
 - Pending/hit/unavailable cases carry reasons. Measurement failures carry Edo's `EvidenceValidity`; gameplay timing failures use separate gameplay reasons. Do not turn unavailable values into zero/clear.
 
-The accepted [CP1 baseline](LH-00-Checkpoint-1-Contract-Proposal.md) requires crown **and both wrists** for high clearance, and both soles plus airborne phase for low. The older crown-only explanation in LH-01 needs reconciliation before LH-10 implementation; fixtures include the current wrist evidence and do not redefine it.
+The accepted [CP1 baseline](LH-00-Checkpoint-1-Contract-Proposal.md) requires crown **and both wrists** for high clearance, and both soles plus airborne phase for low. LH-10 reconciles LH-01's older crown-only explanation to this baseline; fixtures include current wrist evidence without redefining it.
 
 All new domain/fixture values are `nonisolated` with checked `Sendable`, matching current Shared values under MainActor-default compilation. This preserves existing Swift 5 language mode and does not claim whole-team S1/B2 approval or perform a Swift 6 migration. Edo/team confirmation of that broader convention remains pending.
 

@@ -32,16 +32,18 @@ nonisolated struct LaserTargetKey: Hashable, Sendable {
     let playerID: PlayerID
 }
 
-/// LH-09 evidence owner only. Health/scoring and LH-10 clearance remain separate work.
+/// Owns bounded evidence and exactly-once target verdicts. Health/scoring remain separate work.
 nonisolated struct LaserGame: Sendable {
     private struct Crossing: Sendable {
         let target: LaserTarget
         var result: LaserEvidenceSelection
         var historyOverflow = false
+        var judgement: Judgement?
     }
     let timing: LaserEvidenceTiming
     private var context: BodyInputContext
     private let capacity: Int
+    private let clearanceMargin: Double?
     private var history: [PlayerID: [LaserBodyEvidence]] = [:]
     /// At most one scalar per slot, so pruning does not erase the stale-vs-none reason.
     private var lastPrunedCapture: [PlayerID: Double] = [:]
@@ -50,11 +52,20 @@ nonisolated struct LaserGame: Sendable {
     private var exited = false
     private(set) var gameTime = 0.0
 
-    init(timing: LaserEvidenceTiming, context: BodyInputContext, historyCapacityPerPlayer: Int) throws {
+    /// Nil margin preserves evidence-only LH-09 usage. Supply round configuration to enable verdicts.
+    init(timing: LaserEvidenceTiming, context: BodyInputContext, historyCapacityPerPlayer: Int,
+         clearanceMargin: Double? = nil) throws {
         try requireLaserValue(historyCapacityPerPlayer > 0 && context.isActive, "history capacity/context")
+        try requireLaserValue(clearanceMargin.map { $0.isFinite && $0 >= 0 } ?? true, "clearance margin")
         self.timing = timing
         self.context = context
         capacity = historyCapacityPerPlayer
+        self.clearanceMargin = clearanceMargin
+    }
+
+    init(configuration: LaserRoundConfiguration, context: BodyInputContext, historyCapacityPerPlayer: Int) throws {
+        try self.init(timing: configuration.evidenceTiming, context: context,
+                      historyCapacityPerPlayer: historyCapacityPerPlayer, clearanceMargin: configuration.clearanceMargin)
     }
 
     var historyCount: Int { history.values.reduce(0) { $0 + $1.count } }
@@ -78,7 +89,7 @@ nonisolated struct LaserGame: Sendable {
                               && capturedGameTime >= 0 && capturedGameTime <= arrivedAt, "evidence timeline")
         guard !blocked && !exited else { return }
         // Earlier deadlines close before this delivery. Equal-time deliveries precede advance(to:).
-        finalize(at: arrivedAt, inclusive: false)
+        try finalize(at: arrivedAt, inclusive: false)
         gameTime = arrivedAt
         guard snapshot.sessionGeneration == context.sessionGeneration,
               snapshot.cameraGeometryRevision == context.cameraGeometryRevision else { prune(); return }
@@ -107,13 +118,19 @@ nonisolated struct LaserGame: Sendable {
         try requireLaserValue(time.isFinite && time >= gameTime, "game time must be monotonic")
         guard !blocked && !exited else { return }
         gameTime = time
-        finalize(at: time, inclusive: true)
+        try finalize(at: time, inclusive: true)
         prune()
     }
 
     func selection(for key: LaserTargetKey) -> LaserEvidenceSelection? {
         guard !blocked && !exited else { return .withdrawn }
         return crossings[key]?.result
+    }
+
+    func judgement(for key: LaserTargetKey) -> Judgement? {
+        guard !blocked && !exited, clearanceMargin != nil, let crossing = crossings[key] else { return nil }
+        if crossing.result == .pending { return .pending(.awaitingFinalization) }
+        return crossing.judgement
     }
 
     mutating func pause() { withdraw(); blocked = true }
@@ -137,7 +154,7 @@ nonisolated struct LaserGame: Sendable {
         lastPrunedCapture.removeAll()
     }
 
-    private mutating func finalize(at time: Double, inclusive: Bool) {
+    private mutating func finalize(at time: Double, inclusive: Bool) throws {
         for key in Array(crossings.keys) {
             guard let crossing = crossings[key], crossing.result == .pending else { continue }
             let deadline = timing.finalizationTime(crossing: crossing.target.crossingTime)
@@ -149,7 +166,13 @@ nonisolated struct LaserGame: Sendable {
                pruned < timing.captureWindow(crossing: crossing.target.crossingTime).lowerBound {
                 result = .unavailable(.stale)
             }
+            let verdict: Judgement?
+            if let clearanceMargin {
+                verdict = try LaserCollisionJudge().judge(target: crossing.target, selection: result,
+                                                         clearanceMargin: clearanceMargin, context: context)
+            } else { verdict = nil }
             crossings[key]?.result = result
+            crossings[key]?.judgement = verdict
         }
     }
 

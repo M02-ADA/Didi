@@ -21,30 +21,11 @@ nonisolated struct CollisionTimingTests {
         LaserTargetKey(encounterID: scenario.encounter.id, attemptID: scenario.encounter.attemptID, playerID: player)
     }
 
-    /// Test-only geometry oracle: production LH-09 returns evidence, not an LH-10 verdict.
-    private func oracle(_ result: LaserEvidenceSelection, target: LaserTarget, margin: Double) -> Judgement? {
-        switch result {
-        case .pending: return .pending(.awaitingFinalization)
-        case .withdrawn: return nil
-        case .unavailable(let reason): return .unavailable(reason)
-        case .selected(let evidence):
-            guard let sample = evidence.snapshot.players[target.playerID] else { return .unavailable(.noSample) }
-            if target.requiredMove == .duck {
-                let top = [sample.geometry.crownY.value, sample.geometry.leftWristY.value,
-                           sample.geometry.rightWristY.value].compactMap { $0 }.max()!
-                return top + margin < target.beam.lowerY ? .clear : .hit(.insufficientClearance)
-            }
-            let sole = min(sample.geometry.leftSoleY.value!, sample.geometry.rightSoleY.value!)
-            guard sole - margin > target.beam.upperY else { return .hit(.insufficientClearance) }
-            return sample.jumpState.phase == .airborne ? .clear : .hit(.notAirborne)
-        }
-    }
-
     @Test(arguments: Array(1...9))
     func officialReplayCases(_ number: Int) throws {
         let scenario = try LaserReplayScenarios.make()[number - 1]
         for expected in scenario.expected {
-            var game = try LaserGame(timing: scenario.configuration.evidenceTiming, context: context(scenario), historyCapacityPerPlayer: 120)
+            var game = try LaserGame(configuration: scenario.configuration, context: context(scenario), historyCapacityPerPlayer: 120)
             try game.register(scenario.encounter)
             var clock = try GameClock(sourceTime: scenario.captureEpoch)
             let end = min(expected.checkpoint, scenario.pauseAtGameTime ?? .infinity)
@@ -60,14 +41,15 @@ nonisolated struct CollisionTimingTests {
                 game.pause()
                 try game.advance(to: expected.checkpoint)
                 #expect(game.selection(for: targetKey) == .withdrawn)
+                #expect(game.judgement(for: targetKey) == nil)
                 continue
             }
             try game.advance(to: expected.checkpoint - 0.000001)
             #expect(game.selection(for: targetKey) == .pending)
+            #expect(game.judgement(for: targetKey) == .pending(.awaitingFinalization))
             try game.advance(to: expected.checkpoint)
             let result = try #require(game.selection(for: targetKey))
-            let target = try #require(scenario.encounter.targets.first { $0.playerID == expected.playerID })
-            #expect(oracle(result, target: target, margin: scenario.configuration.clearanceMargin) == expected.judgement)
+            #expect(game.judgement(for: targetKey) == expected.judgement)
             if case .selected(let evidence) = result { #expect(evidence.snapshot.frameID == expected.selectedFrameID) }
             // Future data must not revise a committed selection (R4 in particular).
             for record in scenario.input.records where record.deliveredAt - scenario.captureEpoch > expected.checkpoint {
@@ -76,6 +58,7 @@ nonisolated struct CollisionTimingTests {
                                  arrivedAt: record.deliveredAt - scenario.captureEpoch)
             }
             #expect(game.selection(for: targetKey) == result)
+            #expect(game.judgement(for: targetKey) == expected.judgement)
         }
     }
 
