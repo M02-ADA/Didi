@@ -41,11 +41,15 @@ struct LaserWorldLayout {
     var laserHeightAboveFloor: Float = 1.25
     var laserSpawnZ: Float = -22
     var laserCoreThickness: Float = 0.022
+
+    // Temporary DUCK/JUMP cue: above the players, in front of the corridor.
+    var moveCuePosition: SIMD3<Float> = [0, 2.0, 0.6]
 }
 
 /// Builds and owns the LaserHeist RealityKit world: camera, corridor, player
-/// surfaces and lasers. It only renders; positions come from callers, and
-/// later from Jevon's game state (TEAM_ALIGNMENT §B, §C).
+/// surfaces, lasers and their player feedback. It only renders; positions,
+/// states, moves and verdicts come from callers, and later from Jevon's game
+/// state (TEAM_ALIGNMENT §B, §C).
 @MainActor
 final class LaserScene {
     enum EnvironmentSource: String {
@@ -67,6 +71,7 @@ final class LaserScene {
     private(set) var players: [GameWorldMapping.Lane: PlayerCutoutEntity] = [:]
     private(set) var environmentSource: EnvironmentSource?
     private let laser = Entity()
+    private let feedback = LaserFeedback()
     private var laserEmitters: [Entity] = []
     private var fallbackBeam: [Entity] = []
     private var laserGate: LaserGate?
@@ -92,6 +97,8 @@ final class LaserScene {
         addPlayers()
         buildLaser()
         setLaserDepth(layout.laserSpawnZ)
+        feedback.setCuePosition(layout.moveCuePosition)
+        root.addChild(feedback.root)
     }
 
     /// Loads the corridor authored in Reality Composer Pro, or `nil` when the
@@ -152,6 +159,7 @@ final class LaserScene {
         laserGate = gate
         laser.addChild(gate.root)
         gate.setState(.active)
+        feedback.setImpactArt(gate.makeImpactSpark)
         applyLaserGeometry()
     }
 
@@ -173,6 +181,35 @@ final class LaserScene {
     /// Presents a state decided elsewhere; the code-built fallback has no states.
     func setLaserVisualState(_ state: LaserGate.VisualState) {
         laserGate?.setState(state)
+    }
+
+    /// Warning build-up from 0 (warning shown) to 1 (beam goes solid), derived
+    /// by the caller from the encounter's warning and cue times.
+    func setLaserWarningProgress(_ progress: Float) {
+        laserGate?.setWarningProgress(progress)
+    }
+
+    /// Shows the shared move cue: a muted preview during the warning
+    /// (`actionRemaining == nil`), then the action cue with the share of the cue
+    /// lead left before the crossing (1 at the cue, 0 at the crossing). `nil` hides it.
+    func setMoveCue(_ move: LaserFeedback.Move?, actionRemaining: Float?) {
+        feedback.setMoveCue(move, actionRemaining: actionRemaining)
+    }
+
+    /// Shows a finalized verdict for one player: a badge above their head and,
+    /// for a HIT, a spark where their lane meets the beam on the interaction plane.
+    func presentOutcome(_ outcome: LaserFeedback.Outcome, for lane: GameWorldMapping.Lane) {
+        guard let player = players[lane] else { return }
+        let height = (lane == .parent ? layout.parentSize.y : layout.childSize.y) * player.scale.y
+        let bandCenter = (laserBand.lowerBound + laserBand.upperBound) / 2
+        var impact = mapping.laserPosition(heightAboveFloor: bandCenter, worldZ: mapping.interactionPlaneZ + 0.06)
+        impact.x = player.position.x
+        feedback.showOutcome(outcome, for: lane, badgeAt: player.position + [0, height + 0.25, 0.08], impactAt: impact)
+    }
+
+    /// Clears the move cue and outcome feedback, e.g. when the next encounter starts.
+    func clearLaserFeedback() {
+        feedback.clear()
     }
 
     func setPlayerScale(_ lane: GameWorldMapping.Lane, _ scale: Float) {
