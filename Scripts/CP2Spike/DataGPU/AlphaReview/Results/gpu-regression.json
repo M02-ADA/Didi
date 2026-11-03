@@ -1,0 +1,455 @@
+{
+  "commits" : 45,
+  "completions" : 45,
+  "device" : "Apple M5",
+  "deviceRegistryID" : 4294969048,
+  "drops" : 22,
+  "peakInFlight" : 1,
+  "platform" : "native macOS Apple M5 (not iPad or Simulator)",
+  "producerCopyMilliseconds" : [
+    0.29895699999999997,
+    0.236791,
+    0.270625,
+    0.28925000000000001,
+    0.248667,
+    0.249,
+    0.25654100000000002,
+    0.31245800000000001,
+    0.27641700000000002,
+    0.25633299999999998,
+    0.27141599999999999,
+    0.28758299999999998,
+    0.291375,
+    0.25345899999999999,
+    0.23775099999999999,
+    0.268542,
+    0.29049999999999998,
+    0.24454100000000001,
+    0.252751,
+    0.27095900000000001,
+    0.29291600000000001,
+    0.27058300000000002,
+    0.22750000000000001,
+    0.26641700000000001,
+    0.25745899999999999,
+    0.24704100000000001,
+    0.23674999999999999,
+    0.26541700000000001,
+    0.27804200000000001,
+    0.232874
+  ],
+  "stagingBytes" : 6291456,
+  "tests" : [
+    "CPU BGRA\/premultiplied\/corner\/sequence bytes remain immutable after source reuse",
+    "absent accepted calibration and uncertain tracking cannot publish ready images",
+    "actual Metal sRGB buffer-to-LowLevelTexture blit and exact two-player readback",
+    "padded source rows 4096 bytes copied correctly, no row bleed",
+    "actual GPU fence: cancel pins staging, one pending pair, 17 producer frames progress",
+    "replacement watermark survives acquire; duplicate and old callbacks harmless",
+    "atomic context replacement invalidates P1 and preserves compatible P2",
+    "cancellation before submission commits nothing",
+    "throw after first LowLevelTexture replacement: no commit, quarantine, subsequent queue recovery",
+    "P1 unavailable, P2 upload succeeds with original combined provenance",
+    "generation invalidation before actual GPU completion, then safe new generation",
+    "injected failed acknowledgement after real GPU fence: both slots suppressed, storage released (not a real GPU fault)",
+    "asymmetric full-canvas size\/translation\/UV reflection and shared scale",
+    "35 sequential front\/back uploads, five warmup + 30 measured; balanced commits\/completions",
+    "terminal completion permits store\/staging deallocation",
+    "store destroyed mid-upload: independent completion pin retains staging until actual terminal fence"
+  ],
+  "testsFailed" : 0,
+  "testsPassed" : 16,
+  "uploads" : [
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 8,
+      "gpuMilliseconds" : 0.15712500317022204,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.061749999999999999,
+      "submittedToCallbackMilliseconds" : 0.51191699999999996,
+      "token" : "8206B4A2-C051-4928-B74B-64F5867D8A27"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 9,
+      "gpuMilliseconds" : 0.14870832092128694,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.065375000000000003,
+      "submittedToCallbackMilliseconds" : 0.360041,
+      "token" : "1B4A7CB0-A224-4A59-AA02-E835ED1D131A"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 10,
+      "gpuMilliseconds" : 0.52475000848062336,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.082500000000000004,
+      "submittedToCallbackMilliseconds" : 0.845167,
+      "token" : "5EEFCE95-7E13-446D-B738-CE5B8D5197DD"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 11,
+      "gpuMilliseconds" : 0.16416667494922876,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.11787499999999999,
+      "submittedToCallbackMilliseconds" : 0.29962499999999997,
+      "token" : "916871D0-91EF-46EB-9AF4-2F01E04128CE"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 12,
+      "gpuMilliseconds" : 0.16620830865576863,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.056667000000000002,
+      "submittedToCallbackMilliseconds" : 0.79333399999999998,
+      "token" : "A8DE8299-42C1-4B81-BA3C-40873881DEB3"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 13,
+      "gpuMilliseconds" : 0.14150000060908496,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.069458000000000006,
+      "submittedToCallbackMilliseconds" : 0.30875000000000002,
+      "token" : "9C2172E6-2B1F-4641-B398-6952E1B00A35"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 14,
+      "gpuMilliseconds" : 0.43112499406561255,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.073165999999999995,
+      "submittedToCallbackMilliseconds" : 0.77083299999999999,
+      "token" : "14FA6EC8-710B-466C-9C38-BAC7B82B180E"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 15,
+      "gpuMilliseconds" : 0.2807500131893903,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.099625000000000005,
+      "submittedToCallbackMilliseconds" : 0.42504199999999998,
+      "token" : "EE71565C-0D99-4D75-926A-F57412304FBF"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 16,
+      "gpuMilliseconds" : 0.16599998343735933,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.062542,
+      "submittedToCallbackMilliseconds" : 0.72133400000000003,
+      "token" : "F6871D54-00BA-4D6C-B082-589C7BCD082B"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 17,
+      "gpuMilliseconds" : 0.14962500426918268,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.062667,
+      "submittedToCallbackMilliseconds" : 0.359958,
+      "token" : "32D3EED0-6004-40A6-8CD5-A23555084661"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 18,
+      "gpuMilliseconds" : 0.49687499995343387,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.073624999999999996,
+      "submittedToCallbackMilliseconds" : 0.84929200000000005,
+      "token" : "91165E7F-0263-4BDD-95B6-555FB07491C2"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 19,
+      "gpuMilliseconds" : 0.24266666150651872,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.060832999999999998,
+      "submittedToCallbackMilliseconds" : 0.39770800000000001,
+      "token" : "FFA9AA0D-3FB8-4A61-AB36-A1EE15436CB1"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 20,
+      "gpuMilliseconds" : 0.23075001081451774,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.065250000000000002,
+      "submittedToCallbackMilliseconds" : 0.76895899999999995,
+      "token" : "6886E209-43BB-46DD-BDD7-7D8BC89C63BD"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 21,
+      "gpuMilliseconds" : 0.14591668150387704,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.062584000000000001,
+      "submittedToCallbackMilliseconds" : 0.35058299999999998,
+      "token" : "145FB153-D142-4FFB-BD32-C4AC55CFFE45"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 22,
+      "gpuMilliseconds" : 0.89737499365583062,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.063,
+      "submittedToCallbackMilliseconds" : 1.1984159999999999,
+      "token" : "42F4FC28-7FA5-4D80-B959-E53F3F4AA785"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 23,
+      "gpuMilliseconds" : 0.2168749924749136,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.062334000000000001,
+      "submittedToCallbackMilliseconds" : 0.33091700000000002,
+      "token" : "7C50CFBF-F222-4BFE-95B8-DA28F7197E3D"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 24,
+      "gpuMilliseconds" : 0.15991664258763194,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.064541000000000001,
+      "submittedToCallbackMilliseconds" : 0.49954199999999999,
+      "token" : "31379322-58AA-4084-A266-04D243BB7CC3"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 25,
+      "gpuMilliseconds" : 0.14045834541320801,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.058083999999999997,
+      "submittedToCallbackMilliseconds" : 0.35441600000000001,
+      "token" : "2A415E5E-C00C-4C46-A7C8-6093EDD7EEC4"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 26,
+      "gpuMilliseconds" : 0.6961250037420541,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.087874999999999995,
+      "submittedToCallbackMilliseconds" : 0.96350000000000002,
+      "token" : "FA1155A0-0D9A-4C2B-B007-A7FD33FD64FD"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 27,
+      "gpuMilliseconds" : 0.145875004818663,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.063,
+      "submittedToCallbackMilliseconds" : 0.34870800000000002,
+      "token" : "A0D5B0DF-BC64-4523-99AA-DA2730AB1698"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 28,
+      "gpuMilliseconds" : 0.15649999841116369,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.073166999999999996,
+      "submittedToCallbackMilliseconds" : 0.37512499999999999,
+      "token" : "D689D833-B4F9-469C-8C21-B4C3F3B1311F"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 29,
+      "gpuMilliseconds" : 0.15174999134615064,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.061457999999999999,
+      "submittedToCallbackMilliseconds" : 0.35991600000000001,
+      "token" : "443CFFD9-A4D0-4CA3-B636-F88B7E8767E2"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 30,
+      "gpuMilliseconds" : 0.15075001283548772,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.062082999999999999,
+      "submittedToCallbackMilliseconds" : 0.34683399999999998,
+      "token" : "1672831A-21D2-4DDD-ADD6-7011F3D8EC4F"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 31,
+      "gpuMilliseconds" : 0.14937500236555934,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.063042000000000001,
+      "submittedToCallbackMilliseconds" : 0.33695799999999998,
+      "token" : "A2B3F14B-C920-4CC5-AF13-BE732C94587E"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 32,
+      "gpuMilliseconds" : 0.38120834506116807,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.063042000000000001,
+      "submittedToCallbackMilliseconds" : 0.53787499999999999,
+      "token" : "C5684EED-5C6E-4D88-B667-FEE5D10E70C7"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 33,
+      "gpuMilliseconds" : 0.17808334087021649,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.063750000000000001,
+      "submittedToCallbackMilliseconds" : 0.75712500000000005,
+      "token" : "B0306785-3F92-4058-B875-62ADBA19F149"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 34,
+      "gpuMilliseconds" : 0.13987498823553324,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.058666000000000003,
+      "submittedToCallbackMilliseconds" : 0.33595900000000001,
+      "token" : "C8565435-3CC0-4D41-BCC6-EF4CFCF91534"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 35,
+      "gpuMilliseconds" : 0.38037498597986996,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.063041,
+      "submittedToCallbackMilliseconds" : 0.68141600000000002,
+      "token" : "C0926D69-8057-4B90-9824-EAB07D67809F"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 36,
+      "gpuMilliseconds" : 0.14583332813344896,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.065917000000000003,
+      "submittedToCallbackMilliseconds" : 0.37275000000000003,
+      "token" : "74C8570F-4551-4406-8515-99C2EEAD8493"
+    },
+    {
+      "activated" : [
+        "player1",
+        "player2"
+      ],
+      "cancelled" : false,
+      "frameID" : 37,
+      "gpuMilliseconds" : 0.14745834050700068,
+      "gpuSucceeded" : true,
+      "stagingCopyMilliseconds" : 0.058333000000000003,
+      "submittedToCallbackMilliseconds" : 0.39408300000000002,
+      "token" : "C6853351-8702-4A30-9F91-D5C81DA2199C"
+    }
+  ],
+  "verificationReadbackBytes" : 6291456
+}

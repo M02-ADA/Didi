@@ -1,0 +1,93 @@
+{
+  "branch": "feat/cutout-handoff",
+  "head": "976e89f7ff2325991c1876df9fcc413bda721c67",
+  "environment": {
+    "platform": "native arm64 macOS 26.5.2",
+    "device": "Apple M5",
+    "xcode": "26.6 (17F113)",
+    "swift": "6.3.3",
+    "sdk": "26.5",
+    "settings": "Swift 5, MainActor default, complete strict concurrency, warnings-as-errors, SIL/WMO; see scripts"
+  },
+  "preExistingFilesPreserved": {
+    "count": 167,
+    "changed": []
+  },
+  "compilerLogs": {
+    "native-positive-sil": "",
+    "native-negative-sil": "Scripts/CP2Spike/NegativeOwnershipControl.swift:11:24: error: sending 'value' risks causing data races; this is an error in the Swift 6 language mode [#SendingRisksDataRace]\n 9 |         let value = CP2MutableProbe()\n10 |         let retainedWriter = value\n11 |         await receiver.accept(value)\n   |                        |- error: sending 'value' risks causing data races; this is an error in the Swift 6 language mode [#SendingRisksDataRace]\n   |                        `- note: 'value' used after being passed as a 'sending' parameter; Later uses could race\n12 |         retainedWriter.writes += 1 // Must be diagnosed: producer writes after sending.\n   |         `- note: access can happen concurrently\n13 |     }\n14 | }\n\n[#SendingRisksDataRace]: <https://docs.swift.org/compiler/documentation/diagnostics/sending-risks-data-race>\n",
+    "native-build": "",
+    "simulator-positive-sil": "",
+    "simulator-negative-sil": "Scripts/CP2Spike/NegativeOwnershipControl.swift:11:24: error: sending 'value' risks causing data races; this is an error in the Swift 6 language mode [#SendingRisksDataRace]\n 9 |         let value = CP2MutableProbe()\n10 |         let retainedWriter = value\n11 |         await receiver.accept(value)\n   |                        |- error: sending 'value' risks causing data races; this is an error in the Swift 6 language mode [#SendingRisksDataRace]\n   |                        `- note: 'value' used after being passed as a 'sending' parameter; Later uses could race\n12 |         retainedWriter.writes += 1 // Must be diagnosed: producer writes after sending.\n   |         `- note: access can happen concurrently\n13 |     }\n14 | }\n\n[#SendingRisksDataRace]: <https://docs.swift.org/compiler/documentation/diagnostics/sending-risks-data-race>\n",
+    "simulator-build": "",
+    "visual-sil": "",
+    "visual-build": ""
+  },
+  "regression": {
+    "devicesAndConfigurations": [
+      {
+        "device": {
+          "architecture": "arm64",
+          "deviceId": "1E1C6B07-B356-4303-8756-4C0D2A4CDF05",
+          "deviceName": "iPad mini (A17 Pro)",
+          "modelName": "iPad mini (A17 Pro)",
+          "osBuildNumber": "23F77",
+          "osVersion": "26.5",
+          "platform": "iOS Simulator"
+        },
+        "expectedFailures": 0,
+        "failedTests": 0,
+        "passedTests": 131,
+        "skippedTests": 0,
+        "testPlanConfiguration": {
+          "configurationId": "1",
+          "configurationName": "Test Scheme Action"
+        }
+      }
+    ],
+    "environmentDescription": "Sedactive \u00b7 Built with macOS 26.5.2",
+    "expectedFailures": 0,
+    "failedTests": 0,
+    "finishTime": 1793690671.6,
+    "passedTests": 64,
+    "result": "Passed",
+    "skippedTests": 0,
+    "startTime": 1793690665.988,
+    "statistics": [
+      {
+        "subtitle": "76 test runs",
+        "title": "9 tests ran with dynamic parameters"
+      }
+    ],
+    "testFailures": [],
+    "title": "Test - Sedactive",
+    "topInsights": [],
+    "totalTestCount": 64
+  },
+  "visualState": {
+    "completions": 91,
+    "device": "Apple M5",
+    "frameID": 91,
+    "commits": 91,
+    "displayed": {
+      "player1": 91,
+      "player2": 91
+    }
+  },
+  "sourceSHA256": {
+    "Scripts/CP2Spike/DataGPU/DeviceProbe.swift": "6a2db485e5f214fa2e639e4bdae9132b56e540622ac9e8d7325e8c62b7ce18a2",
+    "Scripts/CP2Spike/DataGPU/GPUTests.swift": "118a283fb7d45131f231be511c4c3a4841bf9caf44f255d39c68fbf179550470",
+    "Scripts/CP2Spike/DataGPU/SyntheticFrame.swift": "d7ac293864e704424e4bf533eb753d8fffcc57dde1f541eefaafe4ce9ae9a428",
+    "Scripts/CP2Spike/DataGPU/UploadStore.swift": "ef05dbe35509f471b99458b6582af974641ec0e5cc3db1b0934440cddc1df223",
+    "Scripts/CP2Spike/DataGPU/VisualHarness.swift": "463604ab320a285d53d58e08161e0932daf26c7f4c6989dfb7c23746be6152e9",
+    "Scripts/CP2Spike/build-data-gpu-visual.sh": "f68122c60dbf12702abfc9dea102c4a2ef8984ab0312441229cfc510c426d95a",
+    "Scripts/CP2Spike/run-data-gpu-spike.sh": "8fe754927e40f5b254070d33ad720a66d84ebafc3cb909bd0c90f028a59c75c4"
+  },
+  "limitations": [
+    "Native Mac GPU and standalone RealityView; no physical-iPad validation",
+    "Simulator cutout path compiled only; existing regression suite ran",
+    "No real GPU fault; injected failed acknowledgement follows actual fence",
+    "Sparse lossy screenshots do not establish frame atomicity or calibrated color",
+    "Material edge fringe remains for Kevin review; no production CP2 approval"
+  ]
+}
