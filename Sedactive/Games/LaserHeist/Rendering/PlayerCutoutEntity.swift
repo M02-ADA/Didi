@@ -14,13 +14,22 @@ import UIKit
 /// feet on the floor. Until LH-14 supplies the live cutout from Edo's
 /// compositor, the surface shows a flat pictogram with transparent
 /// surroundings, like the Hi-Fi.
+///
+/// The entity's own position is the player's placement from game data. The
+/// surface hangs under `ride`, a presentation-only offset that cosmetic
+/// motion (the hoverboard ride) may move by a few millimetres; nothing reads
+/// it back as a body position.
 final class PlayerCutoutEntity: Entity {
     private(set) var lane: GameWorldMapping.Lane = .parent
+    /// Presentation-only offset between the placement and the visible surface.
+    let ride = Entity()
 
     init(lane: GameWorldMapping.Lane, size: SIMD2<Float>, color: UIColor) {
         super.init()
         self.lane = lane
         name = "player.\(lane.rawValue)"
+        ride.name = "player.\(lane.rawValue).ride"
+        addChild(ride)
 
         // No tone mapping, so placeholder colours match the Hi-Fi exactly.
         var material = UnlitMaterial(applyPostProcessToneMap: false)
@@ -33,7 +42,7 @@ final class PlayerCutoutEntity: Entity {
         let surface = ModelEntity(mesh: .generatePlane(width: size.x, height: size.y), materials: [material])
         surface.name = "player.\(lane.rawValue).surface"
         surface.position.y = size.y / 2
-        addChild(surface)
+        ride.addChild(surface)
     }
 
     required init() {

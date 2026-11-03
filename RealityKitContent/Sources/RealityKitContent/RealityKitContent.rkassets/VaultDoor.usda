@@ -1,0 +1,363 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Root" (
+    doc = "Vault door presentation (LH-03)."
+)
+{
+    quatf xformOp:orient = (1, 0, 0, 0)
+    float3 xformOp:scale = (1, 1, 1)
+    float3 xformOp:translate = (0, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+    def Scope "Materials"
+    {
+        def Material "Frame"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/Frame/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/Frame/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/Frame/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/vault_frame.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/Frame/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/Frame/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+
+        def Material "UnlockedLightArt"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/UnlockedLightArt/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/UnlockedLightArt/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/UnlockedLightArt/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/vault_unlocked_light.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/UnlockedLightArt/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/UnlockedLightArt/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+
+        def Material "Surround"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/Surround/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/Surround/Color.outputs:out>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/vault_surround.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/Surround/Image.outputs:out>
+                color3f outputs:out
+            }
+        }
+
+        def Material "LeftDoor"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/LeftDoor/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/LeftDoor/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/LeftDoor/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/vault_door_left.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/LeftDoor/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/LeftDoor/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+
+        def Material "RightDoor"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/RightDoor/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/RightDoor/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/RightDoor/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/vault_door_right.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/RightDoor/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/RightDoor/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+    }
+
+    def Xform "VaultDoorRoot" (
+        doc = "Dual Key Vault door (Door/*.png). The frame and surround stay still; Swift slides the panels sideways behind them and shows UnlockedLight (green, over the red light) only when unlocked."
+    )
+    {
+        quatf xformOp:orient = (1, 0, 0, 0)
+        float3 xformOp:scale = (1, 1, 1)
+        float3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+        def Mesh "LockedFrame" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            rel material:binding = </Root/Materials/Frame>
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "vertex"
+            )
+            point3f[] points = [(-2.78545, -0.45, 0), (2.78545, -0.45, 0), (2.78545, 3.14, 0), (-2.78545, 3.14, 0)]
+            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                interpolation = "vertex"
+            )
+            uniform token subdivisionScheme = "none"
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Mesh "UnlockedLight" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            rel material:binding = </Root/Materials/UnlockedLightArt>
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "vertex"
+            )
+            point3f[] points = [(-0.72502, 2.79091, 0), (0.72502, 2.79091, 0), (0.72502, 3.02639, 0), (-0.72502, 3.02639, 0)]
+            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                interpolation = "vertex"
+            )
+            uniform token subdivisionScheme = "none"
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:translate = (0, 0, 0.004)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Mesh "SurroundLeft" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            rel material:binding = </Root/Materials/Surround>
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "vertex"
+            )
+            point3f[] points = [(-3.15, -0.45, 0), (-2.78345, -0.45, 0), (-2.78345, 3.14, 0), (-3.15, 3.14, 0)]
+            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                interpolation = "vertex"
+            )
+            uniform token subdivisionScheme = "none"
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Mesh "SurroundRight" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            rel material:binding = </Root/Materials/Surround>
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "vertex"
+            )
+            point3f[] points = [(2.78345, -0.45, 0), (3.15, -0.45, 0), (3.15, 3.14, 0), (2.78345, 3.14, 0)]
+            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                interpolation = "vertex"
+            )
+            uniform token subdivisionScheme = "none"
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Xform "LeftDoorPanel"
+        {
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:translate = (0, 0, -0.03)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+            def Mesh "Art" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                rel material:binding = </Root/Materials/LeftDoor>
+                normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                    interpolation = "vertex"
+                )
+                point3f[] points = [(-2.40538, -0.45, 0), (0, -0.45, 0), (0, 2.76303, 0), (-2.40538, 2.76303, 0)]
+                texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                    interpolation = "vertex"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                float3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+        }
+
+        def Xform "RightDoorPanel"
+        {
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:translate = (0, 0, -0.03)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+            def Mesh "Art" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                rel material:binding = </Root/Materials/RightDoor>
+                normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                    interpolation = "vertex"
+                )
+                point3f[] points = [(0, -0.45, 0), (2.40538, -0.45, 0), (2.40538, 2.76303, 0), (0, 2.76303, 0)]
+                texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                    interpolation = "vertex"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                float3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+        }
+    }
+}

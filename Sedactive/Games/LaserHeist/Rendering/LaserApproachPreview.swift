@@ -23,6 +23,10 @@ import SwiftUI
 /// - `-laserPreviewScenario <0-3>` repeats one sample encounter.
 /// - `-laserPreviewTime <seconds>` freezes the encounter at a time relative to the crossing.
 /// - `-laserPreviewSpeed <factor>` slows or speeds the loop, e.g. `0.25`.
+///
+/// The corridor streams past at the sample approach speed, so a laser stays
+/// fixed relative to the walls until it reaches the players. It holds still
+/// while a depth or time is pinned.
 @MainActor
 final class LaserApproachPreview {
     /// Sample timings in seconds relative to the crossing. The warning and cue
@@ -92,6 +96,10 @@ final class LaserApproachPreview {
         }
         lastTime = time
         let encounter = Self.encounters[index]
+        if pinnedDepth == nil, frozenTime == nil {
+            let approachSpeed = (scene.mapping.interactionPlaneZ - scene.layout.laserSpawnZ) / Float(-timings.spawn)
+            scene.advanceTravel(by: approachSpeed * Float(deltaTime * speed))
+        }
 
         scene.setLaserDepth(pinnedDepth ?? depth(at: time, scene: scene))
         scene.setLaserVisualState(pinnedState ?? state(at: time, hasHit: encounter.outcomes.values.contains(.hit)))

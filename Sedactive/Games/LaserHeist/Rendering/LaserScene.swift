@@ -16,13 +16,17 @@ import RealityKitContent
 /// Reality Composer Pro corridor loads, its named anchors override the player
 /// lanes and laser spawn depth below.
 struct LaserWorldLayout {
-    // Fallback corridor, used only when the authored scene is unavailable.
-    // It runs from `corridorNearZ` (behind the camera) down to `corridorFarZ`.
-    var corridorWidth: Float = 3.2
-    var corridorHeight: Float = 2.8
+    // Corridor proportions follow Asset 16's vanishing lines for this camera.
+    // The authored scene uses the same values; the code fallback below is only
+    // for when that scene is unavailable. It runs from `corridorNearZ` (behind
+    // the camera) down to `corridorFarZ`. The corridor floor sits below the
+    // game floor (y = 0, the players' feet) so the hoverboard can hover.
+    var corridorWidth: Float = 6.3
+    var corridorHeight: Float = 3.14
+    var corridorFloorY: Float = -0.45
     var corridorNearZ: Float = 6
-    var corridorFarZ: Float = -26
-    var fixtureSpacing: Float = 2
+    var corridorFarZ: Float = -70
+    var fixtureSpacing: Float = 6
 
     // Fixed virtual camera at roughly chest height, framed like the Hi-Fi:
     // the vanishing point sits near the screen centre and players fill the lower half.
@@ -44,6 +48,14 @@ struct LaserWorldLayout {
 
     // Temporary DUCK/JUMP cue: above the players, in front of the corridor.
     var moveCuePosition: SIMD3<Float> = [0, 2.0, 0.6]
+
+    // World depth of the hoverboard's upper half. A low beam first overlaps
+    // the board on screen about 0.75 m before the crossing, so this stays behind that.
+    var hoverboardBackZ: Float = -1.0
+
+    // Where a vault door halts in front of the players. The authored
+    // `VaultDoorStop` anchor overrides this fallback.
+    var vaultDoorStopZ: Float = -7.5
 }
 
 /// Builds and owns the LaserHeist RealityKit world: camera, corridor, player
@@ -64,14 +76,24 @@ final class LaserScene {
     static let editorPreviewsName = "EditorPreviews"
     /// Option 1 laser gate artwork inside the `RealityKitContent` package.
     static let laserGateSceneName = "LaserGate"
+    static let vaultDoorSceneName = "VaultDoor"
+    static let diamondSceneName = "Diamond"
 
     let root = Entity()
     private(set) var layout: LaserWorldLayout
     private(set) var mapping: GameWorldMapping
     private(set) var players: [GameWorldMapping.Lane: PlayerCutoutEntity] = [:]
     private(set) var environmentSource: EnvironmentSource?
+    private(set) var hoverboard: Hoverboard?
     private let laser = Entity()
     private let feedback = LaserFeedback()
+    /// Corridor details that stream past; see `advanceTravel(by:)`.
+    private var travel: Entity?
+    private var travelLoop: Float = 12
+    private var travelOffset: Float = 0
+    private var vaultDoor: VaultDoor?
+    private var diamondArt: DiamondArt?
+    private let diamonds = Entity()
     private var laserEmitters: [Entity] = []
     private var fallbackBeam: [Entity] = []
     private var laserGate: LaserGate?
@@ -99,6 +121,8 @@ final class LaserScene {
         setLaserDepth(layout.laserSpawnZ)
         feedback.setCuePosition(layout.moveCuePosition)
         root.addChild(feedback.root)
+        diamonds.name = "diamonds"
+        root.addChild(diamonds)
     }
 
     /// Loads the corridor authored in Reality Composer Pro, or `nil` when the
@@ -110,6 +134,16 @@ final class LaserScene {
     /// Loads the Option 1 laser gate artwork, or `nil` to keep the code-built laser.
     static func loadLaserGateArtwork() async -> Entity? {
         await loadContent(named: laserGateSceneName, fallback: "the code-built laser")
+    }
+
+    /// Loads the vault door artwork, or `nil` to show no door.
+    static func loadVaultDoorArtwork() async -> Entity? {
+        await loadContent(named: vaultDoorSceneName, fallback: "no vault door")
+    }
+
+    /// Loads the diamond artwork, or `nil` to show no diamonds.
+    static func loadDiamondArtwork() async -> Entity? {
+        await loadContent(named: diamondSceneName, fallback: "no diamonds")
     }
 
     private static func loadContent(named name: String, fallback: String) async -> Entity? {
@@ -137,6 +171,7 @@ final class LaserScene {
                 authored.findEntity(named: Self.editorPreviewsName)?.removeFromParent()
             }
             applyAnchors(from: authored)
+            travel = authored.findEntity(named: "Travel")
             environment = authored
             environmentSource = .realityComposerPro
         } else {
@@ -145,6 +180,88 @@ final class LaserScene {
         }
         environment.name = "environment"
         root.addChild(environment)
+        if let board = environment.findEntity(named: "Corridor")?.findEntity(named: "Hoverboard"),
+           let hoverboard = Hoverboard(entity: board, camera: layout.cameraPosition, backDepth: layout.hoverboardBackZ) {
+            self.hoverboard = hoverboard
+            for (lane, player) in players {
+                hoverboard.setFootShadow(lane, atWorldX: player.position.x)
+            }
+            // The players visibly ride the board through a presentation-only
+            // offset; their placements from game data never move.
+            hoverboard.setRiders(players.values.map(\.ride))
+            hoverboard.startHovering()
+        }
+    }
+
+    /// Streams the corridor's ribs, wall art and floor seams toward the players
+    /// by `distance` meters, wrapping every `TravelLoop` meters, so the
+    /// hoverboard appears to travel forward.
+    ///
+    /// Presentation only: players, lasers and the world mapping never move.
+    /// The caller derives the distance from game state, so pausing the game
+    /// pauses travel; rendering keeps no clock of its own (TEAM_ALIGNMENT §C).
+    /// With Reduce Motion the corridor streams at half speed.
+    func advanceTravel(by distance: Float) {
+        guard let travel, travelLoop > 0 else { return }
+        let scaled = UIAccessibility.isReduceMotionEnabled ? distance * 0.5 : distance
+        travelOffset = (travelOffset + scaled).truncatingRemainder(dividingBy: travelLoop)
+        if travelOffset < 0 {
+            travelOffset += travelLoop
+        }
+        travel.position.z = travelOffset
+    }
+
+    /// Shows or hides the laser, e.g. for previews without an encounter.
+    var isLaserVisible: Bool {
+        get { laser.isEnabled }
+        set { laser.isEnabled = newValue }
+    }
+
+    // MARK: - Vault door and diamonds
+
+    func installVaultDoor(_ artwork: Entity?) {
+        guard vaultDoor == nil, let artwork, let door = VaultDoor(artwork: artwork) else { return }
+        vaultDoor = door
+        door.root.name = "vaultDoor"
+        door.root.isEnabled = false
+        root.addChild(door.root)
+    }
+
+    func installDiamondArt(_ artwork: Entity?) {
+        guard diamondArt == nil, let artwork else { return }
+        diamondArt = DiamondArt(artwork: artwork)
+    }
+
+    /// Places the vault door across the corridor at a world depth, or hides it
+    /// with `nil`. The depth comes from the vault's timing in game state.
+    func setVaultDoorDepth(_ worldZ: Float?) {
+        guard let door = vaultDoor?.root else { return }
+        door.isEnabled = worldZ != nil
+        if let worldZ {
+            door.position = [0, 0, worldZ]
+        }
+    }
+
+    var vaultDoorDepth: Float? {
+        guard let door = vaultDoor?.root, door.isEnabled else { return nil }
+        return door.position.z
+    }
+
+    /// Presents a vault state decided elsewhere (Jevon's vault events).
+    func setVaultDoorState(_ state: VaultDoor.State, animated: Bool) {
+        vaultDoor?.setState(state, animated: animated)
+    }
+
+    func resetVaultDoor() {
+        vaultDoor?.reset()
+    }
+
+    /// A new diamond in the world, not yet placed; the caller positions its
+    /// `root` from game data through the world mapping and removes it when done.
+    func makeDiamond() -> Diamond? {
+        guard let diamond = diamondArt?.makeDiamond() else { return nil }
+        diamonds.addChild(diamond.root)
+        return diamond
     }
 
     /// Replaces the code-built laser with the Option 1 gate artwork. Only one of
@@ -239,6 +356,12 @@ final class LaserScene {
             laserSpan = left.x...right.x
             applyLaserGeometry()
         }
+        if let loop = anchor("TravelLoop") {
+            travelLoop = -loop.z
+        }
+        if let stop = anchor("VaultDoorStop") {
+            layout.vaultDoorStopZ = stop.z
+        }
     }
 
     /// Keeps the gate (or the code-built fallback) on the wall mounts and sized to the band.
@@ -271,27 +394,29 @@ final class LaserScene {
         let corridor = Entity()
         corridor.name = "corridor"
         let width = layout.corridorWidth
-        let height = layout.corridorHeight
+        let floorY = layout.corridorFloorY
+        let height = layout.corridorHeight - floorY
+        let middleY = (layout.corridorHeight + floorY) / 2
         let length = layout.corridorNearZ - layout.corridorFarZ
         let centerZ = (layout.corridorNearZ + layout.corridorFarZ) / 2
 
-        let floor = ModelEntity(mesh: .generatePlane(width: width, depth: length), materials: [unlit(0x2C2236)])
-        floor.position = [0, 0, centerZ]
+        let floor = ModelEntity(mesh: .generatePlane(width: width, depth: length), materials: [unlit(0x342239)])
+        floor.position = [0, floorY, centerZ]
 
-        let ceiling = ModelEntity(mesh: .generatePlane(width: width, depth: length), materials: [unlit(0x1C1944)])
-        ceiling.position = [0, height, centerZ]
+        let ceiling = ModelEntity(mesh: .generatePlane(width: width, depth: length), materials: [unlit(0x17142B)])
+        ceiling.position = [0, layout.corridorHeight, centerZ]
         ceiling.orientation = simd_quatf(angle: .pi, axis: [1, 0, 0])
 
-        let leftWall = ModelEntity(mesh: .generatePlane(width: length, height: height), materials: [unlit(0x221F55)])
-        leftWall.position = [-width / 2, height / 2, centerZ]
+        let leftWall = ModelEntity(mesh: .generatePlane(width: length, height: height), materials: [unlit(0x1C193F)])
+        leftWall.position = [-width / 2, middleY, centerZ]
         leftWall.orientation = simd_quatf(angle: .pi / 2, axis: [0, 1, 0])
 
-        let rightWall = ModelEntity(mesh: .generatePlane(width: length, height: height), materials: [unlit(0x221F55)])
-        rightWall.position = [width / 2, height / 2, centerZ]
+        let rightWall = ModelEntity(mesh: .generatePlane(width: length, height: height), materials: [unlit(0x1C193F)])
+        rightWall.position = [width / 2, middleY, centerZ]
         rightWall.orientation = simd_quatf(angle: -.pi / 2, axis: [0, 1, 0])
 
-        let endWall = ModelEntity(mesh: .generatePlane(width: width, height: height), materials: [unlit(0x17142F)])
-        endWall.position = [0, height / 2, layout.corridorFarZ]
+        let endWall = ModelEntity(mesh: .generatePlane(width: width, height: height), materials: [unlit(0x262141)])
+        endWall.position = [0, middleY, layout.corridorFarZ]
 
         for surface in [floor, ceiling, leftWall, rightWall, endWall] {
             corridor.addChild(surface)
@@ -302,30 +427,28 @@ final class LaserScene {
         return corridor
     }
 
-    /// One repeating fixture: wall ribs, a floor seam and a ceiling light.
+    /// One repeating fixture: wall ribs, a ceiling beam and a floor seam.
     /// Their even spacing is what makes depth readable.
     private func makeFixtureRing(atZ z: Float) -> Entity {
         let ring = Entity()
         ring.position.z = z
         let width = layout.corridorWidth
-        let height = layout.corridorHeight
-        let rib = MeshResource.generateBox(size: [0.06, height, 0.14])
+        let floorY = layout.corridorFloorY
+        let height = layout.corridorHeight - floorY
+        let rib = MeshResource.generateBox(size: [0.07, height, 0.07])
 
-        let leftRib = ModelEntity(mesh: rib, materials: [unlit(0x3A3580)])
-        leftRib.position = [-width / 2 + 0.03, height / 2, 0]
-        let rightRib = ModelEntity(mesh: rib, materials: [unlit(0x3A3580)])
-        rightRib.position = [width / 2 - 0.03, height / 2, 0]
+        let leftRib = ModelEntity(mesh: rib, materials: [unlit(0x312B5B)])
+        leftRib.position = [-width / 2 + 0.035, floorY + height / 2, 0]
+        let rightRib = ModelEntity(mesh: rib, materials: [unlit(0x312B5B)])
+        rightRib.position = [width / 2 - 0.035, floorY + height / 2, 0]
 
-        let seam = ModelEntity(mesh: .generateBox(size: [width, 0.004, 0.05]), materials: [unlit(0x6C4152)])
-        seam.position.y = 0.002
+        let seam = ModelEntity(mesh: .generateBox(size: [width * 0.55, 0.004, 0.05]), materials: [unlit(0x2D1E33)])
+        seam.position.y = floorY + 0.002
 
-        let light = ModelEntity(
-            mesh: .generateBox(size: [width * 0.4, 0.02, 0.35]),
-            materials: [unlit(0x3A3580)]
-        )
-        light.position.y = height - 0.01
+        let beam = ModelEntity(mesh: .generateBox(size: [width, 0.05, 0.07]), materials: [unlit(0x312B5B)])
+        beam.position.y = layout.corridorHeight - 0.025
 
-        for part in [leftRib, rightRib, seam, light] {
+        for part in [leftRib, rightRib, seam, beam] {
             ring.addChild(part)
         }
         return ring
