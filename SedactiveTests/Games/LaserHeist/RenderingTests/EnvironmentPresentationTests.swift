@@ -1,5 +1,6 @@
 import RealityKit
 import Testing
+import UIKit
 @testable import Sedactive
 
 /// LH-03 environment presentation: corridor travel, the hoverboard, the vault
@@ -35,7 +36,7 @@ struct EnvironmentPresentationTests {
         let board = Entity()
         let back = child("Back", of: board)
         let front = child("Front", of: board)
-        let frontLayers = ["Edge", "Art", "FootShadowParent"].map { child($0, of: front) }
+        let frontLayers = ["Edge", "Art", "Underglow", "FootShadowParent"].map { child($0, of: front) }
         board.position = [0, 0, -0.02]
         back.position = [0.4, 0.15, 0]
         let camera = SIMD3<Float>(0, 1.05, 3.1)
@@ -48,13 +49,38 @@ struct EnvironmentPresentationTests {
         let movedCorner = back.convert(position: [1.3, 0.18, 0], to: nil)
 
         #expect(abs(after.z - -0.7) < 1e-4)
-        // Thickness under the art, foot shadows over it, whatever the origins.
-        #expect(frontLayers.map { $0.components[ModelSortGroupComponent.self]?.order } == [0, 1, 2])
+        // Thickness under the art, then the glow, foot shadows on top, whatever the origins.
+        #expect(frontLayers.map { $0.components[ModelSortGroupComponent.self]?.order } == [0, 1, 2, 3])
         // Same direction from the camera means the same place on screen.
         for (old, new) in [(before, after), (corner, movedCorner)] {
             let a = normalize(old - camera), b = normalize(new - camera)
             #expect(simd_distance(a, b) < 1e-4)
         }
+    }
+
+    @Test func vaultDoorStopComesFromTheAuthoredAnchor() {
+        let authored = Entity()
+        child("VaultDoorStop", of: child("Anchors", of: authored)).position = [0, 0, -6]
+        let scene = LaserScene()
+        scene.installEnvironment(authored: authored)
+        #expect(scene.layout.vaultDoorStopZ == -6)
+    }
+
+    @Test func ridingMovesOnlyThePresentationOffsetNeverThePlacement() throws {
+        let board = Entity()
+        _ = child("Back", of: board)
+        _ = child("Front", of: board)
+        let player = PlayerCutoutEntity(lane: .child, size: [0.52, 1.2], color: .white)
+        player.position = [0.7, 0, 0]
+        let hoverboard = try #require(Hoverboard(entity: board, camera: [0, 1.05, 3.1], backDepth: -1.0))
+
+        hoverboard.setRiders([player.ride])
+        hoverboard.startHovering()
+        hoverboard.stopHovering()
+
+        #expect(player.position == [0.7, 0, 0])
+        #expect(player.ride.transform == .identity)
+        #expect(player.findEntity(named: "player.child.surface")?.parent === player.ride)
     }
 
     @Test func vaultDoorOpensBehindTheFrameAndResetsClosedAndLocked() throws {

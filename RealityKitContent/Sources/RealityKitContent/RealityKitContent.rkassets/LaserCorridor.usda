@@ -399,6 +399,46 @@ def Xform "Root" (
                 float outputs:outa
             }
         }
+
+        def Material "HoverUnderglow"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/HoverUnderglow/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/HoverUnderglow/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/HoverUnderglow/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/hover_underglow.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/HoverUnderglow/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/HoverUnderglow/Image.outputs:out>
+                float outputs:outa
+            }
+        }
     }
 
     def Xform "Corridor"
@@ -2806,8 +2846,8 @@ def Xform "Root" (
                     normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
                         interpolation = "vertex"
                     )
-                    point3f[] points = [(-1.8, 0, 0), (1.8, 0, 0), (1.8, 0.22673, 0), (-1.8, 0.22673, 0)]
-                    texCoord2f[] primvars:st = [(0, 0.53), (1, 0.53), (1, 1), (0, 1)] (
+                    point3f[] points = [(-2.2, 0, 0), (2.2, 0, 0), (2.2, 0.14151, 0), (-2.2, 0.14151, 0)]
+                    texCoord2f[] primvars:st = [(0, 0.76), (1, 0.76), (1, 1), (0, 1)] (
                         interpolation = "vertex"
                     )
                     uniform token subdivisionScheme = "none"
@@ -2827,8 +2867,8 @@ def Xform "Root" (
                     normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
                         interpolation = "vertex"
                     )
-                    point3f[] points = [(-1.8, -0.08, 0), (1.8, -0.08, 0), (1.8, 0.14673, 0), (-1.8, 0.14673, 0)]
-                    texCoord2f[] primvars:st = [(0, 0.53), (1, 0.53), (1, 1), (0, 1)] (
+                    point3f[] points = [(-2.2, -0.08, 0), (2.2, -0.08, 0), (2.2, 0.06151, 0), (-2.2, 0.06151, 0)]
+                    texCoord2f[] primvars:st = [(0, 0.76), (1, 0.76), (1, 1), (0, 1)] (
                         interpolation = "vertex"
                     )
                     uniform token subdivisionScheme = "none"
@@ -2856,8 +2896,8 @@ def Xform "Root" (
                     normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
                         interpolation = "vertex"
                     )
-                    point3f[] points = [(-1.8, -0.25568, 0), (1.8, -0.25568, 0), (1.8, 0, 0), (-1.8, 0, 0)]
-                    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 0.53), (0, 0.53)] (
+                    point3f[] points = [(-2.2, -0.4481, 0), (2.2, -0.4481, 0), (2.2, 0, 0), (-2.2, 0, 0)]
+                    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 0.76), (0, 0.76)] (
                         interpolation = "vertex"
                     )
                     uniform token subdivisionScheme = "none"
@@ -2877,14 +2917,35 @@ def Xform "Root" (
                     normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
                         interpolation = "vertex"
                     )
-                    point3f[] points = [(-1.8, -0.33568, 0), (1.8, -0.33568, 0), (1.8, -0.08, 0), (-1.8, -0.08, 0)]
-                    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 0.53), (0, 0.53)] (
+                    point3f[] points = [(-2.2, -0.5281, 0), (2.2, -0.5281, 0), (2.2, -0.08, 0), (-2.2, -0.08, 0)]
+                    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 0.76), (0, 0.76)] (
                         interpolation = "vertex"
                     )
                     uniform token subdivisionScheme = "none"
                     quatf xformOp:orient = (1, 0, 0, 0)
                     float3 xformOp:scale = (1, 1, 1)
                     float3 xformOp:translate = (0, 0, -0.004)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Mesh "Underglow" (
+                    prepend apiSchemas = ["MaterialBindingAPI"]
+                )
+                {
+                    int[] faceVertexCounts = [4]
+                    int[] faceVertexIndices = [0, 1, 2, 3]
+                    rel material:binding = </Root/Materials/HoverUnderglow>
+                    normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                        interpolation = "vertex"
+                    )
+                    point3f[] points = [(-2.2, -0.6681, 0), (2.2, -0.6681, 0), (2.2, -0.5281, 0), (-2.2, -0.5281, 0)]
+                    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                        interpolation = "vertex"
+                    )
+                    uniform token subdivisionScheme = "none"
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    float3 xformOp:translate = (0, 0, 0.004)
                     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
                 }
 
@@ -3006,6 +3067,14 @@ def Xform "Root" (
             quatf xformOp:orient = (1, 0, 0, 0)
             float3 xformOp:scale = (1, 1, 1)
             float3 xformOp:translate = (0, 0, -12)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Xform "VaultDoorStop"
+        {
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:translate = (0, 0, -7.5)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
     }
@@ -3209,13 +3278,13 @@ def Xform "Root" (
         }
 
         def Xform "VaultDoorPreview" (
-            doc = "Editor-only view of VaultDoor.usda at a sample depth, locked. The runtime places the door from game state."
+            doc = "Editor-only view of VaultDoor.usda at the VaultDoorStop anchor, locked. The runtime shows the door only during a vault."
             prepend references = @VaultDoor.usda@
         )
         {
             quatf xformOp:orient = (1, 0, 0, 0)
             float3 xformOp:scale = (1, 1, 1)
-            float3 xformOp:translate = (0, 0, -9)
+            float3 xformOp:translate = (0, 0, -7.5)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
             over "VaultDoorRoot"

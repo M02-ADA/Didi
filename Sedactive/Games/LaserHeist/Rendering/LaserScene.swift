@@ -52,6 +52,10 @@ struct LaserWorldLayout {
     // World depth of the hoverboard's upper half. A low beam first overlaps
     // the board on screen about 0.75 m before the crossing, so this stays behind that.
     var hoverboardBackZ: Float = -1.0
+
+    // Where a vault door halts in front of the players. The authored
+    // `VaultDoorStop` anchor overrides this fallback.
+    var vaultDoorStopZ: Float = -7.5
 }
 
 /// Builds and owns the LaserHeist RealityKit world: camera, corridor, player
@@ -182,6 +186,9 @@ final class LaserScene {
             for (lane, player) in players {
                 hoverboard.setFootShadow(lane, atWorldX: player.position.x)
             }
+            // The players visibly ride the board through a presentation-only
+            // offset; their placements from game data never move.
+            hoverboard.setRiders(players.values.map(\.ride))
             hoverboard.startHovering()
         }
     }
@@ -351,6 +358,9 @@ final class LaserScene {
         }
         if let loop = anchor("TravelLoop") {
             travelLoop = -loop.z
+        }
+        if let stop = anchor("VaultDoorStop") {
+            layout.vaultDoorStopZ = stop.z
         }
     }
 

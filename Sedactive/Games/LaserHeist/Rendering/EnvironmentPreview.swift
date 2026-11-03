@@ -20,7 +20,8 @@ import SwiftUI
 /// Launch with `-environmentPreview <mode>` (the laser preview is off meanwhile):
 /// - `journey` (default): travel; a vault door arrives, unlocks, opens and
 ///   passes; diamonds approach, two are collected and one is missed; repeat.
-/// - `door`: the door at a fixed depth, cycling closed, opening, open, resetting.
+/// - `door`: the door at its authored stop (`VaultDoorStop`), cycling closed,
+///   opening, open, resetting.
 /// - `door-closed`, `door-open`: one door state, held.
 /// - `diamonds`: three floating diamonds, collected or removed in turn.
 ///
@@ -45,7 +46,6 @@ final class EnvironmentPreview {
     struct Tuning {
         var cruiseSpeed: Float = 5.2
         var doorSpawnZ: Float = -60
-        var doorStopZ: Float = -7.5
         var brakingDistance: Float = 9
         var accelerationTime: Double = 1.6
         var lockedHold: Double = 1.2
@@ -88,11 +88,11 @@ final class EnvironmentPreview {
         scene.clearLaserFeedback()
         switch mode {
         case .doorClosed, .doorOpen:
-            scene.setVaultDoorDepth(tuning.doorStopZ)
+            scene.setVaultDoorDepth(scene.layout.vaultDoorStopZ)
             scene.setVaultDoorState(mode == .doorOpen ? .open : .locked, animated: false)
             return
         case .door:
-            scene.setVaultDoorDepth(tuning.doorStopZ)
+            scene.setVaultDoorDepth(scene.layout.vaultDoorStopZ)
         case .diamonds:
             // Just in front of the players, where wrists collect them.
             placeDiamonds(on: scene, atZ: 0.25)
@@ -139,12 +139,12 @@ final class EnvironmentPreview {
             }
         case .doorArriving:
             // Even braking to a stop exactly at the door's halt depth.
-            let remaining = tuning.doorStopZ - doorZ
+            let remaining = scene.layout.vaultDoorStopZ - doorZ
             let braking = cruise * cruise / (2 * tuning.brakingDistance)
             speed = min(cruise, (2 * braking * max(remaining, 0)).squareRoot())
             if remaining < 0.01 {
                 speed = 0
-                doorZ = tuning.doorStopZ
+                doorZ = scene.layout.vaultDoorStopZ
                 enter(.doorLocked)
             }
         case .doorLocked:
