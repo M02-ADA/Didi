@@ -205,6 +205,7 @@ nonisolated struct CutoutHandoffDiagnostics: Sendable {
   /// Recheck before presentation/after every await, including a GPU completion owned by Kevin.
   func isCurrent(_ lease: CutoutLease, playerID: PlayerID, at now: Double) -> Bool {
     acquired?.token == lease.token && consumer == lease.consumer
+      && lease.availablePlayers.contains(playerID)
       && freshness.accepts(lease.frame.bodySnapshot, at: now)
       && compatible(lease.frame, playerID: playerID)
   }

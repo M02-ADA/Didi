@@ -24,6 +24,54 @@ import Testing
 }
 
 @MainActor struct CutoutLifecycleTests {
+  @Test func acquiredEligibilityStaysFixedAcrossCalibrationCutoversAndNewAcquisition() async throws {
+    let budget = CutoutMemoryBudget(limits: try CutoutMemoryLimits())
+    let producer = try CutoutTestProducer(budget: budget)
+    let channel = PlayerCutoutHandoff(budget: budget, freshness: try CutoutFreshnessPolicy())
+    let first = try CutoutTestData.event()
+    try channel.updateInput(first)
+    let consumer = try channel.claimConsumer(generation: first.sessionGeneration!)
+    try await producer.publish(CutoutTestData.snapshot(1), to: channel)
+    // Replace P1's calibration before acquisition; unchanged P2 remains eligible.
+    try channel.updateInput(
+      CutoutTestData.event(
+        2, revisions: [.player1: 2, .player2: 1],
+        cutovers: [.player1: BodyInputCutover(frameID: 1, capturedAt: 2)]))
+    let old = try #require(try channel.acquireLatest(consumer, at: 2))
+    #expect(old.availablePlayers == [.player2])
+    #expect(!channel.isCurrent(old, playerID: .player1, at: 2))
+    #expect(channel.isCurrent(old, playerID: .player2, at: 2))
+
+    try channel.updateInput(
+      CutoutTestData.event(
+        3, revisions: [.player1: 3, .player2: 1],
+        cutovers: [.player1: BodyInputCutover(frameID: 1, capturedAt: 3)]))
+    #expect(old.availablePlayers == [.player2])
+    #expect(!channel.isCurrent(old, playerID: .player1, at: 3))
+    #expect(channel.isCurrent(old, playerID: .player2, at: 3))
+    // Only a newer capture using the accepted revision and passing both cutovers qualifies.
+    try await producer.publish(
+      CutoutTestData.snapshot(4, revisions: [.player1: 3, .player2: 1]), to: channel)
+    try channel.release(old.token)
+    let current = try #require(try channel.acquireLatest(consumer, at: 4))
+    #expect(current.availablePlayers == Set(PlayerID.allCases))
+    #expect(channel.isCurrent(current, playerID: .player1, at: 4))
+    #expect(channel.isCurrent(current, playerID: .player2, at: 4))
+    #expect(old.availablePlayers == [.player2])
+    #expect(!channel.isCurrent(old, playerID: .player1, at: 4))
+
+    // Membership never replaces the existing independent context/calibration checks.
+    try channel.updateInput(
+      CutoutTestData.event(
+        4, revisions: [.player1: 3, .player2: 2],
+        cutovers: [
+          .player1: BodyInputCutover(frameID: 1, capturedAt: 3),
+          .player2: BodyInputCutover(frameID: 4, capturedAt: 4),
+        ]))
+    #expect(channel.isCurrent(current, playerID: .player1, at: 4))
+    #expect(!channel.isCurrent(current, playerID: .player2, at: 4))
+    try channel.release(current.token)
+  }
   @Test func generationReplacementRevokesOldClaimsAndLateRelease() async throws {
     let budget = CutoutMemoryBudget(limits: try CutoutMemoryLimits())
     let producer = try CutoutTestProducer(budget: budget)

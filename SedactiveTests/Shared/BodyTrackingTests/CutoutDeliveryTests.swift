@@ -5,6 +5,28 @@ import Testing
 
 @MainActor struct CutoutDeliveryTests {
   private func requireLease(_ value: CutoutLease?) throws -> CutoutLease { try #require(value) }
+  @Test func presentationRequiresAcquisitionMembershipEvenWhenContextAcceptsBothPlayers() async throws {
+    let budget = CutoutMemoryBudget(limits: try CutoutMemoryLimits())
+    let producer = try CutoutTestProducer(budget: budget)
+    let channel = PlayerCutoutHandoff(budget: budget, freshness: try CutoutFreshnessPolicy())
+    let event = try CutoutTestData.event()
+    try channel.updateInput(event)
+    let consumer = try channel.claimConsumer(generation: event.sessionGeneration!)
+    try await producer.publish(CutoutTestData.snapshot(1), to: channel)
+    let acquired = try #require(try channel.acquireLatest(consumer, at: 1))
+    #expect(acquired.availablePlayers == Set(PlayerID.allCases))
+    #expect(channel.isCurrent(acquired, playerID: .player1, at: 1))
+
+    // Direct membership control: valid CP1 cutovers cannot make an excluded old slot
+    // compatible again. Narrow only membership, keeping identity, frame and context valid.
+    let restricted = CutoutLease(
+      token: acquired.token, consumer: acquired.consumer, frame: acquired.frame,
+      availablePlayers: [.player2])
+    #expect(!channel.isCurrent(restricted, playerID: .player1, at: 1))
+    #expect(channel.isCurrent(restricted, playerID: .player2, at: 1))
+    try channel.release(acquired.token)
+    #expect(!channel.isCurrent(restricted, playerID: .player2, at: 1))
+  }
   @Test func realHandoffAndIndependentSyntheticProducerWithMockConsumer() async throws {
     let budget = CutoutMemoryBudget(limits: try CutoutMemoryLimits())
     let producer = try CutoutTestProducer(budget: budget)
