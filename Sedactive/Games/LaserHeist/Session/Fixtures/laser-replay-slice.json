@@ -1,0 +1,388 @@
+{
+  "schemaVersion": 2,
+  "cameraGeometryRevision": 1,
+  "configuration": {
+    "sessionGeneration": "10000000-0000-4000-8000-000000000001",
+    "calibrations": {
+      "player1": {
+        "playerID": "player1",
+        "sessionGeneration": "10000000-0000-4000-8000-000000000001",
+        "revision": 1,
+        "cameraGeometryRevision": 1,
+        "sourceFrameID": 0,
+        "capturedAt": 0,
+        "standingCrownImageY": 0.9,
+        "standingLeftSoleImageY": 0.1,
+        "standingRightSoleImageY": 0.105,
+        "standingHipImageY": 0.55,
+        "standingBodyImageHeight": 0.8,
+        "standingTorsoImageLength": 0.3,
+        "headOffsetFromNoseShare": 0.06,
+        "leftFootOffsetShare": 0.02,
+        "rightFootOffsetShare": 0.025,
+        "mapping": {
+          "imageAspectRatio": 1.5,
+          "floorImageY": 0.1,
+          "originImageX": 0.7
+        }
+      },
+      "player2": {
+        "playerID": "player2",
+        "sessionGeneration": "10000000-0000-4000-8000-000000000001",
+        "revision": 1,
+        "cameraGeometryRevision": 1,
+        "sourceFrameID": 0,
+        "capturedAt": 0,
+        "standingCrownImageY": 0.625,
+        "standingLeftSoleImageY": 0.1,
+        "standingRightSoleImageY": 0.105,
+        "standingHipImageY": 0.36,
+        "standingBodyImageHeight": 0.525,
+        "standingTorsoImageLength": 0.2,
+        "headOffsetFromNoseShare": 0.06,
+        "leftFootOffsetShare": 0.02,
+        "rightFootOffsetShare": 0.025,
+        "mapping": {
+          "imageAspectRatio": 1.5,
+          "floorImageY": 0.1,
+          "originImageX": 0.3
+        }
+      }
+    },
+    "playerPlaneLayout": {
+      "leftCenterX": -0.65,
+      "rightCenterX": 0.65,
+      "gameUnitsPerImageHeight": 2
+    },
+    "snapshotBufferCapacity": 8,
+    "noProgressPolicy": {
+      "disabled": {}
+    }
+  },
+  "records": [
+    {
+      "deliveredAt": 0.15000000000000002,
+      "snapshot": {
+        "sessionGeneration": "10000000-0000-4000-8000-000000000001",
+        "frameID": 1,
+        "capturedAt": 0.1,
+        "cameraGeometryRevision": 1,
+        "players": {
+          "player1": {
+            "playerID": "player1",
+            "calibrationRevision": 1,
+            "trackingStatus": "reliable",
+            "geometry": {
+              "crownY": {
+                "value": 1.6,
+                "validity": "valid"
+              },
+              "leftWristY": {
+                "value": 0.82,
+                "validity": "valid"
+              },
+              "rightWristY": {
+                "value": 0.86,
+                "validity": "valid"
+              },
+              "leftSoleY": {
+                "value": 0,
+                "validity": "valid"
+              },
+              "rightSoleY": {
+                "value": 0.01,
+                "validity": "valid"
+              },
+              "centerX": {
+                "value": -0.65,
+                "validity": "valid"
+              }
+            },
+            "jumpState": {
+              "phase": "grounded",
+              "validity": "valid"
+            }
+          },
+          "player2": {
+            "playerID": "player2",
+            "calibrationRevision": 1,
+            "trackingStatus": "reliable",
+            "geometry": {
+              "crownY": {
+                "value": 1.05,
+                "validity": "valid"
+              },
+              "leftWristY": {
+                "value": 0.82,
+                "validity": "valid"
+              },
+              "rightWristY": {
+                "value": 0.86,
+                "validity": "valid"
+              },
+              "leftSoleY": {
+                "value": 0,
+                "validity": "valid"
+              },
+              "rightSoleY": {
+                "value": 0.01,
+                "validity": "valid"
+              },
+              "centerX": {
+                "value": 0.65,
+                "validity": "valid"
+              }
+            },
+            "jumpState": {
+              "phase": "grounded",
+              "validity": "valid"
+            }
+          }
+        }
+      }
+    },
+    {
+      "deliveredAt": 4.05,
+      "snapshot": {
+        "sessionGeneration": "10000000-0000-4000-8000-000000000001",
+        "frameID": 2,
+        "capturedAt": 4.0,
+        "cameraGeometryRevision": 1,
+        "players": {
+          "player1": {
+            "playerID": "player1",
+            "calibrationRevision": 1,
+            "trackingStatus": "reliable",
+            "geometry": {
+              "crownY": {
+                "value": 1.4,
+                "validity": "valid"
+              },
+              "leftWristY": {
+                "value": 1.25,
+                "validity": "valid"
+              },
+              "rightWristY": {
+                "value": 1.25,
+                "validity": "valid"
+              },
+              "leftSoleY": {
+                "value": 0,
+                "validity": "valid"
+              },
+              "rightSoleY": {
+                "value": 0.01,
+                "validity": "valid"
+              },
+              "centerX": {
+                "value": -0.65,
+                "validity": "valid"
+              }
+            },
+            "jumpState": {
+              "phase": "grounded",
+              "validity": "valid"
+            }
+          },
+          "player2": {
+            "playerID": "player2",
+            "calibrationRevision": 1,
+            "trackingStatus": "reliable",
+            "geometry": {
+              "crownY": {
+                "value": 1.0,
+                "validity": "valid"
+              },
+              "leftWristY": {
+                "value": 0.85,
+                "validity": "valid"
+              },
+              "rightWristY": {
+                "value": 0.85,
+                "validity": "valid"
+              },
+              "leftSoleY": {
+                "value": 0,
+                "validity": "valid"
+              },
+              "rightSoleY": {
+                "value": 0.01,
+                "validity": "valid"
+              },
+              "centerX": {
+                "value": 0.65,
+                "validity": "valid"
+              }
+            },
+            "jumpState": {
+              "phase": "grounded",
+              "validity": "valid"
+            }
+          }
+        }
+      }
+    },
+    {
+      "deliveredAt": 10.05,
+      "snapshot": {
+        "sessionGeneration": "10000000-0000-4000-8000-000000000001",
+        "frameID": 3,
+        "capturedAt": 10.0,
+        "cameraGeometryRevision": 1,
+        "players": {
+          "player1": {
+            "playerID": "player1",
+            "calibrationRevision": 1,
+            "trackingStatus": "reliable",
+            "geometry": {
+              "crownY": {
+                "value": 1.6,
+                "validity": "valid"
+              },
+              "leftWristY": {
+                "value": 0.82,
+                "validity": "valid"
+              },
+              "rightWristY": {
+                "value": 0.86,
+                "validity": "valid"
+              },
+              "leftSoleY": {
+                "value": 0,
+                "validity": "valid"
+              },
+              "rightSoleY": {
+                "value": 0.01,
+                "validity": "valid"
+              },
+              "centerX": {
+                "value": -0.65,
+                "validity": "valid"
+              }
+            },
+            "jumpState": {
+              "phase": "grounded",
+              "validity": "valid"
+            }
+          },
+          "player2": {
+            "playerID": "player2",
+            "calibrationRevision": 1,
+            "trackingStatus": "reliable",
+            "geometry": {
+              "crownY": {
+                "value": 1.05,
+                "validity": "valid"
+              },
+              "leftWristY": {
+                "value": 0.82,
+                "validity": "valid"
+              },
+              "rightWristY": {
+                "value": 0.86,
+                "validity": "valid"
+              },
+              "leftSoleY": {
+                "value": 0.025,
+                "validity": "valid"
+              },
+              "rightSoleY": {
+                "value": 0.025,
+                "validity": "valid"
+              },
+              "centerX": {
+                "value": 0.65,
+                "validity": "valid"
+              }
+            },
+            "jumpState": {
+              "phase": "airborne",
+              "validity": "valid"
+            }
+          }
+        }
+      }
+    },
+    {
+      "deliveredAt": 16.05,
+      "snapshot": {
+        "sessionGeneration": "10000000-0000-4000-8000-000000000001",
+        "frameID": 4,
+        "capturedAt": 16.0,
+        "cameraGeometryRevision": 1,
+        "players": {
+          "player1": {
+            "playerID": "player1",
+            "calibrationRevision": 1,
+            "trackingStatus": "reliable",
+            "geometry": {
+              "crownY": {
+                "value": 1.6,
+                "validity": "valid"
+              },
+              "leftWristY": {
+                "value": 0.82,
+                "validity": "valid"
+              },
+              "rightWristY": {
+                "value": 0.86,
+                "validity": "valid"
+              },
+              "leftSoleY": {
+                "value": 0,
+                "validity": "valid"
+              },
+              "rightSoleY": {
+                "value": 0.01,
+                "validity": "valid"
+              },
+              "centerX": {
+                "value": -0.65,
+                "validity": "valid"
+              }
+            },
+            "jumpState": {
+              "phase": "grounded",
+              "validity": "valid"
+            }
+          },
+          "player2": {
+            "playerID": "player2",
+            "calibrationRevision": 1,
+            "trackingStatus": "reliable",
+            "geometry": {
+              "crownY": {
+                "value": 1.05,
+                "validity": "valid"
+              },
+              "leftWristY": {
+                "value": 0.82,
+                "validity": "valid"
+              },
+              "rightWristY": {
+                "value": 0.86,
+                "validity": "valid"
+              },
+              "leftSoleY": {
+                "value": 0,
+                "validity": "valid"
+              },
+              "rightSoleY": {
+                "value": 0.01,
+                "validity": "valid"
+              },
+              "centerX": {
+                "value": 0.65,
+                "validity": "valid"
+              }
+            },
+            "jumpState": {
+              "phase": "grounded",
+              "validity": "valid"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -27,4 +27,28 @@ nonisolated struct LaserGameState: Equatable, Sendable {
     let teamHealth: Int
     let teamScore: Int
     let encounters: [LaserEncounterState]
+    var missionProgress: Int = 0
+    var missionTarget: Int = 5
+    var playerStats: [PlayerID: LaserPlayerTargetCounts] = [:]
+    var vault: LaserVaultState? = nil
+}
+
+nonisolated enum LaserVaultButton: String, CaseIterable, Hashable, Sendable { case top, middle, bottom }
+
+nonisolated struct LaserVaultState: Equatable, Sendable {
+    let id: UUID
+    let deadline: Double
+    var buttons: [PlayerID: Set<LaserVaultButton>]
+    var opened: Bool = false
+}
+
+nonisolated enum LaserCoopDecision: Equatable, Sendable {
+    case pending, unavailable, succeeded, failed
+
+    static func evaluate(_ verdicts: [PlayerID: Judgement]) -> Self {
+        guard verdicts.count == 2, Set(verdicts.keys) == Set(PlayerID.allCases),
+              !verdicts.values.contains(where: { if case .pending = $0 { true } else { false } }) else { return .pending }
+        if verdicts.values.contains(where: { if case .unavailable = $0 { true } else { false } }) { return .unavailable }
+        return verdicts.values.allSatisfy { $0 == .clear } ? .succeeded : .failed
+    }
 }

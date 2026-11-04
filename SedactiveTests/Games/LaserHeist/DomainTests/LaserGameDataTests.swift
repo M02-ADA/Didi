@@ -42,7 +42,9 @@ nonisolated struct LaserGameDataTests {
         for scenario in first {
             try scenario.input.validate()
             #expect(scenario.configuration.diamondPoints == nil)
-            #expect(scenario.configuration.activityDuration + scenario.configuration.diamondTimeDuration == 315)
+            #expect(scenario.configuration.diamondTimeDuration == 10)
+            #expect(scenario.configuration.maximumActiveBonusDiamonds == 4)
+            #expect(scenario.configuration.activityDuration + scenario.configuration.diamondTimeDuration == 310)
             #expect(scenario.encounter.targets.map(\.playerID) == PlayerID.allCases)
             for target in scenario.encounter.targets {
                 let calibration = try #require(scenario.input.configuration.calibrations[target.playerID])

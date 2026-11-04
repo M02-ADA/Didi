@@ -6,3 +6,14 @@
 //
 
 import Foundation
+
+nonisolated enum SessionState: Equatable, Sendable {
+    case idle, running, finished, failed(String)
+}
+
+nonisolated struct ReplayTargetResult: Equatable, Sendable {
+    let encounterID: UUID
+    let playerID: PlayerID
+    let judgement: Judgement
+    let selectedFrameID: UInt64?
+}
