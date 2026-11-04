@@ -202,7 +202,7 @@ No raw body recordings are required. MVP activity metrics count scheduled obstac
 | Vault duration | Game-clock time spent in each vault opportunity | Separate from activity progress; pause excluded |
 | Team score | One authoritative sum of both players' committed laser contributions and team diamond awards | One combined HUD/results total; individual target outcomes are not separate score balances |
 | Team clear rate | CLEAR/CLEAR committed encounters ÷ all committed encounters | Excludes withdrawn/unavailable attempts; show unavailable count; no denominator displays “—”, not 100% |
-| Per-player target clears | Available CLEAR targets in committed scored encounters, by player | A high CLEAR may be a held posture; not squat reps. Available targets inside a withdrawn encounter do not count |
+| Per-player target clears | Finalized CLEAR verdicts per player, recorded independently from team rewards | Raw judgement count, not squat reps or team progress; a technically unscored pair can still contain an individual CLEAR. Withdrawn/PENDING targets do not count |
 | Jump targets cleared | Committed low targets with valid airborne phase and both soles clearing | Counts successful game targets, not all jumps or unique jump cycles; no validated takeoff/landing event IDs yet |
 | Unavailable attempts | Withdrawn attempts with at least one UNAVAILABLE target | Tracking quality indicator, not player performance; repeated attempts remain visible |
 | Required jump demands | Scheduled jump attempts actually cued to each player, including tracking-recovery retry/withdrawal | Used for comfort budgeting; not proof that the player jumped |

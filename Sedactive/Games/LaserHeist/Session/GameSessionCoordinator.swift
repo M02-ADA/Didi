@@ -17,11 +17,13 @@ final class GameSessionCoordinator {
     private(set) var summary: RoundSummary?
     private(set) var results: [ReplayTargetResult] = []
     private(set) var latestSnapshot: BodySnapshot?
+    private(set) var events: [GameEvent] = []
     private var provider: ReplayBodyInput?
     private var iterator: AsyncStream<BodySnapshot>.Iterator?
     private var clock: GameClock?
     private var game: LaserGame?
     private var cursor = 0
+    private var vaultCursor = 0
     private var committed: Set<UUID> = []
     private var advancing = false
 
@@ -64,40 +66,48 @@ final class GameSessionCoordinator {
             try game.receive(packet, capturedGameTime: captured, arrivedAt: clock.gameTime)
             latestSnapshot = packet
             cursor += 1
+            if game.roundOutcome != nil { break }
+        }
+        while vaultCursor < script.vaultActions.count, script.vaultActions[vaultCursor].time <= time,
+              game.roundOutcome == nil {
+            let action = script.vaultActions[vaultCursor]
+            try clock.advance(to: action.time)
+            if let player = action.player, let button = action.button {
+                try game.touchVault(id: script.vaultID, playerID: player, button: button, validity: .valid,
+                    generation: script.input.configuration.sessionGeneration,
+                    calibrationRevision: script.input.configuration.calibrations[player]!.revision, at: clock.gameTime)
+            } else { try game.openVault(id: script.vaultID, at: clock.gameTime) }
+            vaultCursor += 1
         }
         try clock.advance(to: time)
         try game.advance(to: clock.gameTime)
+        events.append(contentsOf: game.drainEvents())
         self.clock = clock
         self.game = game
         self.iterator = iterator
         refresh(at: time)
-        if time == script.duration || state?.teamHealth == 0 {
-            let outcome: LaserRoundOutcome = state?.teamHealth == 0 ? .healthDepleted : .completed
+        if let outcome = game.roundOutcome {
             summary = RoundSummary(sessionGeneration: script.input.configuration.sessionGeneration, outcome: outcome,
-                gameDuration: time, activityDuration: time, remainingTeamHealth: state?.teamHealth ?? 5,
+                gameDuration: game.gameTime, activityDuration: game.activityProgress, remainingTeamHealth: state?.teamHealth ?? 5,
                 teamScore: state?.teamScore ?? 0,
-                targets: PlayerID.allCases.map { player in
-                    let values = results.filter { $0.playerID == player }.map(\.judgement)
-                    return LaserPlayerTargetCounts(playerID: player, scheduled: script.encounters.count,
-                        cleared: values.filter { $0 == .clear }.count,
-                        hit: values.filter { if case .hit = $0 { true } else { false } }.count,
-                        unavailable: values.filter { if case .unavailable = $0 { true } else { false } }.count)
-                }, diamondsCollected: 0, vaultsOpened: 0, withdrawnAttempts: 0)
+                targets: PlayerID.allCases.compactMap { game.playerStats[$0] },
+                diamondsCollected: 0, vaultsOpened: game.missionProgress, withdrawnAttempts: 0)
             phase = .finished
             refresh(at: time)
             await provider.stop()
         }
     }
 
-    func stop() async {
+    func stop(reason: LaserRoundOutcome = .aborted) async {
         phase = .finished
-        game?.exit()
+        game?.exit(outcome: reason)
+        if let more = game?.drainEvents() { events.append(contentsOf: more) }
         await provider?.stop()
         iterator = nil
     }
 
     func fail(_ error: any Error) async {
-        await stop()
+        await stop(reason: .technicalInterruption)
         phase = .failed(String(describing: error))
     }
 
@@ -124,7 +134,11 @@ final class GameSessionCoordinator {
                                                   effectsCommitted: committed.contains(encounter.id)))
         }
         state = LaserGameState(sessionGeneration: script.input.configuration.sessionGeneration,
-            phase: summary.map { .ended($0.outcome) } ?? .activity, gameTime: time, activityProgress: time,
+            phase: game.roundPhase, gameTime: game.gameTime, activityProgress: game.activityProgress,
             teamHealth: game.teamHealth, teamScore: game.teamScore, encounters: encounters)
+        state?.missionProgress = game.missionProgress
+        state?.missionTarget = game.missionTarget
+        state?.playerStats = game.playerStats
+        state?.vault = game.vault
     }
 }

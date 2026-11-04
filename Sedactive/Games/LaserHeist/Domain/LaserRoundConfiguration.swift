@@ -35,15 +35,18 @@ nonisolated struct LaserRoundConfiguration: Equatable, Sendable {
     let diamondTimeDuration = 15.0
     let vaultDuration = 5.0
     let maximumActiveBonusDiamonds = 4
+    let missionGateTarget: Int
 
     init(evidenceTiming: LaserEvidenceTiming, clearanceMargin: Double, diamondPoints: Int?,
-         scheduling: LaserSchedulingConfiguration? = nil) throws {
+         scheduling: LaserSchedulingConfiguration? = nil, missionGateTarget: Int = 5) throws {
         try requireLaserValue(clearanceMargin.isFinite && clearanceMargin >= 0, "clearance margin")
         try requireLaserValue(diamondPoints.map { $0 >= 0 } ?? true, "diamond reward")
         self.evidenceTiming = evidenceTiming
         self.clearanceMargin = clearanceMargin
         self.diamondPoints = diamondPoints
         self.scheduling = scheduling
+        try requireLaserValue(missionGateTarget > 0, "mission gate target")
+        self.missionGateTarget = missionGateTarget
     }
 }
 

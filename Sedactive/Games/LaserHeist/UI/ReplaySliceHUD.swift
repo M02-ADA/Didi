@@ -9,7 +9,8 @@ struct ReplaySliceHUD: View {
             Text("LASER HEIST · BODY REPLAY").font(.headline)
             Text("Health \(session.state?.teamHealth ?? 5) / 5   ·   Team score \(session.state?.teamScore ?? 0)")
             Text("P1: left · P2: right").font(.caption)
-            ProgressView(value: session.state?.gameTime ?? 0, total: session.script.duration)
+            Text("Vault progress \(session.state?.missionProgress ?? 0) / \(session.state?.missionTarget ?? 1)")
+            ProgressView(value: session.state?.activityProgress ?? 0, total: session.script.activityDuration)
                 .frame(maxWidth: 280)
                 .accessibilityLabel("Replay progress")
             switch session.phase {
@@ -19,6 +20,21 @@ struct ReplaySliceHUD: View {
             case .failed(let message): Text("Replay stopped: \(message)")
             case .idle: Text("Preparing body replay…")
             case .running: Text("Follow DUCK / JUMP; badges show each player's result.")
+            }
+            if let state = session.state {
+                if state.phase == .vault, let vault = state.vault {
+                    Text("DUAL KEY VAULT · \(max(0, vault.deadline - state.gameTime), specifier: "%.1f")s")
+                        .font(.headline)
+                    ForEach(PlayerID.allCases, id: \.self) { player in
+                        Text("\(player == .player1 ? "P1" : "P2"): " + LaserVaultButton.allCases.map {
+                            "\($0.rawValue) \(vault.buttons[player, default: []].contains($0) ? "✓" : "□")"
+                        }.joined(separator: " · "))
+                    }
+                    Text("Synthetic wrist-contact replay").font(.caption)
+                }
+                if state.phase == .diamondTime { Text("DIAMOND TIME · timer preview").font(.headline) }
+                Text("Clears: P1 \(state.playerStats[.player1]?.cleared ?? 0) · P2 \(state.playerStats[.player2]?.cleared ?? 0)")
+                    .font(.caption)
             }
             if !session.results.isEmpty {
                 Text("Last verdicts: P1 \(lastVerdict(.player1)) · P2 \(lastVerdict(.player2))")
