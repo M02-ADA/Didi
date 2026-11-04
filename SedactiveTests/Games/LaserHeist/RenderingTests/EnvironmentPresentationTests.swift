@@ -43,8 +43,7 @@ struct EnvironmentPresentationTests {
         let before = back.position(relativeTo: nil)
         let corner = back.convert(position: [1.3, 0.18, 0], to: nil)
 
-        let hoverboard = try #require(Hoverboard(entity: board, camera: camera, backDepth: -0.7))
-        hoverboard.stopHovering()
+        _ = try #require(Hoverboard(entity: board, camera: camera, backDepth: -0.7))
         let after = back.position(relativeTo: nil)
         let movedCorner = back.convert(position: [1.3, 0.18, 0], to: nil)
 
@@ -66,21 +65,31 @@ struct EnvironmentPresentationTests {
         #expect(scene.layout.vaultDoorStopZ == -6)
     }
 
-    @Test func ridingMovesOnlyThePresentationOffsetNeverThePlacement() throws {
-        let board = Entity()
+    @Test func hoverboardAndPlayersStayStillWithNoIdleHover() throws {
+        let authored = Entity()
+        let board = child("Hoverboard", of: child("Corridor", of: authored))
+        let front = child("Front", of: board)
         _ = child("Back", of: board)
-        _ = child("Front", of: board)
-        let player = PlayerCutoutEntity(lane: .child, size: [0.52, 1.2], color: .white)
-        player.position = [0.7, 0, 0]
-        let hoverboard = try #require(Hoverboard(entity: board, camera: [0, 1.05, 3.1], backDepth: -1.0))
+        let parts = ["Underglow", "FootShadowParent", "FootShadowChild"].map { child($0, of: front) }
+            + [child("Shadow", of: board)]
+        let frontRest = front.transform
+        let scene = LaserScene()
+        let placements = scene.players.mapValues(\.position)
 
-        hoverboard.setRiders([player.ride])
-        hoverboard.startHovering()
-        hoverboard.stopHovering()
+        scene.installEnvironment(authored: authored)
 
-        #expect(player.position == [0.7, 0, 0])
-        #expect(player.ride.transform == .identity)
-        #expect(player.findEntity(named: "player.child.surface")?.parent === player.ride)
+        #expect(scene.hoverboard != nil)
+        // No idle hover: the old loop gave these parts a breathing opacity.
+        for entity in [board, front] + parts + scene.players.values.flatMap({ [$0, $0.ride] }) {
+            #expect(entity.components[OpacityComponent.self] == nil, "\(entity.name) breathes")
+        }
+        #expect(front.transform == frontRest)
+        // Players sit on the canonical plane; their surfaces' container has no offset.
+        #expect(scene.players.mapValues(\.position) == placements)
+        for player in scene.players.values {
+            #expect(player.ride.transform == .identity)
+            #expect(player.findEntity(named: "player.\(player.lane.rawValue).surface")?.parent === player.ride)
+        }
     }
 
     @Test func vaultDoorOpensBehindTheFrameAndResetsClosedAndLocked() throws {

@@ -111,6 +111,9 @@ final class LaserFeedback {
     /// move. From the action cue it is full size with a countdown:
     /// `actionRemaining` is the share of the cue lead still to go, 1 at the
     /// action cue and 0 when the beam reaches the players. `nil` hides the cue.
+    /// The cue on screen, if any, and whether it is the action cue.
+    var shownMoveCue: (move: Move, acting: Bool)? { shownCue }
+
     func setMoveCue(_ move: Move?, actionRemaining: Float? = nil) {
         guard let move else {
             if shownCue != nil { hideCue() }
