@@ -112,6 +112,8 @@ The **producer** defines each contract type once. Consumers import it and do not
 
 ## G. Decisions
 
+- **Confirmed — task owner, 4 November 2026:** after the final Dual Key Vault, Diamond Time lasts **10 active seconds**. At most **4 diamonds** are active for the team at distinct positions; each collection spawns a replacement elsewhere, with no fixed total collection quota. See [the gameplay rules](LaserHeist-Gameplay-Rules.md#b4a-diamond-time-after-the-final-vault). This records Jevon's product revision, not collaborator sign-off on pending contact/placement details.
+
 - Label statements **Confirmed**, **Proposed** or **TBD**.
 - Coordinate, timing and data-meaning changes always go through the contract workflow in E.
 - Update this file only for an approved decision or a recurring problem. The person proposing the change drafts the edit, and the team approves it.

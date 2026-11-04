@@ -73,7 +73,7 @@ nonisolated struct LaserGame: Sendable {
     private var events: [GameEvent] = []
     private var eventSequence: UInt64 = 0
     private var vaultDuration = 5.0
-    private var bonusDuration = 15.0
+    private var bonusDuration = LaserRoundConfiguration.defaultDiamondTimeDuration
     private(set) var summary: RoundSummary?
     private var primaryPlayerID: PlayerID?
     private var cueLeads: [PlayerID: Double] = [:]

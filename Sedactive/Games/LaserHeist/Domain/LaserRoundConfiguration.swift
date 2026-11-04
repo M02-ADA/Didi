@@ -24,6 +24,7 @@ nonisolated struct LaserEvidenceTiming: Equatable, Sendable {
 }
 
 nonisolated struct LaserRoundConfiguration: Equatable, Sendable {
+    static let defaultDiamondTimeDuration = 10.0
     let evidenceTiming: LaserEvidenceTiming
     let clearanceMargin: Double
     /// Nil until the owner approves the diamond reward; never silently substitute a value.
@@ -32,7 +33,7 @@ nonisolated struct LaserRoundConfiguration: Equatable, Sendable {
     let initialTeamHealth = 5
     let clearTargetPoints = 100
     let activityDuration = 300.0
-    let diamondTimeDuration = 15.0
+    let diamondTimeDuration = Self.defaultDiamondTimeDuration
     let vaultDuration = 5.0
     let maximumActiveBonusDiamonds = 4
     let missionGateTarget: Int

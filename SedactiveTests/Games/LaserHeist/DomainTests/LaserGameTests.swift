@@ -106,7 +106,7 @@ nonisolated struct LaserGameTests {
         #expect(game.drainEvents().filter { if case .coopGateSucceeded = $0.kind { true } else { false } }.count == 1)
     }
 
-    @Test func fiveVaultsLeadToFifteenSecondBonusThenExactlyOneRoundEnd() throws {
+    @Test func fiveVaultsLeadToTenSecondBonusThenExactlyOneRoundEnd() throws {
         let (scenario, initial) = try setup()
         var game = initial
         for index in 0..<5 {
@@ -116,9 +116,10 @@ nonisolated struct LaserGameTests {
         #expect(game.missionProgress == 5)
         #expect(game.roundPhase == .diamondTime)
         #expect(game.roundOutcome == nil)
-        try game.advance(to: 23.5)
+        let bonusStart = game.gameTime
+        try game.advance(to: bonusStart + 9.999999)
         #expect(game.roundOutcome == nil)
-        try game.advance(to: 24)
+        try game.advance(to: bonusStart + 10)
         #expect(game.roundOutcome == .completed)
         try game.advance(to: 30)
         game.exit()

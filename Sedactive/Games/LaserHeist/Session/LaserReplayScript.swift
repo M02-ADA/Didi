@@ -5,8 +5,8 @@ nonisolated struct LaserReplayScript: Sendable {
     let input: ReplayFixture
     let encounters: [LaserEncounter]
     let configuration: LaserRoundConfiguration
-    let duration = 38.0
-    let activityDuration = 32.0
+    var duration: Double { 17 + configuration.vaultDuration + configuration.diamondTimeDuration + 1 }
+    var activityDuration: Double { 17 + configuration.diamondTimeDuration }
     let vaultID = UUID(uuidString: "12000000-0000-4000-8000-000000000100")!
     /// Script-declared synthetic tracking coverage, not inferred physical movement between frames.
     let trackedCoverage = 0.1...17.0
