@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		7120F451A4734D23A49182B8 /* RealityKitContent in Frameworks */ = {isa = PBXBuildFile; productRef = DA6C3BAFD0654607A4652841 /* RealityKitContent */; };
 /* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		FA2300000000000000000001 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;

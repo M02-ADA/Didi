@@ -27,6 +27,10 @@ private struct ReplayRoundView: View {
     @State private var presentation = LaserReplayPresentation()
     @State private var session: GameSessionCoordinator?
     @State private var startupError: String?
+    #if DEBUG
+    @State private var preview = LaserApproachPreview()
+    @State private var environmentPreview = EnvironmentPreview()
+    #endif
 
     var body: some View {
         RealityView { content in
@@ -40,11 +44,26 @@ private struct ReplayRoundView: View {
             scene.installEnvironment(authored: authored)
             #endif
             scene.installLaserArtwork(await LaserScene.loadLaserGateArtwork())
+            scene.installVaultDoor(await LaserScene.loadVaultDoorArtwork())
+            scene.installDiamondArt(await LaserScene.loadDiamondArtwork())
             content.add(scene.root)
             // Optional world-construction guides. Replay body markers live in the presentation adapter.
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-showWorldGuides") {
                 content.add(PoseDebugOverlay.make(for: scene))
+            }
+            // Launch with `-environmentPreview <mode>` to review the corridor,
+            // vault door and diamonds. Each preview replaces the gameplay driver.
+            if let mode = EnvironmentPreview.requestedMode {
+                environmentPreview.start(on: content, scene: scene, mode: mode)
+                return
+            }
+            let arguments = ProcessInfo.processInfo.arguments
+            if arguments.contains("-laserArtworkPreview") || arguments.contains(where: {
+                $0 == "-laserGateState" || $0.hasPrefix("-laserPreview")
+            }) {
+                preview.start(on: content, scene: scene)
+                return
             }
             #endif
             do {
@@ -79,6 +98,11 @@ private struct ReplayRoundView: View {
         }
         .onDisappear {
             presentation.stop()
+            #if DEBUG
+            // Preview subscriptions capture their owners weakly; replacing them releases the subscriptions.
+            preview = LaserApproachPreview()
+            environmentPreview = EnvironmentPreview()
+            #endif
             let previous = session
             Task { await previous?.stop() }
         }
