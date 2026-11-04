@@ -50,6 +50,8 @@ nonisolated struct CameraFrameDiagnostics: Sendable {
   var avDrops: UInt64 = 0
   var superseded: UInt64 = 0
   var capacityDrops: UInt64 = 0
+  var constructionDrops: UInt64 = 0
+  var budgetDrops: UInt64 = 0
   var staleDrops: UInt64 = 0
   mutating func increment(_ key: WritableKeyPath<Self, UInt64>) {
     if self[keyPath: key] < .max { self[keyPath: key] += 1 }
@@ -58,8 +60,12 @@ nonisolated struct CameraFrameDiagnostics: Sendable {
 nonisolated private final class CameraSourceBudget: Sendable {
   struct Counts { var frames = 0, bytes = 0, peakFrames = 0, peakBytes = 0 }
   let maximumBytes: Int
+  let metrics: CameraCaptureMetrics
   let state = Mutex(Counts())
-  init(maximumBytes: Int) { self.maximumBytes = maximumBytes }
+  init(maximumBytes: Int, metrics: CameraCaptureMetrics) {
+    self.maximumBytes = maximumBytes
+    self.metrics = metrics
+  }
   func reserve(_ bytes: Int) throws -> CameraSourceReservation {
     try state.withLock {
       guard bytes > 0, $0.frames < 3, bytes <= maximumBytes - $0.bytes else {
@@ -69,6 +75,7 @@ nonisolated private final class CameraSourceBudget: Sendable {
       $0.bytes += bytes
       $0.peakFrames = max($0.peakFrames, $0.frames)
       $0.peakBytes = max($0.peakBytes, $0.bytes)
+      metrics.sourceBytes($0.bytes)
     }
     return CameraSourceReservation(budget: self, bytes: bytes)
   }
@@ -76,6 +83,7 @@ nonisolated private final class CameraSourceBudget: Sendable {
     state.withLock {
       $0.frames -= 1
       $0.bytes -= bytes
+      metrics.sourceBytes($0.bytes)
     }
   }
   var usage: CameraSourceUsage {
@@ -97,11 +105,13 @@ nonisolated private final class CameraSourceReservation: Sendable {
 /// Private Data keeps its reservation alive through every reader, including retired epochs.
 nonisolated final class CameraSourceFrame: Sendable {
   let metadata: CameraFrameMetadata
+  let admittedAt: Double
   private let bytes: Data
   private let reservation: CameraSourceReservation
   fileprivate init(metadata: CameraFrameMetadata, bytes: Data, reservation: CameraSourceReservation)
   {
     self.metadata = metadata
+    admittedAt = CameraHostClock.now()
     self.bytes = bytes
     self.reservation = reservation
   }
@@ -128,16 +138,20 @@ nonisolated final class FrameStore: Sendable {
     var diagnostics = CameraFrameDiagnostics()
   }
   let maximumFrameBytes: Int
+  let metrics: CameraCaptureMetrics
   private let budget: CameraSourceBudget
   private let state = Mutex(State())
   init(maximumFrameBytes: Int = 4 * 1024 * 1024, maximumRetainedBytes: Int = 12 * 1024 * 1024) {
     precondition(maximumFrameBytes > 0 && maximumRetainedBytes > 0)
     self.maximumFrameBytes = maximumFrameBytes
-    budget = CameraSourceBudget(maximumBytes: maximumRetainedBytes)
+    let metrics = CameraCaptureMetrics()
+    self.metrics = metrics
+    budget = CameraSourceBudget(maximumBytes: maximumRetainedBytes, metrics: metrics)
   }
   var usage: CameraSourceUsage { budget.usage }
   var diagnostics: CameraFrameDiagnostics { state.withLock { $0.diagnostics } }
   func begin(_ context: CameraSourceContext) -> AsyncStream<Void> {
+    metrics.begin(context)
     let pair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
     state.withLock {
       $0.wake?.finish()
@@ -210,6 +224,7 @@ nonisolated final class FrameStore: Sendable {
         throw CameraFrameError.staleContext
       }
       guard !$0.construction else {
+        $0.diagnostics.increment(\.constructionDrops)
         $0.diagnostics.increment(\.capacityDrops)
         throw CameraFrameError.capacity
       }
@@ -218,6 +233,7 @@ nonisolated final class FrameStore: Sendable {
         $0.construction = true
         return reservation
       } catch {
+        $0.diagnostics.increment(\.budgetDrops)
         $0.diagnostics.increment(\.capacityDrops)
         throw error
       }
@@ -230,6 +246,7 @@ nonisolated final class FrameStore: Sendable {
     guard let address = CVPixelBufferGetBaseAddress(buffer) else {
       throw CameraFrameError.invalidDescriptor
     }
+    let copyStart = CameraHostClock.now()
     var data = Data(count: d.byteCount)
     data.withUnsafeMutableBytes { destination in
       for row in 0..<d.height {
@@ -237,6 +254,7 @@ nonisolated final class FrameStore: Sendable {
           from: address.advanced(by: row * d.bytesPerRow), byteCount: d.width * 4)
       }
     }
+    metrics.copied(metadata.context, seconds: CameraHostClock.now() - copyStart)
     let frame = CameraSourceFrame(metadata: metadata, bytes: data, reservation: reservation)
     try state.withLock {
       guard $0.context == metadata.context, $0.admitting else {
@@ -246,6 +264,7 @@ nonisolated final class FrameStore: Sendable {
       if $0.pending != nil { $0.diagnostics.increment(\.superseded) }
       $0.pending = frame
       $0.lastOffered = metadata.frameID
+      metrics.admitted(metadata.context)
       $0.wake?.yield(())
     }
   }
@@ -289,6 +308,8 @@ protocol CameraFrameSink: Actor {
   func reset() async
 }
 actor CameraCopySink: CameraFrameSink {
+  private let metrics: CameraCaptureMetrics?
+  init(metrics: CameraCaptureMetrics? = nil) { self.metrics = metrics }
   private var workspace: CameraReconstructionWorkspace?
   func consume(_ frame: CameraSourceFrame) throws {
     if workspace?.width != frame.metadata.descriptor.width
@@ -296,9 +317,12 @@ actor CameraCopySink: CameraFrameSink {
     {
       workspace = try CameraReconstructionWorkspace(descriptor: frame.metadata.descriptor)
     }
-    try workspace!.copy(frame)  // No Vision, body evidence or image rendering.
+    try workspace!.copy(frame, metrics: metrics)  // No Vision, body evidence or image rendering.
   }
-  func reset() { workspace = nil }
+  func reset() {
+    workspace = nil
+    metrics?.workspace(bytes: 0)
+  }
 }
 nonisolated private final class CameraReconstructionWorkspace {
   let width: Int, height: Int
@@ -318,7 +342,7 @@ nonisolated private final class CameraReconstructionWorkspace {
     else { throw CameraFrameError.allocation }
     pool = result
   }
-  func copy(_ frame: CameraSourceFrame) throws {
+  func copy(_ frame: CameraSourceFrame, metrics: CameraCaptureMetrics?) throws {
     var value: CVPixelBuffer?
     let threshold = [kCVPixelBufferPoolAllocationThresholdKey as String: 1] as CFDictionary
     guard
@@ -330,6 +354,7 @@ nonisolated private final class CameraReconstructionWorkspace {
       width: width, height: height,
       bytesPerRow: CVPixelBufferGetBytesPerRow(value), pixelFormat: kCVPixelFormatType_32BGRA,
       maximumBytes: 4 * 1024 * 1024)
+    metrics?.workspace(bytes: d.byteCount)
     guard CVPixelBufferLockBaseAddress(value, []) == kCVReturnSuccess else {
       throw CameraFrameError.lock
     }

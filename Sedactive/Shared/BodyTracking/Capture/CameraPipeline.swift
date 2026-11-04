@@ -176,7 +176,7 @@ protocol CameraDriving: Actor {
   func resume(context: CameraSourceContext) async throws -> CameraSourceReadiness
 }
 
-/// The sole capture lifecycle facade. No view owns a camera. A2 wiring/diagnostics are not installed.
+/// The sole capture lifecycle facade. No view owns a camera. DEBUG diagnostics borrow this retained instance.
 @MainActor final class CameraPipeline {
   let frames: FrameStore
   private let permission: any CameraPermissionChecking
@@ -201,12 +201,13 @@ protocol CameraDriving: Actor {
   }
   init(
     permission: any CameraPermissionChecking = SystemCameraPermission(),
-    driver: any CameraDriving = AVCameraDriver(), sink: any CameraFrameSink = CameraCopySink()
+    driver: any CameraDriving = AVCameraDriver(), sink: (any CameraFrameSink)? = nil
   ) {
     self.permission = permission
     self.driver = driver
-    self.sink = sink
-    frames = FrameStore()
+    let store = FrameStore()
+    frames = store
+    self.sink = sink ?? CameraCopySink(metrics: store.metrics)
   }
   deinit {
     operation?.cancel()
@@ -219,6 +220,7 @@ protocol CameraDriving: Actor {
       Task { await native.stop(context: context) }
     }
   }
+  func permissionStatus() async -> CameraPermission { await permission.status() }
   func observe(_ callback: @escaping @MainActor (CameraPipelineState) -> Void) throws -> UUID {
     guard !notifying, observer == nil else { throw CameraFailure.operationConflict }
     let token = UUID()
@@ -327,8 +329,16 @@ protocol CameraDriving: Actor {
         do {
           if let lease = try store.acquire(current) {
             do {
-              if store.isCurrent(current) { try await sink.consume(lease.frame) }
-            } catch { events.emit(.failure(.processingFailure)) }
+              if store.isCurrent(current) {
+                let started = CameraHostClock.now()
+                try await sink.consume(lease.frame)
+                store.metrics.completed(
+                  lease.frame, startedAt: started, completedAt: CameraHostClock.now())
+              }
+            } catch {
+              store.metrics.rejected(current)
+              events.emit(.failure(.processingFailure))
+            }
             store.complete(lease)
           }
         } catch CameraFrameError.staleContext {
@@ -441,6 +451,8 @@ nonisolated final class CameraSampleDelegate: NSObject, AVCaptureVideoDataOutput
     _ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
     from connection: AVCaptureConnection
   ) {
+    let enteredAt = CameraHostClock.now()
+    defer { store.metrics.callback(context, seconds: CameraHostClock.now() - enteredAt) }
     do {
       let id = try store.nextIdentity(context)
       let capturedAt = try CameraSourceTime.normalize(
@@ -458,12 +470,11 @@ nonisolated final class CameraSampleDelegate: NSObject, AVCaptureVideoDataOutput
         width: CVPixelBufferGetWidth(pixel),
         height: CVPixelBufferGetHeight(pixel), bytesPerRow: CVPixelBufferGetBytesPerRow(pixel),
         pixelFormat: CVPixelBufferGetPixelFormatType(pixel), maximumBytes: store.maximumFrameBytes)
-      try store.copy(
-        pixel,
-        metadata: CameraFrameMetadata(
-          context: context, frameID: id,
-          capturedAt: capturedAt, descriptor: descriptor, rotationAngle: expected.rotationAngle,
-          mirrored: false))
+      let metadata = CameraFrameMetadata(
+        context: context, frameID: id, capturedAt: capturedAt,
+        descriptor: descriptor, rotationAngle: expected.rotationAngle, mirrored: false)
+      store.metrics.delivered(metadata)
+      try store.copy(pixel, metadata: metadata)
     } catch CameraFrameError.capacity { /* Expected bounded backpressure; source stays running. */
     } catch CameraFrameError.staleContext { /* Old callbacks cannot revive another epoch. */
     } catch let error as CameraFailure { events.emit(.failure(error)) } catch {
@@ -525,6 +536,11 @@ actor AVCameraDriver: CameraDriving {
       guard let device = devices.first(where: { $0.uniqueID == selected.id }) else {
         throw CameraFailure.cameraUnavailable
       }
+      frames.metrics.configuration(
+        context,
+        description:
+          "\(device.localizedName) / \(device.deviceType.rawValue); native \(format.width)x\(format.height), range \(format.minimumFPS)...\(format.maximumFPS) FPS; Center Stage supported \(format.centerStageSupported), active \(device.isCenterStageActive); requested BGRA 1280x720 @30"
+      )
       let input = try AVCaptureDeviceInput(device: device)
       let video = AVCaptureVideoDataOutput()
       session.beginConfiguration()
