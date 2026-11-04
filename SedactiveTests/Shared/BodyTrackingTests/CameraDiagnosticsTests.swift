@@ -106,11 +106,15 @@ nonisolated struct CameraDiagnosticsTests {
       clock.time = 12
       await model.stopAndExport()
       #expect(model.elapsedSeconds == 2)
-      let frozenDetails = model.details
+      let frozenShutdown = model.details.components(separatedBy: "\n").first {
+        $0.contains("awaited shutdown:")
+      }
       clock.time = 50
       await model.stopAndExport()
       #expect(model.elapsedSeconds == 2)
-      #expect(model.details == frozenDetails)
+      #expect(
+        model.details.components(separatedBy: "\n").first { $0.contains("awaited shutdown:") }
+          == frozenShutdown)
       #expect(await driver.stops == 1)
       await driver.release()
     }

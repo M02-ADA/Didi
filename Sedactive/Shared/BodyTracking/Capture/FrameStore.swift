@@ -139,6 +139,9 @@ nonisolated final class FrameStore: Sendable {
   }
   let maximumFrameBytes: Int
   let metrics: CameraCaptureMetrics
+  #if DEBUG
+    let preview: CameraDiagnosticPreview
+  #endif
   private let budget: CameraSourceBudget
   private let state = Mutex(State())
   init(maximumFrameBytes: Int = 4 * 1024 * 1024, maximumRetainedBytes: Int = 12 * 1024 * 1024) {
@@ -146,6 +149,9 @@ nonisolated final class FrameStore: Sendable {
     self.maximumFrameBytes = maximumFrameBytes
     let metrics = CameraCaptureMetrics()
     self.metrics = metrics
+    #if DEBUG
+      preview = CameraDiagnosticPreview(onBytesChanged: { metrics.previewBytes($0) })
+    #endif
     budget = CameraSourceBudget(maximumBytes: maximumRetainedBytes, metrics: metrics)
   }
   var usage: CameraSourceUsage { budget.usage }
@@ -158,6 +164,9 @@ nonisolated final class FrameStore: Sendable {
       $0.pending = nil
       $0.context = context
       $0.admitting = true
+      #if DEBUG
+        preview.updateContext(context)
+      #endif
       $0.sequence = 0
       $0.lastOffered = nil
       $0.diagnostics = CameraFrameDiagnostics()
@@ -171,6 +180,9 @@ nonisolated final class FrameStore: Sendable {
       guard $0.context == context else { return }
       $0.context = nil
       $0.admitting = false
+      #if DEBUG
+        preview.invalidate(context)
+      #endif
       $0.pending = nil
       $0.wake?.finish()
       $0.wake = nil
@@ -180,11 +192,21 @@ nonisolated final class FrameStore: Sendable {
     state.withLock {
       guard $0.context == context else { return }
       $0.admitting = false
+      #if DEBUG
+        preview.invalidate(context)
+      #endif
       $0.pending = nil
     }
   }
   func resume(_ context: CameraSourceContext) {
-    state.withLock { if $0.context == context { $0.admitting = true } }
+    state.withLock {
+      if $0.context == context {
+        $0.admitting = true
+        #if DEBUG
+          preview.updateContext(context)
+        #endif
+      }
+    }
   }
   func containsContext(_ context: CameraSourceContext) -> Bool {
     state.withLock { $0.context == context }
@@ -267,6 +289,14 @@ nonisolated final class FrameStore: Sendable {
       metrics.admitted(metadata.context)
       $0.wake?.yield(())
     }
+    #if DEBUG
+      // Primary work is already published. Optional copy stays within this source scope.
+      preview.offer(metadata: metadata) {
+        var clone = Data()
+        frame.withBytes { clone = Data(bytes: $0.baseAddress!, count: $0.count) }
+        return clone
+      }
+    #endif
   }
   func acquire(_ context: CameraSourceContext) throws -> CameraProcessingLease? {
     try state.withLock {

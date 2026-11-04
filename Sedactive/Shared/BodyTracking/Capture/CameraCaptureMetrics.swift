@@ -57,6 +57,16 @@ nonisolated final class CameraCaptureMetrics: Sendable {
       lastCompletion: Double?
     var workspaceBytes = 0, peakWorkspaceBytes = 0
     var sourceBytes = 0, peakOwnedPixelBytes = 0
+    #if DEBUG
+      var previewBytes = 0
+    #endif
+    var ownedBytes: Int {
+      var count = sourceBytes + workspaceBytes
+      #if DEBUG
+        count += previewBytes
+      #endif
+      return count
+    }
     var callback = CameraLatencyWindow(), copy = CameraLatencyWindow(), wait = CameraLatencyWindow()
     var processing = CameraLatencyWindow(), endToEnd = CameraLatencyWindow()
   }
@@ -66,11 +76,17 @@ nonisolated final class CameraCaptureMetrics: Sendable {
       // Old workspace must have quiesced before pipeline restart; never hide live resource usage.
       let retained = $0.workspaceBytes
       let raw = $0.sourceBytes
+      #if DEBUG
+        let preview = $0.previewBytes
+      #endif
       $0 = State(context: context)
       $0.workspaceBytes = retained
       $0.sourceBytes = raw
       $0.peakWorkspaceBytes = retained
-      $0.peakOwnedPixelBytes = retained + raw
+      #if DEBUG
+        $0.previewBytes = preview
+      #endif
+      $0.peakOwnedPixelBytes = $0.ownedBytes
     }
   }
   func configuration(_ context: CameraSourceContext, description: String) {
@@ -111,16 +127,24 @@ nonisolated final class CameraCaptureMetrics: Sendable {
   func sourceBytes(_ bytes: Int) {
     state.withLock {
       $0.sourceBytes = bytes
-      $0.peakOwnedPixelBytes = max($0.peakOwnedPixelBytes, bytes + $0.workspaceBytes)
+      $0.peakOwnedPixelBytes = max($0.peakOwnedPixelBytes, $0.ownedBytes)
     }
   }
   func workspace(bytes: Int) {
     state.withLock {
       $0.workspaceBytes = bytes
       $0.peakWorkspaceBytes = max(bytes, $0.peakWorkspaceBytes)
-      $0.peakOwnedPixelBytes = max($0.peakOwnedPixelBytes, bytes + $0.sourceBytes)
+      $0.peakOwnedPixelBytes = max($0.peakOwnedPixelBytes, $0.ownedBytes)
     }
   }
+  #if DEBUG
+    func previewBytes(_ bytes: Int) {
+      state.withLock {
+        $0.previewBytes = bytes
+        $0.peakOwnedPixelBytes = max($0.peakOwnedPixelBytes, $0.ownedBytes)
+      }
+    }
+  #endif
   var snapshot: CameraCaptureStatistics {
     let value = state.withLock { $0 }
     func rate(_ count: UInt64, _ first: Double?, _ last: Double?) -> Double? {
@@ -136,7 +160,7 @@ nonisolated final class CameraCaptureMetrics: Sendable {
       sourceSpanSeconds: value.firstCapture.flatMap { first in value.lastCapture.map { $0 - first }
       },
       workspaceBytes: value.workspaceBytes, peakWorkspaceBytes: value.peakWorkspaceBytes,
-      ownedPixelBytes: value.sourceBytes + value.workspaceBytes,
+      ownedPixelBytes: value.ownedBytes,
       peakOwnedPixelBytes: value.peakOwnedPixelBytes,
       callback: value.callback.summary, copy: value.copy.summary, wait: value.wait.summary,
       processing: value.processing.summary, endToEnd: value.endToEnd.summary)

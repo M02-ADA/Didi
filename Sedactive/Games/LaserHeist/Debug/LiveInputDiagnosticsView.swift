@@ -19,6 +19,14 @@
     private let now: @MainActor () -> Double
     private var observer: UUID?
     private var history: [String] = []
+    @ObservationIgnored private var previewWorker: Task<Void, Never>?
+    private var previewVisible = false
+    private(set) var previewEnabled = ProcessInfo.processInfo.arguments.contains(
+      "--camera-preview-on")
+    private(set) var previewFrame: CameraPreviewFrame?
+    @ObservationIgnored private var rssFirst: UInt64?
+    @ObservationIgnored private var rssLast: UInt64?
+    @ObservationIgnored private var rssPeak: UInt64?
     private var startedAt: Double?
     private var endedAt: Double?
     var elapsedSeconds: Double? { startedAt.map { (endedAt ?? now()) - $0 } }
@@ -29,6 +37,8 @@
     init(camera: CameraPipeline, now: @escaping @MainActor () -> Double = CameraHostClock.now) {
       self.camera = camera
       self.now = now
+      let preview = camera.frames.preview
+      previewWorker = Task { @concurrent in await preview.run() }
       observer = try? camera.observe { [weak self] state in
         guard let self else { return }
         if let negotiated = state.negotiated { self.negotiated = negotiated }
@@ -37,8 +47,25 @@
         if self.history.count == 32 { self.history.removeFirst() }
         self.history.append(text)
         self.message = Self.explain(state.status)
+        if case .running = state.status {} else { self.previewFrame = nil }
         if case .failed = state.status { self.endedAt = self.now() }
       }
+    }
+    deinit { previewWorker?.cancel() }
+    func setPreviewVisible(_ visible: Bool) {
+      previewVisible = visible
+      camera.frames.preview.setEnabled(visible && previewEnabled)
+      if !visible { previewFrame = nil }
+    }
+    func setPreviewEnabled(_ enabled: Bool) {
+      previewEnabled = enabled
+      camera.frames.preview.setEnabled(previewVisible && enabled)
+      if !enabled { previewFrame = nil }
+    }
+    func refreshPreview() {
+      let preview = camera.frames.preview
+      if let latest = preview.takeLatest(at: now()) { previewFrame = latest }
+      if let frame = previewFrame, !preview.isCurrent(frame, at: now()) { previewFrame = nil }
     }
     static func explain(_ status: CameraPipelineStatus) -> String {
       switch status {
@@ -77,6 +104,9 @@
       controlToken = token
       negotiated = nil
       history.removeAll(keepingCapacity: true)
+      rssFirst = nil
+      rssLast = nil
+      rssPeak = nil
       startedAt = now()
       endedAt = nil
       startDuration = nil
@@ -135,6 +165,11 @@
       export()
     }
     func refresh() async {
+      if let rss = CameraPreviewProcessMemory.residentBytes() {
+        rssFirst = rssFirst ?? rss
+        rssLast = rss
+        rssPeak = max(rssPeak ?? rss, rss)
+      }
       permission = String(describing: await camera.permissionStatus())
       let statistics = camera.frames.metrics.snapshot
       let usage = camera.frames.usage
@@ -165,7 +200,7 @@
         "Raw owners current/peak: \(usage.frames)/\(usage.peakFrames); raw bytes current/peak: \(usage.bytes)/\(usage.peakBytes) (cap 12582912)",
         "Workspace bytes current/peak: \(statistics.workspaceBytes)/\(statistics.peakWorkspaceBytes) (cap 4194304)",
         "Owned pixel bytes current/peak: \(statistics.ownedPixelBytes)/\(statistics.peakOwnedPixelBytes). This excludes framework/allocator memory; not process RSS.",
-        "Thermal state: \(ProcessInfo.processInfo.thermalState.rawValue); CPU/RSS not measured by this screen.",
+        "Thermal state: \(ProcessInfo.processInfo.thermalState.rawValue); CPU utilization not measured; process RSS sampled separately below.",
         latency("Callback total", statistics.callback),
         latency("Independent Data copy", statistics.copy),
         latency("Copy-complete → worker wait", statistics.wait),
@@ -194,8 +229,26 @@
           "Center Stage active \(negotiated.centerStageActive); stabilization \(negotiated.stabilizationEnabled); no mirrored source"
         )
       }
+      let preview = camera.frames.preview
+      let ps = preview.statistics
+      let pu = preview.budget.usage
       lines.append(
-        "Preview deferred: no session crosses the actor boundary. Proposed display mirror exactly once; Kevin review pending."
+        "Preview enabled/visible: \(previewEnabled)/\(previewVisible); admitted/converted/presented: \(ps.admitted)/\(ps.converted)/\(ps.presented); presented FPS: \(number(ps.displayFPS))"
+      )
+      lines.append(
+        "Preview busy/cadence/budget/context/stale/failure drops: \(ps.busyDrops)/\(ps.cadenceDrops)/\(ps.budgetDrops)/\(ps.contextDrops)/\(ps.staleDrops)/\(ps.failures)"
+      )
+      lines.append(
+        "Preview provider-backed bytes current/peak: \(pu.bytes)/\(pu.peakBytes), backing count: \(pu.backings), cap \(preview.configuration.maximumBytes)"
+      )
+      lines.append(
+        "Process RSS bytes first/last/peak: \(rssFirst.map(String.init) ?? "unavailable")/\(rssLast.map(String.init) ?? "unavailable")/\(rssPeak.map(String.init) ?? "unavailable"). Sampled at numeric refresh; includes framework/renderer memory."
+      )
+      lines.append(latency("Preview independent copy", ps.copying.summary))
+      lines.append(latency("Preview conversion (lazy image creation)", ps.conversion.summary))
+      lines.append(latency("Preview age at MainActor acceptance", ps.age.summary))
+      lines.append(
+        "Preview is mirrored exactly once; full source canvas, no capture rotation reapplied. Optical/device review still required. Core Graphics decoding/display costs are outside conversion timing."
       )
       lines.append(
         "Recent lifecycle transitions (host seconds):\n" + history.joined(separator: "\n"))
@@ -220,6 +273,33 @@
     }
   }
 
+  private struct CameraDiagnosticPreviewPanel: View {
+    let frame: CameraPreviewFrame?
+    let enabled: Bool
+    var body: some View {
+      GeometryReader { geometry in
+        ZStack {
+          Color.black
+          if let frame {
+            let d = frame.metadata.descriptor
+            let rect = CameraPreviewLayout.rect(
+              image: CGSize(width: d.width, height: d.height), in: geometry.size)
+            Image(decorative: frame.image, scale: 1, orientation: .up)
+              .resizable().interpolation(.medium)
+              .frame(width: rect.width, height: rect.height)
+              .scaleEffect(x: -1, y: 1)
+              .position(x: rect.midX, y: rect.midY)
+            Rectangle().stroke(.yellow, lineWidth: 1)
+              .frame(width: rect.width, height: rect.height).position(x: rect.midX, y: rect.midY)
+          } else {
+            Text(enabled ? "No current compatible preview" : "Preview disabled")
+              .foregroundStyle(.white)
+          }
+        }.clipped().transaction { $0.animation = nil }
+      }
+    }
+  }
+
   struct LiveInputDiagnosticsView: View {
     let model: LiveInputDiagnosticsModel
     @Environment(\.dismiss) private var dismiss
@@ -236,12 +316,29 @@
               Button("Observe 30 seconds") { model.start(observeFor30Seconds: true) }
                 .disabled(model.runningObservation)
             }.buttonStyle(.bordered)
+            Toggle(
+              "DEBUG preview (max 5 Hz)",
+              isOn: Binding(get: { model.previewEnabled }, set: { model.setPreviewEnabled($0) }))
+            CameraDiagnosticPreviewPanel(frame: model.previewFrame, enabled: model.previewEnabled)
+              .frame(height: 260)
+            if let frame = model.previewFrame {
+              Text(
+                "Preview frame \(frame.metadata.frameID) • geometry \(frame.metadata.context.geometryRevision) • \(frame.metadata.descriptor.width)×\(frame.metadata.descriptor.height)"
+              )
+              .font(.caption.monospacedDigit())
+            }
             Text(model.details).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+            Button("Save numeric snapshot") {
+              Task {
+                await model.refresh()
+                model.export()
+              }
+            }
             if model.lastExport != nil {
               Text("Numeric report saved in app Documents/LH13A2-observation.txt")
             }
             Text(
-              "No visual preview. Source orientation and display mirroring need Kevin-reviewed validation."
+              "DEBUG preview only. Physical orientation/mirroring still requires Edo and Kevin review."
             )
           }.padding()
         }
@@ -257,12 +354,17 @@
           }
         }
         .task {
+          model.setPreviewVisible(true)
           model.runExplicitLaunchExperimentIfRequested()
+          var refreshCount = 0
           while !Task.isCancelled {
-            await model.refresh()
-            do { try await Task.sleep(for: .milliseconds(500)) } catch { break }
+            model.refreshPreview()
+            if refreshCount % 5 == 0 { await model.refresh() }
+            refreshCount += 1
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { break }
           }
         }
+        .onDisappear { model.setPreviewVisible(false) }
         .onChange(of: phase) { _, newPhase in
           // Debug capture policy only. Gameplay recovery remains Jevon's responsibility.
           if newPhase == .background {
