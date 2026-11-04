@@ -80,18 +80,20 @@ final class GameSessionCoordinator {
             vaultCursor += 1
         }
         try clock.advance(to: time)
+        if time >= script.trackedCoverage.lowerBound {
+            for player in PlayerID.allCases {
+                try game.recordTrackedInterval(playerID: player, from: script.trackedCoverage.lowerBound,
+                    to: min(time, script.trackedCoverage.upperBound), observedAt: time)
+            }
+        }
         try game.advance(to: clock.gameTime)
         events.append(contentsOf: game.drainEvents())
         self.clock = clock
         self.game = game
         self.iterator = iterator
         refresh(at: time)
-        if let outcome = game.roundOutcome {
-            summary = RoundSummary(sessionGeneration: script.input.configuration.sessionGeneration, outcome: outcome,
-                gameDuration: game.gameTime, activityDuration: game.activityProgress, remainingTeamHealth: state?.teamHealth ?? 5,
-                teamScore: state?.teamScore ?? 0,
-                targets: PlayerID.allCases.compactMap { game.playerStats[$0] },
-                diamondsCollected: 0, vaultsOpened: game.missionProgress, withdrawnAttempts: 0)
+        if let final = game.summary {
+            if summary == nil { summary = final }
             phase = .finished
             refresh(at: time)
             await provider.stop()
@@ -102,6 +104,8 @@ final class GameSessionCoordinator {
         phase = .finished
         game?.exit(outcome: reason)
         if let more = game?.drainEvents() { events.append(contentsOf: more) }
+        if summary == nil { summary = game?.summary }
+        refresh(at: game?.gameTime ?? 0)
         await provider?.stop()
         iterator = nil
     }
@@ -118,7 +122,9 @@ final class GameSessionCoordinator {
             var verdicts: [PlayerID: Judgement] = [:]
             for target in encounter.targets {
                 let key = LaserTargetKey(encounterID: encounter.id, attemptID: encounter.attemptID, playerID: target.playerID)
-                verdicts[target.playerID] = game.judgement(for: key) ?? .pending(.awaitingFinalization)
+                verdicts[target.playerID] = game.judgement(for: key)
+                    ?? state?.encounters.first(where: { $0.encounter.id == encounter.id })?.judgements[target.playerID]
+                    ?? .pending(.awaitingFinalization)
             }
             let finalized = verdicts.values.allSatisfy { if case .pending = $0 { false } else { true } }
             if finalized, committed.insert(encounter.id).inserted {

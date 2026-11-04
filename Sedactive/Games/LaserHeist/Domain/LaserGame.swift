@@ -74,6 +74,14 @@ nonisolated struct LaserGame: Sendable {
     private var eventSequence: UInt64 = 0
     private var vaultDuration = 5.0
     private var bonusDuration = 15.0
+    private(set) var summary: RoundSummary?
+    private var primaryPlayerID: PlayerID?
+    private var cueLeads: [PlayerID: Double] = [:]
+    private var avoidanceCounts: [PlayerID: [LaserMove: Int]] = [:]
+    private var coopResults: [LaserCoopRoundResult] = []
+    private var actionWindows: [LaserTargetKey: (start: Double, end: Double)] = [:]
+    private var trackedCoverage: [PlayerID: [ClosedRange<Double>]] = [:]
+    private var withdrawnAttemptIDs: Set<UUID> = []
 
     /// Nil margin preserves evidence-only LH-09 usage. Supply round configuration to enable verdicts.
     init(timing: LaserEvidenceTiming, context: BodyInputContext, historyCapacityPerPlayer: Int,
@@ -94,6 +102,10 @@ nonisolated struct LaserGame: Sendable {
         missionTarget = configuration.missionGateTarget
         vaultDuration = configuration.vaultDuration
         bonusDuration = configuration.diamondTimeDuration
+        primaryPlayerID = configuration.primaryPlayerID
+        for player in PlayerID.allCases {
+            cueLeads[player] = configuration.scheduling?.players[player]?.cueLead ?? configuration.actionCueLead
+        }
     }
 
     var historyCount: Int { history.values.reduce(0) { $0 + $1.count } }
@@ -111,6 +123,9 @@ nonisolated struct LaserGame: Sendable {
         for target in encounter.targets {
             let key = LaserTargetKey(encounterID: encounter.id, attemptID: encounter.attemptID, playerID: target.playerID)
             crossings[key] = Crossing(target: target, result: .pending)
+            if let lead = cueLeads[target.playerID] {
+                actionWindows[key] = (max(gameTime, target.warningTime, target.crossingTime - lead), target.crossingTime)
+            }
             let old = playerStats[target.playerID] ?? LaserPlayerTargetCounts(playerID: target.playerID, scheduled: 0, cleared: 0, hit: 0, unavailable: 0)
             playerStats[target.playerID] = LaserPlayerTargetCounts(playerID: target.playerID, scheduled: old.scheduled + 1,
                 cleared: old.cleared, hit: old.hit, unavailable: old.unavailable)
@@ -194,6 +209,35 @@ nonisolated struct LaserGame: Sendable {
         return output
     }
 
+    /// Explicit tracking coverage in active game time; not inferred from pose phase or cached frames.
+    mutating func recordTrackedInterval(playerID: PlayerID, from start: Double, to end: Double, observedAt time: Double) throws {
+        guard roundOutcome == nil && !exited && !blocked else { return }
+        try requireLaserValue([start, end, time].allSatisfy { $0.isFinite && $0 >= 0 }
+                              && start <= end && end <= time, "tracked coverage")
+        trackedCoverage[playerID] = union((trackedCoverage[playerID] ?? []) + [start...end])
+    }
+
+    private func union(_ ranges: [ClosedRange<Double>]) -> [ClosedRange<Double>] {
+        var output: [ClosedRange<Double>] = []
+        for range in ranges.sorted(by: { $0.lowerBound < $1.lowerBound }) {
+            if let last = output.last, range.lowerBound <= last.upperBound {
+                output[output.count - 1] = last.lowerBound...max(last.upperBound, range.upperBound)
+            } else { output.append(range) }
+        }
+        return output
+    }
+
+    private func challengeSeconds(for player: PlayerID, endingAt end: Double) -> Double? {
+        guard cueLeads[player] != nil, let coverage = trackedCoverage[player] else { return nil }
+        let windows = union(actionWindows.filter { $0.key.playerID == player }.values.compactMap { window in
+            let last = min(end, window.end)
+            return last >= window.start ? window.start...last : nil
+        })
+        return windows.reduce(0) { sum, window in
+            sum + coverage.reduce(0) { $0 + max(0, min(window.upperBound, $1.upperBound) - max(window.lowerBound, $1.lowerBound)) }
+        }
+    }
+
     mutating func openVault(id: UUID, at time: Double) throws {
         try advance(to: time)
         try requireLaserValue(!blocked && !exited && roundOutcome == nil && roundPhase == .activity
@@ -223,6 +267,7 @@ nonisolated struct LaserGame: Sendable {
             current.opened = true
             vault = current
             consumedVaults.insert(id)
+            coopResults.append(LaserCoopRoundResult(gateID: id, outcome: .opened, gameTime: time))
             missionProgress = min(missionTarget, missionProgress + 1)
             emit(.coopGateSucceeded(gateID: id, progress: missionProgress), at: time)
             if missionProgress == missionTarget {
@@ -240,8 +285,21 @@ nonisolated struct LaserGame: Sendable {
         moveTime(to: time)
         roundPhase = .ended(outcome)
         emit(.roundEnded(outcome), at: time)
-        for key in Array(crossings.keys) where crossings[key]?.result == .pending { crossings[key]?.result = .withdrawn }
-        history.removeAll()
+        if let vault, !vault.opened {
+            coopResults.append(LaserCoopRoundResult(gateID: vault.id,
+                outcome: outcome == .vaultFailed ? .timedOut : .interrupted, gameTime: time))
+        }
+        withdraw()
+        summary = RoundSummary(sessionGeneration: context.sessionGeneration, outcome: outcome,
+            gameDuration: gameTime, activityDuration: activityProgress, remainingTeamHealth: teamHealth,
+            teamScore: teamScore, targets: PlayerID.allCases.compactMap { playerStats[$0] },
+            diamondsCollected: 0, vaultsOpened: missionProgress, withdrawnAttempts: withdrawnAttemptIDs.count,
+            playerResults: PlayerID.allCases.map { player in
+                LaserPlayerRoundResult(playerID: player, successfulHighAvoidances: avoidanceCounts[player]?[.duck] ?? 0,
+                    successfulLowAvoidances: avoidanceCounts[player]?[.jump] ?? 0,
+                    validatedJumpCycles: nil, movementChallengeSeconds: challengeSeconds(for: player, endingAt: time))
+            }, coopResults: coopResults, missionProgress: missionProgress, missionTarget: missionTarget,
+            primaryPlayerID: primaryPlayerID)
     }
 
     private mutating func emit(_ kind: LaserGameEventKind, at time: Double) {
@@ -258,6 +316,8 @@ nonisolated struct LaserGame: Sendable {
 
     private mutating func withdraw() {
         for key in Array(crossings.keys) where crossings[key]?.result == .pending {
+            withdrawnAttemptIDs.insert(key.attemptID)
+            if let window = actionWindows[key] { actionWindows[key] = (window.start, min(window.end, gameTime)) }
             crossings[key]?.result = .withdrawn
         }
         history.removeAll()
@@ -308,7 +368,11 @@ nonisolated struct LaserGame: Sendable {
             var clear = 0, hit = 0, unavailable = 0
             emit(.targetJudged(encounterID: key.encounterID, playerID: player, judgement: value), at: time)
             switch value {
-            case .clear: clear = 1; emit(.playerCleared(encounterID: key.encounterID, playerID: player), at: time)
+            case .clear:
+                clear = 1
+                let move = pair.first { $0.key.playerID == player }!.value.target.requiredMove
+                avoidanceCounts[player, default: [:]][move, default: 0] += 1
+                emit(.playerCleared(encounterID: key.encounterID, playerID: player), at: time)
             case .hit: hit = 1; emit(.playerHit(encounterID: key.encounterID, playerID: player), at: time)
             case .unavailable: unavailable = 1
             case .pending: break

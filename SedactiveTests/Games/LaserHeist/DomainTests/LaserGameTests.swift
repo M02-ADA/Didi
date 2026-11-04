@@ -162,6 +162,10 @@ nonisolated struct LaserGameTests {
         }
         #expect(game.teamHealth == 0)
         #expect(game.roundOutcome == .healthDepleted)
+        #expect(game.summary?.outcome == .healthDepleted)
+        #expect(game.summary?.remainingTeamHealth == game.teamHealth)
+        #expect(game.summary?.teamScore == game.teamScore)
+        #expect(game.summary?.gameDuration == game.gameTime)
         #expect(game.teamScore == 0)
         let events = game.drainEvents()
         #expect(events.compactMap { if case .teamDamaged(let amount, _) = $0.kind { amount } else { nil } } == [2,2,1])

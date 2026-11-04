@@ -28,6 +28,12 @@ import Testing
             #expect(session.summary?.outcome == .completed)
             #expect(session.summary?.vaultsOpened == 1)
             #expect(session.state?.missionProgress == 1)
+            #expect(session.summary?.remainingTeamHealth == session.state?.teamHealth)
+            #expect(session.summary?.teamScore == session.state?.teamScore)
+            #expect(session.summary?.missionProgress == session.state?.missionProgress)
+            #expect(session.summary?.playerResults.map(\.successfulHighAvoidances) == [1,2])
+            #expect(session.summary?.playerResults.map(\.successfulLowAvoidances) == [0,1])
+            #expect(session.summary?.playerResults.allSatisfy { $0.validatedJumpCycles == nil } == true)
             if let previous { #expect(session.results == previous) }
             if let previousSummary { #expect(session.summary == previousSummary) }
             if let previousEvents { #expect(session.events == previousEvents) }
@@ -55,7 +61,7 @@ import Testing
         await session.stop()
         try await session.advance(to: 30)
         #expect(session.results.isEmpty)
-        #expect(session.summary == nil)
+        #expect(session.summary?.outcome == .aborted)
     }
 
     @Test func replayExposesCooperationAndFreezesProgressUntilBothSidesFinish() async throws {
@@ -81,6 +87,50 @@ import Testing
         #expect(session.state?.playerStats[.player1]?.cleared == 1)
         #expect(session.state?.playerStats[.player2]?.cleared == 3)
         #expect(session.events.filter { if case .coopGateSucceeded = $0.kind { true } else { false } }.count == 1)
+        #expect(session.events.filter { if case .roundEnded = $0.kind { true } else { false } }.count == 1)
+    }
+
+    @Test func earlyExitProducesOneSummaryAndRetryStartsFreshGeneration() async throws {
+        let original = try script()
+        let first = GameSessionCoordinator(script: original)
+        try await first.start()
+        try await first.advance(to: 3.5)
+        await first.stop()
+        let snapshot = try #require(first.summary)
+        #expect(snapshot.outcome == .aborted)
+        #expect(snapshot.teamScore == 0)
+        #expect(snapshot.playerResults.allSatisfy { $0.validatedJumpCycles == nil })
+        await first.stop(reason: .technicalInterruption)
+        try await first.advance(to: 100)
+        #expect(first.summary == snapshot)
+        #expect(first.events.filter { if case .roundEnded = $0.kind { true } else { false } }.count == 1)
+        let generation = UUID(uuidString: "17100000-0000-4000-8000-000000000001")!
+        let next = try original.freshRound(generation: generation)
+        #expect(next.input.configuration.sessionGeneration != original.input.configuration.sessionGeneration)
+        #expect(next.input.configuration.calibrations.values.allSatisfy { $0.sessionGeneration == generation })
+        #expect(next.input.records.allSatisfy { $0.snapshot?.sessionGeneration == generation })
+        let retry = GameSessionCoordinator(script: next)
+        try await retry.start()
+        #expect(retry.summary == nil && retry.results.isEmpty && retry.events.isEmpty)
+        #expect(retry.state?.gameTime == 0 && retry.state?.teamScore == 0 && retry.state?.teamHealth == 5)
+        #expect(retry.state?.missionProgress == 0)
+        try await retry.advance(to: 100)
+        #expect(retry.summary?.sessionGeneration == generation)
+        #expect(retry.summary?.playerResults.map(\.successfulLowAvoidances) == [0,1])
+        #expect(retry.summary?.playerResults.allSatisfy { $0.validatedJumpCycles == nil } == true)
+        #expect(first.summary == snapshot)
+    }
+
+    @Test func technicalFailureAlsoProducesExactlyOneFrozenSummary() async throws {
+        let session = GameSessionCoordinator(script: try script())
+        try await session.start()
+        try await session.advance(to: 3.5)
+        await session.fail(LaserDataError.invalidValue("synthetic interruption"))
+        let snapshot = try #require(session.summary)
+        #expect(snapshot.outcome == .technicalInterruption)
+        #expect(snapshot.teamScore == 0 && snapshot.remainingTeamHealth == 5)
+        await session.stop()
+        #expect(session.summary == snapshot)
         #expect(session.events.filter { if case .roundEnded = $0.kind { true } else { false } }.count == 1)
     }
 }
