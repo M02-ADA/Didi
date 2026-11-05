@@ -111,6 +111,10 @@ final class LaserScene {
     /// Live player cutouts; `nil` until `attachLiveCutouts` (pictograms show).
     private(set) var liveCutouts: LiveCutoutPresenter?
     private(set) var cutoutStore: CutoutTextureStore?
+    #if DEBUG
+    /// Avatar experiment (Debug `-robotDemo`, `-robotReplay`): 3D robots in place of the pictograms.
+    var robotAvatars: RobotAvatarLayer?
+    #endif
     /// Wall mount x positions, from the authored `LaserMount_*` anchors when available.
     private var laserSpan: ClosedRange<Float>
 

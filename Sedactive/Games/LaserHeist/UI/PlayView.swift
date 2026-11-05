@@ -12,10 +12,36 @@ import RealityKit
 /// not the device camera; live input arrives through Edo's pipeline instead.
 struct PlayView: View {
     @State private var generation = UUID()
+    #if DEBUG
+    /// Debug-only Live Avatar Lab (front camera → rear-view 3D robot). While it is
+    /// open the replay round is torn down, and the lab covers the whole app,
+    /// so no other camera or round runs at the same time.
+    @State private var labOpen = ProcessInfo.processInfo.arguments.contains("-liveAvatarLab")
+    #else
+    private let labOpen = false
+    #endif
 
     var body: some View {
-        ReplayRoundView(generation: generation, retry: { generation = UUID() })
-            .id(generation)
+        Group {
+            if labOpen {
+                Color.black.ignoresSafeArea()
+            } else {
+                ReplayRoundView(generation: generation, retry: { generation = UUID() })
+                    .id(generation)
+            }
+        }
+        #if DEBUG
+        .overlay(alignment: .bottomLeading) {
+            if !labOpen {
+                Button("Live Avatar Lab") { labOpen = true }
+                    .buttonStyle(.borderedProminent)
+                    .padding()
+            }
+        }
+        .fullScreenCover(isPresented: $labOpen) {
+            LiveAvatarLabView { labOpen = false }
+        }
+        #endif
     }
 }
 
@@ -34,6 +60,8 @@ private struct ReplayRoundView: View {
     @State private var environmentPreview = EnvironmentPreview()
     @State private var cutoutFeed: SyntheticCutoutFeed?
     @State private var directorPreview = DirectorLaserPreview()
+    @State private var robotDemo = RobotDemoDriver()
+    @State private var robotDemoActive = false
     #endif
 
     var body: some View {
@@ -84,6 +112,22 @@ private struct ReplayRoundView: View {
                 directorPreview.start(on: content, scene: scene)
                 return
             }
+            // 3D robot demo: `-robotDemo [scenario]` drives both robots with SYNTHETIC,
+            // time-varying body and joint data (no camera, no session, no lasers); see `RobotDemo`.
+            if let only = RobotDemoDriver.requested() {
+                scene.isLaserVisible = false
+                if let input = try? LaserReplayScript.load().input, let template = await RobotAvatarLayer.loadTemplate() {
+                    let robots = RobotAvatarLayer(scene: scene, calibrations: input.configuration.calibrations,
+                                                  layout: input.configuration.playerPlaneLayout, template: template)
+                    scene.robotAvatars = robots
+                    robotDemo.start(on: content, sequence: RobotDemoSequence(
+                        configuration: input.configuration, cameraGeometryRevision: input.cameraGeometryRevision, only: only)) {
+                        robots.apply($0, joints: $1)
+                    }
+                    robotDemoActive = true
+                }
+                return
+            }
             if wantsCutoutPreview || arguments.contains("-laserArtworkPreview") || arguments.contains(where: {
                 $0 == "-laserGateState" || $0.hasPrefix("-laserPreview")
             }) {
@@ -94,6 +138,14 @@ private struct ReplayRoundView: View {
             do {
                 guard !Task.isCancelled else { return }
                 let script = try LaserReplayScript.load().freshRound(generation: generation)
+                #if DEBUG
+                // 3D robot in the replay round: `-robotReplay` stands the robots in place of the
+                // pictograms, driven by the replay's body snapshots through the gameplay presenter.
+                if arguments.contains("-robotReplay"), let template = await RobotAvatarLayer.loadTemplate() {
+                    scene.robotAvatars = RobotAvatarLayer(scene: scene, calibrations: script.input.configuration.calibrations,
+                                                          layout: script.input.configuration.playerPlaneLayout, template: template)
+                }
+                #endif
                 let replay = GameSessionCoordinator(script: script)
                 session = replay
                 try await replay.start()
@@ -110,6 +162,20 @@ private struct ReplayRoundView: View {
             if let session, session.summary == nil { ReplaySliceHUD(session: session) }
             if let startupError { Text("Replay could not start: \(startupError)").padding().background(.black).foregroundStyle(.white) }
             #if DEBUG
+            if robotDemoActive {
+                TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("SYNTHETIC POSE DEMO · not live tracking")
+                            .font(.caption.monospaced().bold())
+                        Text("\(robotDemo.scenario.rawValue + 1)/\(RobotDemoScenario.allCases.count)  \(robotDemo.scenario.title)")
+                            .font(.callout.bold())
+                    }
+                    .foregroundStyle(.white)
+                    .padding(10)
+                    .background(.black.opacity(0.6), in: .rect(cornerRadius: 8))
+                    .padding()
+                }
+            }
             if cutoutFeed != nil, !ProcessInfo.processInfo.arguments.contains("-hideDebugOverlay") {
                 TimelineView(.periodic(from: .now, by: 0.25)) { _ in
                     Text(cutoutStatus)
@@ -145,6 +211,8 @@ private struct ReplayRoundView: View {
             cutoutFeed = nil
             directorPreview.stop()
             directorPreview = DirectorLaserPreview()
+            robotDemo.stop()
+            scene.robotAvatars?.remove()
             // Preview subscriptions capture their owners weakly; replacing them releases the subscriptions.
             preview = LaserApproachPreview()
             environmentPreview = EnvironmentPreview()

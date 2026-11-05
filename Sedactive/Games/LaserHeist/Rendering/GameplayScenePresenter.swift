@@ -413,6 +413,9 @@ final class GameplayScenePresenter {
     /// Fits each pictogram to the latest body sample and places the Debug body markers.
     private func present(_ snapshot: BodySnapshot) {
         if markers.isEmpty { buildMarkers() }
+        #if DEBUG
+        scene.robotAvatars?.apply(snapshot)
+        #endif
         for (index, player) in PlayerID.allCases.enumerated() {
             guard let geometry = snapshot.players[player]?.geometry else { continue }
             if let crown = geometry.crownY.value, let left = geometry.leftSoleY.value, let right = geometry.rightSoleY.value {
