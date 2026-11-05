@@ -379,6 +379,22 @@ final class LaserScene {
         vaultDoor?.reset()
     }
 
+    /// The door's presented state, or `nil` without door artwork.
+    var vaultDoorState: VaultDoor.State? { vaultDoor?.state }
+
+    /// Fades the door in, e.g. on entering a vault.
+    func revealVaultDoor() {
+        vaultDoor?.reveal()
+    }
+
+    /// Adds a part that moves with the door (vault countdown). Returns whether a door exists.
+    @discardableResult
+    func attachToVaultDoor(_ part: Entity) -> Bool {
+        guard let vaultDoor else { return false }
+        vaultDoor.attach(part)
+        return true
+    }
+
     /// A new diamond in the world, not yet placed; the caller positions its
     /// `root` from game data through the world mapping and removes it when done.
     func makeDiamond() -> Diamond? {

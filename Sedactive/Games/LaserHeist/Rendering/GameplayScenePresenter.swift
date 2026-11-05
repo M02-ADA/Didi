@@ -84,6 +84,8 @@ final class GameplayScenePresenter {
     private var markers: [ModelEntity] = []
     private var bandEdges: [PlayerID: [ModelEntity]] = [:]
     private(set) var diagnostics = Diagnostics()
+    /// The Dual Key Vault's door, countdown and button indicators (LH-18).
+    let vault: VaultPresentation
 
     /// - Parameters:
     ///   - encounters: the round's schedule as known now, used only to estimate
@@ -95,6 +97,7 @@ final class GameplayScenePresenter {
         self.configuration = configuration
         capacity = Self.capacity(for: encounters, configuration: configuration,
                                  approachLead: Self.approachLead(in: scene))
+        vault = VaultPresentation(scene: scene, configuration: configuration)
         debug.name = "gameplay.debug"
         debug.isEnabled = showsDebugMarkers
         scene.isLaserVisible = false
@@ -152,6 +155,7 @@ final class GameplayScenePresenter {
         let time = state.gameTime
         if case .ended = state.phase, endedAt == nil { endedAt = time }
         travel(state: state, to: time)
+        vault.update(state: state, travelDistance: travelDistance)
         updateHazards(state: state, at: time)
         updateCue(state: state, at: time)
         if let snapshot, snapshot.sessionGeneration == state.sessionGeneration { present(snapshot) }
@@ -163,6 +167,7 @@ final class GameplayScenePresenter {
         for key in Array(slots.keys) { release(key) }
         scene.setMoveCue(nil, actionRemaining: nil)
         scene.clearLaserFeedback()
+        vault.stop()
         debug.removeFromParent()
     }
 
@@ -172,6 +177,7 @@ final class GameplayScenePresenter {
         travelledUntil = nil
         anchors = [:]
         scene.setTravelDistance(0)
+        vault.reset()
         judgedAt = [:]
         withdrawnAt = [:]
         endedAt = nil
@@ -205,6 +211,8 @@ final class GameplayScenePresenter {
                 diagnostics.teamEffects += 1
             case .attemptWithdrawn(_, let attemptID):
                 withdrawnAt[attemptID] = withdrawnAt[attemptID] ?? event.gameTime
+            case .coopGateSucceeded(let gateID, _):
+                vault.markSucceeded(gateID)
             case .roundEnded:
                 endedAt = endedAt ?? event.gameTime
             default:

@@ -79,6 +79,20 @@ final class VaultDoor {
         show(.locked)
     }
 
+    /// Brief fade-in on entering a vault, so the door doesn't pop in. Cosmetic
+    /// (RealityKit time); the vault's timing is unaffected.
+    static let revealDuration: TimeInterval = 0.25
+
+    func reveal() {
+        root.stopAllAnimations()
+        fade(root, from: 0, to: 1, duration: Self.revealDuration)
+    }
+
+    /// Adds a presentation part (e.g. the vault countdown) that moves with the door.
+    func attach(_ part: Entity) {
+        root.addChild(part)
+    }
+
     private func show(_ newState: State) {
         state = newState
         unlockedLight.stopAllAnimations()
