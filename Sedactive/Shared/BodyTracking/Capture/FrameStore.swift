@@ -139,6 +139,7 @@ nonisolated final class FrameStore: Sendable {
   }
   let maximumFrameBytes: Int
   let metrics: CameraCaptureMetrics
+  let poses = CameraPoseResults()
   #if DEBUG
     let preview: CameraDiagnosticPreview
   #endif
@@ -164,6 +165,7 @@ nonisolated final class FrameStore: Sendable {
       $0.pending = nil
       $0.context = context
       $0.admitting = true
+      poses.begin(context)
       #if DEBUG
         preview.updateContext(context)
       #endif
@@ -180,6 +182,7 @@ nonisolated final class FrameStore: Sendable {
       guard $0.context == context else { return }
       $0.context = nil
       $0.admitting = false
+      poses.invalidate(context)
       #if DEBUG
         preview.invalidate(context)
       #endif
@@ -192,6 +195,7 @@ nonisolated final class FrameStore: Sendable {
     state.withLock {
       guard $0.context == context else { return }
       $0.admitting = false
+      poses.invalidate(context)
       #if DEBUG
         preview.invalidate(context)
       #endif
@@ -202,6 +206,7 @@ nonisolated final class FrameStore: Sendable {
     state.withLock {
       if $0.context == context {
         $0.admitting = true
+        poses.begin(context)
         #if DEBUG
           preview.updateContext(context)
         #endif
@@ -332,14 +337,22 @@ nonisolated enum CameraSourceTime {
   }
 }
 
-/// Future processing uses the same owned bytes; this A1 sink performs reconstruction only.
+/// The single processing sink owns reconstruction and optional B1 Vision work; no body evidence.
 protocol CameraFrameSink: Actor {
   func consume(_ frame: CameraSourceFrame) async throws
   func reset() async
 }
 actor CameraCopySink: CameraFrameSink {
   private let metrics: CameraCaptureMetrics?
-  init(metrics: CameraCaptureMetrics? = nil) { self.metrics = metrics }
+  private let poses: CameraPoseResults?
+  private let makeDetector: @Sendable () -> any CameraPoseDetecting
+  private var detector: (any CameraPoseDetecting)?
+  init(metrics: CameraCaptureMetrics? = nil, poses: CameraPoseResults? = nil,
+    makeDetector: @escaping @Sendable () -> any CameraPoseDetecting = { PoseEstimator() }) {
+    self.metrics = metrics
+    self.poses = poses
+    self.makeDetector = makeDetector
+  }
   private var workspace: CameraReconstructionWorkspace?
   func consume(_ frame: CameraSourceFrame) throws {
     if workspace?.width != frame.metadata.descriptor.width
@@ -347,10 +360,31 @@ actor CameraCopySink: CameraFrameSink {
     {
       workspace = try CameraReconstructionWorkspace(descriptor: frame.metadata.descriptor)
     }
-    try workspace!.copy(frame, metrics: metrics)  // No Vision, body evidence or image rendering.
+    try Task.checkCancellation()
+    guard let poses else {
+      try workspace!.copy(frame, metrics: metrics)
+      return  // Explicit reconstruction-only sink retained for capture tests.
+    }
+    guard let ticket = poses.start(frame.metadata) else { return }
+    if detector == nil { detector = makeDetector() }
+    do {
+      try workspace!.copy(frame, metrics: metrics) { buffer in
+        try Task.checkCancellation()
+        let started = CameraHostClock.now()
+        let observations = try detector!.detect(in: buffer)
+        let completed = CameraHostClock.now()
+        let result = try CameraPoseAdapter.convert(observations, source: frame.metadata)
+        poses.finish(result, ticket: ticket, startedAt: started, completedAt: completed,
+          cancelled: Task.isCancelled)
+      }
+    } catch {
+      poses.failed(ticket)
+      throw error  // No fallback to fabricated poses or to copy-only production behavior.
+    }
   }
   func reset() {
     workspace = nil
+    detector = nil
     metrics?.workspace(bytes: 0)
   }
 }
@@ -372,7 +406,8 @@ nonisolated private final class CameraReconstructionWorkspace {
     else { throw CameraFrameError.allocation }
     pool = result
   }
-  func copy(_ frame: CameraSourceFrame, metrics: CameraCaptureMetrics?) throws {
+  func copy(_ frame: CameraSourceFrame, metrics: CameraCaptureMetrics?,
+    process: (CVPixelBuffer) throws -> Void = { _ in }) throws {
     var value: CVPixelBuffer?
     let threshold = [kCVPixelBufferPoolAllocationThresholdKey as String: 1] as CFDictionary
     guard
@@ -385,6 +420,11 @@ nonisolated private final class CameraReconstructionWorkspace {
       bytesPerRow: CVPixelBufferGetBytesPerRow(value), pixelFormat: kCVPixelFormatType_32BGRA,
       maximumBytes: 4 * 1024 * 1024)
     metrics?.workspace(bytes: d.byteCount)
+    try Self.fill(value, from: frame, descriptor: d)
+    try process(value)  // Synchronous worker-owned scope; pool buffer lives until inference returns.
+  }
+  private static func fill(_ value: CVPixelBuffer, from frame: CameraSourceFrame,
+    descriptor d: CameraFrameDescriptor) throws {
     guard CVPixelBufferLockBaseAddress(value, []) == kCVReturnSuccess else {
       throw CameraFrameError.lock
     }
@@ -394,10 +434,10 @@ nonisolated private final class CameraReconstructionWorkspace {
     }
     destination.initializeMemory(as: UInt8.self, repeating: 0, count: d.byteCount)
     frame.withBytes { source in
-      for row in 0..<height {
+      for row in 0..<d.height {
         destination.advanced(by: row * d.bytesPerRow).copyMemory(
           from: source.baseAddress!.advanced(by: row * frame.metadata.descriptor.bytesPerRow),
-          byteCount: width * 4)
+          byteCount: d.width * 4)
       }
     }
   }

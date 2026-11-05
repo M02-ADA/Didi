@@ -204,7 +204,7 @@
         latency("Callback total", statistics.callback),
         latency("Independent Data copy", statistics.copy),
         latency("Copy-complete → worker wait", statistics.wait),
-        latency("Reconstruction sink", statistics.processing),
+        latency("Total processing sink (copy + optional Vision)", statistics.processing),
         latency("Capture → sink completion", statistics.endToEnd),
       ]
       if let frame = statistics.lastFrame {
@@ -229,6 +229,25 @@
           "Center Stage active \(negotiated.centerStageActive); stabilization \(negotiated.stabilizationEnabled); no mirrored source"
         )
       }
+      let rawPose = camera.frames.poses.snapshot
+      let poseStats = rawPose.statistics
+      lines.append("LH-13B1 RAW VISION ONLY — temporary candidates; no P1/P2 binding or calibration.")
+      lines.append("Pose successful / rejected / failures: \(poseStats.completed) / \(poseStats.rejected) / \(poseStats.failures); Vision result FPS: \(number(poseStats.framesPerSecond))")
+      lines.append("Pose count buckets zero / one / two / more: \(poseStats.counts.map(String.init).joined(separator: "/"))")
+      lines.append(latency("Vision inference", poseStats.inference.summary))
+      lines.append(latency("Capture → pose result", poseStats.age.summary))
+      if let result = rawPose.latest {
+        let source = result.source
+        lines.append("Latest raw pose frame \(source.frameID), generation \(source.context.generation), epoch \(source.context.epoch), geometry \(source.context.geometryRevision), \(source.descriptor.width)×\(source.descriptor.height); capturedAt \(number(source.capturedAt)); current age \(number(now() - source.capturedAt)) s; source rotation \(source.rotationAngle)°, mirrored \(source.mirrored)")
+        lines.append("Vision observations \(result.observationCount); retained candidates \(result.frame.candidates.count) (cap \(PoseEstimator.maximumCandidates)); invalid/unobserved returned joints \(result.invalidJointCount)")
+        for candidate in result.frame.candidates {
+          let confidences = candidate.joints.values.map(\.confidence)
+          let mean = confidences.isEmpty ? nil : confidences.reduce(0, +) / Double(confidences.count)
+          // No coordinates are persisted. Low-confidence is a diagnostic label, not a gameplay threshold.
+          let low = confidences.filter { $0 < 0.3 }.count
+          lines.append("Frame-local candidate \(candidate.candidateID): present \(candidate.joints.count)/\(PoseEstimator.joints.count), missing \(PoseEstimator.joints.count - candidate.joints.count), low-confidence (<0.3, diagnostic only) \(low), confidence min/mean/max \(number(confidences.min()))/\(number(mean))/\(number(confidences.max()))")
+        }
+      } else { lines.append("No compatible raw pose result. Camera running does not imply pose/calibration readiness.") }
       let preview = camera.frames.preview
       let ps = preview.statistics
       let pu = preview.budget.usage
