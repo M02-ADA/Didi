@@ -97,16 +97,16 @@ struct LaserGateLifecycleTests {
         func entity(_ name: String) throws -> Entity { try #require(feedback.root.findEntity(named: name)) }
 
         feedback.setMoveCue(.duck, actionRemaining: 0.5)
-        feedback.showOutcome(.hit, for: .parent, badgeAt: .zero, impactAt: .zero)
-        feedback.showOutcome(.clear, for: .parent, badgeAt: .zero, impactAt: .zero)
-        #expect(try entity("laserFeedback.badge.parent.clear").isEnabled)
-        #expect(try !entity("laserFeedback.badge.parent.hit").isEnabled)
-        #expect(try !entity("laserFeedback.badge.parent.unavailable").isEnabled)
+        feedback.showOutcome(.hit, for: .player1, badgeAt: .zero, impactAt: .zero)
+        feedback.showOutcome(.clear, for: .player1, badgeAt: .zero, impactAt: .zero)
+        #expect(try entity("laserFeedback.badge.player1.clear").isEnabled)
+        #expect(try !entity("laserFeedback.badge.player1.hit").isEnabled)
+        #expect(try !entity("laserFeedback.badge.player1.unavailable").isEnabled)
 
         feedback.clear()
-        for lane in GameWorldMapping.Lane.allCases {
-            #expect(try !entity("laserFeedback.badge.\(lane.rawValue)").isEnabled)
-            #expect(try !entity("laserFeedback.impact.\(lane.rawValue)").isEnabled)
+        for player in PlayerID.allCases {
+            #expect(try !entity("laserFeedback.badge.\(player.rawValue)").isEnabled)
+            #expect(try !entity("laserFeedback.impact.\(player.rawValue)").isEnabled)
         }
         #expect(try entity("laserFeedback.cue").components[OpacityComponent.self]?.opacity == 0)
     }

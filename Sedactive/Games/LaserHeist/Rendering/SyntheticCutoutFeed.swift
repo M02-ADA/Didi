@@ -20,6 +20,11 @@ import QuartzCore
 /// - `invalidate`: every 3 s the camera geometry revision changes.
 /// - `reattach`: every 3 s the presenter detaches and reattaches.
 /// - `stale`: every 10th offer repeats an older frame, which the handoff rejects.
+/// - `stall`: frames stop after 3 s while the input stays running.
+///
+/// `-cutoutMaxDisplayAge <seconds>` sets a display-freshness limit for this
+/// preview only, to check expiry without a newer frame (e.g. with `stall`).
+/// It is not a policy: the production limit is still to be agreed (CP2 §9).
 ///
 /// Image content: P1 is orange and P2 cyan, each with one raised arm on the
 /// image's left, a white marker in the image's top-left corner, one or two
@@ -30,7 +35,13 @@ final class SyntheticCutoutFeed {
     enum Scenario: String {
         case both
         case p1Missing = "p1-missing"
-        case invalidate, reattach, stale
+        case invalidate, reattach, stale, stall
+    }
+
+    static var requestedMaximumDisplayAge: Double? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-cutoutMaxDisplayAge"), index + 1 < arguments.count else { return nil }
+        return Double(arguments[index + 1])
     }
 
     static var requestedScenario: Scenario? {
@@ -104,7 +115,7 @@ final class SyntheticCutoutFeed {
     }
 
     private func attach(to scene: LaserScene, debugMarkers: Bool) {
-        try? scene.attachLiveCutouts(handoff, layout: Self.layout)
+        try? scene.attachLiveCutouts(handoff, layout: Self.layout, maximumDisplayAge: Self.requestedMaximumDisplayAge)
         scene.liveCutouts?.showsDebugMarkers = debugMarkers
     }
 
@@ -131,6 +142,7 @@ final class SyntheticCutoutFeed {
     }
 
     private func produce(elapsed: Double) async {
+        if scenario == .stall && elapsed > 3 { return }
         frameID += 1
         offers += 1
         let repeatOlder = scenario == .stale && offers % 10 == 0 && frameID > 3

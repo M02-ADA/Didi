@@ -48,14 +48,14 @@ final class LaserApproachPreview {
     struct SampleEncounter {
         let move: LaserFeedback.Move
         let band: ClosedRange<Float>
-        let outcomes: [GameWorldMapping.Lane: LaserFeedback.Outcome]
+        let outcomes: [PlayerID: LaserFeedback.Outcome]
     }
 
     static let encounters = [
-        SampleEncounter(move: .duck, band: 1.239...1.261, outcomes: [.parent: .clear, .child: .clear]),
-        SampleEncounter(move: .jump, band: 0.249...0.271, outcomes: [.parent: .hit, .child: .clear]),
-        SampleEncounter(move: .duck, band: 1.239...1.261, outcomes: [.parent: .clear, .child: .unavailable]),
-        SampleEncounter(move: .jump, band: 0.249...0.271, outcomes: [.parent: .hit, .child: .hit]),
+        SampleEncounter(move: .duck, band: 1.239...1.261, outcomes: [.player1: .clear, .player2: .clear]),
+        SampleEncounter(move: .jump, band: 0.249...0.271, outcomes: [.player1: .hit, .player2: .clear]),
+        SampleEncounter(move: .duck, band: 1.239...1.261, outcomes: [.player1: .clear, .player2: .unavailable]),
+        SampleEncounter(move: .jump, band: 0.249...0.271, outcomes: [.player1: .hit, .player2: .hit]),
     ]
 
     var timings = SampleTimings()
@@ -109,8 +109,8 @@ final class LaserApproachPreview {
         scene.setMoveCue(cueShown ? encounter.move : nil, actionRemaining: time >= timings.cue ? Float(time / timings.cue) : nil)
         if time >= timings.verdict, !verdictShown {
             verdictShown = true
-            for (lane, outcome) in encounter.outcomes {
-                scene.presentOutcome(outcome, for: lane)
+            for (player, outcome) in encounter.outcomes {
+                scene.presentOutcome(outcome, for: player)
             }
         }
     }

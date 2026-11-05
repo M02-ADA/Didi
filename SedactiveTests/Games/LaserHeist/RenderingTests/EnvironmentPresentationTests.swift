@@ -88,7 +88,7 @@ struct EnvironmentPresentationTests {
         #expect(scene.players.mapValues(\.position) == placements)
         for player in scene.players.values {
             #expect(player.ride.transform == .identity)
-            #expect(player.findEntity(named: "player.\(player.lane.rawValue).surface")?.parent === player.ride)
+            #expect(player.findEntity(named: "player.\(player.player.rawValue).surface")?.parent === player.ride)
         }
     }
 

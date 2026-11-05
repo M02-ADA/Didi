@@ -28,7 +28,7 @@ final class PlayerCutoutEntity: Entity {
     /// edges above it still blend. Not the 0.5 cut-out used for the pictogram.
     static let liveOpacityThreshold: Float = 0.02
 
-    private(set) var lane: GameWorldMapping.Lane = .parent
+    private(set) var player: PlayerID = .player1
     /// Stable container for the pictogram and live surfaces; never animated.
     let ride = Entity()
     private var placeholder: Entity?
@@ -40,11 +40,11 @@ final class PlayerCutoutEntity: Entity {
     private(set) var liveSurfaces: [ModelEntity] = []
     private var debugMarkers: [ModelEntity] = []
 
-    init(lane: GameWorldMapping.Lane, size: SIMD2<Float>, color: UIColor) {
+    init(player: PlayerID, size: SIMD2<Float>, color: UIColor) {
         super.init()
-        self.lane = lane
-        name = "player.\(lane.rawValue)"
-        ride.name = "player.\(lane.rawValue).ride"
+        self.player = player
+        name = "player.\(player.rawValue)"
+        ride.name = "player.\(player.rawValue).ride"
         addChild(ride)
 
         // No tone mapping, so placeholder colours match the Hi-Fi exactly.
@@ -56,7 +56,7 @@ final class PlayerCutoutEntity: Entity {
             material.opacityThreshold = 0.5
         }
         let surface = ModelEntity(mesh: .generatePlane(width: size.x, height: size.y), materials: [material])
-        surface.name = "player.\(lane.rawValue).surface"
+        surface.name = "player.\(player.rawValue).surface"
         surface.position.y = size.y / 2
         ride.addChild(surface)
         placeholder = surface
@@ -103,7 +103,7 @@ final class PlayerCutoutEntity: Entity {
         if liveSurfaces.isEmpty {
             liveSurfaces = resources.indices.map { index in
                 let quad = ModelEntity(mesh: Self.mirroredUnitQuad, materials: [])
-                quad.name = "player.\(lane.rawValue).live.\(index)"
+                quad.name = "player.\(player.rawValue).live.\(index)"
                 quad.isEnabled = false
                 ride.addChild(quad)
                 return quad
@@ -154,7 +154,7 @@ final class PlayerCutoutEntity: Entity {
         while debugMarkers.count < points.count {
             let marker = ModelEntity(mesh: .generatePlane(width: 0.36, height: 0.012),
                                      materials: [UnlitMaterial(color: .systemGreen)])
-            marker.name = "player.\(lane.rawValue).marker"
+            marker.name = "player.\(player.rawValue).marker"
             addChild(marker)
             debugMarkers.append(marker)
         }

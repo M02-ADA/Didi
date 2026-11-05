@@ -27,6 +27,8 @@ private struct ReplayRoundView: View {
     @State private var presentation = LaserReplayPresentation()
     @State private var session: GameSessionCoordinator?
     @State private var startupError: String?
+    /// Per-frame expiry check for live cutouts (`refreshLiveCutouts`).
+    @State private var cutoutRefresh: EventSubscription?
     #if DEBUG
     @State private var preview = LaserApproachPreview()
     @State private var environmentPreview = EnvironmentPreview()
@@ -49,6 +51,11 @@ private struct ReplayRoundView: View {
             scene.installVaultDoor(await LaserScene.loadVaultDoorArtwork())
             scene.installDiamondArt(await LaserScene.loadDiamondArtwork())
             content.add(scene.root)
+            // Live cutouts expire on the render loop, on the host clock their capture times use,
+            // so a cutout older than its agreed freshness limit falls back without a newer frame.
+            cutoutRefresh = content.subscribe(to: SceneEvents.Update.self) { [weak scene] _ in
+                scene?.refreshLiveCutouts(now: CACurrentMediaTime())
+            }
             // Optional world-construction guides. Replay body markers live in the presentation adapter.
             #if DEBUG
             let arguments = ProcessInfo.processInfo.arguments
@@ -128,6 +135,8 @@ private struct ReplayRoundView: View {
         }
         .onDisappear {
             presentation.stop()
+            cutoutRefresh?.cancel()
+            cutoutRefresh = nil
             // Release the cutout consumer and revoke any upload still on the GPU
             // before this scene is replaced (Retry).
             scene.detachLiveCutouts()

@@ -32,11 +32,11 @@ struct LiveCutoutTests {
             let scene = scene
             presenter = LiveCutoutPresenter(
                 store: store, mapping: scene.mapping, layout: layout,
-                players: [.player1: scene.players[.parent]!, .player2: scene.players[.child]!],
+                players: [.player1: scene.players[.player1]!, .player2: scene.players[.player2]!],
                 hostTime: { clock.now })
         }
 
-        func entity(_ id: PlayerID) -> PlayerCutoutEntity { scene.players[GameWorldMapping.lane(for: id)]! }
+        func entity(_ id: PlayerID) -> PlayerCutoutEntity { scene.players[id]! }
 
         func input(generation: UUID? = nil, camera: UInt64 = 1, status: BodyInputStatus = .running) throws {
             statusRevision += 1
@@ -78,10 +78,8 @@ struct LiveCutoutTests {
     }
 
     @Test func playerOneIsAlwaysTheLeftLane() {
-        #expect(GameWorldMapping.lane(for: .player1) == .parent)
-        #expect(GameWorldMapping.lane(for: .player2) == .child)
         let mapping = GameWorldMapping()
-        #expect(mapping.playerPosition(.parent).x < mapping.playerPosition(.child).x)
+        #expect(mapping.playerPosition(.player1).x < mapping.playerPosition(.player2).x)
     }
 
     // MARK: - Consumer lifecycle
@@ -293,11 +291,73 @@ struct LiveCutoutTests {
 
         // When P1 falls back, the pictogram spans floor to crown and feedback follows it.
         try await rig.offer(2, missing: [.player1])
-        let surface = try #require(entity.findEntity(named: "player.parent.surface"))
+        let surface = try #require(entity.findEntity(named: "player.player1.surface"))
         let bounds = surface.visualBounds(relativeTo: entity)
         #expect(abs(bounds.min.y - 0.2) < 1e-4 && abs(bounds.max.y - 1.9) < 1e-4)
         #expect(abs(entity.visibleTop - 1.9) < 1e-4)
         #expect(entity.position == placement && entity.scale == .one)
+    }
+
+    // MARK: - Display freshness (PR #17)
+
+    @Test func cutoutExpiresWithoutANewerFrame() async throws {
+        let rig = try Rig()
+        rig.presenter.maximumDisplayAge = 0.5
+        rig.clock.now = 1.2
+        try await rig.start()
+        try await rig.offer(1)
+        #expect(rig.presenter.displayed[.player1]?.frameID == 1)
+
+        // No newer frame arrives; only the render loop's refresh runs.
+        rig.presenter.refresh(now: 1.4)
+        #expect(rig.entity(.player1).isShowingLive && rig.entity(.player2).isShowingLive)
+        rig.presenter.refresh(now: 1.6)
+        for id in PlayerID.allCases {
+            #expect(rig.presenter.displayed[id] == nil)
+            #expect(!rig.entity(id).isShowingLive)
+            #expect(rig.store.frontIndex(for: id) == nil)
+        }
+        #expect(rig.presenter.diagnostics.fallbacks == 2)
+
+        // A fresh frame shows again.
+        rig.clock.now = 2.1
+        try await rig.offer(2)
+        #expect(rig.presenter.displayed[.player1]?.frameID == 2)
+    }
+
+    @Test func withoutAnAgreedLimitTheLastCurrentImageStays() async throws {
+        let rig = try Rig()
+        try await rig.start()
+        try await rig.offer(1)
+        // `maximumDisplayAge` is nil until the CP2 hold duration is agreed.
+        rig.presenter.refresh(now: 1_000_000)
+        #expect(rig.presenter.displayed[.player1]?.frameID == 1)
+        #expect(rig.entity(.player1).isShowingLive)
+    }
+
+    @Test func sceneRefreshExpiresAttachedCutoutsAndIgnoresDetached() async throws {
+        let rig = try Rig()
+        try rig.input()
+        // Host time here is the real clock (seconds since boot), far later than the
+        // fixture's capture times, so the limit is set beyond any real host time:
+        // the frame shows however slowly the GPU upload completes.
+        let limit = 1e9
+        try rig.scene.attachLiveCutouts(rig.handoff, layout: rig.layout, maximumDisplayAge: limit)
+        let presenter = try #require(rig.scene.liveCutouts)
+        await presenter.waitUntilIdle()
+        let packet = try await rig.producer.frame(CutoutTestData.snapshot(1))
+        try rig.handoff.offer(packet, at: 100)
+        await presenter.waitUntilIdle()
+        #expect(presenter.displayed[.player1]?.frameID == 1)
+
+        rig.scene.refreshLiveCutouts(now: 1 + limit + 1)
+        #expect(presenter.displayed.isEmpty)
+        for id in PlayerID.allCases { #expect(!rig.entity(id).isShowingLive) }
+
+        // After detach, the per-frame refresh has nothing to act on.
+        rig.scene.detachLiveCutouts()
+        rig.scene.refreshLiveCutouts(now: 1 + limit + 2)
+        #expect(rig.scene.liveCutouts == nil)
     }
 
     // MARK: - GPU resources

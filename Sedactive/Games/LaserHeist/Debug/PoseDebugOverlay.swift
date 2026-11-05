@@ -27,11 +27,11 @@ enum PoseDebugOverlay {
         overlay.addChild(label("interaction plane  z = \(format(planeZ))", at: [-layout.corridorWidth / 2 + 0.15, layout.corridorHeight - 0.3, planeZ], color: .yellow))
         overlay.addChild(label("environment: \(scene.environmentSource?.rawValue ?? "none")", at: [-layout.corridorWidth / 2 + 0.15, layout.corridorHeight - 0.45, planeZ], color: .yellow))
 
-        for (lane, player) in scene.players {
+        for (id, player) in scene.players {
             let feet = ModelEntity(mesh: .generateSphere(radius: 0.04), materials: [UnlitMaterial(color: .green)])
             feet.position = player.position
             overlay.addChild(feet)
-            overlay.addChild(label("\(lane.rawValue)  x = \(format(player.position.x))", at: player.position + [-0.25, -0.12, 0.05], color: .green))
+            overlay.addChild(label("\(id == .player1 ? "P1" : "P2")  x = \(format(player.position.x))", at: player.position + [-0.25, -0.12, 0.05], color: .green))
         }
 
         for z in stride(from: Float(-4), through: layout.laserSpawnZ, by: -4) {

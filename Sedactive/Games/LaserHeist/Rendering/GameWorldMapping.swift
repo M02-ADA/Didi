@@ -22,25 +22,16 @@ import simd
 /// lane centre, so players see themselves as in a mirror while P1 stays left.
 /// Game data itself is never mirrored.
 struct GameWorldMapping {
-    /// Rendering-side lane. P1 binds displayed-left (CP1), so it uses the
-    /// left lane; see `lane(for:)`.
-    enum Lane: String, CaseIterable {
-        case parent
-        case child
-    }
 
     var metersPerGameUnit: Float = 1
     var interactionPlaneZ: Float = 0
-    var laneCenterX: [Lane: Float] = [.parent: -0.7, .child: 0.7]
-
-    /// P1 is displayed-left and P2 displayed-right, for the whole session.
-    static func lane(for playerID: PlayerID) -> Lane {
-        playerID == .player1 ? .parent : .child
-    }
+    /// Each player's lane centre on screen. P1 binds displayed-left (CP1)
+    /// for the whole session, so P1's lane is always the left one.
+    var laneCenterX: [PlayerID: Float] = [.player1: -0.7, .player2: 0.7]
 
     /// A point on the interaction plane in a player's lane.
-    func playerPosition(_ lane: Lane, heightAboveFloor: Float = 0) -> SIMD3<Float> {
-        [laneCenterX[lane, default: 0], heightAboveFloor * metersPerGameUnit, interactionPlaneZ]
+    func playerPosition(_ player: PlayerID, heightAboveFloor: Float = 0) -> SIMD3<Float> {
+        [laneCenterX[player, default: 0], heightAboveFloor * metersPerGameUnit, interactionPlaneZ]
     }
 
     /// Where a live cutout's whole canvas sits, relative to its lane's

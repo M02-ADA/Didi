@@ -32,9 +32,9 @@ final class LaserFeedback {
     private let cuePanels: [Move: Entity]
     private let countdown: ModelEntity
     private var shownCue: (move: Move, acting: Bool)?
-    private let badges: [GameWorldMapping.Lane: Entity]
-    private let badgeFaces: [GameWorldMapping.Lane: [Outcome: Entity]]
-    private var impacts: [GameWorldMapping.Lane: Entity] = [:]
+    private let badges: [PlayerID: Entity]
+    private let badgeFaces: [PlayerID: [Outcome: Entity]]
+    private var impacts: [PlayerID: Entity] = [:]
 
     /// Builds every cue, badge and texture once; showing them later only toggles and animates.
     init() {
@@ -53,12 +53,12 @@ final class LaserFeedback {
         countdown.position = [0, -panelSize.y / 2 - 0.045, 0.002]
 
         let badgeMesh = MeshResource.generatePlane(width: 0.2, height: 0.2)
-        var badges: [GameWorldMapping.Lane: Entity] = [:]
-        var badgeFaces: [GameWorldMapping.Lane: [Outcome: Entity]] = [:]
+        var badges: [PlayerID: Entity] = [:]
+        var badgeFaces: [PlayerID: [Outcome: Entity]] = [:]
         let badgeMaterials = Outcome.allCases.map { Self.material(Self.badgeArt(for: $0), fallback: Self.badgeColor($0)) }
-        for lane in GameWorldMapping.Lane.allCases {
+        for player in PlayerID.allCases {
             let badge = Entity()
-            badge.name = "laserFeedback.badge.\(lane.rawValue)"
+            badge.name = "laserFeedback.badge.\(player.rawValue)"
             badge.isEnabled = false
             var faces: [Outcome: Entity] = [:]
             for (outcome, material) in zip(Outcome.allCases, badgeMaterials) {
@@ -67,8 +67,8 @@ final class LaserFeedback {
                 badge.addChild(face)
                 faces[outcome] = face
             }
-            badges[lane] = badge
-            badgeFaces[lane] = faces
+            badges[player] = badge
+            badgeFaces[player] = faces
         }
         self.cuePanels = cuePanels
         self.countdown = countdown
@@ -98,11 +98,11 @@ final class LaserFeedback {
         for impact in impacts.values {
             impact.removeFromParent()
         }
-        for lane in GameWorldMapping.Lane.allCases {
+        for player in PlayerID.allCases {
             let spark = makeSpark()
-            spark.name = "laserFeedback.impact.\(lane.rawValue)"
+            spark.name = "laserFeedback.impact.\(player.rawValue)"
             root.addChild(spark)
-            impacts[lane] = spark
+            impacts[player] = spark
         }
     }
 
@@ -131,8 +131,8 @@ final class LaserFeedback {
     /// Shows one player's finalized verdict above their head and, for a HIT, a
     /// short spark where their lane meets the beam. The badge clears itself after
     /// about a second; neither effect changes the judged band.
-    func showOutcome(_ outcome: Outcome, for lane: GameWorldMapping.Lane, badgeAt badgePosition: SIMD3<Float>, impactAt impactPosition: SIMD3<Float>) {
-        guard let badge = badges[lane], let faces = badgeFaces[lane] else { return }
+    func showOutcome(_ outcome: Outcome, for player: PlayerID, badgeAt badgePosition: SIMD3<Float>, impactAt impactPosition: SIMD3<Float>) {
+        guard let badge = badges[player], let faces = badgeFaces[player] else { return }
         badge.stopAllAnimations()
         badge.transform = Transform(translation: badgePosition)
         badge.isEnabled = true
@@ -148,7 +148,7 @@ final class LaserFeedback {
             // Firm: a quick pop and a small shake, no overshoot.
             fade(badge, in: 0.08, hold: 0.9, out: 0.3)
             pop(badge, from: 0.5, rise: 0, duration: 0.14, timing: .easeOut, then: Self.shake(badge.transform))
-            if let impact = impacts[lane] {
+            if let impact = impacts[player] {
                 impact.stopAllAnimations()
                 impact.transform = Transform(scale: .init(repeating: 0.6), translation: impactPosition)
                 impact.isEnabled = true

@@ -40,7 +40,13 @@ final class GameplayScenePresenter {
         var withdrawnTargets = 0
         var createdHazards = 0
         var peakVisibleHazards = 0
+        /// Pending hazards that could not be shown. Always 0: a laser gameplay
+        /// still expects a player to avoid is never hidden for lack of pool space.
         var droppedHazards = 0
+        /// Cosmetic power-down tails skipped beyond the expected peak.
+        var droppedTails = 0
+        /// Gates created beyond the schedule's expected peak (the pool grew).
+        var poolGrowth = 0
     }
 
     /// A passed gate is hidden this close to the camera (meters), by when it
@@ -54,7 +60,9 @@ final class GameplayScenePresenter {
 
     private let scene: LaserScene
     private let configuration: LaserRoundConfiguration
-    /// Hazards each player can need at once, from the round's own schedule.
+    /// Gates each player is expected to need at once, from the schedule known
+    /// at the start. A guide, not a limit: pending hazards are always shown and
+    /// the pool grows if needed; only cosmetic tails are trimmed beyond it.
     let capacity: [PlayerID: Int]
     private var slots: [LaserTargetKey: Slot] = [:]
     private var free: [PlayerID: [LaserHazard]] = [:]
@@ -78,7 +86,8 @@ final class GameplayScenePresenter {
     private(set) var diagnostics = Diagnostics()
 
     /// - Parameters:
-    ///   - encounters: the round's schedule, used only to size the hazard pool.
+    ///   - encounters: the round's schedule as known now, used only to estimate
+    ///     the pool's expected peak (encounters added later are still shown).
     ///   - showsDebugMarkers: replay body and band-edge markers (Debug aid).
     init(scene: LaserScene, configuration: LaserRoundConfiguration, encounters: [LaserEncounter],
          showsDebugMarkers: Bool = false) {
@@ -102,7 +111,7 @@ final class GameplayScenePresenter {
     /// Visible windows run from when a gate comes into view (or its warning,
     /// if earlier) until it has powered down after its target is finalized.
     /// The most each player needs at once, plus one for frame-granular
-    /// finalization, bounded at 4 per player.
+    /// finalization.
     static func capacity(for encounters: [LaserEncounter], configuration: LaserRoundConfiguration,
                          approachLead: Double) -> [PlayerID: Int] {
         let tail = 2 * LaserGate.longestTransition
@@ -121,7 +130,7 @@ final class GameplayScenePresenter {
                 open += edge.step
                 most = max(most, open)
             }
-            result[player] = min(max(most, 1) + 1, 4)
+            result[player] = max(most, 1) + 1
         }
         return result
     }
@@ -263,23 +272,25 @@ final class GameplayScenePresenter {
                 wanted.append((key, target, status))
             }
         }
-        // Within capacity, pending hazards come first, then the newest tails.
+        // Every pending hazard is shown, however many there are. Power-down
+        // tails (no longer hazards) fill the rest of the expected peak, newest first.
         var kept: [(key: LaserTargetKey, target: LaserTarget, status: Status)] = []
         for player in PlayerID.allCases {
-            let mine = wanted.filter { $0.key.playerID == player }.sorted {
-                let a = Self.isPending($0.status), b = Self.isPending($1.status)
-                return a != b ? a : $0.target.crossingTime > $1.target.crossingTime
-            }
-            let limit = capacity[player] ?? 1
-            diagnostics.droppedHazards += max(0, mine.count - limit)
-            kept += mine.prefix(limit)
+            let mine = wanted.filter { $0.key.playerID == player }
+            let pending = mine.filter { Self.isPending($0.status) }
+            let tails = mine.filter { !Self.isPending($0.status) }.sorted { $0.target.crossingTime > $1.target.crossingTime }
+            let room = max(0, (capacity[player] ?? 1) - pending.count)
+            diagnostics.droppedTails += max(0, tails.count - room)
+            kept += pending + tails.prefix(room)
         }
         let keys = Set(kept.map(\.key))
         for key in Array(slots.keys) where !keys.contains(key) { release(key) }
         for (key, target, status) in kept {
-            guard let hazard = slots[key]?.hazard ?? acquire(key, target) else { continue }
+            let hazard = slots[key]?.hazard ?? acquire(key, target)
             show(hazard, target: target, status: status, depth: depth(key, target, status, at: time), at: time)
         }
+        // Invariant check: every pending hazard got a gate.
+        diagnostics.droppedHazards += wanted.filter { Self.isPending($0.status) && slots[$0.key] == nil }.count
         anchors = anchors.filter { keys.contains($0.key) }
         diagnostics.peakVisibleHazards = max(diagnostics.peakVisibleHazards, slots.count)
     }
@@ -348,17 +359,18 @@ final class GameplayScenePresenter {
         return min(max(cue, target.warningTime), target.crossingTime)
     }
 
-    private func acquire(_ key: LaserTargetKey, _ target: LaserTarget) -> LaserHazard? {
+    /// A free gate for this player, creating one if none is free. Never fails,
+    /// so a pending hazard always has a gate; growth past the expected peak is counted.
+    private func acquire(_ key: LaserTargetKey, _ target: LaserTarget) -> LaserHazard {
         let player = key.playerID
         let hazard: LaserHazard
         if let reused = free[player]?.popLast() {
             hazard = reused
-        } else if created[player, default: 0] < capacity[player, default: 1] {
+        } else {
             hazard = scene.makeLaneHazard(for: player)
             created[player, default: 0] += 1
             diagnostics.createdHazards += 1
-        } else {
-            return nil
+            if created[player, default: 0] > capacity[player, default: 1] { diagnostics.poolGrowth += 1 }
         }
         slots[key] = Slot(hazard: hazard, target: target)
         return hazard
@@ -411,7 +423,7 @@ final class GameplayScenePresenter {
                 let marker = markers[index * points.count + offset]
                 marker.isEnabled = point.validity == .valid
                 if let y = point.value {
-                    marker.position = scene.mapping.playerPosition(GameWorldMapping.lane(for: player), heightAboveFloor: Float(y))
+                    marker.position = scene.mapping.playerPosition(player, heightAboveFloor: Float(y))
                     marker.position.x += [Float(0), -0.16, 0.16, -0.08, 0.08][offset]
                     marker.position.z += 0.06
                 }

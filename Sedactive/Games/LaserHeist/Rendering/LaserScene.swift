@@ -35,10 +35,10 @@ struct LaserWorldLayout {
     var cameraVerticalFieldOfView: Float = 50
 
     // Placeholder players: size is width x height, scale is per player.
-    var parentSize: SIMD2<Float> = [0.74, 1.75]
-    var childSize: SIMD2<Float> = [0.52, 1.2]
-    var parentScale: Float = 1
-    var childScale: Float = 1
+    var player1Size: SIMD2<Float> = [0.74, 1.75]
+    var player2Size: SIMD2<Float> = [0.52, 1.2]
+    var player1Scale: Float = 1
+    var player2Scale: Float = 1
 
     // One horizontal laser. Height and thickness are preview values only; the
     // judged band comes from Jevon's target geometry through `setLaserBand`.
@@ -88,7 +88,7 @@ final class LaserScene {
     let root = Entity()
     private(set) var layout: LaserWorldLayout
     private(set) var mapping: GameWorldMapping
-    private(set) var players: [GameWorldMapping.Lane: PlayerCutoutEntity] = [:]
+    private(set) var players: [PlayerID: PlayerCutoutEntity] = [:]
     private(set) var environmentSource: EnvironmentSource?
     private(set) var hoverboard: Hoverboard?
     /// Full-width laser for previews; gameplay uses lane-local hazards.
@@ -198,8 +198,8 @@ final class LaserScene {
         if let board = environment.findEntity(named: "Corridor")?.findEntity(named: "Hoverboard"),
            let hoverboard = Hoverboard(entity: board, camera: layout.cameraPosition, backDepth: layout.hoverboardBackZ) {
             self.hoverboard = hoverboard
-            for (lane, player) in players {
-                hoverboard.setFootShadow(lane, atWorldX: player.position.x)
+            for (id, player) in players {
+                hoverboard.setFootShadow(id, atWorldX: player.position.x)
             }
         }
     }
@@ -263,7 +263,7 @@ final class LaserScene {
     /// One player's half of the corridor between the wall mounts. P1 is the
     /// left lane; the boundary is midway between the two lane centres.
     func laneSpan(for player: PlayerID) -> ClosedRange<Float> {
-        let boundary = ((mapping.laneCenterX[.parent] ?? 0) + (mapping.laneCenterX[.child] ?? 0)) / 2
+        let boundary = ((mapping.laneCenterX[.player1] ?? 0) + (mapping.laneCenterX[.player2] ?? 0)) / 2
         return player == .player1 ? laserSpan.lowerBound...boundary : boundary...laserSpan.upperBound
     }
 
@@ -271,7 +271,7 @@ final class LaserScene {
     /// e.g. to replay body data. The player's placement and any live cutout
     /// are unaffected.
     func setPlaceholderBody(for player: PlayerID, floor: Double, crown: Double) {
-        players[GameWorldMapping.lane(for: player)]?.setPlaceholderBody(
+        players[player]?.setPlaceholderBody(
             floorY: Float(floor) * mapping.metersPerGameUnit, crownY: Float(crown) * mapping.metersPerGameUnit)
     }
 
@@ -283,7 +283,7 @@ final class LaserScene {
     /// cutout or pictogram) and, for a HIT, a spark where their lane meets
     /// `band` (game units) on the interaction plane.
     func presentOutcome(_ outcome: LaserFeedback.Outcome, for player: PlayerID, band: ClosedRange<Float>) {
-        presentOutcome(outcome, for: GameWorldMapping.lane(for: player), bandCenter: (band.lowerBound + band.upperBound) / 2)
+        presentOutcome(outcome, for: player, bandCenter: (band.lowerBound + band.upperBound) / 2)
     }
 
     /// The team's shared health and score change for one encounter
@@ -301,10 +301,15 @@ final class LaserScene {
     /// Shows `provider`'s player cutouts on the player surfaces (P1 left, P2
     /// right), replacing the pictograms while each player's image is current.
     /// `layout` is the CP1 player-plane layout the cutouts' placements use.
+    /// `maximumDisplayAge` (host-clock seconds since capture) is the CP2
+    /// display-freshness limit after which a cutout that receives no newer
+    /// frame falls back to the pictogram; `nil` (the default until it is
+    /// agreed with Edo) keeps the last current image. It takes effect through
+    /// `refreshLiveCutouts(now:)`, which the play view calls every frame.
     /// Throws if no GPU texture path is available; the pictograms stay.
     func attachLiveCutouts(
         _ provider: any PlayerCutoutProviding, layout: PlayerPlaneLayout,
-        maximumImageBytes: Int = 8 * 1024 * 1024
+        maximumImageBytes: Int = 8 * 1024 * 1024, maximumDisplayAge: Double? = nil
     ) throws {
         detachLiveCutouts()
         if cutoutStore == nil || cutoutStore?.maximumImageBytes != maximumImageBytes {
@@ -314,10 +319,18 @@ final class LaserScene {
         let presenter = LiveCutoutPresenter(
             store: cutoutStore, mapping: mapping, layout: layout,
             players: Dictionary(uniqueKeysWithValues: PlayerID.allCases.compactMap { id in
-                players[GameWorldMapping.lane(for: id)].map { (id, $0) }
+                players[id].map { (id, $0) }
             }))
+        presenter.maximumDisplayAge = maximumDisplayAge
         liveCutouts = presenter
         try presenter.attach(provider)
+    }
+
+    /// Expires live cutouts older than their display-freshness limit, without
+    /// waiting for another frame. Call once per rendered frame with
+    /// host-clock time (`CACurrentMediaTime()`, the CP1 capture clock).
+    func refreshLiveCutouts(now: Double) {
+        liveCutouts?.refresh(now: now)
     }
 
     /// Stops showing live cutouts; both players return to their pictograms.
@@ -418,15 +431,15 @@ final class LaserScene {
     /// Shows a finalized verdict for one player against the shared (preview)
     /// laser: a badge above their visible body and, for a HIT, a spark where
     /// their lane meets the beam on the interaction plane.
-    func presentOutcome(_ outcome: LaserFeedback.Outcome, for lane: GameWorldMapping.Lane) {
-        presentOutcome(outcome, for: lane, bandCenter: (laser.band.lowerBound + laser.band.upperBound) / 2)
+    func presentOutcome(_ outcome: LaserFeedback.Outcome, for player: PlayerID) {
+        presentOutcome(outcome, for: player, bandCenter: (laser.band.lowerBound + laser.band.upperBound) / 2)
     }
 
-    private func presentOutcome(_ outcome: LaserFeedback.Outcome, for lane: GameWorldMapping.Lane, bandCenter: Float) {
-        guard let player = players[lane] else { return }
+    private func presentOutcome(_ outcome: LaserFeedback.Outcome, for id: PlayerID, bandCenter: Float) {
+        guard let player = players[id] else { return }
         var impact = mapping.laserPosition(heightAboveFloor: bandCenter, worldZ: mapping.interactionPlaneZ + 0.06)
         impact.x = player.position.x
-        feedback.showOutcome(outcome, for: lane, badgeAt: player.position + [0, player.visibleTop + 0.25, 0.08], impactAt: impact)
+        feedback.showOutcome(outcome, for: id, badgeAt: player.position + [0, player.visibleTop + 0.25, 0.08], impactAt: impact)
     }
 
     /// Clears the move cue and outcome feedback, e.g. when the next encounter starts.
@@ -440,11 +453,12 @@ final class LaserScene {
         func anchor(_ name: String) -> SIMD3<Float>? {
             authored.findEntity(named: name)?.position(relativeTo: authored)
         }
-        let playerAnchors: [(GameWorldMapping.Lane, String)] = [(.parent, "PlayerAnchor_Parent"), (.child, "PlayerAnchor_Child")]
-        for (lane, name) in playerAnchors {
+        // Authored RCP anchor names, kept for asset compatibility: "Parent" is P1's lane, "Child" P2's.
+        let playerAnchors: [(PlayerID, String)] = [(.player1, "PlayerAnchor_Parent"), (.player2, "PlayerAnchor_Child")]
+        for (id, name) in playerAnchors {
             guard let position = anchor(name) else { continue }
-            mapping.laneCenterX[lane] = position.x
-            players[lane]?.position = position
+            mapping.laneCenterX[id] = position.x
+            players[id]?.position = position
         }
         if let parent = anchor("PlayerAnchor_Parent") {
             mapping.interactionPlaneZ = parent.z
@@ -545,15 +559,15 @@ final class LaserScene {
     }
 
     private func addPlayers() {
-        let placeholders: [(GameWorldMapping.Lane, SIMD2<Float>, Float, UIColor)] = [
-            (.parent, layout.parentSize, layout.parentScale, .white),
-            (.child, layout.childSize, layout.childScale, .white),
+        let placeholders: [(PlayerID, SIMD2<Float>, Float, UIColor)] = [
+            (.player1, layout.player1Size, layout.player1Scale, .white),
+            (.player2, layout.player2Size, layout.player2Scale, .white),
         ]
-        for (lane, size, scale, color) in placeholders {
-            let player = PlayerCutoutEntity(lane: lane, size: size, color: color)
-            player.position = mapping.playerPosition(lane)
+        for (id, size, scale, color) in placeholders {
+            let player = PlayerCutoutEntity(player: id, size: size, color: color)
+            player.position = mapping.playerPosition(id)
             player.scale = SIMD3(repeating: scale)
-            players[lane] = player
+            players[id] = player
             root.addChild(player)
         }
     }

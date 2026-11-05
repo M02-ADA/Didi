@@ -45,8 +45,9 @@ final class Hoverboard {
     /// Centres the deck's contact shadows (`FootShadowParent`, `FootShadowChild`)
     /// under each player's feet, so the players read as standing on the board.
     /// The players never move with them.
-    func setFootShadow(_ lane: GameWorldMapping.Lane, atWorldX x: Float) {
-        let name = lane == .parent ? "FootShadowParent" : "FootShadowChild"
+    func setFootShadow(_ player: PlayerID, atWorldX x: Float) {
+        // Authored RCP names, kept for asset compatibility: "Parent" is P1's mark, "Child" P2's.
+        let name = player == .player1 ? "FootShadowParent" : "FootShadowChild"
         guard let mark = root.findEntity(named: name) else { return }
         // The mesh is authored at its lane with the origin on the board's centre
         // line (for draw order), so shift it by how far its centre is from `x`.

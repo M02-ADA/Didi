@@ -64,7 +64,7 @@ struct GameplayScenePresenterTests {
         #expect(abs(p1.root.position.y - 1.61) < 1e-4 && abs(p2.root.position.y - 1.11) < 1e-4)
         // P1 covers the left lane up to the boundary, P2 the right; inner emitters hidden.
         #expect(p1.span.upperBound == p2.span.lowerBound)
-        #expect(p1.span.lowerBound < scene.mapping.playerPosition(.parent).x && p2.span.upperBound > scene.mapping.playerPosition(.child).x)
+        #expect(p1.span.lowerBound < scene.mapping.playerPosition(.player1).x && p2.span.upperBound > scene.mapping.playerPosition(.player2).x)
         #expect(p1.emittersShown.left && !p1.emittersShown.right)
         #expect(!p2.emittersShown.left && p2.emittersShown.right)
         // Gameplay hides the shared preview laser.
@@ -326,7 +326,7 @@ struct GameplayScenePresenterTests {
         #expect(presenter.diagnostics.createdHazards == 4)
     }
 
-    @Test func directorScheduleNeedsTwoHazardsPerPlayer() throws {
+    @Test func directorScheduleExpectsThreeGatesPerPlayer() throws {
         let fixture = try #require(LaserReplayScenarios.make().first).input.configuration
         let scheduling = try LaserSchedulingConfiguration(
             players: [.player1: .conservativeCandidate, .player2: .conservativeCandidate], searchStep: 0.25, maximumSearchSteps: 2000)
