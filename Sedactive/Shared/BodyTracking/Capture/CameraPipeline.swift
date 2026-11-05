@@ -207,7 +207,7 @@ protocol CameraDriving: Actor {
     self.driver = driver
     let store = FrameStore()
     frames = store
-    self.sink = sink ?? CameraCopySink(metrics: store.metrics)
+    self.sink = sink ?? CameraCopySink(metrics: store.metrics, poses: store.poses)
   }
   deinit {
     operation?.cancel()
