@@ -27,9 +27,13 @@ private struct ReplayRoundView: View {
     @State private var presentation = LaserReplayPresentation()
     @State private var session: GameSessionCoordinator?
     @State private var startupError: String?
+    /// Per-frame expiry check for live cutouts (`refreshLiveCutouts`).
+    @State private var cutoutRefresh: EventSubscription?
     #if DEBUG
     @State private var preview = LaserApproachPreview()
     @State private var environmentPreview = EnvironmentPreview()
+    @State private var cutoutFeed: SyntheticCutoutFeed?
+    @State private var directorPreview = DirectorLaserPreview()
     #endif
 
     var body: some View {
@@ -47,10 +51,26 @@ private struct ReplayRoundView: View {
             scene.installVaultDoor(await LaserScene.loadVaultDoorArtwork())
             scene.installDiamondArt(await LaserScene.loadDiamondArtwork())
             content.add(scene.root)
+            // Live cutouts expire on the render loop, on the host clock their capture times use,
+            // so a cutout older than its agreed freshness limit falls back without a newer frame.
+            cutoutRefresh = content.subscribe(to: SceneEvents.Update.self) { [weak scene] _ in
+                scene?.refreshLiveCutouts(now: CACurrentMediaTime())
+            }
             // Optional world-construction guides. Replay body markers live in the presentation adapter.
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-showWorldGuides") {
+            let arguments = ProcessInfo.processInfo.arguments
+            if arguments.contains("-showWorldGuides") {
                 content.add(PoseDebugOverlay.make(for: scene))
+            }
+            // Launch with `-syntheticCutouts <scenario>` to show synthetic CP2 player
+            // cutouts through the production presenter. Debug-only preview: its
+            // synthetic bodies would disagree with the replay's, so it runs with the
+            // laser approach (or environment) preview instead of the replay round.
+            // In the game, live cutouts and gameplay run together.
+            let wantsCutoutPreview = SyntheticCutoutFeed.requestedScenario != nil
+            if wantsCutoutPreview {
+                cutoutFeed = SyntheticCutoutFeed.startIfRequested(
+                    on: scene, debugMarkers: !arguments.contains("-hideDebugOverlay"))
             }
             // Launch with `-environmentPreview <mode>` to review the corridor,
             // vault door and diamonds. Each preview replaces the gameplay driver.
@@ -58,8 +78,13 @@ private struct ReplayRoundView: View {
                 environmentPreview.start(on: content, scene: scene, mode: mode)
                 return
             }
-            let arguments = ProcessInfo.processInfo.arguments
-            if arguments.contains("-laserArtworkPreview") || arguments.contains(where: {
+            // Launch with `-directorLaserPreview` to drive the gameplay presenter from
+            // real LaserWaveDirector output (per-player bands, offsets, overlap).
+            if DirectorLaserPreview.isRequested {
+                directorPreview.start(on: content, scene: scene)
+                return
+            }
+            if wantsCutoutPreview || arguments.contains("-laserArtworkPreview") || arguments.contains(where: {
                 $0 == "-laserGateState" || $0.hasPrefix("-laserPreview")
             }) {
                 preview.start(on: content, scene: scene)
@@ -84,6 +109,18 @@ private struct ReplayRoundView: View {
         .overlay(alignment: .topLeading) {
             if let session, session.summary == nil { ReplaySliceHUD(session: session) }
             if let startupError { Text("Replay could not start: \(startupError)").padding().background(.black).foregroundStyle(.white) }
+            #if DEBUG
+            if cutoutFeed != nil, !ProcessInfo.processInfo.arguments.contains("-hideDebugOverlay") {
+                TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                    Text(cutoutStatus)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.white)
+                        .padding(8)
+                        .background(.black.opacity(0.6), in: .rect(cornerRadius: 6))
+                        .padding()
+                }
+            }
+            #endif
         }
         .overlay(alignment: .bottomTrailing) {
             if let session, session.phase == .running {
@@ -98,7 +135,16 @@ private struct ReplayRoundView: View {
         }
         .onDisappear {
             presentation.stop()
+            cutoutRefresh?.cancel()
+            cutoutRefresh = nil
+            // Release the cutout consumer and revoke any upload still on the GPU
+            // before this scene is replaced (Retry).
+            scene.detachLiveCutouts()
             #if DEBUG
+            cutoutFeed?.stop()
+            cutoutFeed = nil
+            directorPreview.stop()
+            directorPreview = DirectorLaserPreview()
             // Preview subscriptions capture their owners weakly; replacing them releases the subscriptions.
             preview = LaserApproachPreview()
             environmentPreview = EnvironmentPreview()
@@ -107,6 +153,19 @@ private struct ReplayRoundView: View {
             Task { await previous?.stop() }
         }
     }
+
+    #if DEBUG
+    /// Which source frame each player shows, for the synthetic cutout preview.
+    private var cutoutStatus: String {
+        guard let presenter = scene.liveCutouts else { return "cutouts detached" }
+        let players = PlayerID.allCases.map { id in
+            "\(id == .player1 ? "P1" : "P2") \(presenter.displayed[id].map { "frame \($0.frameID)" } ?? "pictogram")"
+        }
+        let d = presenter.diagnostics
+        return (players + ["shown \(d.activations)  not current \(d.notCurrent)  fallbacks \(d.fallbacks)  rejected \(cutoutFeed?.rejectedOffers ?? 0)"])
+            .joined(separator: "\n")
+    }
+    #endif
 }
 
 #Preview(traits: .landscapeLeft) {

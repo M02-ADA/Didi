@@ -35,16 +35,22 @@ struct LaserWorldLayout {
     var cameraVerticalFieldOfView: Float = 50
 
     // Placeholder players: size is width x height, scale is per player.
-    var parentSize: SIMD2<Float> = [0.74, 1.75]
-    var childSize: SIMD2<Float> = [0.52, 1.2]
-    var parentScale: Float = 1
-    var childScale: Float = 1
+    var player1Size: SIMD2<Float> = [0.74, 1.75]
+    var player2Size: SIMD2<Float> = [0.52, 1.2]
+    var player1Scale: Float = 1
+    var player2Scale: Float = 1
 
     // One horizontal laser. Height and thickness are preview values only; the
     // judged band comes from Jevon's target geometry through `setLaserBand`.
     var laserHeightAboveFloor: Float = 1.25
     var laserSpawnZ: Float = -22
     var laserCoreThickness: Float = 0.022
+
+    // Forward travel, in meters per second of travelling game time. The
+    // corridor streams at this speed and laser gates sit still in it, so both
+    // pass the players together. Presentation tuning only: a gate always
+    // reaches the players at its target's crossing time, whatever this is.
+    var travelSpeed: Float = 5.2
 
     // Temporary DUCK/JUMP cue: above the players, in front of the corridor.
     var moveCuePosition: SIMD3<Float> = [0, 2.0, 0.6]
@@ -82,27 +88,33 @@ final class LaserScene {
     let root = Entity()
     private(set) var layout: LaserWorldLayout
     private(set) var mapping: GameWorldMapping
-    private(set) var players: [GameWorldMapping.Lane: PlayerCutoutEntity] = [:]
+    private(set) var players: [PlayerID: PlayerCutoutEntity] = [:]
     private(set) var environmentSource: EnvironmentSource?
     private(set) var hoverboard: Hoverboard?
-    private let laser = Entity()
+    /// Full-width laser for previews; gameplay uses lane-local hazards.
+    private let laser: LaserHazard
     private let feedback = LaserFeedback()
     /// Corridor details that stream past; see `advanceTravel(by:)`.
     private var travel: Entity?
     private var travelLoop: Float = 12
-    private var travelOffset: Float = 0
+    /// Where the corridor's travel group sits within its loop (tests and debugging).
+    private(set) var travelOffset: Float = 0
     private var vaultDoor: VaultDoor?
     private var diamondArt: DiamondArt?
     private let diamonds = Entity()
-    private var laserEmitters: [Entity] = []
-    private var fallbackBeam: [Entity] = []
-    private var laserGate: LaserGate?
+    /// Unmodified gate artwork; every laser is built from its own clone.
+    private var laserArtwork: Entity?
+    /// Lane-local gameplay hazards created so far (see `makeLaneHazard`).
+    private var laneHazards: [(player: PlayerID, hazard: LaserHazard)] = []
+    /// The last shared effect presented (`presentTeamEffect`), for tests and debugging.
+    private(set) var lastTeamEffect: (healthDelta: Int, scoreDelta: Int)?
+    /// Live player cutouts; `nil` until `attachLiveCutouts` (pictograms show).
+    private(set) var liveCutouts: LiveCutoutPresenter?
+    private(set) var cutoutStore: CutoutTextureStore?
     /// Wall mount x positions, from the authored `LaserMount_*` anchors when available.
     private var laserSpan: ClosedRange<Float>
-    /// Judged band in game units above the floor; preview values until Jevon's targets exist.
-    private var laserBand: ClosedRange<Float>
 
-    var laserWorldZ: Float { laser.position.z }
+    var laserWorldZ: Float { laser.worldZ }
 
     convenience init() {
         self.init(layout: LaserWorldLayout(), mapping: GameWorldMapping())
@@ -113,11 +125,13 @@ final class LaserScene {
         self.mapping = mapping
         let mountX = layout.corridorWidth / 2 - 0.04
         laserSpan = -mountX...mountX
-        laserBand = (layout.laserHeightAboveFloor - layout.laserCoreThickness / 2)...(layout.laserHeightAboveFloor + layout.laserCoreThickness / 2)
+        let band = (layout.laserHeightAboveFloor - layout.laserCoreThickness / 2)...(layout.laserHeightAboveFloor + layout.laserCoreThickness / 2)
+        laser = LaserHazard(name: "laser", span: laserSpan, band: band, mapping: mapping,
+                            fallbackThickness: layout.laserCoreThickness)
         root.name = "laserWorld"
         root.addChild(makeCamera())
         addPlayers()
-        buildLaser()
+        root.addChild(laser.root)
         setLaserDepth(layout.laserSpawnZ)
         feedback.setCuePosition(layout.moveCuePosition)
         root.addChild(feedback.root)
@@ -171,6 +185,7 @@ final class LaserScene {
                 authored.findEntity(named: Self.editorPreviewsName)?.removeFromParent()
             }
             applyAnchors(from: authored)
+            liveCutouts?.setMapping(mapping)
             travel = authored.findEntity(named: "Travel")
             environment = authored
             environmentSource = .realityComposerPro
@@ -183,13 +198,9 @@ final class LaserScene {
         if let board = environment.findEntity(named: "Corridor")?.findEntity(named: "Hoverboard"),
            let hoverboard = Hoverboard(entity: board, camera: layout.cameraPosition, backDepth: layout.hoverboardBackZ) {
             self.hoverboard = hoverboard
-            for (lane, player) in players {
-                hoverboard.setFootShadow(lane, atWorldX: player.position.x)
+            for (id, player) in players {
+                hoverboard.setFootShadow(id, atWorldX: player.position.x)
             }
-            // The players visibly ride the board through a presentation-only
-            // offset; their placements from game data never move.
-            hoverboard.setRiders(players.values.map(\.ride))
-            hoverboard.startHovering()
         }
     }
 
@@ -202,9 +213,22 @@ final class LaserScene {
     /// pauses travel; rendering keeps no clock of its own (TEAM_ALIGNMENT §C).
     /// With Reduce Motion the corridor streams at half speed.
     func advanceTravel(by distance: Float) {
-        guard let travel, travelLoop > 0 else { return }
         let scaled = UIAccessibility.isReduceMotionEnabled ? distance * 0.5 : distance
-        travelOffset = (travelOffset + scaled).truncatingRemainder(dividingBy: travelLoop)
+        setTravelOffset(travelOffset + scaled)
+    }
+
+    /// Places the corridor `distance` meters along the journey, absolutely,
+    /// so gameplay can keep it in step with world-anchored laser gates (see
+    /// `GameplayScenePresenter`). With Reduce Motion the corridor holds still
+    /// instead: the large streaming motion is decorative, and running it at a
+    /// different speed from the gates would contradict them.
+    func setTravelDistance(_ distance: Float) {
+        setTravelOffset(UIAccessibility.isReduceMotionEnabled ? 0 : distance)
+    }
+
+    private func setTravelOffset(_ offset: Float) {
+        guard let travel, travelLoop > 0 else { return }
+        travelOffset = offset.truncatingRemainder(dividingBy: travelLoop)
         if travelOffset < 0 {
             travelOffset += travelLoop
         }
@@ -213,8 +237,107 @@ final class LaserScene {
 
     /// Shows or hides the laser, e.g. for previews without an encounter.
     var isLaserVisible: Bool {
-        get { laser.isEnabled }
-        set { laser.isEnabled = newValue }
+        get { laser.root.isEnabled }
+        set { laser.root.isEnabled = newValue }
+    }
+
+    // MARK: - Gameplay presentation
+
+    /// A new, hidden laser covering one player's lane: from their wall mount
+    /// to the boundary between the lanes, with only the outer emitter shown.
+    /// Built from the gate artwork when it is installed. The caller (the
+    /// gameplay presenter) pools and reuses these.
+    func makeLaneHazard(for player: PlayerID) -> LaserHazard {
+        let hazard = LaserHazard(name: "laser.\(player.rawValue).\(laneHazards.count)", span: laneSpan(for: player),
+                                 band: laser.band, mapping: mapping, fallbackThickness: layout.laserCoreThickness)
+        if let laserArtwork {
+            hazard.install(artwork: laserArtwork.clone(recursive: true))
+        }
+        hazard.setEmitters(left: player == .player1, right: player == .player2)
+        hazard.root.isEnabled = false
+        laneHazards.append((player, hazard))
+        root.addChild(hazard.root)
+        return hazard
+    }
+
+    /// One player's half of the corridor between the wall mounts. P1 is the
+    /// left lane; the boundary is midway between the two lane centres.
+    func laneSpan(for player: PlayerID) -> ClosedRange<Float> {
+        let boundary = ((mapping.laneCenterX[.player1] ?? 0) + (mapping.laneCenterX[.player2] ?? 0)) / 2
+        return player == .player1 ? laserSpan.lowerBound...boundary : boundary...laserSpan.upperBound
+    }
+
+    /// Fits a player's pictogram between `floor` and `crown` (game units),
+    /// e.g. to replay body data. The player's placement and any live cutout
+    /// are unaffected.
+    func setPlaceholderBody(for player: PlayerID, floor: Double, crown: Double) {
+        players[player]?.setPlaceholderBody(
+            floorY: Float(floor) * mapping.metersPerGameUnit, crownY: Float(crown) * mapping.metersPerGameUnit)
+    }
+
+    func resetPlaceholderBodies() {
+        for player in players.values { player.resetPlaceholderBody() }
+    }
+
+    /// Shows one player's verdict: a badge above their visible body (live
+    /// cutout or pictogram) and, for a HIT, a spark where their lane meets
+    /// `band` (game units) on the interaction plane.
+    func presentOutcome(_ outcome: LaserFeedback.Outcome, for player: PlayerID, band: ClosedRange<Float>) {
+        presentOutcome(outcome, for: player, bandCenter: (band.lowerBound + band.upperBound) / 2)
+    }
+
+    /// The team's shared health and score change for one encounter
+    /// (`teamEffectsCommitted`). The HUD shows the totals from game state; a
+    /// world effect for it is pending its art (LH-05/LH-18), so this records it.
+    func presentTeamEffect(healthDelta: Int, scoreDelta: Int) {
+        lastTeamEffect = (healthDelta, scoreDelta)
+    }
+
+    /// The move cue on screen, if any, and whether it is the action cue.
+    var shownMoveCue: (move: LaserFeedback.Move, acting: Bool)? { feedback.shownMoveCue }
+
+    // MARK: - Live cutouts (CP2)
+
+    /// Shows `provider`'s player cutouts on the player surfaces (P1 left, P2
+    /// right), replacing the pictograms while each player's image is current.
+    /// `layout` is the CP1 player-plane layout the cutouts' placements use.
+    /// `maximumDisplayAge` (host-clock seconds since capture) is the CP2
+    /// display-freshness limit after which a cutout that receives no newer
+    /// frame falls back to the pictogram; `nil` (the default until it is
+    /// agreed with Edo) keeps the last current image. It takes effect through
+    /// `refreshLiveCutouts(now:)`, which the play view calls every frame.
+    /// Throws if no GPU texture path is available; the pictograms stay.
+    func attachLiveCutouts(
+        _ provider: any PlayerCutoutProviding, layout: PlayerPlaneLayout,
+        maximumImageBytes: Int = 8 * 1024 * 1024, maximumDisplayAge: Double? = nil
+    ) throws {
+        detachLiveCutouts()
+        if cutoutStore == nil || cutoutStore?.maximumImageBytes != maximumImageBytes {
+            cutoutStore = try CutoutTextureStore(maximumImageBytes: maximumImageBytes)
+        }
+        guard let cutoutStore else { return }
+        let presenter = LiveCutoutPresenter(
+            store: cutoutStore, mapping: mapping, layout: layout,
+            players: Dictionary(uniqueKeysWithValues: PlayerID.allCases.compactMap { id in
+                players[id].map { (id, $0) }
+            }))
+        presenter.maximumDisplayAge = maximumDisplayAge
+        liveCutouts = presenter
+        try presenter.attach(provider)
+    }
+
+    /// Expires live cutouts older than their display-freshness limit, without
+    /// waiting for another frame. Call once per rendered frame with
+    /// host-clock time (`CACurrentMediaTime()`, the CP1 capture clock).
+    func refreshLiveCutouts(now: Double) {
+        liveCutouts?.refresh(now: now)
+    }
+
+    /// Stops showing live cutouts; both players return to their pictograms.
+    /// The GPU textures are kept for a later attach.
+    func detachLiveCutouts() {
+        liveCutouts?.detach()
+        liveCutouts = nil
     }
 
     // MARK: - Vault door and diamonds
@@ -264,46 +387,38 @@ final class LaserScene {
         return diamond
     }
 
-    /// Replaces the code-built laser with the Option 1 gate artwork. Only one of
-    /// them is ever in the scene; missing artwork keeps the code-built laser.
+    /// Replaces the code-built lasers with the Option 1 gate artwork. Only one
+    /// of them is ever shown per laser; missing artwork keeps the code-built one.
     func installLaserArtwork(_ artwork: Entity?) {
-        guard laserGate == nil, let artwork, let gate = LaserGate(artwork: artwork) else { return }
-        for part in laser.children.map({ $0 }) {
-            part.removeFromParent()
-        }
-        laserEmitters = []
-        fallbackBeam = []
-        laserGate = gate
-        laser.addChild(gate.root)
-        gate.setState(.active)
+        guard laserArtwork == nil, let artwork, let gate = laser.install(artwork: artwork.clone(recursive: true)) else { return }
+        laserArtwork = artwork
         feedback.setImpactArt(gate.makeImpactSpark)
-        applyLaserGeometry()
+        for (_, hazard) in laneHazards {
+            hazard.install(artwork: artwork.clone(recursive: true))
+        }
     }
 
-    /// Moves the laser along the corridor. A future encounter state maps its
-    /// timing to this depth; rendering never decides when a laser arrives.
+    /// Moves the shared (preview) laser along the corridor. Rendering never
+    /// decides when a laser arrives.
     func setLaserDepth(_ worldZ: Float) {
-        let center = (laserBand.lowerBound + laserBand.upperBound) / 2
-        laser.position = mapping.laserPosition(heightAboveFloor: center, worldZ: worldZ)
+        laser.setDepth(worldZ)
     }
 
-    /// Sets the judged band (game units above the floor). The visible solid core
-    /// spans exactly this band; the glow is decorative.
+    /// Sets the shared laser's judged band (game units above the floor). The
+    /// visible solid core spans exactly this band; the glow is decorative.
     func setLaserBand(lowerEdge: Float, upperEdge: Float) {
-        laserBand = lowerEdge...upperEdge
-        setLaserDepth(laser.position.z)
-        applyLaserGeometry()
+        laser.setBand(lowerEdge: lowerEdge, upperEdge: upperEdge)
     }
 
     /// Presents a state decided elsewhere; the code-built fallback has no states.
     func setLaserVisualState(_ state: LaserGate.VisualState) {
-        laserGate?.setState(state)
+        laser.setState(state)
     }
 
     /// Warning build-up from 0 (warning shown) to 1 (beam goes solid), derived
     /// by the caller from the encounter's warning and cue times.
     func setLaserWarningProgress(_ progress: Float) {
-        laserGate?.setWarningProgress(progress)
+        laser.setWarningProgress(progress)
     }
 
     /// Shows the shared move cue: a muted preview during the warning
@@ -313,24 +428,23 @@ final class LaserScene {
         feedback.setMoveCue(move, actionRemaining: actionRemaining)
     }
 
-    /// Shows a finalized verdict for one player: a badge above their head and,
-    /// for a HIT, a spark where their lane meets the beam on the interaction plane.
-    func presentOutcome(_ outcome: LaserFeedback.Outcome, for lane: GameWorldMapping.Lane) {
-        guard let player = players[lane] else { return }
-        let height = (lane == .parent ? layout.parentSize.y : layout.childSize.y) * player.scale.y
-        let bandCenter = (laserBand.lowerBound + laserBand.upperBound) / 2
+    /// Shows a finalized verdict for one player against the shared (preview)
+    /// laser: a badge above their visible body and, for a HIT, a spark where
+    /// their lane meets the beam on the interaction plane.
+    func presentOutcome(_ outcome: LaserFeedback.Outcome, for player: PlayerID) {
+        presentOutcome(outcome, for: player, bandCenter: (laser.band.lowerBound + laser.band.upperBound) / 2)
+    }
+
+    private func presentOutcome(_ outcome: LaserFeedback.Outcome, for id: PlayerID, bandCenter: Float) {
+        guard let player = players[id] else { return }
         var impact = mapping.laserPosition(heightAboveFloor: bandCenter, worldZ: mapping.interactionPlaneZ + 0.06)
         impact.x = player.position.x
-        feedback.showOutcome(outcome, for: lane, badgeAt: player.position + [0, height + 0.25, 0.08], impactAt: impact)
+        feedback.showOutcome(outcome, for: id, badgeAt: player.position + [0, player.visibleTop + 0.25, 0.08], impactAt: impact)
     }
 
     /// Clears the move cue and outcome feedback, e.g. when the next encounter starts.
     func clearLaserFeedback() {
         feedback.clear()
-    }
-
-    func setPlayerScale(_ lane: GameWorldMapping.Lane, _ scale: Float) {
-        players[lane]?.scale = SIMD3(repeating: scale)
     }
 
     /// Reads the named placement points authored under `Root/Anchors`.
@@ -339,44 +453,34 @@ final class LaserScene {
         func anchor(_ name: String) -> SIMD3<Float>? {
             authored.findEntity(named: name)?.position(relativeTo: authored)
         }
-        let playerAnchors: [(GameWorldMapping.Lane, String)] = [(.parent, "PlayerAnchor_Parent"), (.child, "PlayerAnchor_Child")]
-        for (lane, name) in playerAnchors {
+        // Authored RCP anchor names, kept for asset compatibility: "Parent" is P1's lane, "Child" P2's.
+        let playerAnchors: [(PlayerID, String)] = [(.player1, "PlayerAnchor_Parent"), (.player2, "PlayerAnchor_Child")]
+        for (id, name) in playerAnchors {
             guard let position = anchor(name) else { continue }
-            mapping.laneCenterX[lane] = position.x
-            players[lane]?.position = position
+            mapping.laneCenterX[id] = position.x
+            players[id]?.position = position
         }
         if let parent = anchor("PlayerAnchor_Parent") {
             mapping.interactionPlaneZ = parent.z
         }
+        if let left = anchor("LaserMount_Left"), let right = anchor("LaserMount_Right") {
+            laserSpan = left.x...right.x
+        }
+        laser.mapping = mapping
+        laser.setSpan(laserSpan)
+        for (player, hazard) in laneHazards {
+            hazard.mapping = mapping
+            hazard.setSpan(laneSpan(for: player))
+        }
         if let spawn = anchor("LaserSpawnPoint") {
             layout.laserSpawnZ = spawn.z
             setLaserDepth(spawn.z)
-        }
-        if let left = anchor("LaserMount_Left"), let right = anchor("LaserMount_Right") {
-            laserSpan = left.x...right.x
-            applyLaserGeometry()
         }
         if let loop = anchor("TravelLoop") {
             travelLoop = -loop.z
         }
         if let stop = anchor("VaultDoorStop") {
             layout.vaultDoorStopZ = stop.z
-        }
-    }
-
-    /// Keeps the gate (or the code-built fallback) on the wall mounts and sized to the band.
-    private func applyLaserGeometry() {
-        let bandHeight = (laserBand.upperBound - laserBand.lowerBound) * mapping.metersPerGameUnit
-        if let laserGate {
-            laserGate.setSpan(leftX: laserSpan.lowerBound, rightX: laserSpan.upperBound)
-            laserGate.setBandHeight(bandHeight)
-            return
-        }
-        for (emitter, x) in zip(laserEmitters, [laserSpan.lowerBound, laserSpan.upperBound]) {
-            emitter.position.x = x
-        }
-        for part in fallbackBeam {
-            part.scale.y = bandHeight / layout.laserCoreThickness
         }
     }
 
@@ -455,47 +559,21 @@ final class LaserScene {
     }
 
     private func addPlayers() {
-        let placeholders: [(GameWorldMapping.Lane, SIMD2<Float>, Float, UIColor)] = [
-            (.parent, layout.parentSize, layout.parentScale, .white),
-            (.child, layout.childSize, layout.childScale, .white),
+        let placeholders: [(PlayerID, SIMD2<Float>, Float, UIColor)] = [
+            (.player1, layout.player1Size, layout.player1Scale, .white),
+            (.player2, layout.player2Size, layout.player2Scale, .white),
         ]
-        for (lane, size, scale, color) in placeholders {
-            let player = PlayerCutoutEntity(lane: lane, size: size, color: color)
-            player.position = mapping.playerPosition(lane)
+        for (id, size, scale, color) in placeholders {
+            let player = PlayerCutoutEntity(player: id, size: size, color: color)
+            player.position = mapping.playerPosition(id)
             player.scale = SIMD3(repeating: scale)
-            players[lane] = player
+            players[id] = player
             root.addChild(player)
         }
     }
 
     /// One horizontal beam: an opaque core (the part that matches the judged
     /// band), a transparent glow, and an emitter on each wall.
-    private func buildLaser() {
-        laser.name = "laser"
-        let width = layout.corridorWidth
-        let thickness = layout.laserCoreThickness
-        let red = Self.color(0xE5484D)
-
-        let core = ModelEntity(mesh: .generateBox(size: [width, thickness, thickness]), materials: [Self.flat(red)])
-        core.name = "laser.core"
-
-        var glowMaterial = Self.flat(red)
-        glowMaterial.blending = .transparent(opacity: 0.18)
-        let glow = ModelEntity(mesh: .generateBox(size: [width, thickness * 4, thickness * 2]), materials: [glowMaterial])
-        glow.name = "laser.glow"
-
-        laser.addChild(core)
-        laser.addChild(glow)
-        fallbackBeam = [core, glow]
-        for _ in 0..<2 {
-            let emitter = ModelEntity(mesh: .generateBox(size: [0.08, 0.08, 0.08]), materials: [unlit(0x2B2766)])
-            laser.addChild(emitter)
-            laserEmitters.append(emitter)
-        }
-        applyLaserGeometry()
-        root.addChild(laser)
-    }
-
     /// Flat colour from the Hi-Fi palette, e.g. `0x221F55`.
     private func unlit(_ hex: UInt32) -> UnlitMaterial {
         Self.flat(Self.color(hex))

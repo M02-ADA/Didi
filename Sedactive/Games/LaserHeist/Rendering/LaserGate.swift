@@ -23,6 +23,10 @@ final class LaserGate {
         case inactive, warning, active, hit, disabled
     }
 
+    /// The longest state-change animation (the hit flare and the power-down
+    /// fades are 0.2–0.25 s): after it a powered-down gate can be hidden.
+    static let longestTransition: Double = 0.25
+
     /// Gate root, centred on the beam's centre line.
     let root: Entity
     private(set) var state: VisualState?
@@ -83,6 +87,13 @@ final class LaserGate {
         emitters[1].mount.position.x = rightX
         beam.position.x = (leftX + rightX) / 2
         beam.scale.x = (rightX - leftX) / authoredBeamSize.x
+    }
+
+    /// Shows or hides each wall emitter. A lane-local half gate hides the
+    /// inner one, so the two players' halves meet without a mid-corridor emitter.
+    func setEmittersVisible(left: Bool, right: Bool) {
+        emitters[0].mount.isEnabled = left
+        emitters[1].mount.isEnabled = right
     }
 
     /// Sizes the solid core (and the dashed warning) to the judged band height in meters.

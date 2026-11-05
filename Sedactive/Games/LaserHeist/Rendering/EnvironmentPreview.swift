@@ -41,10 +41,10 @@ final class EnvironmentPreview {
         return index + 1 < arguments.count ? Mode(rawValue: arguments[index + 1]) ?? .journey : .journey
     }
 
-    /// Temporary tuning values, not approved constants. The default speed
-    /// matches the laser preview's sample approach (22 m in 4.2 s).
+    /// Temporary tuning values, not approved constants. The default speed is
+    /// the gameplay travel speed (`LaserWorldLayout.travelSpeed`).
     struct Tuning {
-        var cruiseSpeed: Float = 5.2
+        var cruiseSpeed: Float = LaserWorldLayout().travelSpeed
         var doorSpawnZ: Float = -60
         var brakingDistance: Float = 9
         var accelerationTime: Double = 1.6
