@@ -4,6 +4,14 @@
 
 **Status: PROPOSED — design only; implementation and extraction are not authorized by this document.** The Tech Lead selected selective adoption (Option B) as the direction. The coordinate candidate, presentation packet, extraction adaptations, visual policy and acceptance gates below require the indicated owner reviews. No new CP1/CP2 decision, tracker acceptance, asset license, gameplay rule or physical performance claim is implied.
 
+**Dated correction — 6 November 2026 (source-verified):** this proposal pinned the spike at `6cd0626` and its blue robot asset. The spike is now at `b130d5a`. Read the pinned rows below with these updates; the extraction principles and exclusions are unchanged and nothing here is approved:
+
+- **Asset:** the active, approved asset is the final orange mascot `Rendering/Avatar/Robot/mascot.usdz` (sha1 `61d0a911…a2d3ec`, 1.6 MiB, `Mascot.usdc`, 20 joints, 1.398 m, +Y up/−Z forward/+X anatomical right, 7 matte PBR materials), from Codex's `LaserHeist-Original-Mascot-3D-Color` package derived from Asset 13. `laserheist-robot.usdz` below is historical. The §2.3 rights/provenance gate still applies (WP-D08).
+- **New spike files to review with the same retain/adapt rules:** `Robot/MascotPoseEnvelope.swift` (raises arms outward to clear the large head; presentation targets only), avatar-only lighting in `RobotAvatar.swift`, and `SedactiveTests/.../MascotArmClearanceTests.swift` (CPU-skinned real-mesh arm/head clearance).
+- **Foot planting** (`RobotFootPlanner.swift`) is implemented with deterministic tests; adoption remains a separate WP-K07 decision after the first rig/retarget checkpoint.
+- **Physical evidence:** user-reported single-player iPad feasibility through the excluded lab stack (JUMP/DUCK observed, movement-quality issues reported). Not production acceptance; two-player tracking, latency and stability are unverified.
+- **Exclusion reconfirmed:** the spike's Live Avatar Lab runs its own `CameraPipeline` instance, Vision request, identity, calibration, jump detection and GameClock, and in DEBUG `-liveGame` mode feeds its own BodySnapshots into LaserGame. The §2.2 exclusions stand.
+
 ## 1. Recommended adoption decision and verified baseline
 
 Adopt the spike as a source for a **synthetic, rendering-only rear-view avatar prototype**, not as an alternative live input/session implementation. Keep Lean Game-Oriented logical modules within the existing app/test targets; add no package, engine, global layer or second camera owner.
@@ -38,7 +46,7 @@ Paths in this section are repository-relative. Every spike source is pinned to t
 
 | Exact spike source | Proposed destination / action | Required adaptation |
 |---|---|---|
-| `Sedactive/Games/LaserHeist/Rendering/Avatar/Robot/laserheist-robot.usdz` | Same path, **conditional retain** | Provenance/license approval; runtime bundle and rig checks. No regenerated asset. |
+| `Sedactive/Games/LaserHeist/Rendering/Avatar/Robot/mascot.usdz` (replaces the historical `laserheist-robot.usdz`) | Same path, **conditional retain** | Provenance/license approval (WP-D08); runtime bundle and rig checks. No regenerated asset. |
 | `Sedactive/Games/LaserHeist/Rendering/Avatar/Robot/RobotSkeleton.swift` | Same path, retain solver / adapt validation | Validate unique required names, parent order, transform counts, finite values and compatible unit bind scales. Fail clearly instead of silently using fallback limb lengths. Keep model-space FK → parent-local rotation and two-bone IK. |
 | `Sedactive/Games/LaserHeist/Rendering/Avatar/Robot/RobotAvatar.swift` | Same path, **adapt substantially** | Keep RobotRetargeter / RobotAvatarLayer concepts; consume §5, remove launch-argument policy and assumed CP1-shaped synthetic evidence, validate contexts, add no-frame invalidation, explicit cleanup, rig metadata and size policy. Do not copy its weak generation/frame-only gate. |
 | `Sedactive/Games/LaserHeist/Rendering/Avatar/PresentationPose.swift` | Same path, **replace proposed DTO design** | Use §5 exact provenance and explicit P1/P2 outcomes. Existing `matches` checks only generation/frameID and is insufficient. No public CP1 model change. |
@@ -60,7 +68,7 @@ Paths in this section are repository-relative. Every spike source is pinned to t
 
 ### 2.3 Asset provenance, license and target membership
 
-The pinned asset is 738,481 bytes, SHA-256 `dcce9ba6132800a5ffd284c54ce97e93507fdbffe5dfe740f3f0f10ae1265dc4`, a USDZ archive with `Robot.usdc`. The spike README attributes it to a Codex `avatar.usdz`; that statement and a hash are **not a license or full provenance record**. No dedicated license/notice was found in the inspected tree. The source/tests declare 20 joints, +Y up, −Z forward, +X anatomical right and native height 1.398 m; these must be checked on actual import, not trusted for arbitrary replacements.
+*Historical (superseded by the orange mascot; see the dated correction at the top):* the pinned asset is 738,481 bytes, SHA-256 `dcce9ba6132800a5ffd284c54ce97e93507fdbffe5dfe740f3f0f10ae1265dc4`, a USDZ archive with `Robot.usdc`. The spike README attributes it to a Codex `avatar.usdz`; that statement and a hash are **not a license or full provenance record**. No dedicated license/notice was found in the inspected tree. The source/tests declare 20 joints, +Y up, −Z forward, +X anatomical right and native height 1.398 m; these must be checked on actual import, not trusted for arbitrary replacements.
 
 Pinned source anchors: [asset/retargeting claims](https://github.com/M02-ADA/Didi/blob/6cd062680e5967778125f2b87c01bd189e461229/Docs/Avatar-Spike/robot/README.md), [clone/rig attachment](https://github.com/M02-ADA/Didi/blob/6cd062680e5967778125f2b87c01bd189e461229/Sedactive/Games/LaserHeist/Rendering/Avatar/Robot/RobotAvatar.swift#L379), [skeleton and IK](https://github.com/M02-ADA/Didi/blob/6cd062680e5967778125f2b87c01bd189e461229/Sedactive/Games/LaserHeist/Rendering/Avatar/Robot/RobotSkeleton.swift#L127), [old incomplete packet match](https://github.com/M02-ADA/Didi/blob/6cd062680e5967778125f2b87c01bd189e461229/Sedactive/Games/LaserHeist/Rendering/Avatar/PresentationPose.swift#L49). The URL uses the checkout's configured `M02-ADA/Didi` remote, not an assumed repository rename.
 

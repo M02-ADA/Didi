@@ -4,6 +4,8 @@
 
 **Overall disposition: PROPOSED — architecture review only.** The mentor/Tech Lead's representation direction is recorded; this is not approval of the complete revised architecture, code extraction, collision changes, B2a acceptance, B2b implementation or task redistribution.
 
+**Source-verified correction — 6 November 2026 (Kevin, Claude Code audit):** updates §2.1/§2.4/§4/§7/§18.1 for the current spike (`b130d5a`: final orange mascot, arm head-clearance envelope, avatar lighting, foot planting), the unmerged LH-18 vault presentation branch, user-reported physical single-player feasibility and the board's LH-24. The authority split, retained contracts and every PROPOSED/BLOCKED label are unchanged; no decision is accepted by this correction. Package-level detail lives in the [Technical Workplan V2](LaserHeist-Technical-Workplan-V2.md) and the owner/order overlay in [Final Subtask Review V3](LaserHeist-Final-Subtask-Review-V3.md).
+
 **Source-grounded refinement — 6 November 2026.** Incorporates the Current Architecture Baseline Audit in the review conversation and a fresh inspection of current source/contracts. That audit is not a new repository artifact. This revision clarifies composition, joint capabilities, lifecycle/calibration seams, visual fairness and full-product planning inputs. It authorizes documentation only; no owner sign-off or implementation acceptance is inferred.
 
 Decision labels:
@@ -33,7 +35,9 @@ Decision labels:
 | Active branch / HEAD | `feat/architecture`, `5070c0431b8c3fda6a0a0882e667e2b967edc09c` |
 | Accepted baseline | `origin/staging`, same `5070c0431b8c3fda6a0a0882e667e2b967edc09c` |
 | Divergence | **0 ahead / 0 behind the available `origin/staging` ref**; no fetch or new remote freshness claim in this refinement |
-| Avatar source | Available `origin/spike/front-facing-avatar`, `6cd062680e5967778125f2b87c01bd189e461229` |
+| Avatar source | Available `origin/spike/front-facing-avatar`; first pinned at `6cd062680e5967778125f2b87c01bd189e461229`, current `b130d5a` (§2.4) |
+| Vault presentation | `origin/feat/lh18-vault-presentation`, `665b06c`; implemented and tested, unmerged (no PR, not in `staging`) |
+| Current architecture tip | `feat/architecture` `7cab612` = this document plus the workplan, Avatar-01 and five empty `Rendering/Avatar/` placeholder Swift files over `5070c04` |
 | Tracking source | Available `feat/player-tracking` / `origin/feat/player-tracking`, `69860cc75d820c76c3ac45cfac09edce651892f7`; inspected as Git objects |
 | Spike merge base | `9ea77feead299fbf932fb0170ce244f4d03f3f87`; spike predates B1 merge |
 | Refinement entry local changes | Modified `Docs/Architecture/Game-Oriented-Architecture.md`; untracked Avatar-01, this V2 document and `Scripts/CP2Spike/`. Preserve all; no staged or local signing changes observed |
@@ -80,11 +84,16 @@ Read this audit with [TEAM_ALIGNMENT](TEAM_ALIGNMENT.md), [CP1](LH-00-Checkpoint
 
 ### 2.4 Pinned spike findings
 
-The spike's three commits (`5e457dd`, `77901ce`, `6cd0626`) add 36 files and change three from the merge base. It contains a RealityKit skinned USDZ, RobotSkeleton/IK, RobotRetargeter/RobotAvatarLayer, filtering, feet and synthetic scenarios/tests. It also contains a custom LivePoseSink, LiveIdentity, LiveCalibrator, LiveSampleBuilder/JumpDetector and LiveGameSession. The last group is not adopted.
+The spike's commits (`5e457dd`, `77901ce`, `6cd0626`, and since then `b130d5a`) add 47 files and change three from the merge base (`PlayView`, `LaserScene`, `GameplayScenePresenter`, all DEBUG-gated). Two groups:
+
+- **Reusable representation POC (production adaptation candidates):** the final colour-corrected orange mascot (`Rendering/Avatar/Robot/mascot.usdz`, sha1 `61d0a911…a2d3ec`, 20 joints, 1.398 m; it replaced the earlier blue robot and an interim pilot mech), bind-derived RobotSkeleton/RobotPoseSolver two-bone IK, RobotRetargeter/RobotAvatarLayer (two independent clones, one shared 1.6 m size, co-facing anatomical mapping, crouch/jump/arms/lean), `MascotPoseEnvelope` arm head-clearance, PoseSmoothing, RobotFootPlanner (planted/stepping/airborne feet, lateral steps), avatar-only lighting and DEBUG demo/replay hosts, with synthetic tests including real-mesh arm-clearance and foot-planting metrics.
+- **Alternative live stack (excluded):** the Live Avatar Lab creates its own `CameraPipeline` instance with a custom LivePoseSink running its own Vision request, plus LiveIdentity (greedy P1/P2), LiveCalibrator, LiveSampleBuilder/LiveJumpDetector and LiveGameSession with its own GameClock. In `-liveGame` DEBUG mode it feeds its own BodySnapshots into LaserGame/LaserCollisionJudge — a second CP1 producer and session — despite a stale file comment saying otherwise. None of this group is adopted.
+
+**User-reported physical feasibility (not production acceptance):** Kevin reports testing the live avatar and DEBUG gameplay on a physical iPad with one player, observing JUMP/DUCK behaviour, and reporting movement-quality problems. This is user-reported single-player feasibility through the excluded lab stack. Two-player tracking, full-game stability, end-to-end latency, frame time and thermals are **not** verified.
 
 **PROPOSED extraction:** see [Avatar-01 §2](Avatar-01-Rear-View-Representation-Architecture-Proposal.md#2-exact-extraction-list-and-resource-gate) for exact paths and adaptations. No source tree copying. Staging-only B1/replay files absent from the old spike are not approved deletions.
 
-**BLOCKED asset copy:** source declares 20 joints, 1.398 m height, +Y up/−Z forward; actual import must validate these assumptions. The README's Codex attribution/hash is not a complete provenance/distribution/attribution record. Kevin/Theo/Edo must resolve rights before extraction. No legal clearance or physical animation validation is inferred.
+**BLOCKED asset copy:** the orange mascot declares 20 joints, 1.398 m height, +Y up/−Z forward, +X anatomical right; spike import tests check these on the real asset. Its Codex package (`LaserHeist-Original-Mascot-3D-Color`: compatibility report, skeleton map, colour audit) derives from the team's Asset 13 artwork; that is technical provenance, not a complete rights/distribution/attribution record. Kevin/Theo/Edo must record rights before extraction (WP-D08). No legal clearance is inferred.
 
 ## 3. What remains valid
 
@@ -112,7 +121,7 @@ Retaining a contract does not implement the corresponding live skeleton. The raw
 | Calibration-specific masks/landmarks | **RETAINED** where needed to validate standing head and independent feet |
 | Pictogram/neutral-avatar fallback choice | **PROPOSED**, Kevin/Theo review; not an avatar-created tracking status |
 | Spike live camera/tracker/calibration/gameplay adapters | **DEFERRED / excluded** from adoption; accepted owners supply their own reviewed integration |
-| Fixed equal-size robots, jump tuning, foot/depth heuristics | **PROPOSED** synthetic comparisons only; production policy **BLOCKED** by fairness/device review |
+| Fixed equal-size avatars, arm head-clearance envelope, jump tuning, foot/depth heuristics | **PROPOSED** presentation policies; equal size and the outward-arm envelope are deliberate departures from the player's body that WP-D07 must accept or revise. Spike jump tuning affects only its excluded live stack. Foot planting exists as a POC (WP-K07). Production policy **BLOCKED** by fairness/device review |
 | Live skeleton overlays and new image preview route | **DEFERRED**, separately scoped exact-source integration |
 
 These are prospective roles, not code deletion or retroactive contract rejection. In particular, cutting out imagery and estimating crown/sole evidence are different requirements.
@@ -223,7 +232,7 @@ Kevin validates before mutating filters/order, stages both slot targets, then up
 
 Positive uniform scale, a fixed validated asset-axis correction, explicit unit conversion and bounded visual targets belong to Kevin. Missing joints yield limited/neutral animation, never synthetic observations labeled detected. Cosmetic rendering cadence/filtering remains independent of capture cadence. No-frame freshness uses original host time, not GameClock; context/loss invalidation overrides smoothing immediately.
 
-**DEFERRED:** production foot planning and inferred arm depth. These are aesthetic candidates, not measured contact/depth. Review reach, missing joints, finite outputs and actual scene behavior before adoption. B1 currently lacks elbow/knee keys; any producer extension needs its own contract review rather than importing the spike joint vocabulary into CP1 implicitly.
+**DEFERRED:** production foot planning and inferred arm depth. These are aesthetic candidates, not measured contact/depth. Foot planting is already implemented with deterministic tests on the spike; its production adoption is a separately reviewed WP-K07 decision, not a release gate. Review reach, missing joints, finite outputs and actual scene behavior before adoption. B1 currently lacks elbow/knee keys; any producer extension needs its own contract review rather than importing the spike joint vocabulary into CP1 implicitly.
 
 ### 7.1 Minimal joint capability matrix
 
@@ -456,8 +465,9 @@ PROPOSED ONLY (not existing implementations here)
     PoseSmoothing.swift
     Robot/RobotSkeleton.swift
     Robot/RobotAvatar.swift
-    Robot/laserheist-robot.usdz  rights/rig gate
-    Robot/RobotFootPlanner.swift  later optional
+    Robot/MascotPoseEnvelope.swift  mascot arm head-clearance (presentation targets)
+    Robot/mascot.usdz            orange mascot; rights/rig gate (D08)
+    Robot/RobotFootPlanner.swift  existing POC; separate K07 adoption
   Games/LaserHeist/Debug/AvatarRepresentationPreview.swift  synthetic candidate
   SedactiveTests/Games/LaserHeist/RenderingTests/
     AvatarPoseFixtures.swift / adapted RobotAvatarTests.swift
@@ -639,7 +649,8 @@ Identifiers below are verified in [the historical backlog §F](LaserHeist-Cooper
 | Edo/Kevin LH-00 CP2 | **RETAINED** completed history/infrastructure; **DEFERRED** retirement and separately reviewed numeric avatar seam; do not report prior work erased |
 | Kevin LH-14 | **SUPERSEDED** primary future cutout goal; **PROPOSED** replacement avatar scope after team planning; preserve implementation/tests, no issue closure/rename now |
 | Kevin LH-11 | **RETAINED** corridor/camera/lanes/hazards; review avatar attachment/mapping compatibility rather than rewrite world |
-| Kevin LH-18 | **PROPOSED** avatar animation, unavailable state, feedback-position, lighting/depth and visual-clearance adaptation |
+| Kevin LH-18 | **Existing:** gameplay-driven vault presentation implemented and tested on `feat/lh18-vault-presentation` (unmerged) — integrate, do not rebuild. **PROPOSED:** avatar animation, unavailable state, feedback-position, lighting/depth and visual-clearance adaptation |
+| LH-24 (board) | Build Hand Contact for Vault Buttons & Diamonds — from previously supplied board information, status/owner to confirm. **BLOCKED** on the contact-evidence decision (WP-D09); Edo evidence, Jevon domain acceptance, Kevin zone/feedback presentation only |
 | Jevon LH-08 | **RETAINED** session/time; assess live readiness/rebind/recovery with Edo; reject Rendering-owned live session |
 | Jevon LH-09/LH-10 | **RETAINED** human evidence/checker; A should avoid rule redesign. B/C changes **DEFERRED** to explicit fairness contract |
 | Jevon LH-07/LH-12/LH-19 | **RETAINED** data/replay tests; later add scoped source-correlation/fairness scenarios, not renderer meshes to game fixtures |

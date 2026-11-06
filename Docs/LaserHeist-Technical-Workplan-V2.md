@@ -2,13 +2,15 @@
 
 6 November 2026 · Planning owner: Edo · Proposed technical owners: Edo, Kevin, Jevon · Design reviewer: Theo
 
+**Source-verified revision — 6 November 2026 (Kevin, Claude Code audit):** corrects the baseline against `origin/feat/architecture` `7cab612`, the avatar spike at `b130d5a` and the unmerged vault presentation branch `feat/lh18-vault-presentation` `665b06c`; re-scopes K01/K02/K06/K07 around existing POC work; records the final orange mascot asset, user-reported single-player iPad feasibility and the board's LH-24. No decision, owner or package below is approved by this revision. The concise owner/order overlay is [Final Subtask Review V3](LaserHeist-Final-Subtask-Review-V3.md); this file remains the source of package acceptance criteria.
+
 **Disposition: PROPOSED — documentation planning only.** Architecture V2 remains PROPOSED pending affected-owner sign-off. This catalog is not implementation permission, a board update, a committed schedule or acceptance of B2a. Every `WP-*` identifier is a **new local planning ID, not an existing GitHub issue**. Historical LH identifiers are references only. Proposed ownership follows the task's technical boundaries; unassigned screen/audio implementation remains unassigned until the team decides.
 
 ## 1. Executive Summary
 
 Deliver the rear-view avatar game by preserving one human-motion authority and two independent outputs: validated CP1 gameplay evidence for Jevon's sole consumer, and source-correlated numeric avatar input for Kevin. Keep the current App/Games/Shared logical modules, application/test targets and RealityKitContent package. Add game-specific avatar code only under proposed `Sedactive/Games/LaserHeist/Rendering/Avatar/`; do not import the spike's alternative live camera/tracker/calibration/session.
 
-The catalog has **41 proposed packages: 10 decision packages and 31 review/implementation/validation packages** (including the B2a acceptance audit). This is a reviewable backlog, not 41 simultaneous assignments. Completed foundations are excluded from that count. Proposed primary-owner totals: **Edo 13, Kevin 11, Jevon 12, Theo 1 design-review package, UNASSIGNED 4 engineering packages**. Reviewer involvement is not counted as duplicate ownership.
+The catalog has **41 proposed packages: 10 decision packages and 31 review/implementation/validation packages** (including the B2a acceptance audit). This is a reviewable backlog, not 41 simultaneous assignments. Completed foundations are excluded from that count. Technical primary-owner totals: **Edo 13, Kevin 11, Jevon 12, Theo 1 design-review package, plus U01–U04 (4 engineering packages) pending WP-D10**. V3 proposes U01/U03 Kevin and U02/U04 Jevon, with U04-to-Kevin as an open alternative; none is accepted until D10 sign-off. Reviewer involvement is not counted as duplicate ownership.
 
 The likely technical gating chain is B2a acceptance → B2b trusted live association → same-source calibration → accepted context/measurements/live CP1 → live session recovery → trusted live avatar and interactions → integrated physical acceptance. It has no calendar estimate: capacity, dates, device access and review availability have not been supplied. Synthetic avatar work, replay-backed composition and contact-domain fixtures should run in parallel after their specific decisions, rather than waiting for the whole input chain.
 
@@ -20,10 +22,11 @@ P1 is a safe **live high/low-laser vertical slice**, not permission to ship an i
 
 | Item | Observed planning baseline |
 |---|---|
-| Branch / HEAD | `feat/architecture`, `5070c0431b8c3fda6a0a0882e667e2b967edc09c` |
-| Available `origin/staging` | Same commit; no fetch/new remote freshness claim |
+| Branch / HEAD | `feat/architecture`, `7cab612` (docs plus five empty avatar placeholder files over `5070c0431b8c3fda6a0a0882e667e2b967edc09c`) |
+| Available `origin/staging` | `5070c04`; no new remote freshness claim beyond the last fetch |
 | Tracking reference | `origin/feat/player-tracking`, `69860cc75d820c76c3ac45cfac09edce651892f7`; B2a READY FOR RE-REVIEW, not merged/live-integrated here |
-| Spike reference | `origin/spike/front-facing-avatar`, `6cd062680e5967778125f2b87c01bd189e461229`; renderer concepts only, not an approved live stack |
+| Spike reference | `origin/spike/front-facing-avatar`, `b130d5a` (earlier pin `6cd0626`); reusable rig/retarget/IK/feet POC plus a DEBUG-only alternative live stack that is not adopted (V2 §2.4) |
+| Vault presentation reference | `origin/feat/lh18-vault-presentation`, `665b06c`: implemented, tested gameplay-driven vault door presentation; no PR, not in `staging` or this branch |
 | Existing local work | Modified lean index; untracked V2, Avatar-01 and `Scripts/CP2Spike/`; preserve all |
 | Project conventions | Swift 5 language mode, default MainActor, approachable concurrency; existing targets and package retained |
 
@@ -40,12 +43,14 @@ Actual source and assertions take precedence over old status prose. Prior A2/B1 
 | LaserGame / LaserCollisionJudge / LaserWaveDirector / GameClock | Implemented domain, evidence timing, scoring, scheduling and time primitives | Extend missing interactions/integration; do not redesign working laser rules |
 | LaserScene / GameWorldMapping / GameplayScenePresenter | Implemented corridor, hazards, mapping and replay presentation | Reuse scene/lanes; owner review for functional mapping/host edits |
 | Replay session, ResultsView and Retry | Working replay path; test-only full-round harness also exists | Preserve replay regressions and distinguish the harness from production live orchestration |
+| Vault presentation (LH-18 branch `665b06c`) | `Rendering/VaultPresentation.swift` and `VaultPresentationTests.swift` drive the door, deadline countdown, per-player button indicators and open/fail states from existing domain vault state/events; indicators are status only, not hit targets | Review and integrate before K06 diamond work; do not rebuild |
+| Avatar representation POC (spike `b130d5a`) | Final orange mascot USDZ, 20-joint rig, two independent avatars, bind-derived two-bone IK, retargeting, arm head-clearance envelope, smoothing, foot planting/lateral stepping, avatar-only lighting, DEBUG demo/live-lab hosts and synthetic tests. User-reported physical single-player iPad feasibility (JUMP/DUCK observed, movement-quality issues reported) | Production **adaptation** source for K01/K02/K07 after D08/D01/D06; not production acceptance. Its live camera/Vision/identity/calibration/jump/session stack is excluded |
 
 ### 2.3 Remaining reality and primary source references
 
 `Shared/BodyTracking/Processing/{PlayerTracker,MotionEngine,CalibrationSession,BodyMeasurementExtractor,JumpDetector}.swift` and `Shared/BodyTracking/BodyInputService.swift` are skeletons on this checkout. `Capture/PersonSegmenter.swift` is also a skeleton. B2a on its separate ref is a pure algorithm awaiting review; it is not physical identity proof. No avatar is present in staging. B1 exposes 14 joint keys and no elbows/knees or measured depth.
 
-`GameSessionCoordinator.start` directly constructs ReplayBodyInput; SessionState does not implement live setup/calibration/countdown/recovery. Home, PlayerSetup and Calibration views are placeholders. AudioService is a skeleton. Vault domain commands exist, but live contacts/complete phase presentation do not. Diamond Time configuration/timing and diamond art exist, but domain spawn/collection/replacement is incomplete; `LaserGame.end` still emits `diamondsCollected: 0`.
+`GameSessionCoordinator.start` directly constructs ReplayBodyInput; SessionState does not implement live setup/calibration/countdown/recovery. Home, PlayerSetup and Calibration views are placeholders. AudioService is a skeleton. Vault domain commands exist, but live contacts/complete phase presentation do not. Diamond Time configuration/timing and diamond art exist, but domain spawn/collection/replacement is absent (not merely incomplete), `diamondPoints` is unset, the gameplay presenter never renders diamonds, and `LaserGame.end` still emits `diamondsCollected: 0`. Vault gameplay presentation is absent on this branch but implemented on `feat/lh18-vault-presentation` (§2.2). `GameClockTests.swift`, `GameSessionCoordinatorTests.swift`, `JumpDetectorTests.swift` and `PlayerTrackerTests.swift` are empty files; GameClock and the coordinator are covered only indirectly (replay, collision-timing and summary suites). The five `Rendering/Avatar/` Swift files added in `7cab612` are empty placeholders at the same paths as real spike files, so a later avatar PR must replace them (add/add conflict) rather than merge around them.
 
 Full paths below are repository-relative. For compact package descriptions, these verified prefixes apply; bare filenames inherit the named component's prefix. Brace notation groups existing files; any new filename/directory is explicitly marked **proposed**. Existing test locations are reused; a referenced proposed test file is future work, not evidence of passing tests.
 
@@ -88,7 +93,7 @@ Working recommendations remain proposals: co-facing anatomy; keep B2a binding se
 | Kevin | Asset technical review, rig/IK/retargeting, numeric renderer adapter, placement/fallback/freshness, RealityKit and visible laser alignment | Identity, accepted calibration, GameClock or human contact judgment |
 | Jevon | Single session/GameClock/domain, provider-injection integration, binding/calibration request orchestration, readiness/recovery, vault/diamond rules and results | Another camera/tracker or render-authored evidence |
 | Theo | Character/animation/interaction design, instructions and comprehension review | Automatically assigned Swift UI/audio implementation |
-| UNASSIGNED | U01–U04 until WP-D10 resolves implementation ownership | Not assumed to be Theo or whichever engineer is free |
+| PENDING D10 | U01–U04. **Proposed, not accepted:** U01 Kevin, U02 Jevon, U03 Kevin (provisionally supported by Kevin); U04 Jevon per V3, with Kevin as an open alternative for team discussion | Not assumed to be Theo or whichever engineer is free |
 
 App constructs/selects the provider; Jevon's one coordinator retains/consumes it. Edo's retained live bundle executes source controls. Kevin's pure game-specific adapter is App-composed and receives immutable values; Shared never imports RealityKit or Laser Heist rendering. No new global layer, LiveGameSession, CP1 subscriber, camera owner, processing consumer, tracker or accepted-baseline authority.
 
@@ -174,7 +179,7 @@ For later implementation packages, common verification is mandatory as applicabl
 
 - **Primary owner:** Kevin.
 - **Priority / type / disposition:** P0 / architecture-design / ready for review.
-- **Existing status:** Proposed AvatarPoseFrame/adapter; B1 currently has 14 joints and no elbows/knees/depth.
+- **Existing status:** Proposed AvatarPoseFrame/adapter; B1 currently has 14 joints and no elbows/knees/depth. The spike retargeter (`b130d5a`) uses shoulders, wrists, hips, ankles and ears, with elbows optional (it falls back to a straight shoulder→wrist arm); it also reads `PlayerCalibration` image-space fields, which the packet should replace with per-player standing reference values in game units (standing/hip height, leg length, lane centre, lower-sole lift, centre X) and the compatible calibration revision.
 - **Why:** A rich rig must not manufacture observed anatomy, identity or calibrated evidence.
 - **Scope and paths:** V2 §5/§7, Avatar-01 §5–6; proposed `Rendering/Avatar/PresentationPose.swift` and `AvatarPoseAdapter.swift`. Define original source/control, two slot outcomes, observed/derived/procedural distinctions, optional calibration capability, bounded latest-only transport and independent status.
 - **Deliverable:** Immutable numeric packet/adapter contract and versioned freshness/fallback policy requirements.
@@ -188,7 +193,7 @@ For later implementation packages, common verification is mandatory as applicabl
 
 - **Primary owner:** Jevon.
 - **Priority / type / disposition:** P0 / architecture-design / ready for review.
-- **Existing status:** Human crown/wrist and sole/airborne rules implemented; avatar scaling/latency policy proposed only.
+- **Existing status:** Human crown/wrist and sole/airborne rules implemented; avatar scaling/latency policy proposed only. The spike makes two deliberate presentation departures this decision must accept or revise: every avatar is shown at one 1.6 m height whatever the player's height (motion normalised per player calibration), and the mascot's arm envelope draws a straight-up arm outward to clear its head.
 - **Why:** A visually clear robot can disagree with the authoritative human verdict.
 - **Scope and paths:** V2 §9.1, `Domain/LaserCollisionJudge.swift`, `Rendering/GameWorldMapping.swift`; compare height-preserving versus normalized visuals, root lift, wrist/foot clearance, source-to-crossing timing and smoothing residuals.
 - **Deliverable:** Approved first policy and measurable synthetic/physical comparison protocol with criteria to be selected from evidence.
@@ -202,9 +207,9 @@ For later implementation packages, common verification is mandatory as applicabl
 
 - **Primary owner:** Kevin.
 - **Priority / type / disposition:** P0 / architecture-design / ready for review.
-- **Existing status:** Spike USDZ and rig code exist only on its pinned ref; attribution/hash is not a complete rights record.
+- **Existing status:** The approved orange mascot (`Rendering/Avatar/Robot/mascot.usdz`, sha1 `61d0a911…a2d3ec`, 1.6 MiB, 20 joints, 1.398 m, +Y up/−Z forward/+X anatomical right, 7 matte PBR materials) and rig code exist on spike `b130d5a`. It replaced the earlier blue robot (`laserheist-robot.usdz`, now historical) and an interim pilot mech. The Codex package `LaserHeist-Original-Mascot-3D-Color` records compatibility, skeleton map and colour audit and is derived from the team's Asset 13 artwork; this is technical provenance, not a complete rights/distribution record.
 - **Why:** Asset copying/distribution and rig assumptions need explicit clearance before adoption.
-- **Scope and paths:** Pinned spike `Rendering/Avatar/Robot/laserheist-robot.usdz`, RobotSkeleton/RobotAvatar and `Docs/Avatar-Spike/robot/README.md`; inspect provenance, modification/distribution/attribution, axes/joint names and Debug/Release resource strategy.
+- **Scope and paths:** Spike `Rendering/Avatar/Robot/mascot.usdz`, RobotSkeleton/RobotAvatar/MascotPoseEnvelope and `Docs/Avatar-Spike/robot/README.md`; inspect provenance, modification/distribution/attribution, axes/joint names and Debug/Release resource strategy.
 - **Deliverable:** Recorded rights/provenance and technical rig contract, or a documented approved replacement route.
 - **Hard dependencies:** None; read-only inspection can proceed independently.
 - **Acceptance:** Kevin/Theo/Edo sign off source/rights and intended character; record required import checks and resource policy. An absent license or unknown origin blocks asset extraction; no legal clearance is inferred from a filename.
@@ -216,7 +221,7 @@ For later implementation packages, common verification is mandatory as applicabl
 
 - **Primary owner:** Edo.
 - **Priority / type / disposition:** P0 / architecture-design / ready for review.
-- **Existing status:** CP1 has wrist Y, not full hand positions; raw Vision wrists and scripted vault contacts are not calibrated live contacts. Gameplay G1/G11/G12/G14 retain open details.
+- **Existing status:** Board task **LH-24 — Build Hand Contact for Vault Buttons & Diamonds** (from previously supplied board information; board status/owner to be confirmed) is decomposed here, E08, J04/J05, J07 and K06 presentation. CP1 has wrist Y, not full hand positions; raw Vision wrists and scripted vault contacts are not calibrated live contacts. Gameplay G1/G11/G12/G14 retain open details.
 - **Why:** Vaults and diamonds are required interactions; avatar hands cannot supply their authority.
 - **Scope and paths:** `Models/BodyGeometry.swift`, `Domain/{LaserGame,LaserRoundConfiguration}.swift`, gameplay rules B4/B4a/G. Specify validated position/reach/validity/source fields, timing/arrival/boundary/deduplication, eligible wrists/players, trajectory/areas, score selection, initial population and missed-slot policy.
 - **Deliverable:** Edo-owned evidence proposal plus Jevon-owned interaction/score decision table, reviewed visual-zone contract; choose a single-session-reader route.
@@ -366,11 +371,11 @@ For later implementation packages, common verification is mandatory as applicabl
 - **Reviewers:** Jevon and Kevin for downstream input/latency suitability; Theo for safe instructions.
 - **Parallel:** With J/K synthetic integration; device slots must be coordinated. E02/E03/E04 also perform their scoped physical checks earlier.
 
-### WP-K01 — Import and validate the synthetic rear-view rig
+### WP-K01 — Adapt and validate the existing rear-view rig for production
 
 - **Primary owner:** Kevin.
-- **Priority / type / disposition:** P1 / synthetic-validation / blocked.
-- **Existing status:** Corridor exists; robot asset/rig only on the spike and not cleared for copying.
+- **Priority / type / disposition:** P1 / synthetic-validation / blocked by D08 sign-off only (production adaptation of existing POC, not greenfield).
+- **Existing status:** **Implemented on spike `b130d5a`:** mascot import, 20 required joints, bind-derived skeleton, two independent `clone(recursive:)` instances at one shared size, rear-view axes, avatar-only lights/environment and `remove()` teardown, with real-asset tests (`RobotAvatarTests`, `MascotArmClearanceTests`). **Production gaps:** remove the DEBUG gate, fail clearly when the asset/joints are missing (lookup currently returns nil silently), replace the five `7cab612` placeholder files, select one host mode, and record the D08 rights decision.
 - **Why:** Establish a minimum coherent representation without taking the spike's live stack.
 - **Scope and paths:** Proposed `Rendering/Avatar/Robot/{RobotSkeleton,RobotAvatar}.swift` and cleared USDZ, proposed rendering tests. Selectively adapt load/clone/rig validation and minimal rest-pose IK from Avatar-01's extraction list; attach a synthetic DEBUG host only through reviewed App/scene edits.
 - **Deliverable:** Two independently owned rear-view robots in the existing corridor, validated skeleton/import and bounded layer teardown.
@@ -384,10 +389,10 @@ For later implementation packages, common verification is mandatory as applicabl
 
 - **Primary owner:** Kevin.
 - **Priority / type / disposition:** P1 / synthetic-validation / blocked.
-- **Existing status:** Spike contains richer retargeting/IK; staging has no avatar. B1 lacks elbow/knee observations.
+- **Existing status:** **Mostly implemented on spike `b130d5a`:** co-facing anatomical retargeting (one presentation mirror, anatomical labels preserved), bind-derived two-bone leg IK with level feet, elbow limit, lane placement, sway, root lift from sole height (no use of jump phase), crouch as a share of leg length, scale-free arms, per-player motion normalisation, missing-joint hold/fade rules, the mascot arm head-clearance envelope and 1€ smoothing; synthetic short/tall and two-player fixtures. **Production adaptation:** consume the D06 packet instead of `PlayerCalibration` image-space internals, run on B1's 14 joints (elbows optional), keep DEBUG fixtures in tests, and record the D07-accepted size/arm policy. B1 lacks elbow/knee observations. User-reported physical single-player feasibility exists; it is not acceptance.
 - **Why:** Prove intuitive motion and feasible poses before connecting real people.
 - **Scope and paths:** Proposed `Rendering/Avatar/{PresentationPose,PoseSmoothing}.swift`, RobotAvatar/RobotSkeleton and synthetic fixtures/tests. Implement named arm/torso/limited-leg mapping, lane/world placement, candidate scale/root lift and missing-joint rules with explicit procedural elbows/knees.
-- **Deliverable:** Deterministic rest/arms/lean/crouch/jump/asymmetric/short-tall comparison scenes and bounded retargeter.
+- **Deliverable:** The adapted spike retargeter/solver with deterministic rest/arms/lean/crouch/jump/asymmetric/short-tall comparison scenes (combined with K01 as one "avatar foundation" PR where review size allows).
 - **Hard dependencies:** WP-K01, WP-D01, WP-D06.
 - **Acceptance:** Physical-side fixture labels map correctly, source coordinates unchanged, no negative scale/double rotation, missing joints not zeroed, finite IK/reach limits and no size pumping. Distinguish observed joints, derived directions and cosmetic bend/contact. Demonstrate jump lift without double counting feet/root and no invented airborne evidence.
 - **Out of scope:** Procedural stepping, physical accuracy, final fairness threshold approval, B1/CP1 extension.
@@ -398,7 +403,7 @@ For later implementation packages, common verification is mandatory as applicabl
 
 - **Primary owner:** Kevin.
 - **Priority / type / disposition:** P1 / synthetic-validation / blocked.
-- **Existing status:** Packet/adapter proposed; CP2 consumer is not a numeric avatar authority.
+- **Existing status:** Packet/adapter proposed; CP2 consumer is not a numeric avatar authority. The spike has a latest-only frame gate, joint/frame matching, presence fade and render-rate smoothing to reuse; age-based expiry and invalidation on calibration-revision/session-generation change are missing.
 - **Why:** Source-correlated visual delivery must be safe before it receives live values.
 - **Scope and paths:** Proposed `Rendering/Avatar/AvatarPoseAdapter.swift`, PresentationPose and renderer layer, rendering tests. Implement pure game-specific projection composed by App, bounded pending/current packets, context/attachment tokens, freshness, partial-slot fallback and release; use controlled producers/clocks.
 - **Deliverable:** Immutable packet/adapter plus two-rig consumer that rejects stale/incompatible work without another CP1 claim.
@@ -436,33 +441,37 @@ For later implementation packages, common verification is mandatory as applicabl
 - **Reviewers:** Edo and Jevon; Theo for control comprehension.
 - **Parallel:** Fixture adapter work precedes dependencies in K03; final live activation waits. A separately scoped direction-only experiment is not completion of this calibrated package.
 
-### WP-K06 — Complete vault/diamond/phase visual feedback
+### WP-K06 — Integrate vault presentation; add diamond and phase visual feedback
 
 - **Primary owner:** Kevin.
-- **Priority / type / disposition:** P2 / integration / blocked.
-- **Existing status:** VaultDoor/Diamond art and feedback exist; production presenter does not fully drive the required phase interactions.
+- **Priority / type / disposition:** P2 / integration / vault part ready for PR review; diamond/phase parts blocked.
+- **Existing status:** Four parts, kept separate:
+  1. **Existing vault visual presentation (LH-18 work):** implemented and tested on `feat/lh18-vault-presentation` `665b06c` (`VaultPresentation.swift`, `VaultPresentationTests.swift`; small edits to GameplayScenePresenter, LaserScene, VaultDoor). Driven by today's domain vault state/events; indicators are status only. **Do not rebuild.**
+  2. **Required integration/review:** open a PR to `staging`, review against current domain events, rebase over later scene changes. Not blocked by J04.
+  3. **New diamond presentation:** absent (Diamond art/entity exists only in EnvironmentPreview; the presenter renders no diamonds). Needs J05's authoritative IDs/positions/collect/replace events.
+  4. **Phase cleanup and contact-zone cues:** pause/phase-exit cleanup, visible button/diamond reach zones (LH-24 presentation share) and any new vault events from J04/J06/D09.
 - **Why:** Required full-game mechanics need visible zones, button states, approaches, pickups/misses and phase progress.
-- **Scope and paths:** Existing `Rendering/{GameplayScenePresenter,LaserScene,VaultDoor,Diamond,LaserFeedback}.swift` and HUD integration. Consume Jevon's approved read-only IDs/state/events, trajectories and interaction areas; reuse art and pooling.
-- **Deliverable:** Replay/synthetic-driven complete phase presentation, ready for the same live domain events.
-- **Hard dependencies:** WP-J04, WP-J05.
+- **Scope and paths:** Existing `Rendering/{GameplayScenePresenter,LaserScene,VaultDoor,Diamond,LaserFeedback}.swift`, `VaultPresentation.swift` from the LH-18 branch and HUD integration. Consume Jevon's approved read-only IDs/state/events, trajectories and interaction areas; reuse art and pooling.
+- **Deliverable:** Merged vault presentation, then replay/synthetic-driven diamond and phase presentation, ready for the same live domain events.
+- **Hard dependencies:** WP-J04, WP-J05 for completion (diamond, contact-zone and new vault semantics). The existing vault presentation PR (part 2) is not blocked by them.
 - **Acceptance:** Three buttons/side and shared deadline, correct moving diamond passage, single terminal animation/award cue, no stale collected IDs, distinct max-four replacement feedback, pause/phase exit cleanup and bounded entities. No renderer-timer expiry/contact judgment; verify glow/depth and cues in actual scene.
 - **Out of scope:** Domain spawn/contact/score authority, redesigning laser verdicts, assigning audio implementation.
 - **Reviewers:** Jevon for event/trajectory timing; Edo for input-space alignment; Theo for clarity.
-- **Parallel:** With live input work using domain fixtures; coordinate presenter/scene edits with K05 rather than competing branches touching the same entities.
+- **Parallel:** With live input work using domain fixtures; coordinate presenter/scene edits with K05 rather than competing branches touching the same entities. Integration order: LH-18 vault PR first, then the avatar foundation's scene hook, then diamond/phase work (all touch GameplayScenePresenter/LaserScene).
 
-### WP-K07 — Optional procedural foot planting and motion polish
+### WP-K07 — Review and adopt existing procedural foot planting
 
 - **Primary owner:** Kevin.
-- **Priority / type / disposition:** P3 / synthetic-validation / deferred.
-- **Existing status:** Spike foot planner exists; baseline has no avatar and basic IK is sufficient for first validation.
+- **Priority / type / disposition:** P3 / synthetic-validation / deferred adoption — **existing POC awaiting review**; not a release gate unless the team separately decides so.
+- **Existing status:** **Implemented on spike `b130d5a`:** `RobotFootPlanner` (planted/stepping/airborne feet, evidence-gated lateral steps, weight shift, balance and reach fallbacks, reset on mode change) with deterministic synthetic tests (`RobotFootPlantingTests`: 0.0 mm planted drift, no reach shortfall, no sole below the deck across the scenarios) and a Debug comparison switch. Without it, lateral sway moves both planted feet with the root (visible sliding); that root-slide mode is the obsolete fallback.
 - **Why:** Improve visual stance only if basic animation is already fair and resource cost justifies it.
 - **Scope and paths:** Proposed `Rendering/Avatar/Robot/RobotFootPlanner.swift`, bounded per-foot state/filter policy and adapted synthetic tests from the spike.
 - **Deliverable:** Optional versioned cosmetic stance/step candidate with reset/reach/performance characterization.
-- **Hard dependencies:** WP-K05, WP-K04; separate prioritization/authorization after minimum presentation is accepted.
+- **Hard dependencies:** WP-K02, WP-D07; separate prioritization/authorization. Earliest sensible adoption is a follow-on PR after the K01/K02 avatar foundation, not after K05.
 - **Acceptance:** No manufactured physical contact/airborne evidence, no planted jumping feet, finite deterministic clamps, release/reset on invalidation and no gameplay/performance regression. If unnecessary or misleading, leave disabled/deferred.
 - **Out of scope:** New gameplay gestures, human measurement reconstruction, mandatory product gate.
 - **Reviewers:** Edo, Jevon, Theo.
-- **Parallel:** Only after core integration is stable; not on the minimum/complete-game critical path.
+- **Parallel:** After K02 review, in parallel with K03/K04; not on the minimum/complete-game critical path.
 
 ### WP-J01 — Inject the provider and separate replay driving
 
@@ -578,7 +587,7 @@ For later implementation packages, common verification is mandatory as applicabl
 
 ### WP-U01 — Implement Home, navigation and concise onboarding
 
-- **Primary owner:** UNASSIGNED engineering.
+- **Primary owner:** PENDING D10 — proposed Kevin (Kevin provisionally willing; team acceptance pending).
 - **Priority / type / disposition:** P2 / integration / blocked.
 - **Existing status:** HomeView is a placeholder; RootView opens PlayView directly, with a separate DEBUG cover.
 - **Why:** Product entry must explain physical play and route to authorized setup rather than start a replay by default.
@@ -592,7 +601,7 @@ For later implementation packages, common verification is mandatory as applicabl
 
 ### WP-U02 — Implement setup, calibration and recovery screens
 
-- **Primary owner:** UNASSIGNED engineering.
+- **Primary owner:** PENDING D10 — proposed Jevon (supported by Kevin; Jevon's acceptance pending).
 - **Priority / type / disposition:** P1 / integration / blocked.
 - **Existing status:** PlayerSetupView/State and CalibrationView are placeholders; diagnostics are not production setup.
 - **Why:** Two people need explicit binding/lane confirmation, standing instructions, progress/errors and non-blaming recovery controls.
@@ -606,7 +615,7 @@ For later implementation packages, common verification is mandatory as applicabl
 
 ### WP-U03 — Integrate live recovery/results/retry presentation
 
-- **Primary owner:** UNASSIGNED engineering.
+- **Primary owner:** PENDING D10 — proposed Kevin (Kevin provisionally willing; team acceptance pending).
 - **Priority / type / disposition:** P2 / integration / blocked.
 - **Existing status:** ResultsView renders replay summaries and Retry; live outcome/navigation handoff is incomplete.
 - **Why:** Finish the player-facing round flow without moving session authority into UI.
@@ -620,7 +629,7 @@ For later implementation packages, common verification is mandatory as applicabl
 
 ### WP-U04 — Implement event-driven audio and lifecycle
 
-- **Primary owner:** UNASSIGNED engineering.
+- **Primary owner:** PENDING D10 — proposed Jevon (V3); Kevin is an open alternative for team discussion. Not accepted.
 - **Priority / type / disposition:** P2 / integration / blocked.
 - **Existing status:** AudioService is a skeleton; no completed event-driven audio integration.
 - **Why:** Required warnings/feedback need an owned, bounded sound path independent of judgments and clocks.
@@ -684,9 +693,9 @@ Edo maintains App edits proposed by other streams, including retained dependenci
 
 ## 7. Kevin workstream
 
-**11 primary packages:** D01, D06, D08; K01–K07; Q02. Rig/rights, packet/mapping and synthetic representation can advance before live calibration, provided their specific gates close.
+**11 primary packages:** D01, D06, D08; K01–K07; Q02 (plus U01/U03, and possibly U04, if D10 accepts the V3 proposal). Rig/rights, packet/mapping and synthetic representation can advance before live calibration, provided their specific gates close. Much of K01/K02/K07 and the K06 vault part already exist as POC work (§2.2); Kevin's remaining effort is production adaptation, the packet adapter (K03), fairness evidence (K04), live integration (K05) and diamond/phase visuals.
 
-Recommended flow: resolve asset/mapping/packet decisions → validate rest rig (K01) → retarget fixtures (K02) and lifecycle/adapter fixtures (K03) on coordinated files → clearance review (K04). Build K06 interaction visuals from Jevon's domain fixtures in parallel with input integration. Only K05 activates calibrated live presentation after trusted input/session readiness. K07 remains an optional later enhancement, with no pressure to disguise its procedural feet as observations.
+Recommended flow: open the existing LH-18 vault presentation PR (K06 part 2) → resolve asset/mapping/packet decisions → adapt the spike rig and retargeter as one avatar-foundation PR (K01/K02) → adapter/lifecycle (K03) on separate files → review K07 adoption → clearance review (K04). Build K06 diamond/phase visuals from Jevon's domain fixtures in parallel with input integration. Only K05 activates calibrated live presentation after trusted input/session readiness. Procedural feet are never presented as observations.
 
 No automatic removal/rename of PlayerCutoutEntity, CutoutPlacement, CP2 tests/resources or GameWorldMapping. Select one representation host mode so cutout and avatar presenters do not fight over visibility. Kevin's pure numeric adapter and Edo's producer tee are different responsibilities with one shared packet agreement, not two implementations of association or calibration.
 
@@ -702,10 +711,10 @@ Keep LaserGame, LaserCollisionJudge and GameClock authoritative. A fixture that 
 
 | Package | Proposed primary ownership | Dependency/assignment issue |
 |---|---|---|
-| WP-U01 | UNASSIGNED engineering | Home/navigation/onboarding; needs App review, not another camera owner |
-| WP-U02 | UNASSIGNED engineering | Setup/calibration/recovery controls; P1-critical for an understandable live setup, controlled-state implementation can precede live algorithms |
-| WP-U03 | UNASSIGNED engineering | Reuse existing ResultsView; connect live outcomes/retry/navigation without duplicating U02 recovery logic |
-| WP-U04 | UNASSIGNED engineering | Shared audio and game event adapter, rights/assets and cleanup |
+| WP-U01 | Proposed Kevin — pending D10 | Home/navigation/onboarding; needs App review, not another camera owner |
+| WP-U02 | Proposed Jevon — pending D10 | Setup/calibration/recovery controls; P1-critical for an understandable live setup, controlled-state implementation can precede live algorithms |
+| WP-U03 | Proposed Kevin — pending D10 | Reuse existing ResultsView; connect live outcomes/retry/navigation without duplicating U02 recovery logic |
+| WP-U04 | Proposed Jevon (V3) or Kevin (alternative) — open, pending D10 | Shared audio and game event adapter, rights/assets and cleanup. Jevon: events originate in his domain, but he also carries J01–J08 and U02 on the critical path. Kevin: cues fire on the same committed events as K06/LaserFeedback visuals, easing one-cue-per-event deduplication; adds to K05/K06/U01/U03. Shared/Audio lifetime needs Edo review either way |
 | WP-T01 | Theo design/UX review | Character/animation/instructions; no automatic Swift/audio implementation |
 
 WP-D10 must resolve engineering ownership before U packages begin. If the three engineers have insufficient capacity, the team must explicitly revise scope/capacity or allocate help; this plan does not assume an Academy deadline, available hours or a fourth engineer. Required interactions and basic usable screens cannot disappear through unowned status. Art provenance and delivery format also need agreement; a rendering engineer approving import does not alone establish design acceptance or distribution rights.
@@ -779,6 +788,8 @@ flowchart TD
     K02 --> T01[WP-T01 design acceptance]
     K05 --> Q02[WP-Q02 release and performance]
     K06 --> Q02
+    K02 --> K07[WP-K07 foot planting adoption, optional]
+    D07 --> K07
     Uearly --> Q02
     U02 --> Q02
     U03 --> Q02
@@ -791,7 +802,7 @@ flowchart TD
     E04 -. parallel controlled session work .-> J01
 ```
 
-U01/U04 can proceed after D10; U02 uses J02; only U03's final integration needs J08. K05 additionally requires the explicit calibrated evidence/input gate in its catalog entry. T01's decision gates and Q02's complete candidate dependencies are likewise in the catalog. K07 is omitted from the mandatory path.
+U01/U04 can proceed after D10; U02 uses J02; only U03's final integration needs J08. K05 additionally requires the explicit calibrated evidence/input gate in its catalog entry. T01's decision gates and Q02's complete candidate dependencies are likewise in the catalog. K07 is shown as an optional branch off K02/D07; nothing on the mandatory path depends on it.
 
 ### 11.2 Likely critical path and bottlenecks
 
@@ -851,7 +862,7 @@ Acceptance reports must list exact commit/source/policy versions and distinguish
 | B2a acceptance or physical association refuses too often | Conservative ambiguity/duplicate/expired-evidence rules may force disruptive rebind | E01 safety review before B2b; E02 physical characterization and D03 UX decision. Do not relax identities to improve demos. |
 | Calibration segmentation cost/association | New masks share source resources and can reduce primary pose cadence | D04 topology/budget choice; E03 measured admission/cleanup before E04 standing acceptance; no unlimited source retention |
 | Large evidence work | E06 spans measurements/jump/publication | Two internal review checkpoints; do not integrate publication until algorithm validity/cancel tests pass. Split into later issues only if measured scope warrants it. |
-| Large representation work | K02 spans anatomy/IK/scale and missing inputs | Start rest/asymmetric arms/torso, then calibrated-reference leg/root fixtures. Keep procedural feet separate K07. |
+| Large representation work | K02 spans anatomy/IK/scale and missing inputs | Adapt the existing spike retargeter rather than re-implementing; start rest/asymmetric arms/torso, then calibrated-reference leg/root fixtures. Keep procedural feet in a separate K07 PR. |
 | Large session/interaction work | J03 lifecycle and J05 simultaneous replacements have independent failure paths | J01/J02 isolate controlled core first; J05 terminal/scoring then cap/replacement checkpoint; J06 replay before J07 live contacts. No one “finish live game” issue. |
 | Unresolved hand evidence/product policy | CP1 Y-only wrists cannot establish required pickups/buttons; G11/G12/G14 open | D09 is a P0 blocker with Edo/Jevon ownership, not a renderer shortcut. Both normal passage and finale mechanics stay required. |
 | Rig/rights or 14-joint capability mismatch | Spike asset provenance incomplete; rig richer than producer | D08 before copy; D06 limited pose/optional procedural joints; any producer extension separately reviewed rather than assumed |
@@ -885,12 +896,14 @@ Verified IDs below come from the checked-in cooperative checklist/milestone docu
 | LH-00 CP1, LH-13C | Existing contracts/replay preserved; E05/E06 live context/measurements/delivery |
 | LH-13D / LH-08 | D02/D03/D05, J01–J03 and J08 session/time/lifecycle, coordinated with Edo |
 | LH-00 CP2 / LH-14 | Preserve implemented handoff/rendering; D06/E07/K01–K05 define numeric avatar replacement prospectively. No automatic issue rename or cutout deletion. |
-| LH-11 / LH-18 | Existing world/mapping retained; K01–K06 game-specific representation/feedback and Q02 verification |
+| LH-11 | Existing world/mapping retained; K01–K05 attach the avatar and Q02 verifies |
+| LH-18 | Vault presentation **implemented** on `feat/lh18-vault-presentation` `665b06c` (unmerged): K06 part 2 integrates it; remaining LH-18 art/feedback scope maps to K02/K04/K06 and T01 |
+| LH-24 (board) | **Build Hand Contact for Vault Buttons & Diamonds** — from previously supplied board information; board status/owner to be confirmed, not read by this audit. D09 evidence/rules → E08 measured hand/wrist evidence (Edo) → J04/J05 domain against contact fixtures → J07 live acceptance (Jevon) → K06 zone/feedback presentation only (Kevin). Not the earlier informal planning label for gameplay-scene integration. |
 | LH-07/LH-09/LH-10/LH-15/LH-16 | Existing domain/checker/scheduler preserved; D09/J04–J07 complete missing interaction/phase integration |
 | LH-12 / LH-19 | Existing replay tests retained; J01/J06 and focused domain/session regression expand integration evidence |
 | LH-17 | Existing RoundSummary/Results preserved; J08/U03 complete live outcome/retry integration; no persistence assumption |
 | LH-02–LH-05 | Theo design/art/animation provenance; T01 and reviewer gates, not automatic engineering assignment |
-| LH-06 | Audio reference for D10/U04; still unassigned implementation |
+| LH-06 | Audio reference for D10/U04; implementation owner pending D10 (Jevon proposed, Kevin alternative) |
 | LH-20 / LH-21 | E09/K05/Q01/Q02 physical input/game/representation/release evidence and Theo comprehension review |
 
 ## 17. Proposed review order
@@ -900,7 +913,7 @@ Verified IDs below come from the checked-in cooperative checklist/milestone docu
 3. Authorize narrow controlled work only: B2b after E01/D02/D03; K01 after rights; J01 after DI design; approved contact-domain fixtures after D09; assigned UI/audio against controlled state. Each package gets its own file/verification scope.
 4. Review E03 topology before E04 algorithm; review E04 validated results before E05 accepted-context work and E06 publication. Review K02/K03 before K04, and J01/J02 before J03.
 5. Review E09/J03/K04 evidence, then separately authorize K05 and E08/J07 as appropriate. Review complete replay J06 before final live phase acceptance.
-6. Review J08/U03 outcomes/retry, K06 visual events and U04 audio; run Q02 complete candidate checks, then Q01 joint actual two-person acceptance. Keep K07 deferred unless capacity/value supports it.
+6. Review J08/U03 outcomes/retry, K06 visual events and U04 audio; run Q02 complete candidate checks, then Q01 joint actual two-person acceptance. Decide K07 adoption on its own review; it is not a release gate unless the team decides otherwise.
 
 ## 18. Decisions requiring Tech Lead/team approval
 
@@ -915,4 +928,6 @@ Verified IDs below come from the checked-in cooperative checklist/milestone docu
 
 This task creates **only `Docs/LaserHeist-Technical-Workplan-V2.md`**. Existing V2, Avatar-01, lean index, TEAM_ALIGNMENT/backlog, source/tests/assets, project/signing files, Scripts and branch refs remain untouched. Verify catalog field coverage, unique IDs/owner/priority totals, dependency references/acyclicity, local links, Markdown whitespace/fences and Git scope before delivery. No build/device tests or new execution results are appropriate for documentation planning. Skills applied: swift-architecture-skill and swift-concurrency. Stop after workplan review; no implementation, extraction or issue/board changes.
 
-Planning checks performed: all **41** unique packages contain every catalog field; owner/priority totals match the summary; **87** explicit task-prerequisite edges reference existing packages and form an acyclic graph. There are **11 ready-for-review**, **29 blocked** and **1 deferred** packages; none is represented as an approved implementation. Relative document link targets, code-fence balance and trailing whitespace checks pass. File-hash/Git comparison is the preservation gate; existing untracked files are included, rather than relying only on `git diff` (which omits new untracked content). These are documentation checks, not test/build/device results.
+**6 November source-verified revision:** package count, IDs, priorities and the 87 prerequisite edges are unchanged (K07's two prerequisites moved from K05/K04 to K02/D07). Dispositions are unchanged in count, with K06 now noting that its existing vault part is ready for PR review. Owner rows for U01–U04 now record proposals pending D10, not acceptance.
+
+Original planning checks performed: all **41** unique packages contain every catalog field; owner/priority totals match the summary; **87** explicit task-prerequisite edges reference existing packages and form an acyclic graph. There are **11 ready-for-review**, **29 blocked** and **1 deferred** packages; none is represented as an approved implementation. Relative document link targets, code-fence balance and trailing whitespace checks pass. File-hash/Git comparison is the preservation gate; existing untracked files are included, rather than relying only on `git diff` (which omits new untracked content). These are documentation checks, not test/build/device results.
