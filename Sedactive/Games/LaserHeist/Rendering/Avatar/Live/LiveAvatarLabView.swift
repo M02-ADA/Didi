@@ -26,6 +26,7 @@ struct LiveAvatarLabView: View {
         .overlay(alignment: .topTrailing) { controls }
         .overlay(alignment: .bottomLeading) { SkeletonPreview(people: model.people).padding() }
         .overlay(alignment: .bottom) { playerChips }
+        .overlay(alignment: .bottomTrailing) { roundPanel }
         .task { await model.start() }
         .onChange(of: scenePhase) { _, phase in
             // The camera never runs in the background; a fresh capture starts on return.
@@ -75,8 +76,29 @@ struct LiveAvatarLabView: View {
             }
             .pickerStyle(.segmented)
             .frame(width: 220)
+            Picker("Jump", selection: Binding(get: { model.jumpTuning.name }, set: { model.setJumpTuning(.named($0)) })) {
+                Text("Jump: tuned").tag(LiveJumpTuning.tuned.name)
+                Text("original").tag(LiveJumpTuning.original.name)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 220)
+            Picker("Feet", selection: Binding(get: { model.footPlanting }, set: { model.setFootPlanting($0) })) {
+                Text("Feet: planted").tag(true)
+                Text("legacy").tag(false)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 220)
             Button("Recalibrate") { model.beginCalibration() }
                 .buttonStyle(.bordered)
+                .disabled(model.roundActive)
+            if model.roundActive {
+                Button("Stop round") { model.stopRound() }
+                    .buttonStyle(.bordered)
+            } else {
+                Button(model.mode == .single ? "Start round (solo test)" : "Start co-op round") { model.startRound() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.canStartRound)
+            }
         }
         .padding()
     }
@@ -91,6 +113,8 @@ struct LiveAvatarLabView: View {
                         .foregroundStyle(s.tracked ? .green : .orange)
                     Text("\(s.move) · lift \(s.liftCM) cm · crouch \(s.crouchCM) cm")
                     Text("arms L \(s.leftArm)° R \(s.rightArm)° · lean \(s.lean)°")
+                    if !s.jump.isEmpty { Text(s.jump).foregroundStyle(.cyan) }
+                    if !s.feet.isEmpty { Text(s.feet).foregroundStyle(.mint) }
                 }
                 .font(.caption.monospaced())
                 .foregroundStyle(.white)
@@ -99,6 +123,27 @@ struct LiveAvatarLabView: View {
             }
         }
         .padding(.bottom, 24)
+    }
+
+    /// The live round: status, the next laser's requirement, and the checker's
+    /// last verdicts with their evidence (kept small, away from the robots).
+    @ViewBuilder private var roundPanel: some View {
+        if model.roundActive || !model.reportLines.isEmpty || !model.roundText.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.roundText).font(.caption.bold())
+                if !model.nextTargetText.isEmpty { Text(model.nextTargetText).foregroundStyle(.yellow) }
+                ForEach(Array(model.reportLines.suffix(4).enumerated()), id: \.offset) { _, line in
+                    Text(line).foregroundStyle(line.contains("CLEAR") ? .green : line.contains("HIT") ? .red : .orange)
+                }
+            }
+            .font(.caption2.monospaced())
+            .foregroundStyle(.white)
+            .frame(maxWidth: 520, alignment: .leading)
+            .padding(8)
+            .background(.black.opacity(0.6), in: .rect(cornerRadius: 8))
+            .padding(.trailing)
+            .padding(.bottom, 96)
+        }
     }
 
     private func ms(_ value: Int?) -> String { value.map { "\($0) ms" } ?? "—" }

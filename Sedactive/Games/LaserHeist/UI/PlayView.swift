@@ -17,6 +17,7 @@ struct PlayView: View {
     /// open the replay round is torn down, and the lab covers the whole app,
     /// so no other camera or round runs at the same time.
     @State private var labOpen = ProcessInfo.processInfo.arguments.contains("-liveAvatarLab")
+        || ProcessInfo.processInfo.arguments.contains("-liveGame")
     #else
     private let labOpen = false
     #endif
@@ -120,8 +121,12 @@ private struct ReplayRoundView: View {
                     let robots = RobotAvatarLayer(scene: scene, calibrations: input.configuration.calibrations,
                                                   layout: input.configuration.playerPlaneLayout, template: template)
                     scene.robotAvatars = robots
+                    // As in the live lab: 30 Hz poses shown at render rate, feet diagnostics on.
+                    robots.smoothing = 0.03
+                    robots.diagnosticsEnabled = true
                     robotDemo.start(on: content, sequence: RobotDemoSequence(
-                        configuration: input.configuration, cameraGeometryRevision: input.cameraGeometryRevision, only: only)) {
+                        configuration: input.configuration, cameraGeometryRevision: input.cameraGeometryRevision, only: only),
+                                    render: { robots.render(now: $0) }) {
                         robots.apply($0, joints: $1)
                     }
                     robotDemoActive = true
@@ -163,17 +168,28 @@ private struct ReplayRoundView: View {
             if let startupError { Text("Replay could not start: \(startupError)").padding().background(.black).foregroundStyle(.white) }
             #if DEBUG
             if robotDemoActive {
-                TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+                TimelineView(.periodic(from: .now, by: 0.2)) { context in
                     VStack(alignment: .leading, spacing: 2) {
                         Text("SYNTHETIC POSE DEMO · not live tracking")
                             .font(.caption.monospaced().bold())
                         Text("\(robotDemo.scenario.rawValue + 1)/\(RobotDemoScenario.allCases.count)  \(robotDemo.scenario.title)")
                             .font(.callout.bold())
+                        if let robots = scene.robotAvatars {
+                            Text(robots.footPlanting ? "feet: planted + stepping" : "feet: LEGACY (root slides)")
+                                .font(.caption.monospaced())
+                            ForEach(PlayerID.allCases, id: \.self) { player in
+                                if let d = robots.footDiagnostics[player] {
+                                    Text("\(player == .player1 ? "P1" : "P2") \(d.line)").font(.caption2.monospaced())
+                                }
+                            }
+                        }
                     }
                     .foregroundStyle(.white)
                     .padding(10)
                     .background(.black.opacity(0.6), in: .rect(cornerRadius: 8))
                     .padding()
+                    // The robot layer is not observable: re-read it on every timeline tick.
+                    .id(context.date)
                 }
             }
             if cutoutFeed != nil, !ProcessInfo.processInfo.arguments.contains("-hideDebugOverlay") {

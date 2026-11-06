@@ -30,6 +30,10 @@ final class LiveAvatarLabModel {
         var leftArm = 0
         var rightArm = 0
         var lean = 0
+        /// Jump detector readout: feet validity, lift vs threshold, noise, phase.
+        var jump = ""
+        /// Foot planting readout (`RobotAvatarLayer.FootDiagnostics.line`).
+        var feet = ""
     }
 
     /// Rolling latency samples in seconds.
@@ -68,6 +72,23 @@ final class LiveAvatarLabModel {
     private(set) var feet = "—"
     @ObservationIgnored private var feetStats = (frames: 0, anklesSeen: 0, lowestSum: 0.0)
 
+    // MARK: Live round state (observable summaries only)
+    private(set) var roundActive = false
+    private(set) var roundText = ""
+    private(set) var nextTargetText = ""
+    private(set) var reportLines: [String] = []
+    @ObservationIgnored private var round: LiveGameSession?
+    @ObservationIgnored private var presenter: GameplayScenePresenter?
+    @ObservationIgnored private var lastGeometryRevision: UInt64 = 1
+    /// The robot's pose per player and frame, to compare with what the checker judged.
+    /// `-liveGame [solo|coop]`: start a round as soon as the needed players are calibrated.
+    @ObservationIgnored private var autoStartRound: Bool = ProcessInfo.processInfo.arguments.contains("-liveGame")
+    /// `-liveGameSynthetic`: a SYNTHETIC scripted player instead of the camera (Simulator checks only).
+    @ObservationIgnored let usesSyntheticPlayer = ProcessInfo.processInfo.arguments.contains("-liveGameSynthetic")
+    @ObservationIgnored private var synthetic: [PlayerID: LiveSyntheticPlayer] = [:]
+    @ObservationIgnored private var syntheticFrame: UInt64 = 0
+    @ObservationIgnored private var lastSyntheticEmit = 0.0
+
     @ObservationIgnored let scene = LaserScene()
     @ObservationIgnored private var template: Entity?
     @ObservationIgnored private var layer: RobotAvatarLayer?
@@ -81,14 +102,43 @@ final class LiveAvatarLabModel {
     @ObservationIgnored private var fpsWindow: [Double] = []
     @ObservationIgnored private var renderSubscription: EventSubscription?
     @ObservationIgnored private var lastLog = 0.0
-    @ObservationIgnored private let logsStats = ProcessInfo.processInfo.arguments.contains("-liveAvatarLabLog")
+    /// Counts, timings and verdict lines only (no images or joints); on by default
+    /// in the lab so a device session leaves data to tune from (`-noLabLog` turns it off).
+    @ObservationIgnored private let logsStats = !ProcessInfo.processInfo.arguments.contains("-noLabLog")
+    /// Jump detection rule in use: "tuned" (default) or "original" (`-jumpTuning original`).
+    private(set) var jumpTuning: LiveJumpTuning = {
+        let arguments = ProcessInfo.processInfo.arguments
+        return LiveJumpTuning.named(arguments.firstIndex(of: "-jumpTuning").flatMap { $0 + 1 < arguments.count ? arguments[$0 + 1] : nil })
+    }()
+    /// Per player and frame: what the evidence and the robot showed, to classify verdicts.
+    @ObservationIgnored private var frameLog: [PlayerID: [FrameNote]] = [:]
+    @ObservationIgnored private var roundStart = 0.0
+    @ObservationIgnored private var jumpsDetected: [PlayerID: Int] = [:]
+    @ObservationIgnored private var wasAirborne: [PlayerID: Bool] = [:]
+
+    struct FrameNote {
+        let frameID: UInt64
+        /// Capture time in round game time.
+        let time: Double
+        let top: Double?
+        let sole: Double?
+        let airborne: Bool
+        let robotLiftCM: Int
+        let robotCrouchCM: Int
+    }
 
     // MARK: - Scene
 
     func install(on content: RealityViewCameraContent) async {
         scene.installEnvironment(authored: await LaserScene.loadAuthoredEnvironment())
+        scene.installLaserArtwork(await LaserScene.loadLaserGateArtwork())
         scene.isLaserVisible = false
+        if let index = ProcessInfo.processInfo.arguments.firstIndex(of: "-liveGame"),
+           index + 1 < ProcessInfo.processInfo.arguments.count, ProcessInfo.processInfo.arguments[index + 1] == "coop" {
+            setMode(.two)
+        }
         content.add(scene.root)
+        tracker.setJumpTuning(jumpTuning)
         template = await RobotAvatarLayer.loadTemplate()
         if template == nil { cameraStatus = "Robot asset failed to load" }
         renderSubscription = content.subscribe(to: SceneEvents.Update.self) { [weak self] _ in
@@ -109,6 +159,10 @@ final class LiveAvatarLabModel {
             layout = input.configuration.playerPlaneLayout
         }
         layer = RobotAvatarLayer(scene: scene, calibrations: calibrations, layout: layout, template: template)
+        // 30 Hz camera poses shown smoothly at render rate; 30 ms keeps the lag to about one camera frame.
+        layer?.smoothing = 0.03
+        layer?.footPlanting = footPlanting
+        layer?.diagnosticsEnabled = true
         for player in PlayerID.allCases {
             scene.players[player]?.isEnabled = mode.players.contains(player)
         }
@@ -117,6 +171,10 @@ final class LiveAvatarLabModel {
     // MARK: - Camera lifecycle
 
     func start() async {
+        if usesSyntheticPlayer {
+            startSyntheticPlayer()
+            return
+        }
         guard pipeline == nil else { return }
         let sink = LivePoseSink()
         let pipeline = CameraPipeline(sink: sink)
@@ -155,6 +213,8 @@ final class LiveAvatarLabModel {
     }
 
     func stop() async {
+        // A camera restart restarts frame IDs: the round cannot continue across it.
+        if roundActive && !usesSyntheticPlayer { stopRound(reason: "camera stopped") }
         consumer?.cancel()
         consumer = nil
         sink?.finish()
@@ -167,6 +227,7 @@ final class LiveAvatarLabModel {
     }
 
     func close() async {
+        stopRound(reason: "lab closed")
         await stop()
         renderSubscription?.cancel()
         renderSubscription = nil
@@ -217,6 +278,7 @@ final class LiveAvatarLabModel {
             cameraDrops = d.avDrops + d.capacityDrops + d.constructionDrops + d.budgetDrops + d.staleDrops
             cameraSuperseded = d.superseded
         }
+        lastGeometryRevision = frame.cameraGeometryRevision
         guard let out = tracker.process(frame, now: now) else {
             staleDrops = tracker.staleDrops
             orderDrops = tracker.orderDrops
@@ -263,11 +325,34 @@ final class LiveAvatarLabModel {
             }
         }
 
+        // One frame, two consumers: the robot (presentation) and the authoritative checker.
         layer?.apply(out.snapshot, joints: out.joints)
         let applied = CameraHostClock.now()
         appliedAt = applied
         captureToAvatar.add(applied - frame.capturedAt)
         updateStatus(out.snapshot)
+        for player in PlayerID.allCases where tracker.airborne(player) != (wasAirborne[player] ?? false) {
+            wasAirborne[player] = tracker.airborne(player)
+            if tracker.airborne(player) { jumpsDetected[player, default: 0] += 1 }
+        }
+        if roundActive {
+            round?.receive(out.snapshot, now: applied)
+            for (player, status) in players where status.calibrated {
+                let g = out.snapshot.players[player]?.geometry
+                let top = [g?.crownY.value, g?.leftWristY.value, g?.rightWristY.value].compactMap { $0 }.max()
+                let sole = g?.leftSoleY.value.flatMap { l in g?.rightSoleY.value.map { min(l, $0) } }
+                var log = frameLog[player, default: []]
+                log.append(FrameNote(frameID: out.snapshot.frameID, time: out.snapshot.capturedAt - roundStart, top: top, sole: sole,
+                                     airborne: out.snapshot.players[player]?.jumpState.phase == .airborne,
+                                     robotLiftCM: status.liftCM, robotCrouchCM: status.crouchCM))
+                if log.count > 300 { log.removeFirst(log.count - 300) }
+                frameLog[player] = log
+            }
+        }
+        if autoStartRound, !roundActive, mode.players.allSatisfy({ tracker.calibrations[$0] != nil }) {
+            autoStartRound = false
+            startRound()
+        }
         if logsStats, applied - lastLog > 2 { writeStats(); lastLog = applied }
     }
 
@@ -290,6 +375,17 @@ final class LiveAvatarLabModel {
                 s.leftArm = raise(r.targets.upperArm[.left], outward: -1)
                 s.rightArm = raise(r.targets.upperArm[.right], outward: 1)
                 s.lean = Int((r.targets.lean / degree).rounded())
+                s.feet = layer?.footDiagnostics[player]?.line ?? ""
+                if let jump = tracker.jumpDetector(player), let calibration = tracker.calibrations[player] {
+                    let standing = calibration.standingBodyImageHeight * tracker.layout.gameUnitsPerImageHeight
+                    let g = sample?.geometry
+                    func ok(_ v: EstimatedScalar?) -> String { v?.validity == .valid ? "✓" : "✗" }
+                    s.jump = String(format: "feet L%@ R%@ · lift %@ / need %.1f cm · noise %.1f · %@ · jumps %d (%@)",
+                                    ok(g?.leftSoleY), ok(g?.rightSoleY),
+                                    jump.lift.map { String(format: "%.1f", $0 * 100) } ?? "—",
+                                    jump.enterThreshold(standing: standing) * 100, jump.noise * 100,
+                                    jump.airborne ? "AIRBORNE" : "grounded", jumpsDetected[player, default: 0], jumpTuning.name)
+                }
                 s.move = !r.isAvailable ? "unavailable: \(Self.unavailableReason(sample))"
                     : tracker.airborne(player) ? "JUMP (airborne)" : s.crouchCM >= 4 ? "DUCK" : "standing"
             }
@@ -311,10 +407,193 @@ final class LiveAvatarLabModel {
     }
 
     private func rendered() {
+        if usesSyntheticPlayer { emitSyntheticFrame() }
+        layer?.render(now: CameraHostClock.now())
+        tickRound()
         guard let appliedAt else { return }
         avatarToRender.add(CameraHostClock.now() - appliedAt)
         self.appliedAt = nil
     }
+
+    // MARK: - Live round (real LaserHeist rules)
+
+    var canStartRound: Bool { mode.players.allSatisfy { tracker.calibrations[$0] != nil } && !roundActive }
+
+    /// Starts a real round on the existing corridor: Jevon's director schedules the
+    /// lasers from the live calibrations, `LaserGame` judges the live evidence, and the
+    /// existing presenter renders travel, gates, cues and CLEAR/HIT feedback.
+    func startRound() {
+        guard canStartRound else { return }
+        do {
+            let session = try LiveGameSession(
+                mode: mode == .single ? .solo : .cooperative, calibrations: tracker.calibrations, layout: tracker.layout,
+                sessionGeneration: tracker.sessionGeneration, cameraGeometryRevision: lastGeometryRevision,
+                startTime: CameraHostClock.now())
+            // `roundStart` (below) matches the session's clock anchor to within a millisecond.
+            presenter?.stop()
+            presenter = GameplayScenePresenter(scene: scene, configuration: session.configuration,
+                                               encounters: session.encounters, showsDebugMarkers: false)
+            round = session
+            roundStart = CameraHostClock.now()
+            roundActive = true
+            reportLines = []
+            frameLog = [:]
+            tickRound()
+        } catch {
+            roundText = "Round could not start: \(error)"
+        }
+    }
+
+    func stopRound(reason: String = "stopped") {
+        guard roundActive, var round else { return }
+        round.stop()
+        presenter?.apply(state: round.state, events: round.events, snapshot: round.latestSnapshot)
+        presenter?.stop()
+        presenter = nil
+        self.round = nil
+        roundActive = false
+        roundText = "Round \(reason). Tap Start round to play again."
+        nextTargetText = ""
+    }
+
+    /// Advances the round to now on the render loop and presents its state.
+    private func tickRound() {
+        guard roundActive, var round else { return }
+        round.advance(to: CameraHostClock.now())
+        presenter?.apply(state: round.state, events: round.events, snapshot: round.latestSnapshot)
+        let newReports = round.reports.dropFirst(reportLines.count)
+        for report in newReports { reportLines.append(describe(report)) }
+        self.round = round
+        let state = round.state
+        let label = round.mode == .solo ? "SOLO SMOKE TEST (P2 absent: UNAVAILABLE, no team effects)" : "CO-OP ROUND"
+        let judged = state.encounters.filter(\.effectsCommitted).count
+        roundText = String(format: "%@ · t %.1f s · %d/%d lasers · health %d · score %d%@", label, state.gameTime, judged,
+                           state.encounters.count, state.teamHealth, state.teamScore,
+                           round.rejectedFrames > 0 ? " · rejected frames \(round.rejectedFrames)" : "")
+        let upcoming = state.encounters.flatMap(\.encounter.targets).filter { $0.playerID == .player1 && $0.crossingTime >= state.gameTime }
+            .min { $0.crossingTime < $1.crossingTime }
+        nextTargetText = upcoming.map { t in
+            String(format: "next P1: %@ in %.1f s · must be %@ %.2f", t.requiredMove == .duck ? "DUCK" : "JUMP",
+                   t.crossingTime - state.gameTime, t.requiredMove == .duck ? "below" : "above",
+                   t.requiredMove == .duck ? t.beam.lowerY - round.configuration.clearanceMargin
+                                           : t.beam.upperY + round.configuration.clearanceMargin)
+        } ?? (round.isFinished ? "All lasers judged. Tap Start round to play again." : "")
+        if round.isFinished {
+            roundActive = false
+            presenter?.stop()
+            presenter = nil
+            self.round = nil
+            nextTargetText = "All lasers judged. Tap Start round to play again."
+        }
+    }
+
+    /// One line per judged target: verdict, the checker's measurement against its
+    /// threshold, which frame it used and how far from the crossing, and what the
+    /// robot showed for that same frame.
+    private func describe(_ r: LiveCrossingReport) -> String {
+        let who = r.playerID == .player1 ? "P1" : "P2"
+        let move = r.move == .duck ? "DUCK" : "JUMP"
+        let verdict: String = switch r.judgement {
+        case .clear: "CLEAR"
+        case .hit(let reason): "HIT (\(reason))"
+        case .unavailable(let reason): "UNAVAILABLE (\(reason))"
+        case .pending: "pending"
+        }
+        var line = String(format: "%@ %@ @%.1fs: %@", who, move, r.crossingTime, verdict)
+        let cause = Self.classify(r, frames: frameLog[r.playerID] ?? [])
+        if !cause.isEmpty { line += " → " + cause }
+        if let measured = r.measured {
+            line += String(format: " · body %.2f %@ %.2f", measured, r.move == .duck ? "vs <" : "vs >", r.threshold)
+            if r.move == .jump { line += r.airborne == true ? " airborne" : " NOT airborne" }
+        }
+        if let frame = r.frameID, let offset = r.captureOffset, let delay = r.arrivalDelay {
+            line += String(format: " · frame %llu %+.2fs, age %.2fs", frame, offset, delay)
+            if let note = frameLog[r.playerID]?.first(where: { $0.frameID == frame }) {
+                line += " · robot lift \(note.robotLiftCM) cm, crouch \(note.robotCrouchCM) cm"
+            }
+        }
+        return line
+    }
+
+    /// Why a target was not CLEAR (or why a CLEAR looked wrong), from this
+    /// player's own frames around the crossing:
+    /// TRACKING (no usable evidence), TIMING (the move happened, not at the
+    /// crossing), DETECTION (feet were up but no jump was recognized),
+    /// CLEARANCE (recognized but not high/low enough), NO MOVE, and
+    /// PRESENTATION (judged CLEAR but the robot barely showed it).
+    static func classify(_ r: LiveCrossingReport, frames: [FrameNote]) -> String {
+        let near = frames.filter { abs($0.time - r.crossingTime) <= 0.6 }
+        switch r.judgement {
+        case .pending: return ""
+        case .unavailable: return "TRACKING"
+        case .clear:
+            if let note = frames.first(where: { $0.frameID == r.frameID }) {
+                if r.move == .jump, note.robotLiftCM < 2 { return "PRESENTATION: robot lift \(note.robotLiftCM) cm" }
+                if r.move == .duck, note.robotCrouchCM < 3 { return "PRESENTATION: robot crouch \(note.robotCrouchCM) cm" }
+            }
+            return ""
+        case .hit:
+            switch r.move {
+            case .duck:
+                if let low = near.first(where: { ($0.top ?? .infinity) < r.threshold }) {
+                    return String(format: "TIMING: low enough at %+.2fs from crossing", low.time - r.crossingTime)
+                }
+                return (r.measured ?? 0) < r.threshold + 0.1 ? "CLEARANCE: not quite low enough" : "NO MOVE: no duck seen"
+            case .jump:
+                if let up = near.first(where: { $0.airborne && ($0.sole ?? 0) > r.threshold }) {
+                    return String(format: "TIMING: airborne at %+.2fs from crossing", up.time - r.crossingTime)
+                }
+                if near.contains(where: \.airborne) { return "CLEARANCE: jump recognized but feet not above the beam" }
+                if near.contains(where: { ($0.sole ?? 0) > r.threshold }) { return "DETECTION: feet were up but no jump recognized" }
+                return "NO MOVE: no jump seen"
+            }
+        }
+    }
+
+    /// Planted feet and stepping (default) or the earlier root-only motion, to
+    /// compare on the device (`-legacyFeet` starts with the earlier one).
+    private(set) var footPlanting = !ProcessInfo.processInfo.arguments.contains("-legacyFeet")
+
+    func setFootPlanting(_ on: Bool) {
+        footPlanting = on
+        layer?.footPlanting = on
+    }
+
+    /// Compares jump rules on the same device without rebuilding.
+    func setJumpTuning(_ tuning: LiveJumpTuning) {
+        guard tuning != jumpTuning else { return }
+        jumpTuning = tuning
+        tracker.setJumpTuning(tuning)
+        jumpsDetected = [:]
+    }
+
+    // MARK: - Synthetic player (Simulator checks only)
+
+    private func startSyntheticPlayer() {
+        guard synthetic.isEmpty else { return }
+        cameraStatus = "SYNTHETIC scripted player (no camera; Simulator check)"
+        synthetic[.player1] = LiveSyntheticPlayer(body: LiveSyntheticBody(cx: mode == .single ? 0.5 : 0.68), missEvery: 4)
+        if mode == .two { synthetic[.player2] = LiveSyntheticPlayer(body: LiveSyntheticBody(cx: 0.32, h: 0.7), missEvery: 3) }
+        autoStartRound = true
+        if tracker.calibrations.isEmpty { beginCalibration() }
+    }
+
+    /// One synthetic frame per 1/30 s of host time, captured 30 ms before it is processed.
+    private func emitSyntheticFrame() {
+        let now = CameraHostClock.now()
+        guard !synthetic.isEmpty, now - lastSyntheticEmit >= 1.0 / 30 else { return }
+        lastSyntheticEmit = now
+        let time = round?.gameTime ?? -1
+        let people = PlayerID.allCases.compactMap { player -> LivePerson? in
+            guard let script = synthetic[player] else { return nil }
+            let targets = round?.encounters.flatMap(\.targets).filter { $0.playerID == player } ?? []
+            return script.body(at: time, targets: targets).person(aspect: 16.0 / 9)
+        }
+        syntheticFrame += 1
+        handle(LiveBodyFrame(frameID: syntheticFrame, capturedAt: now - 0.03, visionCompletedAt: now - 0.005,
+                             imageAspect: 16.0 / 9, cameraGeometryRevision: 1, people: people))
+    }
+
 
     /// Debug `-liveAvatarLabLog`: counts and timings only (no images, no joints), for checking a device run.
     private func writeStats() {
@@ -331,6 +610,9 @@ final class LiveAvatarLabModel {
             "captureToAvatarMS_p95": captureToAvatar.percentile(0.95) ?? -1,
             "avatarToRenderMS_p50": avatarToRender.percentile(0.5) ?? -1,
             "staleDrops": staleDrops, "orderDrops": orderDrops, "cameraDrops": cameraDrops,
+            "round": roundText, "crossingReports": reportLines,
+            "jumpTuning": jumpTuning.name, "jumpReadout": players.mapValues(\.jump).reduce(into: [String: String]()) { $0[$1.key.rawValue] = $1.value },
+            "footPlanting": footPlanting, "feetReadout": players.mapValues(\.feet).reduce(into: [String: String]()) { $0[$1.key.rawValue] = $1.value },
         ]
         guard let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
             .appendingPathComponent("live-avatar-lab-stats.json"),

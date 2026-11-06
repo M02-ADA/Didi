@@ -72,18 +72,64 @@ nonisolated struct RobotPoseTargets: Equatable, Sendable {
     /// Model-space directions for the upper arm and forearm; `nil` keeps the bind pose.
     var upperArm: [Side: SIMD3<Float>] = [:]
     var forearm: [Side: SIMD3<Float>] = [:]
-    /// Each foot's height above the floor (knee raise), metres.
+    /// Each foot's height above the floor (knee raise or step arc), metres.
     var footLift: [Side: Float] = [:]
+    /// Each foot's sideways offset from its bind position (+X = screen right),
+    /// metres: where the foot planner keeps a planted foot while the pelvis
+    /// moves, or carries a stepping foot.
+    var footShift: [Side: Float] = [:]
+    /// How much of each arm's aimed pose to show (0 = bind pose, 1 = aimed);
+    /// missing means 1 when a direction is present. Fades instead of snapping.
+    var armWeight: [Side: Float] = [:]
 
     static let rest = RobotPoseTargets()
+
+    /// Moves `k` (0…1) of the way toward `target`: scalars linearly, limb
+    /// directions along the shorter arc, arm weights linearly. Used to smooth
+    /// camera-rate targets at render rate.
+    func blended(toward target: RobotPoseTargets, k: Float) -> RobotPoseTargets {
+        func mix(_ a: Float, _ b: Float) -> Float { a + (b - a) * k }
+        func dir(_ a: SIMD3<Float>?, _ b: SIMD3<Float>?) -> SIMD3<Float>? {
+            guard let b else { return a }
+            guard let a else { return b }
+            let v = simd_normalize(a) * (1 - k) + simd_normalize(b) * k
+            return simd_length(v) > 1e-5 ? simd_normalize(v) : b
+        }
+        var out = target
+        out.pelvisDrop = mix(pelvisDrop, target.pelvisDrop)
+        out.lean = mix(lean, target.lean)
+        out.headRoll = mix(headRoll, target.headRoll)
+        for side in Side.allCases {
+            out.upperArm[side] = dir(upperArm[side], target.upperArm[side])
+            out.forearm[side] = dir(forearm[side], target.forearm[side])
+            out.footLift[side] = mix(footLift[side] ?? 0, target.footLift[side] ?? 0)
+            out.footShift[side] = mix(footShift[side] ?? 0, target.footShift[side] ?? 0)
+            let from = armWeight[side] ?? (upperArm[side] == nil ? 0 : 1)
+            let to = target.armWeight[side] ?? (target.upperArm[side] == nil ? 0 : 1)
+            out.armWeight[side] = mix(from, to)
+        }
+        return out
+    }
+
+    /// Human elbows flex to about 150°: a forearm folded further (tracking
+    /// noise) is turned back to that limit within its own bend plane.
+    static func limitElbow(upper: SIMD3<Float>, fore: SIMD3<Float>, maximumDegrees: Float = 150) -> SIMD3<Float> {
+        let a = simd_normalize(upper), f = simd_normalize(fore)
+        let limit = maximumDegrees * .pi / 180
+        guard simd_dot(a, f) < cos(limit) else { return fore }
+        var perpendicular = f - simd_dot(f, a) * a
+        if simd_length(perpendicular) < 1e-5 { perpendicular = simd_cross(a, [0, 0, 1]) }
+        if simd_length(perpendicular) < 1e-5 { perpendicular = simd_cross(a, [1, 0, 0]) }
+        return simd_normalize(a * cos(limit) + simd_normalize(perpendicular) * sin(limit))
+    }
 }
 
 /// Turns targets into a full array of local joint transforms, starting from
 /// the bind pose every time. Limbs are aimed in model space and converted
 /// into parent space through the posed parent, so children follow; rest
 /// translations and unit scales are never changed except the pelvis drop.
-/// Legs use two-bone IK toward the planted (or lifted) ankle, knees bending
-/// forward (−Z); feet are kept level.
+/// Legs use two-bone IK toward each foot's own target (bind ankle plus
+/// `footShift` and `footLift`), knees bending forward (−Z); feet are kept level.
 nonisolated struct RobotPoseSolver: Sendable {
     let skeleton: RobotSkeleton
     private let thigh: Float
@@ -92,6 +138,8 @@ nonisolated struct RobotPoseSolver: Sendable {
     private let bindWorld: (rotation: [simd_quatf], position: [SIMD3<Float>])
     private let names: [String]
     private let childOf: [Int: Int]
+    /// Per leg: thigh joint, foot joint and the bind hip-to-ankle distance (the reach kept at rest).
+    private let legs: [(side: RobotPoseTargets.Side, thigh: Int, foot: Int, reach: Float)]
 
     init(skeleton: RobotSkeleton) {
         self.skeleton = skeleton
@@ -107,12 +155,40 @@ nonisolated struct RobotPoseSolver: Sendable {
         }
         thigh = length("Thigh_L", "Shin_L")
         shin = length("Shin_L", "Foot_L")
+        let full = thigh + shin - 1e-4
+        legs = [(RobotPoseTargets.Side.left, "Thigh_L", "Foot_L"), (.right, "Thigh_R", "Foot_R")].compactMap { side, a, b in
+            guard let i = skeleton(a), let j = skeleton(b) else { return nil }
+            return (side, i, j, min(full, simd_distance(bindWorld.position[i], bindWorld.position[j])))
+        }
+    }
+
+    /// How much further the pelvis must drop so both feet can reach their
+    /// targets (knees bend, as when standing over spread feet). Zero at rest and
+    /// whenever the feet are under the hips; a foot too far sideways for any
+    /// drop still falls short (`reachShortfall`).
+    func reachDrop(_ t: RobotPoseTargets) -> Float {
+        var drop: Float = 0
+        for leg in legs {
+            var hip = bindWorld.position[leg.thigh]
+            hip.y -= t.pelvisDrop
+            let ankle = bindWorld.position[leg.foot]
+            let target = SIMD3<Float>(ankle.x + (t.footShift[leg.side] ?? 0), ankle.y + (t.footLift[leg.side] ?? 0), ankle.z)
+            let horizontal = (target.x - hip.x) * (target.x - hip.x) + (target.z - hip.z) * (target.z - hip.z)
+            guard horizontal < leg.reach * leg.reach else { continue }
+            drop = max(drop, (hip.y - target.y) - sqrt(leg.reach * leg.reach - horizontal))
+        }
+        return drop > 1e-5 ? drop : 0
     }
 
     var legLength: Float { thigh + shin }
 
-    func solve(_ t: RobotPoseTargets) -> [Transform] {
+    func solve(_ t: RobotPoseTargets) -> [Transform] { solveDetailed(t).local }
+
+    /// The solve plus, per leg, how far (metres) the requested ankle lies
+    /// beyond the leg's reach (0 when reached): the foot then stops short.
+    func solveDetailed(_ t: RobotPoseTargets) -> (local: [Transform], reachShortfall: [RobotPoseTargets.Side: Float]) {
         let s = skeleton
+        var shortfall: [RobotPoseTargets.Side: Float] = [:]
         var local = s.bind
         var rotation = [simd_quatf](repeating: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1), count: local.count)
         var position = [SIMD3<Float>](repeating: .zero, count: local.count)
@@ -136,13 +212,19 @@ nonisolated struct RobotPoseSolver: Sendable {
         }
 
         func name(_ i: Int) -> String { names[i] }
+
+        /// Keeps `weight` of the aimed local rotation, the rest of the bind rotation.
+        func blendTowardBind(_ i: Int, weight: Float) {
+            guard weight < 0.999 else { return }
+            local[i].rotation = simd_slerp(s.bind[i].rotation, local[i].rotation, max(0, weight))
+        }
         func side(_ n: String) -> RobotPoseTargets.Side { n.hasSuffix("_L") ? .left : .right }
 
         for i in local.indices {
             let n = name(i)
             switch n {
             case "Pelvis":
-                local[i].translation.y -= t.pelvisDrop
+                local[i].translation.y -= t.pelvisDrop + reachDrop(t)
             case "Spine", "Chest":
                 let tilt = t.lean / 2 * (n == "Spine" ? 1 : 2)
                 if let c = childOf[i] { aim(i, toward: c, [sin(tilt), cos(tilt), 0]) }
@@ -151,17 +233,25 @@ nonisolated struct RobotPoseSolver: Sendable {
                 // The head is a leaf: set its model-space roll directly over the bind orientation.
                 local[i].rotation = parentWorld(i).inverse * (simd_quatf(angle: world, axis: [0, 0, 1]) * bindWorld.rotation[i])
             case "UpperArm_L", "UpperArm_R":
-                if let d = t.upperArm[side(n)], let c = childOf[i] { aim(i, toward: c, d) }
+                if let d = t.upperArm[side(n)], let c = childOf[i] {
+                    aim(i, toward: c, d)
+                    blendTowardBind(i, weight: t.armWeight[side(n)] ?? 1)
+                }
             case "Forearm_L", "Forearm_R":
-                if let d = t.forearm[side(n)], let c = childOf[i] { aim(i, toward: c, d) }
+                if var d = t.forearm[side(n)], let c = childOf[i] {
+                    if let upper = t.upperArm[side(n)] { d = RobotPoseTargets.limitElbow(upper: upper, fore: d) }
+                    aim(i, toward: c, d)
+                    blendTowardBind(i, weight: t.armWeight[side(n)] ?? 1)
+                }
             case "Thigh_L", "Thigh_R":
                 guard let shinIndex = childOf[i], let footIndex = childOf[shinIndex] else { break }
                 // Hip position with the pelvis already posed.
                 let hip = (s.parent[i].map { position[$0] } ?? .zero) + parentWorld(i).act(local[i].translation)
                 let bindAnkle = bindWorld.position[footIndex]
-                let target = SIMD3<Float>(bindAnkle.x, bindAnkle.y + (t.footLift[side(n)] ?? 0), bindAnkle.z)
+                let target = SIMD3<Float>(bindAnkle.x + (t.footShift[side(n)] ?? 0), bindAnkle.y + (t.footLift[side(n)] ?? 0), bindAnkle.z)
                 var toAnkle = target - hip
                 let reach = min(simd_length(toAnkle), legLength - 1e-4)
+                shortfall[side(n)] = max(0, simd_length(toAnkle) - legLength)
                 toAnkle = simd_normalize(toAnkle) * reach
                 let along = simd_normalize(toAnkle)
                 let a = (thigh * thigh + reach * reach - shin * shin) / (2 * reach)
@@ -190,7 +280,7 @@ nonisolated struct RobotPoseSolver: Sendable {
                 position[i] = local[i].translation
             }
         }
-        return local
+        return (local, shortfall)
     }
 }
 #endif

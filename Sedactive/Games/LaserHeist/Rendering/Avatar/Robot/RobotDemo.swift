@@ -11,17 +11,25 @@ import SwiftUI
 /// The required avatar demonstrations, each 4 seconds, in a loop.
 enum RobotDemoScenario: Int, CaseIterable {
     case idle, p1JumpLand, p2DuckStand, bothJump, p1ArmRaise, asymmetricArms, duckWhileJump, trackingLoss
+    // Feet: lean vs side step (foot planting and lateral stepping).
+    case leanRight, leanLeft, stepRight, stepLeft, twoSteps, stepThenStop, duckPlanted, stepThenJump, lossDuringStep, p1StepP2Idle
 
     static let duration = 4.0
 
     var key: String {
-        ["idle", "p1-jump", "p2-duck", "both-jump", "p1-arm", "arms", "duck-jump", "tracking-loss"][rawValue]
+        ["idle", "p1-jump", "p2-duck", "both-jump", "p1-arm", "arms", "duck-jump", "tracking-loss",
+         "lean-right", "lean-left", "step-right", "step-left", "two-steps", "step-stop", "duck-planted", "step-jump",
+         "loss-step", "p1-step-p2-idle"][rawValue]
     }
 
     var title: String {
         ["Both idle", "P1 jumps and lands", "P2 ducks and stands", "Both jump independently",
          "P1 raises an arm, P2 idle", "Asymmetric arms", "P1 ducks while P2 jumps",
-         "P2 tracking lost and recovered; P1 leans and sways"][rawValue]
+         "P2 tracking lost and recovered; P1 leans and sways",
+         "P1 leans right, feet planted", "P1 leans left, feet planted", "P1 steps right, then back",
+         "P1 steps left, then back", "P1 two steps right, two back", "P1 quick step right, stops, returns",
+         "P1 ducks, feet planted", "P1 steps right, jumps, steps back", "P1 tracking lost mid-step",
+         "P1 side-steps; P2 idle with body sway"][rawValue]
     }
 }
 
@@ -44,9 +52,51 @@ struct RobotDemoSequence {
         /// Torso tilt toward screen right, and head roll (counter-clockwise on screen).
         var lean = 0.0
         var headRoll = 0.0
-        /// Sideways step on screen.
+        /// Hip centre sideways on screen (screen right positive).
         var sway = 0.0
+        /// Each ankle sideways on screen; `nil` moves it with the hips (a whole-body shift).
+        var leftFoot: Double?
+        var rightFoot: Double?
         var lost = false
+    }
+
+    /// One compact side step of `distance` (screen right positive) from `start`: the
+    /// leading foot lifts and lands first, the hips follow, the trailing foot closes.
+    struct SideStep {
+        var lead = 0.0, trail = 0.0, hips = 0.0, leadLift = 0.0, trailLift = 0.0
+    }
+
+    static func sideStep(_ t: Double, at start: Double, distance: Double, quick: Bool = false) -> SideStep {
+        func smooth(_ a: Double, _ b: Double) -> Double {
+            let x = min(1, max(0, (t - a) / (b - a)))
+            return x * x * (3 - 2 * x)
+        }
+        let swing = quick ? 0.22 : 0.3
+        var s = SideStep()
+        s.lead = distance * smooth(start, start + swing)
+        s.hips = distance * smooth(start + 0.05, start + swing + 0.25)
+        s.trail = distance * smooth(start + swing, start + 2 * swing)
+        s.leadLift = 0.045 * bump(t, start, start + swing)
+        s.trailLift = 0.035 * bump(t, start + swing, start + 2 * swing)
+        return s
+    }
+
+    /// Applies side steps to a body: screen-right steps lead with the right foot.
+    static func stepping(_ b: inout Body, _ t: Double, _ steps: [(start: Double, distance: Double)], quick: Bool = false) {
+        var left = b.leftFoot ?? 0, right = b.rightFoot ?? 0
+        for step in steps {
+            let s = sideStep(t, at: step.start, distance: step.distance, quick: quick)
+            b.sway += s.hips
+            if step.distance > 0 {
+                right += s.lead; left += s.trail
+                b.rightLegRaise += s.leadLift; b.leftLegRaise += s.trailLift
+            } else {
+                left += s.lead; right += s.trail
+                b.leftLegRaise += s.leadLift; b.rightLegRaise += s.trailLift
+            }
+        }
+        b.leftFoot = left
+        b.rightFoot = right
     }
 
     let configuration: BodyInputConfiguration
@@ -136,6 +186,50 @@ struct RobotDemoSequence {
                 b.lost = t >= 1.0 && t < 2.6
                 b.rightArm = t < 1.0 ? 6 + 100 * Self.plateau(t, 0.1, 0.6, 2, 3) : 6 + 60 * Self.plateau(t, 2.8, 3.2, 3.6, 3.95)
             }
+        case .leanRight, .leanLeft:
+            // Weight shift and trunk lean, ankles still: no step.
+            if p1 {
+                let sign = scenario == .leanRight ? 1.0 : -1.0
+                let w = Self.plateau(t, 0.4, 1.1, 2.6, 3.3)
+                b.sway = sign * 0.07 * w
+                b.lean = sign * 9 * w
+                b.leftFoot = 0
+                b.rightFoot = 0
+            }
+        case .stepRight, .stepLeft:
+            if p1 {
+                let sign = scenario == .stepRight ? 1.0 : -1.0
+                Self.stepping(&b, t, [(0.6, sign * 0.16), (2.6, -sign * 0.16)])
+            }
+        case .twoSteps:
+            if p1 { Self.stepping(&b, t, [(0.3, 0.14), (1.0, 0.14), (2.2, -0.14), (2.9, -0.14)]) }
+        case .stepThenStop:
+            if p1 { Self.stepping(&b, t, [(0.5, 0.2), (3.2, -0.2)], quick: true) }
+        case .duckPlanted:
+            if p1 {
+                b.drop = 0.15 * standing * Self.plateau(t, 0.5, 1.2, 2.6, 3.3)
+                b.sway = 0.015 * sin(2 * .pi * t / 1.3)  // incidental balance sway
+                b.leftFoot = 0
+                b.rightFoot = 0
+            }
+        case .stepThenJump:
+            if p1 {
+                Self.stepping(&b, t, [(0.4, 0.15), (3.1, -0.15)])
+                b.lift = Self.jump(t, 1.6, airtime: 0.6, height: 0.25)
+            }
+        case .lossDuringStep:
+            if p1 {
+                Self.stepping(&b, t, [(0.8, 0.16), (3.0, -0.16)])
+                b.lost = t >= 0.95 && t < 1.8
+            }
+        case .p1StepP2Idle:
+            if p1 {
+                Self.stepping(&b, t, [(0.5, 0.15), (2.5, -0.15)])
+            } else {
+                b.sway = 0.012 * sin(2 * .pi * t / 1.7)  // incidental sway, ankles still
+                b.leftFoot = 0
+                b.rightFoot = 0
+            }
         }
         return b
     }
@@ -193,6 +287,9 @@ struct RobotDemoSequence {
         // Ankles sit the calibrated foot height above the sole.
         let foot = calibration.leftFootOffsetShare * calibration.standingBodyImageHeight * layout.gameUnitsPerImageHeight
         let headX = shoulderX - (crown - shoulderY) * tan(b.lean * deg) * 0.5
+        // Each ankle: its own sideways track, or with the hips.
+        let leftAnkleX = layout.centerX(for: player) - (b.leftFoot ?? b.sway) + 0.06 * c0
+        let rightAnkleX = layout.centerX(for: player) - (b.rightFoot ?? b.sway) - 0.06 * c0
 
         func v(_ value: Double) throws -> EstimatedScalar { try EstimatedScalar(value: value, validity: .valid) }
         let phase: JumpPhase
@@ -216,8 +313,9 @@ struct RobotDemoSequence {
             .rightElbow: p((rightShoulder.x + rightWrist.x) / 2, (rightShoulder.y + rightWrist.y) / 2),
             .leftWrist: p(leftWrist.x, leftWrist.y), .rightWrist: p(rightWrist.x, rightWrist.y),
             .leftHip: p(hipX + 0.08 * c0, hipY), .rightHip: p(hipX - 0.08 * c0, hipY),
-            .leftKnee: p(hipX + 0.07 * c0, (hipY + leftSole) / 2), .rightKnee: p(hipX - 0.07 * c0, (hipY + rightSole) / 2),
-            .leftAnkle: p(hipX + 0.06 * c0, leftSole + foot), .rightAnkle: p(hipX - 0.06 * c0, rightSole + foot),
+            .leftKnee: p((hipX + leftAnkleX) / 2 + 0.04 * c0, (hipY + leftSole) / 2),
+            .rightKnee: p((hipX + rightAnkleX) / 2 - 0.04 * c0, (hipY + rightSole) / 2),
+            .leftAnkle: p(leftAnkleX, leftSole + foot), .rightAnkle: p(rightAnkleX, rightSole + foot),
         ]
         return (sample, PresentationPoseSample(playerID: player, calibrationRevision: calibration.revision, joints: points))
     }
@@ -242,17 +340,22 @@ final class RobotDemoDriver {
         return .some(RobotDemoScenario.allCases.first { $0.key == key })
     }
 
-    /// `apply` receives each synthetic frame (the robot layer).
+    /// `apply` receives each synthetic frame (the robot layer); `render`, if
+    /// given, runs every rendered frame with the same sequence time, so steps
+    /// and smoothing animate at display rate like the live lab.
     func start(on content: RealityViewCameraContent, sequence: RobotDemoSequence,
+               render: (@MainActor (Double) -> Void)? = nil,
                apply: @escaping @MainActor (BodySnapshot, PresentationPoseFrame) -> Void) {
         subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self] event in
             guard let self else { return }
             elapsed += event.deltaTime
             let latest = UInt64(elapsed * RobotDemoSequence.frameRate)
-            guard latest > frame, let next = try? sequence.frame(latest) else { return }
-            frame = latest
-            apply(next.snapshot, next.joints)
-            scenario = next.scenario
+            if latest > frame, let next = try? sequence.frame(latest) {
+                frame = latest
+                apply(next.snapshot, next.joints)
+                scenario = next.scenario
+            }
+            render?(elapsed)
         }
     }
 
