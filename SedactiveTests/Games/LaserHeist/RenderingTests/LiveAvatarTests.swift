@@ -92,7 +92,8 @@ struct LiveAvatarTests {
         func raise(_ side: RobotPoseTargets.Side) -> Float {
             guard let d = r.targets.upperArm[side] else { return 0 }
             let outward = side == .left ? -d.x : d.x  // the robot's left is −X, screen left from behind
-            return atan2(outward, -d.y) * 180 / .pi
+            // Shown elevation: the aimed angle blended toward the hanging bind pose by the arm's weight.
+            return atan2(outward, -d.y) * 180 / .pi * (r.targets.armWeight[side] ?? 0)
         }
     }
 
@@ -198,19 +199,22 @@ struct LiveAvatarTests {
     @Test func jumpNeedsRealLiftAndLandsAtIdle() async throws {
         var (tracker, last) = try calibrated([Body()], mode: .single)
         let layer = try await layer(for: tracker)
-        // Noise and tiptoes (3% of height) never read as a jump.
+        _ = run(&tracker, layer, from: last + 1, count: 10, [Body()])  // fade in
+        // Ankle noise and a slight rise (1.5% of height) are not a jump; the robot barely moves.
         var small = Body()
-        small.lift = 0.024
-        var p = run(&tracker, layer, from: last + 1, count: 5, [small])[.player1]!
-        #expect(p.lift == 0 && !tracker.airborne(.player1))
-        // A real jump: 15% of standing height → the rig rises by that much (P1 stands 1.6 m).
-        var jump = Body()
-        jump.lift = 0.12
-        p = run(&tracker, layer, from: last + 6, count: 3, [jump])[.player1]!
-        #expect(tracker.airborne(.player1) && abs(p.lift - Float(0.12 / 0.8 * 1.6)) < 0.01)
-        // Landing: back on the floor, back at idle.
-        p = run(&tracker, layer, from: last + 9, count: 3, [Body()])[.player1]!
-        #expect(!tracker.airborne(.player1) && p.lift == 0 && p.pelvisDrop < 0.005)
+        small.lift = 0.012
+        var p = run(&tracker, layer, from: last + 11, count: 5, [small])[.player1]!
+        #expect(p.lift < 0.015 && !tracker.airborne(.player1))
+        // A small intentional hop: 5% of standing height (8 cm on a 1.6 m player).
+        var hop = Body()
+        hop.lift = 0.04
+        p = run(&tracker, layer, from: last + 16, count: 1, [hop])[.player1]!
+        #expect(tracker.airborne(.player1) && p.lift > 0.04)  // recognized and shown on the first frame
+        p = run(&tracker, layer, from: last + 17, count: 3, [hop])[.player1]!
+        #expect(abs(p.lift - Float((0.04 / 0.8 - 0.01) * 1.6)) < 0.01)  // (minus half the soft noise zone)
+        // Landing: back on the floor, back at idle within a few frames.
+        p = run(&tracker, layer, from: last + 20, count: 4, [Body()])[.player1]!
+        #expect(!tracker.airborne(.player1) && p.lift < 0.01 && p.pelvisDrop < 0.005)
     }
 
     @Test func crouchDepthIsContinuousAndStandingRestores() async throws {
@@ -222,12 +226,84 @@ struct LiveAvatarTests {
             b.crouch = crouch
             let p = run(&tracker, layer, from: last + 1 + UInt64(n) * 5, count: 5, [b])[.player1]!
             depths.append(p.pelvisDrop)
-            #expect(p.lift == 0 && p.isAvailable)
+            #expect(p.lift < 0.005 && p.isAvailable)
         }
-        #expect(depths[0] == 0)  // within the noise deadband
+        #expect(depths[0] < 0.003)  // within the soft noise zone: almost nothing, and no step leaving it
         #expect(depths[1] > 0 && depths[2] > depths[1] && depths[3] > depths[2])
         let p = run(&tracker, layer, from: last + 30, count: 5, [Body()])[.player1]!
         #expect(p.pelvisDrop < 0.005)
+    }
+
+    /// One knee raised high (one foot 20% of height up, the other planted) is
+    /// never a jump: the lower sole stays on the floor.
+    @Test func oneKneeRaisedIsNotAJump() async throws {
+        var (tracker, last) = try calibrated([Body()], mode: .single)
+        let layer = try await layer(for: tracker)
+        var knee = Body()
+        knee.leftFootLift = 0.16
+        let p = run(&tracker, layer, from: last + 1, count: 15, [knee])[.player1]!
+        #expect(!tracker.airborne(.player1) && p.lift < 0.01)
+        #expect((p.r.targets.footLift[.left] ?? 0) > 0.05)  // the robot lifts that foot instead
+    }
+
+    /// Losing both ankles never produces a jump: those samples are unknown
+    /// (not airborne) and the robot keeps its legs; back on the floor, still grounded.
+    @Test func losingTheAnklesNeverFabricatesAJump() async throws {
+        var (tracker, last) = try calibrated([Body()], mode: .single)
+        let layer = try await layer(for: tracker)
+        _ = run(&tracker, layer, from: last + 1, count: 10, [Body()])
+        var noFeet = Body()
+        noFeet.missing = [.leftAnkle, .rightAnkle]
+        for id in last + 11...last + 20 {
+            let processed = tracker.process(frame(id, [noFeet]), now: Double(id) / 30 + 0.05)
+            let out = try #require(processed)
+            let jump = try #require(out.snapshot.players[.player1]).jumpState
+            #expect(jump.phase != .airborne && jump.validity != .valid)
+            layer.apply(out.snapshot, joints: out.joints)
+        }
+        var back = Body()
+        back.lift = 0.01  // back slightly higher (posture/depth shift)
+        let p = run(&tracker, layer, from: last + 21, count: 10, [back])[.player1]!
+        #expect(!tracker.airborne(.player1) && p.lift < 0.02 && p.isAvailable)
+    }
+
+    /// Ducking down and up again moves the pelvis continuously: monotonic, no
+    /// frame-to-frame step larger than 2.5 cm, back to standing at the end.
+    @Test func duckIsContinuousFrameToFrame() async throws {
+        var (tracker, last) = try calibrated([Body()], mode: .single)
+        let layer = try await layer(for: tracker)
+        _ = run(&tracker, layer, from: last + 1, count: 10, [Body()])
+        var drops: [Float] = []
+        for n in 0..<60 {
+            var b = Body()
+            b.crouch = 0.15 * LiveSyntheticPlayer.plateau(Double(n) / 30, 0.1, 0.6, 1.2, 1.7)
+            drops.append(run(&tracker, layer, from: last + 11 + UInt64(n), count: 1, [b])[.player1]!.pelvisDrop)
+        }
+        let steps = zip(drops.dropFirst(), drops).map { $0 - $1 }
+        #expect(steps.allSatisfy { abs($0) < 0.025 })
+        #expect(drops.max()! > 0.08 && drops.last! < 0.01)
+        let peak = drops.firstIndex(of: drops.max()!)!
+        #expect(steps[..<(peak - 1)].allSatisfy { $0 > -1e-4 })  // never bobs back up on the way down
+    }
+
+    /// Two players: only the one who hops is airborne, and the same RELATIVE
+    /// hop lifts both robots equally whatever their heights.
+    @Test func twoPlayersHopIndependentlyAndNormalized() async throws {
+        let tall = Body(cx: 0.7, h: 0.8), short = Body(cx: 0.3, h: 0.6)
+        var (tracker, last) = try calibrated([tall, short], mode: .two)
+        let layer = try await layer(for: tracker)
+        _ = run(&tracker, layer, from: last + 1, count: 10, [tall, short])
+        var tallHop = tall
+        tallHop.lift = 0.05 * 0.8
+        var p = run(&tracker, layer, from: last + 11, count: 4, [tallHop, short])
+        #expect(tracker.airborne(.player1) && !tracker.airborne(.player2))
+        #expect(p[.player1]!.lift > 0.05 && p[.player2]!.lift < 0.01)
+        _ = run(&tracker, layer, from: last + 15, count: 15, [tall, short])
+        var shortHop = short
+        shortHop.lift = 0.05 * 0.6
+        p = run(&tracker, layer, from: last + 30, count: 4, [tallHop, shortHop])
+        #expect(tracker.airborne(.player1) && tracker.airborne(.player2))
+        #expect(abs(p[.player1]!.lift - p[.player2]!.lift) < 0.01)
     }
 
     // MARK: - Frames, loss and identity
@@ -283,10 +359,10 @@ struct LiveAvatarTests {
         var raised = Body()
         raised.rightArm = 90
         _ = run(&tracker, layer, from: last + 1, count: 10, [raised])
-        var p = run(&tracker, layer, from: last + 11, count: 30, [])[.player1]!  // 1 s with nobody in view
-        #expect(!p.isAvailable && p.lift < 0.001 && p.pelvisDrop < 0.005 && p.raise(.right) == 0)  // back to the bind pose
+        var p = run(&tracker, layer, from: last + 11, count: 45, [])[.player1]!  // 1.5 s with nobody in view
+        #expect(!p.isAvailable && p.lift < 0.001 && p.pelvisDrop < 0.005 && p.raise(.right) < 2)  // faded back to the bind pose
         #expect(p.opacity == RobotAvatarLayer.unavailableOpacity)  // dimmed while unavailable
-        p = run(&tracker, layer, from: last + 41, count: 3, [Body()])[.player1]!
+        p = run(&tracker, layer, from: last + 56, count: 3, [Body()])[.player1]!
         #expect(p.isAvailable && p.raise(.right) < 10 && p.opacity == 1)
     }
 

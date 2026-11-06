@@ -148,51 +148,77 @@ struct RobotAvatarTests {
         #expect(left.y < 0)  // still hanging
     }
 
+    /// Feeds the same input at 30 Hz for `frames` frames from `time`; returns the next time.
+    @discardableResult
+    private func feed(_ r: inout RobotRetargeter, _ sample: PlayerBodySample?, _ joints: PresentationPoseSample?,
+                      from time: Double, frames: Int) -> Double {
+        for n in 0..<frames { r.update(sample: sample, joints: joints, time: time + Double(n) / 30) }
+        return time + Double(frames) / 30
+    }
+
     @Test func crouchLeanAndJumpRetarget() throws {
         let (c, layout) = try calibration()
         var r = RobotRetargeter(calibration: c, layout: layout, robotLegRest: 0.574)
+        // The first appearance fades in from rest (no snap), fully within 0.25 s.
         r.update(sample: try sample(c), joints: joints(c), time: 0)
-        #expect(r.targets.pelvisDrop < 0.01 && r.lift == 0)
+        #expect(r.presence == 0)
+        var t = feed(&r, try sample(c), joints(c), from: 1.0 / 30, frames: 9)
+        #expect(r.presence > 0.95 && r.targets.pelvisDrop < 0.01 && r.lift < 0.005)
         // Hips 0.25 lower: within 100 ms (3 frames of the 1€ filter) the pelvis follows most of the way.
-        for n in 1...3 { r.update(sample: try sample(c), joints: joints(c, hipDrop: 0.25), time: Double(n) / 30) }
-        let expected = Float(0.25 / 0.868) * 0.574
+        t = feed(&r, try sample(c), joints(c, hipDrop: 0.25), from: t, frames: 3)
+        let expected = Float(0.25 / 0.868 - 0.015) * 0.574  // the soft noise zone takes half its width
         #expect(r.targets.pelvisDrop > 0.85 * expected && r.targets.pelvisDrop <= expected + 1e-3)
         // Shoulders shifted toward the player's right (−X unmirrored): lean toward screen right (+).
-        for n in 4...6 { r.update(sample: try sample(c), joints: joints(c, shoulderShift: -0.15), time: Double(n) / 30) }
+        t = feed(&r, try sample(c), joints(c, shoulderShift: -0.15), from: t, frames: 3)
         #expect(r.targets.lean > 0.1)
-        // Jump lift is the measured sole height, unfiltered; landing returns to 0.
-        r.update(sample: try sample(c, phase: .airborne, soles: (0.3, 0.32)), joints: joints(c), time: 7.0 / 30)
-        #expect(abs(r.lift - 0.3) < 1e-6)
-        r.update(sample: try sample(c), joints: joints(c), time: 8.0 / 30)
-        #expect(r.lift == 0)
+        // Jump lift follows the lower sole continuously, without waiting for the
+        // jump phase (presentation only): most of it within one frame, all of it within four.
+        let standing = RobotAvatarLayer.standingHeight / r.motionScale
+        let full = (0.3 - r.liftDeadband * standing / 2) * r.motionScale
+        t = feed(&r, try sample(c, phase: .grounded, soles: (0.3, 0.32)), joints(c), from: t, frames: 1)
+        #expect(r.lift > 0.75 * full)
+        t = feed(&r, try sample(c, phase: .grounded, soles: (0.3, 0.32)), joints(c), from: t, frames: 3)
+        #expect(abs(r.lift - full) < 0.01)
+        // Landing: back to (almost) 0 within four frames, never below the floor.
+        var lifts: [Float] = []
+        for n in 0..<4 { r.update(sample: try sample(c), joints: joints(c), time: t + Double(n) / 30); lifts.append(r.lift) }
+        #expect(lifts.last! < 0.01 && lifts.allSatisfy { $0 >= 0 })
     }
 
     @Test func trackingLossRelaxesAndRecoveryUsesFreshData() throws {
         let (c, layout) = try calibration()
         var r = RobotRetargeter(calibration: c, layout: layout, robotLegRest: 0.574)
-        r.update(sample: try sample(c), joints: joints(c, rightWrist: (-1.4, 1.3), hipDrop: 0.2), time: 0)
+        var t = feed(&r, try sample(c), joints(c, rightWrist: (-1.4, 1.3), hipDrop: 0.2), from: 0, frames: 15)
         #expect(r.isAvailable && r.targets.pelvisDrop > 0.05)
-        r.update(sample: nil, joints: nil, time: 1.0)
-        #expect(!r.isAvailable && r.targets.upperArm.isEmpty && r.targets.pelvisDrop < 0.01)
-        r.update(sample: try sample(c), joints: joints(c), time: 1.033)
-        #expect(r.isAvailable && (r.targets.forearm[.right]?.y ?? 0) < 0)
+        // One or two missed detections: the pose is held exactly, still shown as tracked.
+        let held = r.targets
+        t = feed(&r, nil, nil, from: t, frames: 2)
+        #expect(r.isAvailable && r.targets == held)
+        // Gone for 1.5 s: fades back to the bind pose (never invents movement).
+        t = feed(&r, nil, nil, from: t, frames: 43)
+        #expect(!r.isAvailable && r.targets.pelvisDrop < 0.005 && (r.targets.armWeight[.right] ?? 0) < 0.02)
+        // Recovery fades in from rest toward FRESH data (arm hanging), never the old raised arm.
+        r.update(sample: try sample(c), joints: joints(c), time: t)
+        #expect(r.isAvailable && r.presence < 0.5)  // eases in over ~0.1 s
+        feed(&r, try sample(c), joints(c), from: t + 1.0 / 30, frames: 10)
+        #expect(r.presence > 0.95 && (r.targets.forearm[.right]?.y ?? 0) < 0)
     }
 
     @Test func aLowConfidenceArmHoldsBrieflyThenReturnsToBind() throws {
         let (c, layout) = try calibration()
         var r = RobotRetargeter(calibration: c, layout: layout, robotLegRest: 0.574)
-        r.update(sample: try sample(c), joints: joints(c, rightWrist: (-1.4, 1.3)), time: 0)
-        #expect(r.targets.forearm[.right] != nil)
-        // Right elbow and wrist drop below confidence: the arm holds, then relaxes to bind.
+        var t = feed(&r, try sample(c), joints(c, rightWrist: (-1.4, 1.3)), from: 0, frames: 15)
+        #expect((r.targets.armWeight[.right] ?? 0) > 0.95)
+        // Right elbow and wrist drop below confidence: the arm holds, then fades to bind.
         var weak = joints(c).joints
         weak[.rightElbow] = nil
         weak[.rightWrist] = nil
         let sparse = PresentationPoseSample(playerID: .player1, calibrationRevision: c.revision, joints: weak)
-        r.update(sample: try sample(c), joints: sparse, time: 0.2)
-        #expect(r.targets.forearm[.right] != nil)
-        r.update(sample: try sample(c), joints: sparse, time: 0.8)
-        #expect(r.targets.forearm[.right] == nil && r.targets.upperArm[.right] == nil)
-        #expect(r.targets.forearm[.left] != nil)  // the other arm is unaffected
+        t = feed(&r, try sample(c), sparse, from: t, frames: 6)  // 0.2 s
+        #expect((r.targets.armWeight[.right] ?? 0) > 0.95)
+        feed(&r, try sample(c), sparse, from: t, frames: 30)  // +1 s
+        #expect((r.targets.armWeight[.right] ?? 1) < 0.1)
+        #expect((r.targets.armWeight[.left] ?? 0) > 0.95)  // the other arm is unaffected
     }
 
     @Test func layerAcceptsRestartedFrameIDsAfterReset() async throws {
@@ -299,9 +325,10 @@ struct RobotAvatarTests {
                                     jumpState: JumpState(phase: .airborne, validity: .valid))
         }
         // Both jump 15% of their own height.
-        tall.update(sample: try jump(calibrations[.player1]!, 0.15 * 1.7), joints: nil, time: 0)
-        short.update(sample: try jump(calibrations[.player2]!, 0.15 * 1.2), joints: nil, time: 0)
-        #expect(abs(tall.lift - 0.15 * RobotAvatarLayer.standingHeight) < 1e-3)
+        feed(&tall, try jump(calibrations[.player1]!, 0.15 * 1.7), nil, from: 0, frames: 20)
+        feed(&short, try jump(calibrations[.player2]!, 0.15 * 1.2), nil, from: 0, frames: 20)
+        // The soft noise zone (2% of height) takes 1% off, also per player height.
+        #expect(abs(tall.lift - 0.14 * RobotAvatarLayer.standingHeight) < 2e-3)
         #expect(abs(short.lift - tall.lift) < 1e-3)
     }
 

@@ -227,26 +227,131 @@ nonisolated struct LiveCalibrator: Sendable {
     }
 }
 
+// MARK: - Jump detection (Debug stand-in for Edo's JumpDetector)
+
+/// Named jump-detection settings, so the original and tuned rules can be
+/// compared on the same device without rebuilding (`-jumpTuning original`).
+/// Shares are of the player's calibrated standing height.
+nonisolated struct LiveJumpTuning: Equatable, Sendable {
+    let name: String
+    /// Both soles above this (and above the noise floor) to start a jump.
+    let enterShare: Double
+    /// Below this the jump has landed.
+    let exitShare: Double
+    /// The start threshold is at least this many times the player's own
+    /// standing foot noise (0: off).
+    let noiseMultiple: Double
+    /// Takeoff must rise at least `riseFraction × enter threshold` within
+    /// `riseWindow` seconds: a hop, not a slow rise onto the toes (nil: off).
+    let riseWindow: Double?
+    let riseFraction: Double
+    /// A jump in progress survives this many frames without both ankles
+    /// (those frames are still reported as unknown, never as airborne).
+    let dropoutFrames: Int
+    /// Grounded foot height drifts with posture and depth; follow it while
+    /// standing still (seconds of smoothing, nil: fixed calibrated floor).
+    let baselineTime: Double?
+
+    /// The first live rule: 6% to start, 3% to land, no other gates.
+    static let original = Self(name: "original", enterShare: 0.06, exitShare: 0.03, noiseMultiple: 0,
+                               riseWindow: nil, riseFraction: 0, dropoutFrames: 0, baselineTime: nil)
+    /// A small intentional hop: 3% to start (above the checker's own ~2% beam),
+    /// 1.5% to land, at least 4× the player's foot noise, a quick rise of 80% of
+    /// that within 0.25 s, two frames of dropout tolerance, and a drifting floor.
+    static let tuned = Self(name: "tuned", enterShare: 0.03, exitShare: 0.015, noiseMultiple: 4,
+                            riseWindow: 0.25, riseFraction: 0.8, dropoutFrames: 2, baselineTime: 1.0)
+
+    static func named(_ name: String?) -> Self { name == original.name ? .original : .tuned }
+}
+
+/// Per-player jump phase from both soles over time. Presentation-side
+/// evidence for the Debug live round only; the checker's own rule (soles
+/// above the beam while airborne) is unchanged.
+nonisolated struct LiveJumpDetector: Sendable {
+    var tuning: LiveJumpTuning
+    private(set) var airborne = false
+    /// Lower sole above the grounded baseline, in game units (nil without both ankles).
+    private(set) var lift: Double?
+    private(set) var baseline = 0.0
+    /// Standing foot noise (standard deviation), game units.
+    private(set) var noise = 0.0
+    private var noiseVariance = 0.0
+    private var recent: [(time: Double, lift: Double)] = []
+    private var missing = 0
+    private var lastTime: Double?
+
+    init(tuning: LiveJumpTuning) { self.tuning = tuning }
+
+    func enterThreshold(standing: Double) -> Double {
+        max(tuning.enterShare * standing, tuning.noiseMultiple * noise)
+    }
+
+    /// Updates with this frame's soles (game units above the calibrated floor).
+    /// Returns the phase to report, `nil` when it is unknown this frame.
+    mutating func update(left: Double?, right: Double?, at time: Double, standing: Double) -> JumpPhase? {
+        let dt = lastTime.map { max(0, time - $0) } ?? 0
+        lastTime = time
+        guard let left, let right else {
+            missing += 1
+            lift = nil
+            if missing > tuning.dropoutFrames { airborne = false; recent = [] }
+            return nil
+        }
+        missing = 0
+        let raw = min(left, right)
+        let lifted = raw - baseline
+        lift = lifted
+        if let window = tuning.riseWindow {
+            recent.append((time, lifted))
+            recent.removeAll { time - $0.time > window }
+        }
+        let enter = enterThreshold(standing: standing)
+        if airborne {
+            airborne = lifted > tuning.exitShare * standing
+        } else if lifted > enter {
+            let lowest = recent.map(\.lift).min() ?? lifted
+            airborne = tuning.riseWindow == nil || lifted - lowest >= tuning.riseFraction * enter
+        }
+        // Learn the standing floor and noise only while clearly grounded.
+        if !airborne, let tau = tuning.baselineTime, abs(lifted) < enter, dt > 0 {
+            let k = 1 - exp(-dt / tau)
+            baseline += k * lifted
+            noiseVariance += k * (lifted * lifted - noiseVariance)
+            noise = sqrt(noiseVariance)
+        }
+        return airborne ? .airborne : .grounded
+    }
+
+    mutating func reset() {
+        airborne = false
+        recent = []
+        missing = 0
+        lift = nil
+    }
+}
+
 // MARK: - Per-frame samples
 
 /// One player's live sample builder: Vision joints → CP1-shaped
 /// presentation estimate plus player-plane joints. Keeps only the jump
 /// hysteresis between frames.
 nonisolated struct LiveSampleBuilder: Sendable {
-    /// A jump starts when both soles are this share of standing height above
-    /// the floor and ends below the lower share, so camera noise and rising
-    /// onto the toes never read as a jump.
-    static let jumpEnterShare = 0.06
-    static let jumpExitShare = 0.03
     static let minimumConfidence = 0.3
 
     let calibration: PlayerCalibration
     let layout: PlayerPlaneLayout
-    private(set) var airborne = false
+    private(set) var jump: LiveJumpDetector
 
-    init(calibration: PlayerCalibration, layout: PlayerPlaneLayout) {
+    init(calibration: PlayerCalibration, layout: PlayerPlaneLayout, jumpTuning: LiveJumpTuning = .tuned) {
         self.calibration = calibration
         self.layout = layout
+        jump = LiveJumpDetector(tuning: jumpTuning)
+    }
+
+    var airborne: Bool { jump.airborne }
+
+    mutating func setJumpTuning(_ tuning: LiveJumpTuning) {
+        jump = LiveJumpDetector(tuning: tuning)
     }
 
     var standingHeight: Double { calibration.standingBodyImageHeight * layout.gameUnitsPerImageHeight }
@@ -256,12 +361,12 @@ nonisolated struct LiveSampleBuilder: Sendable {
         calibration.mapping.gameX(imageX: imageX, playerID: calibration.playerID, layout: layout)
     }
 
-    mutating func sample(_ person: LivePerson?) throws -> (PlayerBodySample, PresentationPoseSample?) {
+    mutating func sample(_ person: LivePerson?, at time: Double = 0) throws -> (PlayerBodySample, PresentationPoseSample?) {
         let id = calibration.playerID
         let none = try EstimatedScalar(value: nil, validity: .missingLandmarks)
         guard let person, let center = person.point(.root) ?? person.center,
               person.point(.neck, minimumConfidence: Self.minimumConfidence) != nil else {
-            airborne = false
+            jump.reset()
             let lost = try EstimatedScalar(value: nil, validity: .outOfFrame)
             return (PlayerBodySample(playerID: id, calibrationRevision: calibration.revision, trackingStatus: .lost,
                                      geometry: BodyGeometry(crownY: lost, leftWristY: lost, rightWristY: lost,
@@ -277,15 +382,9 @@ nonisolated struct LiveSampleBuilder: Sendable {
         let crown = person.point(.nose, minimumConfidence: c).map { gameY($0.y + calibration.headOffsetFromNoseShare * height) }
         let leftSole = person.point(.leftAnkle, minimumConfidence: c).map { gameY($0.y - calibration.leftFootOffsetShare * height) }
         let rightSole = person.point(.rightAnkle, minimumConfidence: c).map { gameY($0.y - calibration.rightFootOffsetShare * height) }
-        let jump: JumpState
-        if let leftSole, let rightSole {
-            let lift = min(leftSole, rightSole)
-            airborne = airborne ? lift > Self.jumpExitShare * standingHeight : lift > Self.jumpEnterShare * standingHeight
-            jump = JumpState(phase: airborne ? .airborne : .grounded, validity: .valid)
-        } else {
-            airborne = false
-            jump = JumpState(phase: .unknown, validity: .missingLandmarks)
-        }
+        let phase = jump.update(left: leftSole, right: rightSole, at: time, standing: standingHeight)
+        let jumpState = phase.map { JumpState(phase: $0, validity: .valid) }
+            ?? JumpState(phase: .unknown, validity: .missingLandmarks)
         let sample = PlayerBodySample(
             playerID: id, calibrationRevision: calibration.revision, trackingStatus: .reliable,
             geometry: BodyGeometry(crownY: try value(crown),
@@ -293,7 +392,7 @@ nonisolated struct LiveSampleBuilder: Sendable {
                                    rightWristY: try value(person.point(.rightWrist, minimumConfidence: c).map { gameY($0.y) }),
                                    leftSoleY: try value(leftSole), rightSoleY: try value(rightSole),
                                    centerX: try value(gameX(center.x))),
-            jumpState: jump)
+            jumpState: jumpState)
         var points: [PresentationJoint: PresentationPoint] = [:]
         for (live, joint) in Self.presentationJoints {
             guard let p = person.point(live, minimumConfidence: c) else { continue }
@@ -324,6 +423,8 @@ nonisolated struct LiveAvatarTracker: Sendable {
     private(set) var calibrations: [PlayerID: PlayerCalibration] = [:]
     private(set) var layout = PlayerPlaneLayout(leftCenterX: -0.65, rightCenterX: 0.65, gameUnitsPerImageHeight: 2)
     private var builders: [PlayerID: LiveSampleBuilder] = [:]
+    /// Jump detection settings for every player (original or tuned).
+    private(set) var jumpTuning: LiveJumpTuning = .tuned
     private var revision: UInt64 = 0
     private(set) var lastFrameID: UInt64?
     private(set) var staleDrops = 0
@@ -366,7 +467,7 @@ nonisolated struct LiveAvatarTracker: Sendable {
                                        gameUnitsPerImageHeight: Self.referenceHeight / reference.standingBodyImageHeight)
         }
         calibrations.merge(made) { $1 }
-        builders = calibrations.mapValues { LiveSampleBuilder(calibration: $0, layout: layout) }
+        builders = calibrations.mapValues { LiveSampleBuilder(calibration: $0, layout: layout, jumpTuning: jumpTuning) }
     }
 
     /// `nil` when the frame is a duplicate, out of order, or stale.
@@ -380,7 +481,7 @@ nonisolated struct LiveAvatarTracker: Sendable {
         var samples: [PlayerID: PlayerBodySample] = [:]
         var joints: [PlayerID: PresentationPoseSample] = [:]
         for player in PlayerID.allCases {
-            if var builder = builders[player], let made = try? builder.sample(assigned[player]) {
+            if var builder = builders[player], let made = try? builder.sample(assigned[player], at: frame.capturedAt) {
                 builders[player] = builder
                 samples[player] = made.0
                 joints[player] = made.1
@@ -399,5 +500,14 @@ nonisolated struct LiveAvatarTracker: Sendable {
     }
 
     func airborne(_ player: PlayerID) -> Bool { builders[player]?.airborne ?? false }
+
+    /// The player's jump detector (lift, thresholds, noise) for diagnostics.
+    func jumpDetector(_ player: PlayerID) -> LiveJumpDetector? { builders[player]?.jump }
+
+    /// Switches every player's jump rule; detection restarts from grounded.
+    mutating func setJumpTuning(_ tuning: LiveJumpTuning) {
+        jumpTuning = tuning
+        for key in Array(builders.keys) { builders[key]?.setJumpTuning(tuning) }
+    }
 }
 #endif
