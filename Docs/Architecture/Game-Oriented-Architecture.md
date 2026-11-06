@@ -1,5 +1,7 @@
 # Lean Game-Oriented Modular Architecture
 
+**Architecture revision under review — 6 November 2026:** [Laser Heist Architecture V2 — Avatar Pivot](../LaserHeist-Architecture-V2-Avatar-Pivot.md) records the rear-view avatar direction, current source audit, retained human-input/gameplay authority and proposed adoption gates. V2 is **PROPOSED**, not whole-architecture acceptance or implementation permission. App/Games/Shared remains valid. The migration tree/status prose below records the 31 October snapshot; later accepted contracts/reports and actual source govern current implementation status. CP1/CP2 history is preserved; this reference authorizes no cutout deletion or binding/collision/mirroring change.
+
 **Completed structural migration — 31 October 2026.** Edo explicitly authorized structural relocation of all affected files, including Jevon's and Kevin's, plus necessary documentation/reference fixes. This exception applies to this migration only; functional ownership, APIs and normal review workflows remain intact.
 
 This structure fits Sedactive's game-first direction: Laser Heist owns its rules, session and presentation, while reusable body tracking, profiles, timekeeping and audio live in Shared. All folders are **logical modules within the existing application target**. There is no compiler-enforced package/target isolation, generic game engine, additional framework, or second game.
