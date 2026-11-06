@@ -1,14 +1,72 @@
-# 3D robot avatar (Debug spike)
+# 3D avatar: orange LaserHeist mascot (Debug spike)
 
-> **Status:** Debug only, presentation only. The live camera path is verified on an iPad Pro 13" for frames, Vision and latency. Robot motion is verified with synthetic data in the Simulator; on hardware it still needs a person in front of the camera.
+> **Status:** Debug only, presentation only. The live camera path is verified on an iPad Pro 13" for frames, Vision and latency. Avatar motion is verified with synthetic data in the Simulator; on hardware it still needs a person in front of the camera.
 
 ## Asset
 
-`Rendering/Avatar/Robot/laserheist-robot.usdz` is Codex's `avatar.usdz`, byte-identical (sha1 `ed1be8dd…0f2255`):
+**Active avatar: the final colour-corrected orange mascot.** `Rendering/Avatar/Robot/mascot.usdz` is Codex's `mascot.usdz` from `LaserHeist-Original-Mascot-3D-Color/`, byte-identical (sha1 `61d0a911…a2d3ec`, 1.6 MiB). `RobotAvatarLayer.resourceName` is `"mascot"`, and it is the only avatar in the app bundle. Every 3D path loads it through `RobotAvatarLayer.loadTemplate()`, once per layer: the robot demo, the Live Avatar Lab, the live round and `-robotReplay`.
 
-- One skinned mesh on a 20-joint UsdSkel.
-- 1.398 m tall, +Y up, facing −Z, with +X as the robot's anatomical right.
-- Under our camera (at +Z, looking down −Z) we see the robot's back, and its right side is on screen right.
+- One skinned mesh on a 20-joint UsdSkel: 14,309 vertices and 27,066 triangles per instance. The head shell and face are weighted to `Head` only.
+- 7 matte PBR materials (roughness 0.94, metallic 0, specular 0.12, no emission on the body), used unchanged.
+- 1.398 m tall, soles at y = 0, +Y up, facing −Z, with +X as the mascot's anatomical right. It is shown at the shared 1.6 m (scale 1.1445) for P1 and P2.
+- Under our camera (at +Z, looking down −Z) we see its back, with its right side on screen right. P1 is on the left, P2 on the right, and no extra rotation or flip is applied.
+
+**Rig compatibility.** Joint names, paths, order and parents match the earlier robots. The bind transforms differ:
+
+| Model metres | First robot | Pilot mech | Orange mascot |
+|---|---:|---:|---:|
+| Pelvis Y | 0.665 | 0.526 | 0.406 |
+| Upper-arm pivot X / Y | 0.177 / 0.995 | 0.361 / 0.790 | 0.135 / 0.605 |
+| Ankle X / Y | 0.117 / 0.088 | 0.163 / 0.114 | 0.139 / 0.105 |
+| Hip-to-ankle height | 0.574 | 0.393 | 0.293 |
+| Head joint Y | 1.106 | 0.883 | 0.709 |
+
+Everything geometric is read from the loaded bind pose, never assumed:
+- **Bones and stance:** leg and bone lengths, leg rest height (crouch depth is a share of it), and ankle stance (the foot planner's home positions). The leg-rest fallback for a rig without leg joints is now the solver's own leg length, not the first robot's 0.574 m.
+- **Knee plane:** knees bend in the bind pose's own plane, so the rest targets reproduce the bind exactly (`restTargetsReproduceTheBindPose`).
+- **Foot planner:** its board-metre constants needed no change. Every foot scenario keeps 0.0 mm planted drift, no IK reach shortfall and no sole below the deck.
+
+**Arm clearance (`MascotPoseEnvelope.swift`).** The shoulders sit under the large head, so an upper arm aimed straight up goes through it. Codex's helper is used with its values unchanged. It runs in `RobotAvatarLayer.present`, after smoothing and foot planning and immediately before the solve, only while `RobotAvatarLayer.headClearance` is on (tied to the mascot resource). It reads and writes presentation targets only, never Vision joints, body samples or anything judged. Its effect:
+- Rising arms are turned outward: the upper arm settles about 9° above horizontal and the forearm about 34°, with more clearance when the trunk or head tilts.
+- Downward arms are untouched, the change eases in over the first part of a raise, and left and right mirror each other.
+
+`MascotArmClearanceTests` checks it on the real mesh, skinned on the CPU from the imported weights and inverse bind matrices (bind reproduced to < 0.1 mm) and posed by our solver:
+
+| | Raw targets | With the helper |
+|---|---|---|
+| Arm vertices inside the head | 340–1,627 per pose (10 poses) | 0 in every pose |
+| Closest arm vertex to the head | — | 5.5–44 mm |
+
+The 10 poses: left, right or both arms up, forward-up, both up in a deep crouch, both up while leaning either way, right up while stepping, bent elbow, and reaching across. A 1° sweep from arm-down to arm-up never moves the shown direction by more than 3° per step, so there is no snapping.
+
+**Lighting and colour.** The key (3000) and fill (1200) directional lights are unchanged; they are the same rig Codex validated the colours under.
+- **The problem:** RealityView's default environment light added on top. It clipped red on 81% of the mascot's orange pixels and washed the lit orange to #FFA762, a pale peach.
+- **The fix:** the avatars now receive their own uniform dark-grey environment light (`neutralEnvironment()`, sRGB 0.18) instead of the default one. The lit-orange median is #F68046, against #F47E44 in Codex's rear render under the same lights and the asset target #F78146.
+- **Scope:** only the avatar containers receive it. The corridor and lasers are unlit, and they were pixel-identical in before/after captures.
+- **How it was measured:** Simulator screenshots are sRGB-tagged and verified against a control in the same capture (the system-blue button reads exactly #0088FF). The figure is the median of orange pixels in the 45–85% luminance band. `evidence/mascot-color-check.png` shows before, after and the reference.
+- **Not covered:** the iPad display itself (P3 panel, True Tone, brightness) has not been looked at.
+
+**Verified (Simulator, synthetic poses; not yet a person on the iPad).** All 276 tests pass.
+- **Watched in the landscape iPad Simulator:** idle, arms overhead (the new `-robotDemo arms-up`: both up, duck with arms up, P2 stepping with an arm up), asymmetric arms, duck, jump, P1 ducking while P2 jumps, step right, lean right, tracking loss and recovery, and the live round (lasers, JUMP cue, CLEAR/HIT).
+- **Cost:** about 20 µs per solve, and about 80 µs per rendered frame for both avatars (retarget, planner, envelope, solve, joint write; Simulator). The pair is about 54k triangles, against 168k for the previous mech. iPad frame time and thermals are unmeasured.
+
+**Known visual limits.**
+- **Leg creases:** deep knee bends crease the backs of the short lower legs, from linear-blend skinning on the asset's weights. Codex's own crouch and step validation renders show the same; fixing it means changing the asset's weights, not our solver.
+- **Knee angle:** the bind knee leans slightly inward as well as forward, so knees converge a little in a deep duck.
+- **See-through when dimmed:** a tracking-lost avatar is dimmed to 50% opacity, and at that opacity the far side of the head and body shows through. The earlier avatars did the same.
+- **Arms overhead:** a straight-up arm is shown out to the side by design, so it never matches the player's vertical arm.
+
+**Rollback.**
+- **Pilot mech (previous version):** Codex's `LaserHeist-Mascot-Pilot-Mech/mascot-pilot-mech.usdz` (sha1 `73ba1683…`).
+- **Blue-and-white robot:** Codex's `LaserHeist-Robot/avatar.usdz` (sha1 `ed1be8dd…`), also in Git at `6cd0626` as `laserheist-robot.usdz`.
+- **How to restore:**
+  1. Copy the file in as `Rendering/Avatar/Robot/<name>.usdz`, remove `mascot.usdz`, and set `RobotAvatarLayer.resourceName` to `<name>`. `headClearance` then switches off on its own.
+  2. Rebuild.
+- **Tests that are mascot-specific:** `MascotArmClearanceTests.raisedArmsClearTheHeadOnlyWithTheEnvelope` expects `headClearance` and expects raw arms to hit the head, so it fails after a rollback; skip or remove it.
+
+**Evidence** (`evidence/`, Simulator, synthetic):
+- **Images:** `mascot-idle-landscape.png`, `mascot-color-check.png`, `mascot-live-round-sheet.png`.
+- **Animations:** `mascot-arms-up.gif`, `mascot-arms.gif`, `mascot-duck.gif`, `mascot-jump.gif`, `mascot-duck-jump.gif`, `mascot-step-right.gif`, `mascot-lean-right.gif`, `mascot-tracking-loss.gif`, `mascot-live-round.gif`.
 
 ## Pipeline
 
@@ -61,7 +119,7 @@ A player's own height never sizes the robot. It still normalises that player's m
 - **Crouch depth** is a share of the player's own leg length.
 - **Arm and trunk directions** don't depend on size.
 
-**Evidence:** `robot-equal-size.png` is current. The older `robot-synthetic-*.png/.gif` and `live-avatar-lab-robot-simulator.png` predate equal sizing and still show a smaller P2.
+**Evidence:** `mascot-idle-landscape.png` is current (orange mascot). `robot-equal-size.png` shows the earlier robot. The older `robot-synthetic-*.png/.gif` and `live-avatar-lab-robot-simulator.png` predate equal sizing and still show a smaller P2.
 
 ## Removed 2D chibi experiment
 

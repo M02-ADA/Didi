@@ -281,7 +281,9 @@ struct LiveAvatarTests {
         }
         let steps = zip(drops.dropFirst(), drops).map { $0 - $1 }
         #expect(steps.allSatisfy { abs($0) < 0.025 })
-        #expect(drops.max()! > 0.08 && drops.last! < 0.01)
+        // Deep enough: the same share of the avatar's leg as 8 cm of the first robot's 0.574 m leg.
+        let leg = try #require(layer.robots[.player1]).retargeter.robotLegRest
+        #expect(drops.max()! > 0.08 / 0.574 * leg && drops.last! < 0.01)
         let peak = drops.firstIndex(of: drops.max()!)!
         #expect(steps[..<(peak - 1)].allSatisfy { $0 > -1e-4 })  // never bobs back up on the way down
     }
@@ -391,7 +393,9 @@ struct LiveAvatarTests {
         let poses = run(&tracker, layer, from: last + 1, count: 6, [jumper, croucher])
         let p1 = try #require(poses[.player1]), p2 = try #require(poses[.player2])
         #expect(p1.lift > 0.2 && p1.pelvisDrop < 0.01)
-        #expect(p2.lift == 0 && p2.pelvisDrop > 0.03)
+        // The croucher ducks by the same share of the avatar's leg as 3 cm of the first robot's 0.574 m leg.
+        let leg = try #require(layer.robots[.player2]).retargeter.robotLegRest
+        #expect(p2.lift == 0 && p2.pelvisDrop > 0.03 / 0.574 * leg, "drop \(p2.pelvisDrop) of leg \(leg)")
     }
 
     @Test func singlePlayerModeNeedsOnlyOnePerson() async throws {

@@ -38,10 +38,17 @@ struct RobotAvatarTests {
         }
         model.jointTransforms = transforms
         transforms = model.jointTransforms
-        // Bind pose: 1.398 m tall, facing −Z, anatomical right on +X (screen right from behind).
+        // Bind pose: anatomical right on +X (screen right from behind), the
+        // trunk stacked upward from the root at the deck, knees forward (−Z).
         let bind = skeleton.world(skeleton.bind).position
         #expect(bind[skeleton("Hand_R")!].x > 0 && bind[skeleton("Hand_L")!].x < 0)
-        #expect(bind[skeleton("Head")!].y > 1.0 && abs(bind[skeleton("Root")!].y) < 1e-4)
+        #expect(abs(bind[skeleton("Root")!].y) < 1e-4)
+        #expect(bind[skeleton("Head")!].y > bind[skeleton("Chest")!].y && bind[skeleton("Chest")!].y > bind[skeleton("Pelvis")!].y)
+        #expect(bind[skeleton("Shin_L")!].z <= 0 && bind[skeleton("Shin_R")!].z <= 0)
+        // The mesh: `RobotSkeleton.modelHeight` tall, soles on the deck (y = 0).
+        let bounds = try await template().visualBounds(relativeTo: nil)
+        #expect(abs(bounds.extents.y - RobotSkeleton.modelHeight) < 0.005, "height \(bounds.extents.y)")
+        #expect(abs(bounds.min.y) < 0.005, "sole \(bounds.min.y)")
     }
 
     @Test func twoInstancesPoseIndependently() async throws {
@@ -62,9 +69,10 @@ struct RobotAvatarTests {
     @Test func restTargetsReproduceTheBindPose() async throws {
         let (_, skeleton, solver) = try await rig()
         let posed = solver.solve(.rest)
-        for (p, b) in zip(posed, skeleton.bind) {
-            #expect(simd_distance(p.translation, b.translation) < 1e-5)
-            #expect(abs(simd_dot(p.rotation.vector, b.rotation.vector)) > 0.9999)
+        for (i, (p, b)) in zip(posed, skeleton.bind).enumerated() {
+            let joint = skeleton.paths[i].split(separator: "/").last.map(String.init) ?? "?"
+            #expect(simd_distance(p.translation, b.translation) < 1e-5, "\(joint) moved")
+            #expect(abs(simd_dot(p.rotation.vector, b.rotation.vector)) > 0.9999, "\(joint) rotated")
         }
     }
 
@@ -367,7 +375,8 @@ struct RobotAvatarTests {
             layer.apply(f.snapshot, joints: f.joints)
         }
         let p1 = try #require(layer.robots[.player1]), p2 = try #require(layer.robots[.player2])
-        #expect(p1.retargeter.targets.pelvisDrop > 0.05 && p1.retargeter.lift == 0)
+        // The same share of the avatar's leg as 5 cm was of the first robot's 0.574 m leg.
+        #expect(p1.retargeter.targets.pelvisDrop > 0.05 / 0.574 * p1.retargeter.robotLegRest && p1.retargeter.lift == 0)
         #expect(p2.retargeter.lift > 0.1)
         #expect(p1.container.position.y == 0 && p2.container.position.y > 0.1)
         // Robots stand on their own lanes, P1 left, P2 right; the pictograms are hidden.
@@ -375,5 +384,22 @@ struct RobotAvatarTests {
         #expect(scene.players[.player2]?.findEntity(named: "player.player2.surface")?.isEnabled == false)
         layer.remove()
         #expect(scene.players[.player2]?.findEntity(named: "player.player2.surface")?.isEnabled == true)
+    }
+
+    /// The avatars are lit only by key/fill plus their own dim neutral
+    /// environment (not RealityView's default one, which washed the orange out).
+    @Test func avatarsReceiveOnlyTheirOwnNeutralEnvironmentLight() async throws {
+        let input = try LaserReplayScript.load().input
+        let scene = LaserScene()
+        let layer = RobotAvatarLayer(scene: scene, calibrations: input.configuration.calibrations,
+                                     layout: input.configuration.playerPlaneLayout, template: try await template())
+        let lights = try #require(scene.root.findEntity(named: "robot.lights"))
+        #expect(lights.components[ImageBasedLightComponent.self] != nil)
+        for robot in layer.robots.values {
+            #expect(robot.container.components[ImageBasedLightReceiverComponent.self]?.imageBasedLight === lights)
+        }
+        let intensities = lights.children.compactMap { ($0 as? DirectionalLight)?.light.intensity }.sorted()
+        #expect(intensities == [1200, 3000])  // unchanged key and fill
+        layer.remove()
     }
 }

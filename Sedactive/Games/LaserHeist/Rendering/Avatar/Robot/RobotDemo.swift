@@ -13,13 +13,15 @@ enum RobotDemoScenario: Int, CaseIterable {
     case idle, p1JumpLand, p2DuckStand, bothJump, p1ArmRaise, asymmetricArms, duckWhileJump, trackingLoss
     // Feet: lean vs side step (foot planting and lateral stepping).
     case leanRight, leanLeft, stepRight, stepLeft, twoSteps, stepThenStop, duckPlanted, stepThenJump, lossDuringStep, p1StepP2Idle
+    // Arms overhead against the mascot's head: alone, while ducking, while stepping.
+    case armsOverhead
 
     static let duration = 4.0
 
     var key: String {
         ["idle", "p1-jump", "p2-duck", "both-jump", "p1-arm", "arms", "duck-jump", "tracking-loss",
          "lean-right", "lean-left", "step-right", "step-left", "two-steps", "step-stop", "duck-planted", "step-jump",
-         "loss-step", "p1-step-p2-idle"][rawValue]
+         "loss-step", "p1-step-p2-idle", "arms-up"][rawValue]
     }
 
     var title: String {
@@ -29,7 +31,8 @@ enum RobotDemoScenario: Int, CaseIterable {
          "P1 leans right, feet planted", "P1 leans left, feet planted", "P1 steps right, then back",
          "P1 steps left, then back", "P1 two steps right, two back", "P1 quick step right, stops, returns",
          "P1 ducks, feet planted", "P1 steps right, jumps, steps back", "P1 tracking lost mid-step",
-         "P1 side-steps; P2 idle with body sway"][rawValue]
+         "P1 side-steps; P2 idle with body sway",
+         "P1 both arms up, ducks, stands, lowers; P2 steps with right arm up"][rawValue]
     }
 }
 
@@ -229,6 +232,15 @@ struct RobotDemoSequence {
                 b.sway = 0.012 * sin(2 * .pi * t / 1.7)  // incidental sway, ankles still
                 b.leftFoot = 0
                 b.rightFoot = 0
+            }
+        case .armsOverhead:
+            if p1 {
+                b.leftArm = 6 + 168 * Self.plateau(t, 0.2, 0.8, 3.2, 3.8)
+                b.rightArm = b.leftArm
+                b.drop = 0.15 * standing * Self.plateau(t, 1.2, 1.7, 2.3, 2.8)
+            } else {
+                b.rightArm = 6 + 165 * Self.plateau(t, 0.2, 0.7, 3.3, 3.8)
+                Self.stepping(&b, t, [(1.0, 0.15), (2.6, -0.15)])
             }
         }
         return b

@@ -328,7 +328,12 @@ final class RobotAvatarLayer {
         }
     }
 
-    static let resourceName = "laserheist-robot"
+    /// The bundled avatar (`mascot.usdz`, Codex's final colour-corrected
+    /// orange mascot, unchanged). Rollback: see the robot README.
+    static let resourceName = "mascot"
+    /// Turn rising arm targets outward so they clear the mascot's large head
+    /// (`MascotPoseEnvelope`). Tied to the asset: another avatar never gets it.
+    static let headClearance = resourceName == "mascot"
     /// Every robot's standing height on screen, in metres: one shared size for
     /// P1 and P2 (the size P1's robot had before sizes were equalised). Player
     /// height never changes it; see `RobotRetargeter.motionScale`.
@@ -392,7 +397,7 @@ final class RobotAvatarLayer {
             entity.addChild(container)
             entity.findEntity(named: "player.\(player.rawValue).surface")?.isEnabled = false
             let bindWorld = skeleton.world(skeleton.bind).position
-            let legRest = skeleton("Thigh_L").flatMap { t in skeleton("Foot_L").map { bindWorld[t].y - bindWorld[$0].y } } ?? 0.574
+            let legRest = skeleton("Thigh_L").flatMap { t in skeleton("Foot_L").map { bindWorld[t].y - bindWorld[$0].y } } ?? solver.legLength
             var ankleX: [RobotPoseTargets.Side: Float] = [:]
             for (side, name) in [(RobotPoseTargets.Side.left, "Foot_L"), (.right, "Foot_R")] {
                 ankleX[side] = skeleton(name).map { bindWorld[$0].x } ?? (side == .left ? -0.1 : 0.1)
@@ -414,6 +419,26 @@ final class RobotAvatarLayer {
         lights.addChild(key)
         lights.addChild(fill)
         scene.root.addChild(lights)
+        // The avatars' own dim, neutral environment light in place of RealityView's
+        // default one, which over-exposed the matte orange (red clipped on 81% of
+        // its pixels, washing it to peach). With only key/fill plus this, the lit
+        // orange matches the colour validated for the asset (#F78146). Only the
+        // avatars receive it; the corridor and lasers are unlit and unaffected.
+        if let environment = Self.neutralEnvironment() {
+            lights.components.set(ImageBasedLightComponent(source: .single(environment)))
+            for robot in robots.values { robot.container.components.set(ImageBasedLightReceiverComponent(imageBasedLight: lights)) }
+        }
+    }
+
+    /// A uniform dark-grey environment (sRGB 0.18): soft fill so shadowed sides
+    /// keep their shape, too dim to wash out the material colours.
+    static func neutralEnvironment(level: CGFloat = 0.18) -> EnvironmentResource? {
+        guard let context = CGContext(data: nil, width: 8, height: 4, bitsPerComponent: 8, bytesPerRow: 32,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        context.setFillColor(CGColor(srgbRed: level, green: level, blue: level, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 8, height: 4))
+        return context.makeImage().flatMap { try? EnvironmentResource(equirectangular: $0, withName: "avatar.environment") }
     }
 
     /// A new camera session restarts frame IDs; forget the last one shown.
@@ -493,6 +518,8 @@ final class RobotAvatarLayer {
             plan = out
         }
         robot.container.position = [rootX, s.lift, 0]
+        // After smoothing and foot planning, just before the solve: presentation targets only.
+        if Self.headClearance { MascotPoseEnvelope.apply(to: &t) }
         let solved = robot.solver.solveDetailed(t)
         robot.model.jointTransforms = solved.local
         if diagnosticsEnabled { recordFeet(player, robot, solved, rootX: rootX, lift: s.lift, plan: plan, trackedLift: t.footLift) }

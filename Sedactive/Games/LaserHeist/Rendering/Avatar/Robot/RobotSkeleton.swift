@@ -8,10 +8,15 @@ import Foundation
 import RealityKit
 import simd
 
-// The Codex robot (`laserheist-robot.usdz`, unchanged): one skinned mesh on a
-// 20-joint UsdSkel, 1.398 m tall, origin between the feet, +Y up, facing −Z,
-// +X = the robot's anatomical right. Under our camera at +Z looking down −Z
-// the virtual camera sees its back, and its right side is on screen right.
+// The avatar (`mascot.usdz`, Codex's final colour-corrected orange mascot,
+// unchanged): one skinned mesh on a 20-joint UsdSkel, 1.398 m tall, origin
+// between the feet with the soles on it, +Y up, facing −Z, +X = the
+// avatar's anatomical right. Under our camera at +Z looking down −Z the
+// virtual camera sees its back, and its right side is on screen right.
+// Joint names, paths and parents match the earlier robots; bind transforms
+// differ (short legs, shoulders under a large head), so everything
+// geometric (leg lengths, ankle stance, knee plane) is read from the loaded
+// bind pose, never assumed. Arm head clearance: `MascotPoseEnvelope`.
 
 /// The skeleton as RealityKit reports it for one instance: joint paths,
 /// parents and bind-pose local transforms (`ModelEntity.jointTransforms`).
@@ -129,7 +134,8 @@ nonisolated struct RobotPoseTargets: Equatable, Sendable {
 /// into parent space through the posed parent, so children follow; rest
 /// translations and unit scales are never changed except the pelvis drop.
 /// Legs use two-bone IK toward each foot's own target (bind ankle plus
-/// `footShift` and `footLift`), knees bending forward (−Z); feet are kept level.
+/// `footShift` and `footLift`), knees bending in the bind pose's own knee
+/// plane (forward, −Z, give or take the rig's authored splay); feet are kept level.
 nonisolated struct RobotPoseSolver: Sendable {
     let skeleton: RobotSkeleton
     private let thigh: Float
@@ -140,6 +146,11 @@ nonisolated struct RobotPoseSolver: Sendable {
     private let childOf: [Int: Int]
     /// Per leg: thigh joint, foot joint and the bind hip-to-ankle distance (the reach kept at rest).
     private let legs: [(side: RobotPoseTargets.Side, thigh: Int, foot: Int, reach: Float)]
+    /// Per leg (by thigh joint): the direction the knee bends, taken from the
+    /// rig's own bind pose (the knee's offset from the hip-to-ankle line), so
+    /// the rest targets reproduce the authored bind exactly. A straight bind
+    /// leg, or one not bent forward, falls back to forward (−Z).
+    private let kneeBend: [Int: SIMD3<Float>]
 
     init(skeleton: RobotSkeleton) {
         self.skeleton = skeleton
@@ -160,6 +171,17 @@ nonisolated struct RobotPoseSolver: Sendable {
             guard let i = skeleton(a), let j = skeleton(b) else { return nil }
             return (side, i, j, min(full, simd_distance(bindWorld.position[i], bindWorld.position[j])))
         }
+        var bend: [Int: SIMD3<Float>] = [:]
+        for name in ["Thigh_L", "Thigh_R"] {
+            guard let hip = skeleton(name), let knee = skeleton(name.replacingOccurrences(of: "Thigh", with: "Shin")),
+                  let foot = skeleton(name.replacingOccurrences(of: "Thigh", with: "Foot")) else { continue }
+            let axis = simd_normalize(bindWorld.position[foot] - bindWorld.position[hip])
+            let offset = bindWorld.position[knee] - bindWorld.position[hip]
+            let perpendicular = offset - simd_dot(offset, axis) * axis
+            let forward = simd_length(perpendicular) > 0.005 && simd_dot(simd_normalize(perpendicular), [0, 0, -1]) > 0.3
+            bend[hip] = forward ? simd_normalize(perpendicular) : [0, 0, -1]
+        }
+        kneeBend = bend
     }
 
     /// How much further the pelvis must drop so both feet can reach their
@@ -256,7 +278,9 @@ nonisolated struct RobotPoseSolver: Sendable {
                 let along = simd_normalize(toAnkle)
                 let a = (thigh * thigh + reach * reach - shin * shin) / (2 * reach)
                 let h = sqrt(max(0, thigh * thigh - a * a))
-                var bend = SIMD3<Float>(0, 0, -1) - simd_dot([0, 0, -1], along) * along  // knees forward (−Z)
+                // Knees bend the way the bind pose bends them (forward, −Z, for a straight bind leg).
+                let hint = kneeBend[i] ?? [0, 0, -1]
+                var bend = hint - simd_dot(hint, along) * along
                 bend = simd_length(bend) > 1e-5 ? simd_normalize(bend) : [0, 0, -1]
                 let k = hip + along * a + bend * h
                 knee[i] = k
