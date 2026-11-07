@@ -102,6 +102,55 @@ nonisolated enum TrackingFixtures {
   static let threeCandidateOrders = [[0, 1, 2], [0, 2, 1], [1, 0, 2],
     [1, 2, 0], [2, 0, 1], [2, 1, 0]]
 
+  static func opposingDisplacements(mirrored: Bool = false, restored: Bool = false,
+    ids: [UInt64] = [30, 40]) -> [PoseCandidate] {
+    let raw: [[BodyJoint: (Double, Double)]] = [
+      [.leftShoulder: (0.36, 0.60), .rightShoulder: (0.64, 0.60),
+        .leftHip: (0.51, 0.40), .rightHip: (0.59, 0.40)],
+      [.leftShoulder: (0.44, 0.60), .rightShoulder: (0.56, 0.60),
+        .leftHip: (0.41, 0.40), .rightHip: (0.49, 0.40)],
+    ]
+    return raw.enumerated().map { index, values in
+      var joints = values.mapValues { point in
+        PoseJoint(x: mirrored ? 1 - point.0 : point.0, y: point.1, confidence: 0.9)
+      }
+      if !restored { joints.removeValue(forKey: index == 0 ? .leftHip : .rightHip) }
+      return PoseCandidate(candidateID: ids[index], joints: joints,
+        maskTopImageY: nil, maskBottomImageY: nil, leftFootBottomImageY: nil,
+        rightFootBottomImageY: nil, maskAssociation: .unavailable)
+    }
+  }
+
+  static func opposingBindingPair(mirrored: Bool) -> [PoseCandidate] {
+    [candidate(10, x: 0.55), candidate(20, x: 0.45)].map { candidate in
+      guard mirrored else { return candidate }
+      return PoseCandidate(candidateID: candidate.candidateID,
+        joints: candidate.joints.mapValues {
+          PoseJoint(x: 1 - $0.x, y: $0.y, confidence: $0.confidence)
+        }, maskTopImageY: nil, maskBottomImageY: nil, leftFootBottomImageY: nil,
+        rightFootBottomImageY: nil, maskAssociation: .unavailable)
+    }
+  }
+
+  static func coherentShouldersOppositeTorso(mirrored: Bool, restored: Bool = false,
+    ids: [UInt64] = [30, 40]) -> [PoseCandidate] {
+    let raw: [[BodyJoint: (Double, Double)]] = [
+      [.leftShoulder: (0.49, 0.60), .rightShoulder: (0.59, 0.60),
+        .leftHip: (0.42, 0.40), .rightHip: (0.50, 0.40)],
+      [.leftShoulder: (0.41, 0.60), .rightShoulder: (0.51, 0.60),
+        .leftHip: (0.50, 0.40), .rightHip: (0.58, 0.40)],
+    ]
+    return raw.enumerated().map { index, points in
+      var joints = points.mapValues {
+        PoseJoint(x: mirrored ? 1 - $0.0 : $0.0, y: $0.1, confidence: 0.9)
+      }
+      if !restored { joints.removeValue(forKey: index == 0 ? .leftHip : .rightHip) }
+      return PoseCandidate(candidateID: ids[index], joints: joints,
+        maskTopImageY: nil, maskBottomImageY: nil, leftFootBottomImageY: nil,
+        rightFootBottomImageY: nil, maskAssociation: .unavailable)
+    }
+  }
+
 }
 
 nonisolated struct PlayerTrackerTests {
@@ -916,6 +965,492 @@ nonisolated struct PlayerTrackerTests {
       #expect(ar.assignmentCount <= 73)
     }
     #expect(a.snapshot.player1.state == .lost && a.snapshot.player2.state == .lost)
+  }
+
+  @Test(arguments: [false, true])
+  func coherentShouldersCannotProveOppositeTorsoIndependence(_ mirrored: Bool) throws {
+    let idPairs: [[UInt64]] = [[30, 40], [10, 20], [90, 2]]
+    for ids in idPairs {
+      let scene = F.coherentShouldersOppositeTorso(mirrored: mirrored, ids: ids)
+      for order in [[0, 1], [1, 0]] {
+        var tracker = try F.bound(pair: F.opposingBindingPair(mirrored: mirrored))
+        let r = try tracker.process(F.input(3, 0.25, order.map { scene[$0] }))
+        for player in PlayerID.allCases {
+          #expect(r[player].state == .uncertain && r[player].reason == .ambiguous)
+          #expect(!r[player].requiresRebind && r[player].candidateID == nil)
+          #expect(r[player].lastConfirmedAt == 0.125)
+        }
+        #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+      }
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func restoredOppositeTorsoRetainsGlobalIdentityAmbiguity(_ mirrored: Bool) throws {
+    let scene = F.coherentShouldersOppositeTorso(mirrored: mirrored, restored: true)
+    for order in [[0, 1], [1, 0]] {
+      var tracker = try F.bound(pair: F.opposingBindingPair(mirrored: mirrored))
+      let r = try tracker.process(F.input(3, 0.25, order.map { scene[$0] }))
+      for player in PlayerID.allCases {
+        #expect(r[player].state == .lost && r[player].reason == .ambiguous)
+        #expect(r[player].requiresRebind && r[player].candidateID == nil)
+        #expect(r[player].lastConfirmedAt == 0.125)
+      }
+      #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+    }
+  }
+
+  @Test(arguments: [3, 4], [0, 1, 2])
+  func mutualCoreCoverageHonorsConfiguredThreeAndFour(_ minimum: Int, _ variant: Int) throws {
+    var tracker = try F.bound(policy: F.policy(coreCount: minimum))
+    let firstMissing: [BodyJoint] = variant == 0 ? [] : [.leftHip]
+    let secondMissing: [BodyJoint] = variant == 2 ? [.leftHip] : []
+    let r = try tracker.process(F.input(3, 0.25,
+      [F.candidate(30, x: 0.75, missing: firstMissing),
+        F.candidate(40, x: 0.25, missing: secondMissing)]))
+    let firstSupported = minimum == 3 || variant == 0
+    let secondSupported = minimum == 3 || variant != 2
+    for (player, supported, id) in [(PlayerID.player1, firstSupported, UInt64(30)),
+      (.player2, secondSupported, UInt64(40))] {
+      #expect(r[player].state == (supported ? .tracking : .uncertain))
+      #expect(r[player].candidateID == (supported ? id : nil))
+      #expect(r[player].lastConfirmedAt == (supported ? 0.25 : 0.125))
+      #expect(!r[player].requiresRebind)
+    }
+    // At floor four, the valid full peer may continue while the partial identity refuses.
+    #expect(r.provisionalDescriptorCount == 0)
+  }
+
+  @Test(arguments: [0, 1, 2, 3])
+  func comparablePartialSeparationSupportsDifferentTranslationDirections(_ direction: Int) throws {
+    let heights = [(0.5, 0.5), (0.65, 0.35), (0.35, 0.65), (0.55, 0.45)]
+    let pair = [F.candidate(10, x: 0.6, y: heights[direction].0),
+      F.candidate(20, x: 0.4, y: heights[direction].1)]
+    var tracker = try F.bound(pair: pair)
+    let scene = [F.candidate(30, x: 0.6, y: heights[direction].0 + 0.01, missing: [.leftHip]),
+      F.candidate(40, x: 0.4, y: heights[direction].1 - 0.01, missing: [.leftHip])]
+    let r = try tracker.process(F.input(3, 0.25, scene.reversed()))
+    #expect(r.player1.state == .tracking && r.player1.candidateID == 30)
+    #expect(r.player2.state == .tracking && r.player2.candidateID == 40)
+    #expect(r.player1.lastConfirmedAt == 0.25 && r.player2.lastConfirmedAt == 0.25)
+    #expect(!r.player1.requiresRebind && !r.player2.requiresRebind)
+  }
+
+  @Test(arguments: [BodyJoint.leftHip, .rightHip, .leftShoulder, .rightShoulder])
+  func droppingMutualSupportCannotCreateIndependentPair(_ firstMissing: BodyJoint) throws {
+    let baseline = try F.bound()
+    for secondMissing in [BodyJoint.leftHip, .rightHip, .leftShoulder, .rightShoulder]
+      where firstMissing != secondMissing {
+      var richer = baseline, poorer = baseline
+      let first = F.candidate(30, x: 0.75, missing: [firstMissing])
+      let supported = try richer.process(F.input(3, 0.25, [first, F.candidate(40, x: 0.25)]))
+      #expect(supported.player1.state == .tracking && supported.player2.state == .tracking)
+      // Only delete one observed joint from the second candidate: mutual coverage falls 3 -> 2.
+      let refused = try poorer.process(F.input(3, 0.25,
+        [first, F.candidate(40, x: 0.25, missing: [secondMissing])]))
+      for player in PlayerID.allCases {
+        #expect(refused[player].state == .uncertain && refused[player].reason == .ambiguous)
+        #expect(!refused[player].requiresRebind && refused[player].candidateID == nil)
+        #expect(refused[player].lastConfirmedAt == 0.125)
+      }
+      #expect(refused.confirmedDescriptorCount == 2 && refused.provisionalDescriptorCount == 0)
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func repeatedBelowCoverageFramesFreezeHistoryThroughExpiry(_ mirrored: Bool) throws {
+    var tracker = try F.bound(pair: F.opposingBindingPair(mirrored: mirrored))
+    for id in 3...50 {
+      let scene = F.coherentShouldersOppositeTorso(mirrored: mirrored,
+        ids: [UInt64(id), UInt64(id + 100)])
+      let r = try tracker.process(F.input(UInt64(id), Double(id - 1) * 0.125,
+        id.isMultiple(of: 2) ? scene.reversed() : scene))
+      for player in PlayerID.allCases {
+        #expect(r[player].state == .uncertain || r[player].state == .lost)
+        #expect(r[player].candidateID == nil && r[player].lastConfirmedAt == 0.125)
+      }
+      #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+      #expect(r.assignmentCount <= 73)
+    }
+    #expect(tracker.snapshot.player1.state == .lost && tracker.snapshot.player2.state == .lost)
+    let later = try tracker.process(F.input(51, 6.25, F.opposingBindingPair(mirrored: mirrored)))
+    #expect(later.player1.state == .lost && later.player2.state == .lost)
+    #expect(later.player1.candidateID == nil && later.player2.candidateID == nil)
+  }
+
+  @Test(arguments: [false, true])
+  func unavailablePairRecoversOnlyAfterComparablePartialDwell(_ mirrored: Bool) throws {
+    let pair = F.opposingBindingPair(mirrored: mirrored)
+    var tracker = try F.bound(pair: pair)
+    try tracker.process(F.input(3, 0.25, F.coherentShouldersOppositeTorso(mirrored: mirrored)))
+    let comparable = pair.map { candidate in
+      PoseCandidate(candidateID: candidate.candidateID,
+        joints: candidate.joints.filter { $0.key != .leftHip }, maskTopImageY: nil,
+        maskBottomImageY: nil, leftFootBottomImageY: nil, rightFootBottomImageY: nil,
+        maskAssociation: .unavailable)
+    }
+    let pending = try tracker.process(F.input(4, 0.375, comparable))
+    for player in PlayerID.allCases {
+      #expect(pending[player].state == .uncertain && pending[player].reason == .recovering)
+      #expect(pending[player].candidateID == nil && pending[player].lastConfirmedAt == 0.125)
+    }
+    #expect(pending.confirmedDescriptorCount == 2 && pending.provisionalDescriptorCount == 2)
+    let r = try tracker.process(F.input(5, 0.5, comparable.reversed()))
+    #expect(r.player1.state == .tracking && r.player1.candidateID == (mirrored ? 20 : 10))
+    #expect(r.player2.state == .tracking && r.player2.candidateID == (mirrored ? 10 : 20))
+    #expect(r.player1.lastConfirmedAt == 0.5 && r.player2.lastConfirmedAt == 0.5)
+  }
+
+  @Test(arguments: [false, true])
+  func opposingPartialDisplacementsCannotConfirmIndependentBodies(_ mirrored: Bool) throws {
+    let pair = F.opposingBindingPair(mirrored: mirrored)
+    var tracker = try F.bound(pair: pair)
+    let r = try tracker.process(F.input(3, 0.25, F.opposingDisplacements(mirrored: mirrored)))
+    for player in PlayerID.allCases {
+      #expect(r[player].state == .uncertain)
+      #expect(r[player].reason == .ambiguous && !r[player].requiresRebind)
+      #expect(r[player].candidateID == nil)
+      #expect(r[player].lastConfirmedAt == 0.125)
+    }
+    #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+  }
+
+  @Test(arguments: [false, true])
+  func restoringOpposingFixtureHipsRetainsSupportedOverlap(_ mirrored: Bool) throws {
+    let pair = F.opposingBindingPair(mirrored: mirrored)
+    var tracker = try F.bound(pair: pair)
+    let r = try tracker.process(F.input(3, 0.25,
+      F.opposingDisplacements(mirrored: mirrored, restored: true)))
+    for player in PlayerID.allCases {
+      #expect(r[player].state == .uncertain && r[player].requiresRebind)
+      #expect(r[player].candidateID == nil && r[player].lastConfirmedAt == 0.125)
+    }
+    #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+  }
+
+  @Test(arguments: [false, true])
+  func opposingPairsAreInvariantUnderCandidateOrderAndLocalIDs(_ mirrored: Bool) throws {
+    let idPairs: [[UInt64]] = [[30, 40], [10, 20], [90, 2]]
+    for ids in idPairs {
+      for order in [[0, 1], [1, 0]] {
+        var tracker = try F.bound(pair: F.opposingBindingPair(mirrored: mirrored))
+        let scene = F.opposingDisplacements(mirrored: mirrored, ids: ids)
+        let r = try tracker.process(F.input(3, 0.25, order.map { scene[$0] }))
+        for player in PlayerID.allCases {
+          #expect(r[player].state == .uncertain && r[player].reason == .ambiguous)
+          #expect(!r[player].requiresRebind && r[player].candidateID == nil)
+          #expect(r[player].lastConfirmedAt == 0.125)
+        }
+        #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+      }
+    }
+  }
+
+  @Test("Below-coverage coherent translation remains unavailable", arguments: [0, 1, 2, 3])
+  func coherentPartialSeparationSupportsDifferentTranslationDirections(_ direction: Int) throws {
+    let heights = [(0.5, 0.5), (0.65, 0.35), (0.35, 0.65), (0.55, 0.45)]
+    let pair = [F.candidate(10, x: 0.6, y: heights[direction].0),
+      F.candidate(20, x: 0.4, y: heights[direction].1)]
+    var tracker = try F.bound(pair: pair)
+    let scene = [F.candidate(30, x: 0.6, y: heights[direction].0 + 0.01, missing: [.leftHip]),
+      F.candidate(40, x: 0.4, y: heights[direction].1 - 0.01, missing: [.rightHip])]
+    let r = try tracker.process(F.input(3, 0.25, scene.reversed()))
+    // WP-E01-P1/P2 explicitly approves revising this heuristic positive. Preserve its scenes.
+    for player in PlayerID.allCases {
+      #expect(r[player].state == .uncertain && r[player].reason == .ambiguous)
+      #expect(!r[player].requiresRebind && r[player].candidateID == nil)
+      #expect(r[player].lastConfirmedAt == 0.125)
+    }
+    #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+  }
+
+  @Test(arguments: [0.0, 0.01, 0.03, 0.06])
+  func incompleteCancellationCannotBecomeIndependentTranslation(_ offset: Double) throws {
+    var tracker = try F.bound(pair: F.opposingBindingPair(mirrored: false))
+    let scene = F.opposingDisplacements()
+    var joints = scene[0].joints
+    joints[.rightShoulder] = .init(x: 0.64 + offset, y: 0.6, confidence: 0.9)
+    let changed = PoseCandidate(candidateID: 30, joints: joints, maskTopImageY: nil,
+      maskBottomImageY: nil, leftFootBottomImageY: nil, rightFootBottomImageY: nil,
+      maskAssociation: .unavailable)
+    let r = try tracker.process(F.input(3, 0.25, [changed, scene[1]]))
+    for player in PlayerID.allCases {
+      #expect(r[player].state == .uncertain && r[player].candidateID == nil)
+      #expect(r[player].lastConfirmedAt == 0.125)
+    }
+    #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+  }
+
+  @Test(arguments: [0.3, 0.9])
+  func largeMeanDisplacementStillNeedsSupportFromEverySharedJoint(_ shoulderY: Double) throws {
+    var tracker = try F.bound(pair: F.opposingBindingPair(mirrored: false))
+    let scene = F.opposingDisplacements()
+    var joints = scene[1].joints
+    // Mean displacement exceeds the gate, but the unchanged shoulder has zero projection
+    // along that vertical mean. Neither mean magnitude nor individual magnitudes suffice.
+    joints[.rightShoulder] = .init(x: 0.56, y: shoulderY, confidence: 0.9)
+    let changed = PoseCandidate(candidateID: 40, joints: joints, maskTopImageY: nil,
+      maskBottomImageY: nil, leftFootBottomImageY: nil, rightFootBottomImageY: nil,
+      maskAssociation: .unavailable)
+    let r = try tracker.process(F.input(3, 0.25, [scene[0], changed]))
+    for player in PlayerID.allCases {
+      #expect(r[player].state != .tracking && r[player].candidateID == nil)
+      #expect(r[player].lastConfirmedAt == 0.125)
+    }
+    #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+  }
+
+  @Test(arguments: [false, true])
+  func repeatedOpposingObservationsFreezeHistoryThroughExpiration(_ mirrored: Bool) throws {
+    var tracker = try F.bound(pair: F.opposingBindingPair(mirrored: mirrored))
+    for id in 3...50 {
+      let scene = F.opposingDisplacements(mirrored: mirrored, ids: [UInt64(id), UInt64(id + 100)])
+      let r = try tracker.process(F.input(UInt64(id), Double(id - 1) * 0.125,
+        id.isMultiple(of: 2) ? scene.reversed() : scene))
+      for player in PlayerID.allCases {
+        #expect(r[player].state == .uncertain || r[player].state == .lost)
+        #expect(r[player].candidateID == nil && r[player].lastConfirmedAt == 0.125)
+      }
+      #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+      #expect(r.assignmentCount <= 73)
+    }
+    #expect(tracker.snapshot.player1.state == .lost && tracker.snapshot.player2.state == .lost)
+  }
+
+  @Test(arguments: [false, true])
+  func opposingUncertaintyRecoversOnlyAfterSupportedSeparationAndDwell(_ mirrored: Bool) throws {
+    let pair = F.opposingBindingPair(mirrored: mirrored)
+    var tracker = try F.bound(pair: pair)
+    try tracker.process(F.input(3, 0.25, F.opposingDisplacements(mirrored: mirrored)))
+    let pending = try tracker.process(F.input(4, 0.375, pair))
+    for player in PlayerID.allCases {
+      #expect(pending[player].state == .uncertain && pending[player].reason == .recovering)
+      #expect(pending[player].candidateID == nil && pending[player].lastConfirmedAt == 0.125)
+    }
+    #expect(pending.provisionalDescriptorCount == 2 && pending.confirmedDescriptorCount == 2)
+    let r = try tracker.process(F.input(5, 0.5, pair.reversed()))
+    #expect(r.player1.candidateID == (mirrored ? 20 : 10))
+    #expect(r.player2.candidateID == (mirrored ? 10 : 20))
+    #expect(r.player1.state == .tracking && r.player2.state == .tracking)
+    #expect(r.player1.lastConfirmedAt == 0.5 && r.player2.lastConfirmedAt == 0.5)
+  }
+
+  @Test(arguments: [false, true])
+  func complementaryPartialCandidatesCannotProveIndependentBodies(_ mirrored: Bool) throws {
+    let pair = [F.candidate(10, x: 0.55), F.candidate(20, x: 0.45)]
+    var tracker = try F.bound(pair: pair) // Unchanged default synthetic policy.
+    let scene = [F.candidate(30, x: mirrored ? 0.49 : 0.51, missing: [.leftHip]),
+      F.candidate(40, x: mirrored ? 0.51 : 0.49, missing: [.rightHip])]
+    let r = try tracker.process(F.input(3, 0.25, scene))
+    for player in PlayerID.allCases {
+      #expect(r[player].state == .uncertain)
+      #expect(r[player].candidateID == nil)
+      #expect(r[player].lastConfirmedAt == 0.125)
+    }
+    #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+  }
+
+  @Test func inferenceFailureDuringAcquisitionReportsFailureAndClearsDwell() throws {
+    var tracker = try F.tracker()
+    let pending = try tracker.process(F.input(1, 0))
+    #expect(pending.provisionalDescriptorCount == 2)
+    let failed = try tracker.inferenceFailed(source: F.source(2, 0.0625))
+    for player in PlayerID.allCases {
+      #expect(failed[player].state == .unbound)
+      #expect(failed[player].reason == .inferenceFailed)
+      #expect(failed[player].candidateID == nil && failed[player].lastConfirmedAt == nil)
+    }
+    #expect(failed.provisionalDescriptorCount == 0 && failed.confirmedDescriptorCount == 0)
+    #expect(try tracker.process(F.input(3, 0.125)).player1.state == .unbound)
+    #expect(try tracker.process(F.input(4, 0.25)).player1.state == .tracking)
+  }
+
+  @Test(arguments: [false, true])
+  func partialPairEvidenceIsPermutationAndIDInvariant(_ mirrored: Bool) throws {
+    let pair = [F.candidate(10, x: 0.55), F.candidate(20, x: 0.45)]
+    let idPairs: [[UInt64]] = [[30, 40], [90, 2], [10, 20]]
+    for ids in idPairs {
+      let scene = [F.candidate(ids[0], x: mirrored ? 0.49 : 0.51, missing: [.leftHip]),
+        F.candidate(ids[1], x: mirrored ? 0.51 : 0.49, missing: [.rightHip])]
+      for order in [[0, 1], [1, 0]] {
+        var tracker = try F.bound(pair: pair)
+        let r = try tracker.process(F.input(3, 0.25, order.map { scene[$0] }))
+        for player in PlayerID.allCases {
+          #expect(r[player].state == .uncertain && r[player].reason == .ambiguous)
+          #expect(!r[player].requiresRebind && r[player].candidateID == nil)
+          #expect(r[player].lastConfirmedAt == 0.125)
+        }
+        #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+      }
+    }
+  }
+
+  @Test(arguments: [0, 1, 2])
+  func comparableNearCandidatesRetainDuplicateLatch(_ variant: Int) throws {
+    let missing: [[BodyJoint]] = [[], [.leftHip], [.rightHip]]
+    let pair = [F.candidate(10, x: 0.55), F.candidate(20, x: 0.45)]
+    var tracker = try F.bound(pair: pair)
+    let r = try tracker.process(F.input(3, 0.25,
+      [F.candidate(30, x: 0.51, missing: missing[variant]),
+        F.candidate(40, x: 0.49, missing: missing[variant])]))
+    for player in PlayerID.allCases {
+      #expect(r[player].state == .uncertain && r[player].requiresRebind)
+      #expect(r[player].candidateID == nil && r[player].lastConfirmedAt == 0.125)
+    }
+    // Proven duplicate ambiguity stays latched even after full bodies separate again.
+    let later = try tracker.process(F.input(4, 0.375, pair))
+    #expect(later.player1.requiresRebind && later.player2.requiresRebind)
+    #expect(later.player1.candidateID == nil && later.player2.candidateID == nil)
+  }
+
+  @Test(arguments: [BodyJoint.leftHip, .rightHip, .leftShoulder, .rightShoulder])
+  func separatedPartialCoverageRemainsSupported(_ firstMissing: BodyJoint) throws {
+    for secondMissing in [BodyJoint.leftHip, .rightHip, .leftShoulder, .rightShoulder] {
+      var tracker = try F.bound()
+      let r = try tracker.process(F.input(3, 0.25,
+        [F.candidate(40, x: 0.25, missing: [secondMissing]),
+          F.candidate(30, x: 0.75, missing: [firstMissing])]))
+      // Approved Option A revision: keep all 16 scenes, but only the four same-missing
+      // combinations have three mutual core joints. Distance cannot replace coverage.
+      if secondMissing == firstMissing {
+        #expect(r.player1.state == .tracking && r.player1.candidateID == 30)
+        #expect(r.player2.state == .tracking && r.player2.candidateID == 40)
+        #expect(!r.player1.requiresRebind && !r.player2.requiresRebind)
+        #expect(r.player1.lastConfirmedAt == 0.25 && r.player2.lastConfirmedAt == 0.25)
+      } else {
+        for player in PlayerID.allCases {
+          #expect(r[player].state == .uncertain && r[player].reason == .ambiguous)
+          #expect(!r[player].requiresRebind && r[player].candidateID == nil)
+          #expect(r[player].lastConfirmedAt == 0.125)
+        }
+        #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+      }
+    }
+  }
+
+  @Test(arguments: [BodyJoint.leftHip, .rightHip, .leftShoulder, .rightShoulder])
+  func unknownPartialCoverageDoesNotLatchOrConfirm(_ firstMissing: BodyJoint) throws {
+    let pair = [F.candidate(10, x: 0.55), F.candidate(20, x: 0.45)]
+    for secondMissing in [BodyJoint.leftHip, .rightHip, .leftShoulder, .rightShoulder]
+      where secondMissing != firstMissing {
+      var tracker = try F.bound(pair: pair)
+      let r = try tracker.process(F.input(3, 0.25,
+        [F.candidate(30, x: 0.51, missing: [firstMissing]),
+          F.candidate(40, x: 0.49, missing: [secondMissing])]))
+      for player in PlayerID.allCases {
+        #expect(r[player].state == .uncertain && r[player].reason == .ambiguous)
+        #expect(!r[player].requiresRebind && r[player].candidateID == nil)
+        #expect(r[player].lastConfirmedAt == 0.125)
+      }
+      #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+    }
+  }
+
+  @Test func oneSeparatedSharedJointCannotProvePartialBodiesDistinct() throws {
+    let pair = [F.candidate(10, x: 0.55), F.candidate(20, x: 0.45)]
+    var tracker = try F.bound(pair: pair)
+    let left = F.candidate(30, x: 0.51, missing: [.leftHip])
+    let raw = F.candidate(40, x: 0.49, missing: [.rightHip])
+    var joints = raw.joints
+    // Only one shared shoulder separates; the other stays near the competing observation.
+    joints[.leftShoulder] = .init(x: 0.26, y: 0.6, confidence: 0.9)
+    let right = PoseCandidate(candidateID: raw.candidateID, joints: joints,
+      maskTopImageY: nil, maskBottomImageY: nil, leftFootBottomImageY: nil,
+      rightFootBottomImageY: nil, maskAssociation: .unavailable)
+    let r = try tracker.process(F.input(3, 0.25, [left, right]))
+    for player in PlayerID.allCases {
+      #expect(r[player].state == .uncertain && r[player].candidateID == nil)
+      #expect(r[player].lastConfirmedAt == 0.125)
+    }
+    #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+  }
+
+  @Test(arguments: [false, true])
+  func fullTorsoShapeExclusionPreservesIndependentOverlap(_ mirrored: Bool) throws {
+    let firstLength = mirrored ? 0.32 : 0.18
+    let secondLength = mirrored ? 0.18 : 0.32
+    let pair = [F.candidate(10, x: 0.55, length: firstLength),
+      F.candidate(20, x: 0.45, length: secondLength)]
+    var tracker = try F.bound(pair: pair)
+    let r = try tracker.process(F.input(3, 0.25,
+      [F.candidate(40, x: 0.5, length: secondLength),
+        F.candidate(30, x: 0.5, length: firstLength)]))
+    #expect(r.player1.state == .tracking && r.player1.candidateID == 30)
+    #expect(r.player2.state == .tracking && r.player2.candidateID == 40)
+    #expect(!r.player1.requiresRebind && !r.player2.requiresRebind)
+    #expect(r.player1.lastConfirmedAt == 0.25 && r.player2.lastConfirmedAt == 0.25)
+  }
+
+  @Test func unknownPairAllowsDwellRecoveryOnlyAfterSeparation() throws {
+    let pair = [F.candidate(10, x: 0.55), F.candidate(20, x: 0.45)]
+    var tracker = try F.bound(pair: pair)
+    try tracker.process(F.input(3, 0.25,
+      [F.candidate(30, x: 0.51, missing: [.leftHip]),
+        F.candidate(40, x: 0.49, missing: [.rightHip])]))
+    let pending = try tracker.process(F.input(4, 0.375, pair))
+    #expect(pending.player1.reason == .recovering && pending.player2.reason == .recovering)
+    #expect(pending.player1.candidateID == nil && pending.player2.candidateID == nil)
+    #expect(pending.player1.lastConfirmedAt == 0.125 && pending.player2.lastConfirmedAt == 0.125)
+    #expect(pending.provisionalDescriptorCount == 2)
+    let recovered = try tracker.process(F.input(5, 0.5, pair))
+    #expect(recovered.player1.state == .tracking && recovered.player1.candidateID == 10)
+    #expect(recovered.player2.state == .tracking && recovered.player2.candidateID == 20)
+    #expect(recovered.player1.lastConfirmedAt == 0.5 && recovered.player2.lastConfirmedAt == 0.5)
+  }
+
+  @Test(arguments: [false, true])
+  func independentPlayerSurvivesComplementaryPartialCompetition(_ mirrored: Bool) throws {
+    var tracker = try F.bound()
+    let affected: PlayerID = mirrored ? .player2 : .player1
+    let other: PlayerID = mirrored ? .player1 : .player2
+    let x = mirrored ? 0.25 : 0.75
+    let scene = [F.candidate(30, x: x, missing: [.leftHip]),
+      F.candidate(40, x: x + (mirrored ? -0.001 : 0.001), missing: [.rightHip]),
+      F.candidate(90, x: mirrored ? 0.75 : 0.25), F.candidate(99, x: 0.5)]
+    let r = try tracker.process(F.input(3, 0.25, scene.reversed()))
+    #expect(r[affected].state == .uncertain && r[affected].candidateID == nil)
+    #expect(r[affected].lastConfirmedAt == 0.125)
+    #expect(r[other].state == .tracking && r[other].candidateID == 90)
+    #expect(!r[other].requiresRebind && r[other].lastConfirmedAt == 0.25)
+  }
+
+  @Test(arguments: [false, true])
+  func repeatedUnknownPairsFreezeHistoryAndCannotResurrect(_ mirrored: Bool) throws {
+    let pair = [F.candidate(10, x: 0.55), F.candidate(20, x: 0.45)]
+    var tracker = try F.bound(pair: pair)
+    for id in 3...50 {
+      let scene = [F.candidate(UInt64(id), x: mirrored ? 0.49 : 0.51, missing: [.leftHip]),
+        F.candidate(UInt64(id + 100), x: mirrored ? 0.51 : 0.49, missing: [.rightHip])]
+      let r = try tracker.process(F.input(UInt64(id), Double(id - 1) * 0.125,
+        id.isMultiple(of: 2) ? scene.reversed() : scene))
+      for player in PlayerID.allCases {
+        #expect(r[player].state == .uncertain || r[player].state == .lost)
+        #expect(r[player].candidateID == nil && r[player].lastConfirmedAt == 0.125)
+      }
+      #expect(r.confirmedDescriptorCount == 2 && r.provisionalDescriptorCount == 0)
+      #expect(r.assignmentCount <= 73)
+    }
+    let later = try tracker.process(F.input(51, 6.25, pair))
+    #expect(later.player1.state == .lost && later.player2.state == .lost)
+    #expect(later.player1.candidateID == nil && later.player2.candidateID == nil)
+  }
+
+  @Test func unknownPairResetRequiresOriginalControlAndNewGeneration() throws {
+    let pair = [F.candidate(10, x: 0.55), F.candidate(20, x: 0.45)]
+    var tracker = try F.bound(pair: pair)
+    let old = F.input(3, 0.25,
+      [F.candidate(30, x: 0.51, missing: [.leftHip]),
+        F.candidate(40, x: 0.49, missing: [.rightHip])])
+    try tracker.process(old)
+    let next = F.context(generation: UUID(), epoch: UUID())
+    try tracker.reset(context: next, controlRevision: 2)
+    let before = tracker.snapshot
+    #expect(throws: PlayerTrackingError.staleControl) { try tracker.process(old) }
+    #expect(tracker.snapshot == before && before.confirmedDescriptorCount == 0)
+    try tracker.armBinding(controlRevision: 2)
+    try tracker.process(F.input(1, 5, pair, context: next, revision: 2))
+    let rebound = try tracker.process(F.input(2, 5.125, pair, context: next, revision: 2))
+    #expect(rebound.player1.state == .tracking && rebound.player2.state == .tracking)
   }
 
   @Test func longDeterministicSequencesKeepBoundedHistoriesAndRepeatExactly() throws {

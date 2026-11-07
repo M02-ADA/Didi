@@ -308,6 +308,24 @@ nonisolated struct PlayerTracker: Sendable {
     return hypot(dx, dy)
   }
 
+  private enum CandidateIndependence { case distinct, overlapping, unavailable }
+
+  /// Anchor association and current-body independence are different evidence questions.
+  /// Preserve the existing duplicate metric when sufficient mutual core support exists.
+  /// Option A: require comparable current core evidence, or fully observed shape distinction.
+  /// Translation of a below-coverage anatomical subset cannot establish body independence.
+  private func independence(_ a: Descriptor, _ b: Descriptor) -> CandidateIndependence {
+    // Preserve the existing supported crossing case: two full torso shapes can be
+    // distinguishable even at the same center. This is the existing shape exclusion
+    // gate, not a new identity feature or a claim that size alone identifies a person.
+    if let shape = shapeDifference(a, b), shape.isFinite,
+      shape > policy.maximumLogScaleChange { return .distinct }
+    if let distance = proximity(a, b) {
+      return distance > policy.minimumPairSeparation ? .distinct : .overlapping
+    }
+    return .unavailable
+  }
+
   private mutating func acquire(_ values: [Descriptor?], overflow: Bool, source: PlayerTrackingSource) {
     guard armed else { return }
     let eligible = values.compactMap { $0 }
@@ -462,13 +480,17 @@ nonisolated struct PlayerTracker: Sendable {
           latch: choices.compactMap({ $0 }).count > 1)
         continue
       }
-      let duplicate = candidates.indices.contains { j in
-        j != choice && costs[i][j] != nil
-          && (proximity(candidates[choice], candidates[j]).map {
-            $0 <= policy.minimumPairSeparation
-          } ?? false)
+      var duplicate = false, unknownCompetitor = false
+      for j in candidates.indices where j != choice && costs[i][j] != nil {
+        switch independence(candidates[choice], candidates[j]) {
+        case .distinct: break
+        case .overlapping: duplicate = true
+        case .unavailable: unknownCompetitor = true
+        }
       }
-      proposals[i] = duplicate ? .refuse(.ambiguous, latch: true) : .candidate(choice, cost: cost)
+      if duplicate { proposals[i] = .refuse(.ambiguous, latch: true) }
+      else if unknownCompetitor { proposals[i] = .refuse(.ambiguous, latch: false) }
+      else { proposals[i] = .candidate(choice, cost: cost) }
     }
 
     // B — Resolve BOTH decisions against immutable evidence, before any confirmation can occur.
@@ -479,22 +501,39 @@ nonisolated struct PlayerTracker: Sendable {
     for i in baseline.indices {
       guard case let .candidate(choice, _) = proposals[i] else { continue }
       let other = 1 - i
-      let safe: Bool
-      switch evidence[other][choice] {
-      case .excluded:
-        safe = true
-      case .unavailable:
-        safe = baseline[other].confirmed == nil
-      case .supported:
-        safe = plausible.allSatisfy { hypothesis in
-          guard let independent = hypothesis[other], independent != choice else { return false }
-          // An independent-body explanation must also have a usable reverse comparison.
-          // Otherwise an unknown cross-identity edge could create a circular justification.
-          if case .unavailable = evidence[i][independent] { return false }
-          return true
+      var safe = true, latch = false
+      // Even mutually exclusive anchor edges do not alone establish two independent bodies.
+      // Both proposals read the same pair evidence; no slot's commit can bypass this gate.
+      if case let .candidate(peer, _) = proposals[other] {
+        switch independence(candidates[choice], candidates[peer]) {
+        case .distinct: break
+        case .overlapping: safe = false; latch = true
+        case .unavailable: safe = false
         }
       }
-      if !safe { resolved[i] = .refuse(.ambiguous, latch: true) }
+      switch evidence[other][choice] {
+      case .excluded:
+        break
+      case .unavailable:
+        if baseline[other].confirmed != nil { safe = false; latch = true }
+      case .supported:
+        for hypothesis in plausible {
+          guard let independent = hypothesis[other], independent != choice else {
+            safe = false; latch = true; continue
+          }
+          // An independent-body explanation must also have a usable reverse comparison.
+          // Otherwise an unknown cross-identity edge could create a circular justification.
+          if case .unavailable = evidence[i][independent] {
+            safe = false; latch = true; continue
+          }
+          switch independence(candidates[choice], candidates[independent]) {
+          case .distinct: break
+          case .overlapping: safe = false; latch = true
+          case .unavailable: safe = false
+          }
+        }
+      }
+      if !safe { resolved[i] = .refuse(.ambiguous, latch: latch) }
     }
 
     // C — Commit the whole frame once. Recovery uses its existing capture-time dwell; tentative,
@@ -554,7 +593,11 @@ nonisolated struct PlayerTracker: Sendable {
     value.candidateID = nil
     value.cost = nil
     value.provisional = nil
-    guard slot.state != .unbound, slot.state != .lost else { return value }
+    if slot.state == .unbound {
+      value.reason = reason
+      return value
+    }
+    guard slot.state != .lost else { return value }
     value.identityAmbiguous = slot.identityAmbiguous || latch
     let expired = slot.confirmed.map { time - $0.time >= policy.recoveryWindow } ?? true
     value.state = lost || expired ? .lost : .uncertain
