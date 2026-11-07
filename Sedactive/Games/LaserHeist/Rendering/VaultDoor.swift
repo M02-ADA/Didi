@@ -50,9 +50,11 @@ final class VaultDoor {
 
     /// Unlocking switches the light to green, then the panels slide apart;
     /// locking slides them shut and turns the light red again. With Reduce
-    /// Motion the panels fade instead of sliding.
-    func setState(_ newState: State, animated: Bool) {
+    /// Motion the panels fade instead of sliding; `reduceMotion` defaults to
+    /// the system setting.
+    func setState(_ newState: State, animated: Bool, reduceMotion: Bool? = nil) {
         guard newState != state else { return }
+        let reduceMotion = reduceMotion ?? UIAccessibility.isReduceMotionEnabled
         guard animated else { return show(newState) }
         state = newState
         let opening = newState == .open
@@ -63,7 +65,7 @@ final class VaultDoor {
             panel.part.stopAllAnimations()
             let from = opening ? panel.closed : panel.open
             let to = opening ? panel.open : panel.closed
-            if UIAccessibility.isReduceMotionEnabled {
+            if reduceMotion {
                 panel.part.transform = panel.closed
                 fade(panel.part, from: opening ? 1 : 0, to: opening ? 0 : 1, duration: Self.closeDuration)
             } else {

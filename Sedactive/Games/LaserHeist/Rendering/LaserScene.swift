@@ -111,6 +111,10 @@ final class LaserScene {
     /// Live player cutouts; `nil` until `attachLiveCutouts` (pictograms show).
     private(set) var liveCutouts: LiveCutoutPresenter?
     private(set) var cutoutStore: CutoutTextureStore?
+    /// 3D mascot avatars standing on the players' lanes in place of the
+    /// pictograms, or `nil` (pictograms). Installed and removed by the host
+    /// (`PlayView`); fed body frames by `GameplayScenePresenter`.
+    var robotAvatars: RobotAvatarLayer?
     /// Wall mount x positions, from the authored `LaserMount_*` anchors when available.
     private var laserSpan: ClosedRange<Float>
 
@@ -371,8 +375,9 @@ final class LaserScene {
     }
 
     /// Presents a vault state decided elsewhere (Jevon's vault events).
-    func setVaultDoorState(_ state: VaultDoor.State, animated: Bool) {
-        vaultDoor?.setState(state, animated: animated)
+    /// `reduceMotion` defaults to the system setting.
+    func setVaultDoorState(_ state: VaultDoor.State, animated: Bool, reduceMotion: Bool? = nil) {
+        vaultDoor?.setState(state, animated: animated, reduceMotion: reduceMotion)
     }
 
     func resetVaultDoor() {
@@ -385,6 +390,17 @@ final class LaserScene {
     /// Fades the door in, e.g. on entering a vault.
     func revealVaultDoor() {
         vaultDoor?.reveal()
+    }
+
+    /// A copy of the door as it stands now (place, open panels), added to the
+    /// scene without its child named `childName`; the caller removes it. `nil`
+    /// without door artwork or while the door is hidden.
+    func makeVaultDoorCopy(excluding childName: String) -> Entity? {
+        guard let door = vaultDoor?.root, door.isEnabled else { return nil }
+        let copy = door.clone(recursive: true)
+        copy.findEntity(named: childName)?.removeFromParent()
+        root.addChild(copy)
+        return copy
     }
 
     /// Adds a part that moves with the door (vault countdown). Returns whether a door exists.

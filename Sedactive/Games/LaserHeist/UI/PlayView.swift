@@ -34,6 +34,8 @@ private struct ReplayRoundView: View {
     @State private var environmentPreview = EnvironmentPreview()
     @State private var cutoutFeed: SyntheticCutoutFeed?
     @State private var directorPreview = DirectorLaserPreview()
+    @State private var robotDemo = RobotDemoDriver()
+    @State private var robotDemoActive = false
     #endif
 
     var body: some View {
@@ -84,6 +86,26 @@ private struct ReplayRoundView: View {
                 directorPreview.start(on: content, scene: scene)
                 return
             }
+            // 3D avatar demo: `-robotDemo [scenario]` drives both mascots with SYNTHETIC,
+            // time-varying body and joint data (no camera, no session, no lasers); see `RobotDemo`.
+            if let only = RobotDemoDriver.requested() {
+                scene.isLaserVisible = false
+                do {
+                    let input = try LaserReplayScript.load().input
+                    guard let robots = try await installAvatars(calibrations: input.configuration.calibrations,
+                                                                layout: input.configuration.playerPlaneLayout) else { return }
+                    // 30 Hz poses shown at render rate, feet diagnostics on.
+                    robots.smoothing = 0.03
+                    robots.diagnosticsEnabled = true
+                    robotDemo.start(on: content, sequence: RobotDemoSequence(
+                        configuration: input.configuration, cameraGeometryRevision: input.cameraGeometryRevision, only: only),
+                                    render: { robots.render(now: $0) }) {
+                        robots.apply($0, joints: $1)
+                    }
+                    robotDemoActive = true
+                } catch { startupError = String(describing: error) }
+                return
+            }
             if wantsCutoutPreview || arguments.contains("-laserArtworkPreview") || arguments.contains(where: {
                 $0 == "-laserGateState" || $0.hasPrefix("-laserPreview")
             }) {
@@ -94,6 +116,15 @@ private struct ReplayRoundView: View {
             do {
                 guard !Task.isCancelled else { return }
                 let script = try LaserReplayScript.load().freshRound(generation: generation)
+                #if DEBUG
+                // `-robotReplay`: the Lemon (P1) and Tangerine (P2) mascots stand in place of the
+                // pictograms in the replay round, driven by its body snapshots through the
+                // gameplay presenter, alongside the lasers and the vault. Presentation only.
+                if ProcessInfo.processInfo.arguments.contains("-robotReplay") {
+                    guard try await installAvatars(calibrations: script.input.configuration.calibrations,
+                                                   layout: script.input.configuration.playerPlaneLayout) != nil else { return }
+                }
+                #endif
                 let replay = GameSessionCoordinator(script: script)
                 session = replay
                 try await replay.start()
@@ -110,6 +141,31 @@ private struct ReplayRoundView: View {
             if let session, session.summary == nil { ReplaySliceHUD(session: session) }
             if let startupError { Text("Replay could not start: \(startupError)").padding().background(.black).foregroundStyle(.white) }
             #if DEBUG
+            if robotDemoActive {
+                TimelineView(.periodic(from: .now, by: 0.2)) { context in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("SYNTHETIC POSE DEMO · not live tracking")
+                            .font(.caption.monospaced().bold())
+                        Text("\(robotDemo.scenario.rawValue + 1)/\(RobotDemoScenario.allCases.count)  \(robotDemo.scenario.title)")
+                            .font(.callout.bold())
+                        if let robots = scene.robotAvatars {
+                            Text(robots.footPlanting ? "feet: planted + stepping" : "feet: LEGACY (root slides)")
+                                .font(.caption.monospaced())
+                            ForEach(PlayerID.allCases, id: \.self) { player in
+                                if let d = robots.footDiagnostics[player] {
+                                    Text("\(player == .player1 ? "P1" : "P2") \(d.line)").font(.caption2.monospaced())
+                                }
+                            }
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .padding(10)
+                    .background(.black.opacity(0.6), in: .rect(cornerRadius: 8))
+                    .padding()
+                    // The avatar layer is not observable: re-read it on every timeline tick.
+                    .id(context.date)
+                }
+            }
             if cutoutFeed != nil, !ProcessInfo.processInfo.arguments.contains("-hideDebugOverlay") {
                 TimelineView(.periodic(from: .now, by: 0.25)) { _ in
                     Text(cutoutStatus)
@@ -140,11 +196,15 @@ private struct ReplayRoundView: View {
             // Release the cutout consumer and revoke any upload still on the GPU
             // before this scene is replaced (Retry).
             scene.detachLiveCutouts()
+            // Remove the avatars and their lights before this scene is replaced (Retry).
+            scene.robotAvatars?.remove()
+            scene.robotAvatars = nil
             #if DEBUG
             cutoutFeed?.stop()
             cutoutFeed = nil
             directorPreview.stop()
             directorPreview = DirectorLaserPreview()
+            robotDemo.stop()
             // Preview subscriptions capture their owners weakly; replacing them releases the subscriptions.
             preview = LaserApproachPreview()
             environmentPreview = EnvironmentPreview()
@@ -155,6 +215,20 @@ private struct ReplayRoundView: View {
     }
 
     #if DEBUG
+    /// Stands the mascots on the players' lanes, from the shared templates
+    /// (loaded once per app run). `nil` if this view went away while loading:
+    /// nothing is attached to a scene being discarded. Throws if an asset is
+    /// missing or invalid, so the failure shows instead of silent pictograms.
+    private func installAvatars(calibrations: [PlayerID: PlayerCalibration],
+                                layout: PlayerPlaneLayout) async throws -> RobotAvatarLayer? {
+        let templates = try await RobotAvatarLayer.sharedTemplates()
+        guard !Task.isCancelled else { return nil }
+        scene.robotAvatars?.remove()
+        let robots = RobotAvatarLayer(scene: scene, calibrations: calibrations, layout: layout, templates: templates)
+        scene.robotAvatars = robots
+        return robots
+    }
+
     /// Which source frame each player shows, for the synthetic cutout preview.
     private var cutoutStatus: String {
         guard let presenter = scene.liveCutouts else { return "cutouts detached" }

@@ -213,6 +213,8 @@ final class GameplayScenePresenter {
                 withdrawnAt[attemptID] = withdrawnAt[attemptID] ?? event.gameTime
             case .coopGateSucceeded(let gateID, _):
                 vault.markSucceeded(gateID)
+            case .coopGateFailed(let gateID):
+                vault.markFailed(gateID)
             case .roundEnded:
                 endedAt = endedAt ?? event.gameTime
             default:
@@ -421,6 +423,8 @@ final class GameplayScenePresenter {
     /// Fits each pictogram to the latest body sample and places the Debug body markers.
     private func present(_ snapshot: BodySnapshot) {
         if markers.isEmpty { buildMarkers() }
+        // The avatars show the same body frame; presentation only, never judged.
+        scene.robotAvatars?.apply(snapshot)
         for (index, player) in PlayerID.allCases.enumerated() {
             guard let geometry = snapshot.players[player]?.geometry else { continue }
             if let crown = geometry.crownY.value, let left = geometry.leftSoleY.value, let right = geometry.rightSoleY.value {

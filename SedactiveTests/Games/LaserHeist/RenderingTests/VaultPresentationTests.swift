@@ -16,7 +16,10 @@ struct VaultPresentationTests {
             clearanceMargin: 0.005, diamondPoints: nil, actionCueLead: 1.4)
     }
 
-    private func named(_ name: String, in parent: Entity, _ entity: Entity = Entity()) -> Entity {
+    /// Names `entity` (a new one by default) and adds it to `parent`; returned for chaining.
+    @discardableResult
+    private func named(_ name: String, in parent: Entity, _ entity: Entity? = nil) -> Entity {
+        let entity = entity ?? Entity()
         entity.name = name
         parent.addChild(entity)
         return entity
@@ -181,6 +184,22 @@ struct VaultPresentationTests {
                 rects[player, default: []].append(rect)
             }
         }
+        // The seconds-left number between the columns (a generous glyph box), and each
+        // column's completion outline, stay clear of the figures, HUD, countdown and light.
+        let digit = screenRect([0, VaultPresentation.digitCenterY, door + 0.05],
+                               size: [0.36, VaultPresentation.digitHeight], in: scene, aspect: aspect)
+        for obstacle in figures + [hud, countdown, light] {
+            #expect(!overlaps(digit, obstacle), "number overlaps at \(viewport)")
+        }
+        for player in PlayerID.allCases {
+            let x = (player == .player1 ? -1 : 1) * VaultPresentation.indicatorColumnX
+            let outline = screenRect([x, VaultPresentation.outlineCenterY, door + 0.045],
+                                     size: VaultPresentation.outlineSize, in: scene, aspect: aspect)
+            #expect(outline.x >= 0 && outline.y <= 1 && outline.z >= 0 && outline.w <= 1)
+            for obstacle in figures + [hud, countdown, light, digit] {
+                #expect(!overlaps(outline, obstacle), "\(player) outline overlaps at \(viewport)")
+            }
+        }
         // Balanced: P2's column mirrors P1's about the screen centre.
         for (left, right) in zip(rects[.player1]!, rects[.player2]!) {
             #expect(abs((left.x + left.y) / 2 + (right.x + right.y) / 2 - 1) < 1e-3)
@@ -314,5 +333,426 @@ struct VaultPresentationTests {
         #expect(scene.vaultDoorDepth == nil)
         presenter.stop()
         #expect(presenter.vault.indicator(.player1, .top) == nil)
+    }
+}
+
+// MARK: - Vault experience across a round (Jevon's real LaserGame)
+
+/// Jevon's `LaserGame`, driven only through its existing public vault API
+/// (`openVault`, `touchVault`, `advance`, `pause`/`resume`), as the replay
+/// session does: SYNTHETIC verified contacts, no camera, no renderer.
+/// The state is built the way `GameSessionCoordinator.refresh` builds it.
+@MainActor
+private struct DomainRound {
+    private(set) var game: LaserGame
+    let configuration: LaserRoundConfiguration
+    let generation: UUID
+    private let revisions: [PlayerID: UInt64]
+    private(set) var events: [GameEvent] = []
+
+    init(vaults: Int, generation: UUID = UUID()) throws {
+        let fixture = try LaserReplayScript.load().input
+        let context = BodyInputContext(sessionGeneration: generation, cameraGeometryRevision: fixture.cameraGeometryRevision,
+            calibrationRevisions: fixture.configuration.calibrations.mapValues(\.revision),
+            cutovers: fixture.configuration.calibrations.mapValues {
+                BodyInputCutover(frameID: $0.sourceFrameID, capturedAt: $0.capturedAt)
+            }, isActive: true)
+        configuration = try LaserRoundConfiguration(
+            evidenceTiming: LaserEvidenceTiming(windowBefore: 0.35, windowAfter: 0.25, deliveryAllowance: 0.1),
+            clearanceMargin: 0.005, diamondPoints: nil, missionGateTarget: vaults, actionCueLead: 1.4)
+        game = try LaserGame(configuration: configuration, context: context, historyCapacityPerPlayer: 120)
+        self.generation = generation
+        revisions = context.calibrationRevisions
+    }
+
+    var state: LaserGameState {
+        var state = LaserGameState(sessionGeneration: generation, phase: game.roundPhase, gameTime: game.gameTime,
+                                   activityProgress: game.activityProgress, teamHealth: game.teamHealth,
+                                   teamScore: game.teamScore, encounters: [])
+        state.missionProgress = game.missionProgress
+        state.missionTarget = game.missionTarget
+        state.vault = game.vault
+        return state
+    }
+
+    mutating func advance(to time: Double) throws {
+        try game.advance(to: time)
+        events += game.drainEvents()
+    }
+
+    mutating func open(_ id: UUID, at time: Double) throws {
+        try game.openVault(id: id, at: time)
+        events += game.drainEvents()
+    }
+
+    mutating func touch(_ id: UUID, _ player: PlayerID, _ button: LaserVaultButton, at time: Double) throws {
+        try game.touchVault(id: id, playerID: player, button: button, validity: .valid, generation: generation,
+                            calibrationRevision: revisions[player]!, at: time)
+        events += game.drainEvents()
+    }
+
+    /// Both sides complete in the replay's order, 0.1 s apart from `time`.
+    mutating func completeBothSides(_ id: UUID, from time: Double) throws {
+        var t = time
+        for player in PlayerID.allCases {
+            for button in [LaserVaultButton.bottom, .top, .middle] {
+                try touch(id, player, button, at: t)
+                t += 0.1
+            }
+        }
+    }
+
+    mutating func pause() { game.pause() }
+    /// Player Stop / End round.
+    mutating func exit() {
+        game.exit(outcome: .aborted)
+        events += game.drainEvents()
+    }
+    mutating func resume() { game.resume() }
+}
+
+extension VaultPresentationTests {
+    private func makePresenter(for round: DomainRound, reduceMotion: Bool = false) throws -> (GameplayScenePresenter, LaserScene) {
+        let (scene, _) = scene()
+        let presenter = GameplayScenePresenter(scene: scene, configuration: round.configuration, encounters: [])
+        presenter.vault.reducesMotion = { reduceMotion }
+        return (presenter, scene)
+    }
+
+    private func apply(_ presenter: GameplayScenePresenter, _ round: DomainRound) {
+        presenter.apply(state: round.state, events: round.events, snapshot: nil)
+    }
+
+    private func allIndicators(_ presenter: GameplayScenePresenter) -> [VaultPresentation.Indicator?] {
+        PlayerID.allCases.flatMap { player in LaserVaultButton.allCases.map { presenter.vault.indicator(player, $0) } }
+    }
+
+    /// Every door entity in the scene: the real one and any exiting copy.
+    private func doorEntities(in scene: LaserScene) -> [Entity] {
+        func walk(_ entity: Entity) -> [Entity] {
+            (entity.name.hasPrefix("vaultDoor") ? [entity] : []) + entity.children.flatMap(walk)
+        }
+        return walk(scene.root)
+    }
+
+    private func id(_ n: Int) -> UUID { UUID(uuidString: String(format: "17000000-0000-4000-8000-%012d", n))! }
+
+    // MARK: Sequential vaults and phases
+
+    /// activity → vault → activity → vault → … → Diamond Time → completed,
+    /// rendered every 0.1 s from the real game: each vault reveals once,
+    /// fresh, opens once, and the round ends with nothing left over.
+    @Test func sequentialVaultsEachRevealFreshAndOpenOnceThroughDiamondTime() throws {
+        var round = try DomainRound(vaults: 3)
+        let (presenter, scene) = try makePresenter(for: round)
+        var phases: [LaserRoundPhase] = []
+        func render(until end: Double) throws {
+            var t = round.state.gameTime
+            while t < end - 1e-9 {
+                t = min(end, t + 0.1)
+                try round.advance(to: t)
+                apply(presenter, round)
+                if phases.last != round.state.phase { phases.append(round.state.phase) }
+            }
+        }
+        for (index, start) in [2.0, 14.0, 26.0].enumerated() {
+            try render(until: start)
+            try round.open(id(index + 1), at: start)
+            apply(presenter, round)
+            phases.append(round.state.phase)
+            // Each vault starts clean: locked door at its stop, six idle indicators, full countdown.
+            #expect(presenter.vault.diagnostics.reveals == index + 1)
+            #expect(scene.vaultDoorState == .locked)
+            #expect(abs((scene.vaultDoorDepth ?? .nan) - scene.layout.vaultDoorStopZ) < 1e-4)
+            #expect(allIndicators(presenter).allSatisfy { $0 == .idle })
+            #expect(PlayerID.allCases.allSatisfy { presenter.vault.sideComplete($0) == false })
+            #expect(presenter.vault.countdownDigit == 5 && presenter.vault.countdownFraction == 1)
+            try round.completeBothSides(id(index + 1), from: start + 0.5)
+            apply(presenter, round)
+            #expect(presenter.vault.diagnostics.opens == index + 1)
+            #expect(scene.vaultDoorState == .open)
+        }
+        try render(until: 26.5 + 0.6 + LaserRoundConfiguration.defaultDiamondTimeDuration + 1)
+        #expect(phases == [.activity, .vault, .activity, .vault, .activity, .vault, .diamondTime, .ended(.completed)])
+        let d = presenter.vault.diagnostics
+        #expect(d.reveals == 3 && d.opens == 3 && d.activations == 18 && d.sideCompletions == 6 && d.timeouts == 0)
+        // Vaults are 12 s apart, so each opened door has passed the camera before the next: no handoff.
+        #expect(d.handoffs == 0)
+        #expect(scene.vaultDoorDepth == nil)
+        #expect(doorEntities(in: scene).count == 1)
+    }
+
+    /// The next vault begins while the previous opened door is still passing
+    /// the players: that door fades out in place as a single copy, and the
+    /// real door starts the new vault at its stop. No jump, no stale state.
+    @Test func newVaultDuringThePreviousDoorsExitHandsItOffWithoutAJump() throws {
+        var round = try DomainRound(vaults: 3)
+        let (presenter, scene) = try makePresenter(for: round)
+        try round.open(id(1), at: 1)
+        apply(presenter, round)
+        try round.completeBothSides(id(1), from: 1.2)
+        apply(presenter, round)
+        try round.advance(to: 2)
+        apply(presenter, round)
+        let passing = try #require(scene.vaultDoorDepth)
+        #expect(passing > scene.layout.vaultDoorStopZ + 0.1)  // moved toward the players
+
+        try round.open(id(2), at: 2)
+        apply(presenter, round)
+        let exiting = try #require(presenter.vault.exitingDoor)
+        #expect(abs(exiting.position(relativeTo: nil).z - passing) < 1e-4)  // left where it was
+        #expect(exiting.findEntity(named: "vault.indicators") == nil)       // no copied indicators
+        #expect(abs((scene.vaultDoorDepth ?? .nan) - scene.layout.vaultDoorStopZ) < 1e-4)
+        #expect(scene.vaultDoorState == .locked)
+        #expect(allIndicators(presenter).allSatisfy { $0 == .idle })
+        #expect(presenter.vault.diagnostics.handoffs == 1 && presenter.vault.diagnostics.reveals == 2)
+
+        // A third quick vault replaces the copy: never more than one.
+        try round.completeBothSides(id(2), from: 2.2)
+        try round.advance(to: 3)
+        apply(presenter, round)
+        try round.open(id(3), at: 3)
+        apply(presenter, round)
+        #expect(presenter.vault.diagnostics.handoffs == 2)
+        #expect(doorEntities(in: scene).count <= 2)
+        #expect(doorEntities(in: scene).filter { $0.name == "vaultDoor.exiting" }.count <= 1)
+
+        presenter.stop()
+        #expect(presenter.vault.exitingDoor == nil && doorEntities(in: scene).count == 1)
+        #expect(scene.vaultDoorDepth == nil)
+    }
+
+    /// Re-applying the same state and events (rendered frames between game
+    /// updates) never replays an activation, completion, opening or timeout.
+    @Test func repeatedUpdatesNeverReplayAnimationsOrTerminalStates() throws {
+        var round = try DomainRound(vaults: 2)
+        let (presenter, scene) = try makePresenter(for: round)
+        try round.open(id(1), at: 1)
+        try round.touch(id(1), .player1, .top, at: 1.2)
+        for _ in 0..<5 { apply(presenter, round) }
+        #expect(presenter.vault.diagnostics.activations == 1)
+        try round.completeBothSides(id(1), from: 1.4)
+        for _ in 0..<5 { apply(presenter, round) }
+        let opened = presenter.vault.diagnostics
+        #expect(opened.opens == 1 && opened.activations == 6 && opened.sideCompletions == 2 && opened.reveals == 1)
+        #expect(scene.vaultDoorState == .open)
+
+        var failing = try DomainRound(vaults: 1)
+        let (other, _) = try makePresenter(for: failing)
+        try failing.open(id(2), at: 1)
+        apply(other, failing)
+        try failing.advance(to: 7)
+        for _ in 0..<5 { apply(other, failing) }
+        #expect(other.vault.diagnostics.timeouts == 1 && other.vault.diagnostics.opens == 0)
+    }
+
+    // MARK: Success, failure, same-tick resolution
+
+    /// Timeout from the real game: the countdown empties, reads 0 and turns
+    /// red; the door stays locked; a completed side keeps its outline.
+    @Test func timeoutShowsZeroAnEmptyBarAndKeepsCompletedSides() throws {
+        var round = try DomainRound(vaults: 1)
+        let (presenter, scene) = try makePresenter(for: round)
+        try round.open(id(1), at: 1)
+        for (k, button) in LaserVaultButton.allCases.enumerated() {
+            try round.touch(id(1), .player1, button, at: 1.5 + Double(k) * 0.2)
+        }
+        try round.advance(to: 4)
+        apply(presenter, round)
+        #expect(presenter.vault.sideComplete(.player1) == true && presenter.vault.sideComplete(.player2) == false)
+        try round.advance(to: 6.5)
+        apply(presenter, round)
+        #expect(round.state.phase == .ended(.vaultFailed))
+        #expect(presenter.vault.diagnostics.timeouts == 1)
+        #expect(presenter.vault.countdownFraction == 0 && presenter.vault.countdownDigit == 0)
+        #expect(scene.vaultDoorState == .locked && scene.vaultDoorDepth != nil)
+        #expect(presenter.vault.sideComplete(.player1) == true)
+        presenter.stop()
+        #expect(scene.vaultDoorDepth == nil && presenter.vault.countdownDigit == nil)
+    }
+
+    /// A vault that begins and resolves between two updates (one long frame)
+    /// is still shown, from its own success or timeout event.
+    @Test func aVaultResolvedBetweenTwoUpdatesIsStillShown() throws {
+        var opening = try DomainRound(vaults: 2)
+        let (presenter, scene) = try makePresenter(for: opening)
+        try opening.advance(to: 0.5)
+        apply(presenter, opening)
+        try opening.open(id(1), at: 1)
+        try opening.completeBothSides(id(1), from: 1.1)
+        try opening.advance(to: 2)
+        apply(presenter, opening)
+        #expect(opening.state.phase == .activity)
+        #expect(presenter.vault.diagnostics.reveals == 1 && presenter.vault.diagnostics.opens == 1)
+        #expect(scene.vaultDoorState == .open && scene.vaultDoorDepth != nil)
+
+        var failing = try DomainRound(vaults: 1)
+        let (other, otherScene) = try makePresenter(for: failing)
+        try failing.advance(to: 0.5)
+        apply(other, failing)
+        try failing.open(id(2), at: 1)
+        try failing.advance(to: 8)
+        apply(other, failing)
+        #expect(other.vault.diagnostics.reveals == 1 && other.vault.diagnostics.timeouts == 1)
+        #expect(other.vault.countdownDigit == 0 && otherScene.vaultDoorState == .locked)
+    }
+
+    /// A presenter whose first state already holds a vault opened earlier
+    /// doesn't show it: it was not entered or resolved while presenting.
+    @Test func aVaultAlreadyOpenedBeforePresentingIsNotShown() throws {
+        var round = try DomainRound(vaults: 2)
+        try round.open(id(1), at: 1)
+        try round.completeBothSides(id(1), from: 1.1)
+        try round.advance(to: 4)
+        let (presenter, scene) = try makePresenter(for: round)
+        apply(presenter, round)
+        #expect(presenter.vault.diagnostics.reveals == 0 && scene.vaultDoorDepth == nil)
+    }
+
+    // MARK: Pause, urgency, clocks
+
+    /// Pause freezes game time, so the countdown, its number and the door
+    /// hold; after resume the vault continues with its remaining time.
+    /// The presentation reads no other clock: real time passing changes nothing.
+    @Test func pauseHoldsTheDeadlineAndNoOtherClockMovesIt() throws {
+        var round = try DomainRound(vaults: 1)
+        let (presenter, scene) = try makePresenter(for: round)
+        try round.open(id(1), at: 1)
+        try round.advance(to: 3.2)
+        apply(presenter, round)
+        #expect(presenter.vault.countdownDigit == 3 && presenter.vault.countdownUrgent == false)
+        let fraction = try #require(presenter.vault.countdownFraction)
+        round.pause()
+        for later in [4.0, 6.0, 9.0] {
+            try round.advance(to: later)  // ignored while paused
+            Thread.sleep(forTimeInterval: 0.02)
+            apply(presenter, round)
+            #expect(presenter.vault.countdownFraction == fraction && presenter.vault.countdownDigit == 3)
+            #expect(abs((scene.vaultDoorDepth ?? .nan) - scene.layout.vaultDoorStopZ) < 1e-4)
+        }
+        #expect(round.state.phase == .vault)
+        round.resume()
+        try round.advance(to: 4.6)  // 1.4 s of game time left
+        apply(presenter, round)
+        #expect(presenter.vault.countdownDigit == 2 && presenter.vault.countdownUrgent == true)
+        let countdown = try #require(presenter.vault.root.findEntity(named: "vault.countdown"))
+        #expect(countdown.scale.y > 1.5)  // urgency is also thickness, not colour alone
+    }
+
+    // MARK: Stop, abort, retry
+
+    @Test func stopAbortAndRetryLeaveNothingBehind() throws {
+        var round = try DomainRound(vaults: 3)
+        let (presenter, scene) = try makePresenter(for: round)
+        try round.open(id(1), at: 1)
+        apply(presenter, round)
+        try round.completeBothSides(id(1), from: 1.2)
+        try round.advance(to: 2)
+        apply(presenter, round)
+        try round.open(id(2), at: 2)
+        try round.touch(id(2), .player2, .middle, at: 2.3)
+        apply(presenter, round)
+        #expect(presenter.vault.exitingDoor != nil)
+        // Abort mid-vault (End round): everything hides, the copy included.
+        round.exit()
+        apply(presenter, round)
+        #expect(round.state.phase == .ended(.aborted))
+        #expect(scene.vaultDoorDepth == nil && presenter.vault.exitingDoor == nil)
+        #expect(allIndicators(presenter).allSatisfy { $0 == nil } && presenter.vault.countdownDigit == nil)
+
+        // Retry: a new generation starts with no vault and a clean first reveal.
+        var retry = try DomainRound(vaults: 3)
+        try retry.advance(to: 0.5)
+        apply(presenter, retry)
+        #expect(scene.vaultDoorDepth == nil && scene.vaultDoorState == .locked)
+        try retry.open(id(1), at: 1)
+        apply(presenter, retry)
+        #expect(allIndicators(presenter).allSatisfy { $0 == .idle })
+        #expect(PlayerID.allCases.allSatisfy { presenter.vault.sideComplete($0) == false })
+        #expect(presenter.vault.countdownDigit == 5 && presenter.vault.exitingDoor == nil)
+        #expect(doorEntities(in: scene).count == 1)
+    }
+
+    // MARK: Reduce Motion
+
+    /// With Reduce Motion nothing pops or slides, the copy is dropped at once,
+    /// and every state still reads: check vs ring, outline, number, door light.
+    @Test func reduceMotionKeepsEveryStateReadableWithoutMovement() throws {
+        var round = try DomainRound(vaults: 2)
+        let (presenter, scene) = try makePresenter(for: round, reduceMotion: true)
+        try round.open(id(1), at: 1)
+        try round.touch(id(1), .player1, .top, at: 1.2)
+        apply(presenter, round)
+        let top = try #require(presenter.vault.root.findEntity(named: "vault.indicator.player1.top"))
+        #expect(presenter.vault.indicator(.player1, .top) == .active)
+        #expect(top.scale == .one && presenter.vault.diagnostics.pops == 0)
+        try round.completeBothSides(id(1), from: 1.4)
+        apply(presenter, round)
+        let outline = try #require(presenter.vault.root.findEntity(named: "vault.outline.player1"))
+        #expect(presenter.vault.diagnostics.sideCompletions == 2 && outline.isEnabled && outline.scale == .one)
+        #expect(presenter.vault.diagnostics.pops == 0)
+        // The door opens by fading its panels, which stay in place.
+        #expect(scene.vaultDoorState == .open)
+        let door = try #require(scene.root.findEntity(named: "vaultDoor"))
+        for name in ["LeftDoorPanel", "RightDoorPanel"] {
+            let panel = try #require(door.findEntity(named: name))
+            #expect(abs(panel.position.x) < 1e-5)
+            #expect(panel.components[OpacityComponent.self]?.opacity == 0)
+        }
+        // The next vault during the exit: the old door is simply gone.
+        try round.advance(to: 2.2)
+        apply(presenter, round)
+        #expect(scene.vaultDoorDepth != nil)
+        try round.open(id(2), at: 2.2)
+        apply(presenter, round)
+        #expect(presenter.vault.diagnostics.handoffs == 1 && presenter.vault.exitingDoor == nil)
+        #expect(doorEntities(in: scene).count == 1)
+        #expect(presenter.vault.countdownDigit == 5 && allIndicators(presenter).allSatisfy { $0 == .idle })
+    }
+
+    /// Without Reduce Motion the panels slide (no fade), and each activation
+    /// and completed side pops once.
+    @Test func withMotionThePanelsSlideOpen() throws {
+        var round = try DomainRound(vaults: 1)
+        let (presenter, scene) = try makePresenter(for: round)
+        try round.open(id(1), at: 1)
+        apply(presenter, round)
+        try round.completeBothSides(id(1), from: 1.2)
+        apply(presenter, round)
+        let door = try #require(scene.root.findEntity(named: "vaultDoor"))
+        let left = try #require(door.findEntity(named: "LeftDoorPanel"))
+        let right = try #require(door.findEntity(named: "RightDoorPanel"))
+        #expect(left.position.x < -1 && right.position.x > 1)  // slid out by their width
+        #expect(left.components[OpacityComponent.self] == nil)
+        #expect(presenter.vault.diagnostics.pops == 6 + 2)
+    }
+
+    // MARK: Bounded entities
+
+    /// The presentation builds its parts once: many vaults later there are
+    /// still six indicators, two outlines, one countdown and one door.
+    @Test func entitiesStayBoundedAcrossManyVaults() throws {
+        var round = try DomainRound(vaults: 5)
+        let (presenter, scene) = try makePresenter(for: round)
+        func count(_ prefix: String) -> Int {
+            func walk(_ e: Entity) -> Int { (e.name.hasPrefix(prefix) ? 1 : 0) + e.children.reduce(0) { $0 + walk($1) } }
+            return walk(scene.root)
+        }
+        var t = 1.0
+        for n in 1...5 {
+            try round.open(id(n), at: t)
+            apply(presenter, round)
+            try round.completeBothSides(id(n), from: t + 0.2)
+            apply(presenter, round)
+            t += 2
+            try round.advance(to: t)
+            apply(presenter, round)
+        }
+        #expect(presenter.vault.diagnostics.reveals == 5 && presenter.vault.diagnostics.opens == 5)
+        #expect(count("vault.indicator.") == 6 && count("vault.outline.") == 2 && count("vault.countdown.digit.") == 6)
+        #expect(count("vault.countdown") == 1 + 1 + 6)  // bar, digits holder, digits
+        #expect(count("vaultDoor") <= 2 && count("vaultDoor.exiting") <= 1)
+        presenter.stop()
+        #expect(count("vaultDoor.exiting") == 0)
     }
 }
