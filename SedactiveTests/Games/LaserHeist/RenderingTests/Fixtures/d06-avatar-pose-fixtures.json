@@ -1,0 +1,247 @@
+{
+  "name": "LaserHeist D06 AvatarPoseFrame shared synthetic fixtures (K03 consumer / E07 producer)",
+  "note": "PROPOSED shared fixtures for synthetic development. Not a production schema; field names follow the D06 proposal revision 3 and may change at the field freeze (D02/D03). Decoded by a test-only layer; no Shared type is Codable for them.",
+  "policy": { "maxAge": 0.25, "visualConfidence": 0.3 },
+  "base": {
+    "context": {
+      "generation": "D0600000-0000-4000-8000-000000000001",
+      "epoch": "D0600000-0000-4000-8000-000000000011",
+      "geometryRevision": 1, "imageWidth": 1920, "imageHeight": 1080, "rotationAngle": 0, "mirrored": false
+    },
+    "controlRevision": 5,
+    "layout": { "leftCenterX": -0.6, "rightCenterX": 0.6, "gameUnitsPerImageHeight": 2.0 },
+    "calibration": {
+      "player1": {
+        "revision": 1,
+        "mapping": { "imageAspectRatio": 1.7777777777777777, "floorImageY": 0.1, "originImageX": 0.7 },
+        "standingCrownImageY": 0.9, "standingHipImageY": 0.5,
+        "standingLeftAnkleImageY": 0.13, "standingRightAnkleImageY": 0.13,
+        "cutover": { "frameID": 5, "capturedAt": 0.5 }
+      },
+      "player2": {
+        "revision": 1,
+        "mapping": { "imageAspectRatio": 1.7777777777777777, "floorImageY": 0.1, "originImageX": 0.3 },
+        "standingCrownImageY": 0.9, "standingHipImageY": 0.5,
+        "standingLeftAnkleImageY": 0.13, "standingRightAnkleImageY": 0.13,
+        "cutover": { "frameID": 5, "capturedAt": 0.5 }
+      }
+    },
+    "candidates": {
+      "player1": {
+        "id": 11,
+        "joints": {
+          "nose": [0.70, 0.86, 0.9], "leftEye": [0.71, 0.87, 0.9], "rightEye": [0.69, 0.87, 0.9],
+          "leftEar": [0.72, 0.86, 0.9], "rightEar": [0.68, 0.86, 0.9], "neck": [0.70, 0.80, 0.9],
+          "leftShoulder": [0.73, 0.78, 0.9], "rightShoulder": [0.67, 0.78, 0.9],
+          "leftWrist": [0.75, 0.52, 0.9], "rightWrist": [0.65, 0.52, 0.9],
+          "leftHip": [0.72, 0.50, 0.9], "rightHip": [0.68, 0.50, 0.9],
+          "leftAnkle": [0.72, 0.13, 0.9], "rightAnkle": [0.68, 0.13, 0.9]
+        }
+      },
+      "player2": {
+        "id": 22,
+        "joints": {
+          "nose": [0.30, 0.86, 0.9], "leftEye": [0.31, 0.87, 0.9], "rightEye": [0.29, 0.87, 0.9],
+          "leftEar": [0.32, 0.86, 0.9], "rightEar": [0.28, 0.86, 0.9], "neck": [0.30, 0.80, 0.9],
+          "leftShoulder": [0.33, 0.78, 0.9], "rightShoulder": [0.27, 0.78, 0.9],
+          "leftWrist": [0.35, 0.52, 0.9], "rightWrist": [0.25, 0.52, 0.9],
+          "leftHip": [0.32, 0.50, 0.9], "rightHip": [0.28, 0.50, 0.9],
+          "leftAnkle": [0.32, 0.13, 0.9], "rightAnkle": [0.28, 0.13, 0.9]
+        }
+      }
+    }
+  },
+  "fixtures": [
+    {
+      "id": "F01", "title": "Two calibrated players, all 14 joints, standing",
+      "steps": [
+        { "status": { "revision": 1 } },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1 }, "expect": "accepted" },
+        { "drain": 1.05, "expect": { "frameID": 10, "hasCurrent": true, "player1": "calibrated:1", "player2": "calibrated:1", "player1Joints": 14, "player2Joints": 14 } }
+      ]
+    },
+    {
+      "id": "F02", "title": "Missing and low-confidence joints; (0, 0) is a real coordinate",
+      "steps": [
+        { "status": { "revision": 1 } },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1,
+                     "edit": { "player1": { "drop": ["leftWrist", "leftAnkle", "rightAnkle"],
+                                            "set": { "rightWrist": [0.65, 0.52, 0.05], "nose": [0.0, 0.0, 0.9] } } } },
+          "expect": "accepted" },
+        { "drain": 1.05, "expect": { "frameID": 10, "player1": "calibrated:1", "player2": "calibrated:1", "player1Joints": 11, "player2Joints": 14 } }
+      ]
+    },
+    {
+      "id": "F03", "title": "One slot unavailable for each tracker reason; peer unaffected; recovery",
+      "steps": [
+        { "status": { "revision": 1 } },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1, "slots": { "player2": { "state": "uncertain" } }, "candidates": ["player1"] }, "expect": "accepted" },
+        { "drain": 1.01, "expect": { "frameID": 10, "player1": "calibrated:1", "player2": "unavailable:identityUncertain" } },
+        { "offer": { "frameID": 11, "capturedAt": 1.1, "contextRevision": 1, "slots": { "player2": { "state": "lost" } }, "candidates": ["player1"] }, "expect": "accepted" },
+        { "drain": 1.11, "expect": { "frameID": 11, "player1": "calibrated:1", "player2": "unavailable:trackingLost" } },
+        { "offer": { "frameID": 12, "capturedAt": 1.2, "contextRevision": 1, "slots": { "player2": { "state": "unbound" } }, "candidates": ["player1"] }, "expect": "accepted" },
+        { "drain": 1.21, "expect": { "frameID": 12, "player1": "calibrated:1", "player2": "unavailable:unbound" } },
+        { "offer": { "frameID": 13, "capturedAt": 1.3, "contextRevision": 1, "slots": { "player2": { "state": "tracking", "candidate": 22, "rebind": true } } }, "expect": "accepted" },
+        { "drain": 1.31, "expect": { "frameID": 13, "player1": "calibrated:1", "player2": "unavailable:rebindRequired" } },
+        { "offer": { "frameID": 14, "capturedAt": 1.4, "contextRevision": 1, "slots": { "player2": { "state": "tracking" } }, "candidates": ["player1"] }, "expect": "accepted" },
+        { "drain": 1.41, "expect": { "frameID": 14, "player1": "calibrated:1", "player2": "unavailable:notObserved" } },
+        { "offer": { "frameID": 15, "capturedAt": 1.5, "contextRevision": 1 }, "expect": "accepted" },
+        { "drain": 1.51, "expect": { "frameID": 15, "player1": "calibrated:1", "player2": "calibrated:1" } }
+      ]
+    },
+    {
+      "id": "F04", "title": "Uncalibrated players are direction-only, never unavailable",
+      "steps": [
+        { "status": { "revision": 1, "calibrated": ["player2"] } },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1, "calibration": ["player2"],
+                     "edit": { "player1": { "set": { "leftAnkle": [0.72, 0.23, 0.9], "rightAnkle": [0.68, 0.23, 0.9] } } } },
+          "expect": "accepted" },
+        { "drain": 1.05, "expect": { "frameID": 10, "player1": "directionOnly", "player2": "calibrated:1" } },
+        { "status": { "revision": 2, "layout": false } },
+        { "drain": 1.06, "expect": { "frame": false, "hasCurrent": false, "resetAll": false, "resetCalibration": ["player1", "player2"] } },
+        { "offer": { "frameID": 11, "capturedAt": 1.1, "contextRevision": 2 }, "expect": "accepted" },
+        { "drain": 1.15, "expect": { "frameID": 11, "player1": "directionOnly", "player2": "directionOnly" } }
+      ]
+    },
+    {
+      "id": "F05", "title": "No-frame expiry on the injected host clock",
+      "steps": [
+        { "status": { "revision": 1 } },
+        { "offer": { "frameID": 10, "capturedAt": 10.0, "contextRevision": 1 }, "expect": "accepted" },
+        { "drain": 10.2, "expect": { "frameID": 10, "hasCurrent": true, "expired": false } },
+        { "drain": 10.24, "expect": { "frame": false, "hasCurrent": true, "expired": false } },
+        { "drain": 10.251, "expect": { "frame": false, "hasCurrent": false, "expired": true } },
+        { "drain": 10.3, "expect": { "frame": false, "hasCurrent": false, "expired": false } },
+        { "offer": { "frameID": 10, "capturedAt": 10.0, "contextRevision": 1 }, "expect": "staleFrame" },
+        { "offer": { "frameID": 11, "capturedAt": 10.3, "contextRevision": 1 }, "expect": "accepted" },
+        { "drain": 10.31, "expect": { "frameID": 11, "hasCurrent": true } }
+      ]
+    },
+    {
+      "id": "F06", "title": "Out-of-order completion and equal capture time are refused",
+      "steps": [
+        { "status": { "revision": 1 } },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1 }, "expect": "accepted" },
+        { "offer": { "frameID": 12, "capturedAt": 1.066, "contextRevision": 1 }, "expect": "accepted" },
+        { "offer": { "frameID": 11, "capturedAt": 1.033, "contextRevision": 1 }, "expect": "staleFrame" },
+        { "offer": { "frameID": 13, "capturedAt": 1.066, "contextRevision": 1 }, "expect": "staleFrame" },
+        { "drain": 1.07, "expect": { "frameID": 12 } }
+      ]
+    },
+    {
+      "id": "F07", "title": "Source mismatches refuse the whole frame; watermark unchanged",
+      "steps": [
+        { "status": { "revision": 1 } },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1 }, "expect": "accepted" },
+        { "drain": 1.01, "expect": { "frameID": 10 } },
+        { "offer": { "frameID": 11, "capturedAt": 1.1, "contextRevision": 1, "context": { "geometryRevision": 2 } }, "expect": "contextMismatch" },
+        { "offer": { "frameID": 11, "capturedAt": 1.1, "contextRevision": 1, "context": { "imageWidth": 1440 } }, "expect": "contextMismatch" },
+        { "offer": { "frameID": 11, "capturedAt": 1.1, "contextRevision": 1, "context": { "rotationAngle": 180 } }, "expect": "contextMismatch" },
+        { "offer": { "frameID": 11, "capturedAt": 1.1, "contextRevision": 1, "context": { "mirrored": true } }, "expect": "invalidSource" },
+        { "offer": { "frameID": 11, "capturedAt": 1.1, "contextRevision": 1, "context": { "generation": "D0600000-0000-4000-8000-000000000000" } }, "expect": "contextMismatch" },
+        { "offer": { "frameID": 11, "capturedAt": 1.1, "contextRevision": 1 }, "expect": "accepted" },
+        { "drain": 1.11, "expect": { "frameID": 11 } }
+      ]
+    },
+    {
+      "id": "F08", "title": "Control/binding revision: stale control refused; a control change resets associations",
+      "steps": [
+        { "status": { "revision": 1 } },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1, "controlRevision": 4 }, "expect": "controlMismatch" },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1 }, "expect": "accepted" },
+        { "drain": 1.01, "expect": { "frameID": 10, "player1": "calibrated:1" } },
+        { "status": { "revision": 2, "controlRevision": 6 } },
+        { "drain": 1.02, "expect": { "frame": false, "hasCurrent": false, "resetAll": true } },
+        { "offer": { "frameID": 11, "capturedAt": 1.1, "contextRevision": 2, "controlRevision": 5 }, "expect": "controlMismatch" },
+        { "offer": { "frameID": 11, "capturedAt": 1.1, "contextRevision": 2, "controlRevision": 6,
+                     "slots": { "player1": { "state": "unbound" }, "player2": { "state": "unbound" } }, "candidates": [] }, "expect": "accepted" },
+        { "drain": 1.11, "expect": { "frameID": 11, "player1": "unavailable:unbound", "player2": "unavailable:unbound" } }
+      ]
+    },
+    {
+      "id": "F09", "title": "Calibration replacement: downgrade, reset, compatible upgrade after the cutover, old references refused",
+      "steps": [
+        { "status": { "revision": 1 } },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1 }, "expect": "accepted" },
+        { "drain": 1.01, "expect": { "frameID": 10, "player1": "calibrated:1", "player2": "calibrated:1" } },
+        { "status": { "revision": 2, "calibrationRevisions": { "player1": 2 }, "cutovers": { "player1": { "frameID": 20, "capturedAt": 2.0 } } } },
+        { "drain": 1.02, "expect": { "frame": false, "hasCurrent": false, "resetAll": false, "resetCalibration": ["player1"] } },
+        { "offer": { "frameID": 11, "capturedAt": 1.1, "contextRevision": 1 }, "expect": "staleContext" },
+        { "offer": { "frameID": 15, "capturedAt": 1.5, "contextRevision": 2 }, "expect": "accepted" },
+        { "drain": 1.51, "expect": { "frameID": 15, "player1": "directionOnly", "player2": "calibrated:1" } },
+        { "offer": { "frameID": 20, "capturedAt": 2.0, "contextRevision": 2, "calibrationRevisions": { "player1": 2 } }, "expect": "accepted" },
+        { "drain": 2.01, "expect": { "frameID": 20, "player1": "directionOnly", "player2": "calibrated:1" } },
+        { "offer": { "frameID": 21, "capturedAt": 2.1, "contextRevision": 2, "calibrationRevisions": { "player1": 2 } }, "expect": "accepted" },
+        { "drain": 2.11, "expect": { "frameID": 21, "player1": "calibrated:2", "player2": "calibrated:1" } },
+        { "offer": { "frameID": 22, "capturedAt": 2.2, "contextRevision": 2 }, "expect": "accepted" },
+        { "drain": 2.21, "expect": { "frameID": 22, "player1": "directionOnly", "player2": "calibrated:1" } }
+      ]
+    },
+    {
+      "id": "F10", "title": "Same-source visual values: validity respected; calibration required",
+      "steps": [
+        { "status": { "revision": 1, "calibrated": ["player1"] } },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1,
+                     "visual": { "player1": { "crownY": 1.85, "leftSoleY": 0.25, "rightSoleY": 0.25, "centerX": -0.6 },
+                                 "player2": { "crownY": 1.6, "leftSoleY": 0.25, "rightSoleY": 0.25, "centerX": 0.6 } } },
+          "expect": "accepted" },
+        { "drain": 1.01, "expect": { "frameID": 10, "player1": "calibrated:1", "player2": "directionOnly" } },
+        { "offer": { "frameID": 11, "capturedAt": 1.1, "contextRevision": 1,
+                     "visual": { "player1": { "crownY": 1.6, "leftSoleY": "stale", "rightSoleY": "stale", "centerX": -0.6 } } },
+          "expect": "accepted" },
+        { "drain": 1.11, "expect": { "frameID": 11, "player1": "calibrated:1" } },
+        { "offer": { "frameID": 12, "capturedAt": 1.2, "contextRevision": 1, "edit": { "player1": { "drop": ["leftHip", "rightHip"] } },
+                     "visual": { "player1": { "crownY": 1.36, "leftSoleY": 0.0, "rightSoleY": 0.0, "centerX": -0.6 } } },
+          "expect": "accepted" },
+        { "drain": 1.21, "expect": { "frameID": 12, "player1": "calibrated:1" } }
+      ]
+    },
+    {
+      "id": "F11", "title": "Stop, same-context resume and a real source transition: no late resurrection, no frameID reset",
+      "steps": [
+        { "status": { "revision": 1 } },
+        { "offer": { "frameID": 30, "capturedAt": 3.0, "contextRevision": 1 }, "expect": "accepted" },
+        { "drain": 3.01, "expect": { "frameID": 30, "player1": "calibrated:1" } },
+        { "status": { "revision": 2, "isActive": false } },
+        { "drain": 3.02, "expect": { "frame": false, "hasCurrent": false, "resetAll": true } },
+        { "offer": { "frameID": 31, "capturedAt": 3.033, "contextRevision": 1 }, "expect": "inactive" },
+        { "status": { "revision": 3 } },
+        { "drain": 3.1, "expect": { "frame": false, "hasCurrent": false, "resetAll": true } },
+        { "offer": { "frameID": 31, "capturedAt": 3.033, "contextRevision": 1 }, "expect": "staleContext" },
+        { "offer": { "frameID": 32, "capturedAt": 3.2, "contextRevision": 3 }, "expect": "accepted" },
+        { "drain": 3.21, "expect": { "frameID": 32, "player1": "calibrated:1", "player2": "calibrated:1" } },
+        { "status": { "revision": 4, "context": { "epoch": "D0600000-0000-4000-8000-000000000012" } } },
+        { "drain": 3.3, "expect": { "frame": false, "hasCurrent": false, "resetAll": true } },
+        { "offer": { "frameID": 33, "capturedAt": 3.3, "contextRevision": 4 }, "expect": "contextMismatch" },
+        { "offer": { "frameID": 40, "capturedAt": 4.0, "contextRevision": 3, "context": { "epoch": "D0600000-0000-4000-8000-000000000012" } }, "expect": "staleContext" },
+        { "offer": { "frameID": 40, "capturedAt": 4.0, "contextRevision": 4, "context": { "epoch": "D0600000-0000-4000-8000-000000000012" } }, "expect": "accepted" },
+        { "drain": 4.01, "expect": { "frameID": 40, "player1": "calibrated:1", "player2": "calibrated:1" } }
+      ]
+    },
+    {
+      "id": "F12", "title": "Attachment revoked (teardown, Retry, replacement): every later call is ignored",
+      "steps": [
+        { "status": { "revision": 1 } },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1 }, "expect": "accepted" },
+        { "drain": 1.01, "expect": { "frameID": 10 } },
+        { "revoke": true },
+        { "offer": { "frameID": 11, "capturedAt": 1.1, "contextRevision": 1 }, "expect": "revoked" },
+        { "status": { "revision": 2 } },
+        { "drain": 1.11, "expect": { "frame": false, "hasCurrent": false, "resetAll": false, "expired": false } }
+      ]
+    },
+    {
+      "id": "F13", "title": "Candidate identity: unique IDs, tracker-referenced only, order irrelevant, bounded",
+      "steps": [
+        { "status": { "revision": 1 } },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1, "candidateIDs": { "player2": 11 } }, "expect": "duplicateCandidate" },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1, "slots": { "player1": { "state": "tracking", "candidate": 99 } } }, "expect": "unknownCandidate" },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1, "slots": { "player2": { "state": "tracking", "candidate": 11 } } }, "expect": "sharedCandidate" },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1, "extraCandidates": 7 }, "expect": "tooManyCandidates" },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1, "edit": { "player1": { "set": { "nose": [1.2, 0.86, 0.9] } } } }, "expect": "invalidJoint" },
+        { "offer": { "frameID": 10, "capturedAt": 1.0, "contextRevision": 1, "candidates": ["player2", "player1"], "extraCandidates": 1 }, "expect": "accepted" },
+        { "drain": 1.01, "expect": { "frameID": 10, "player1": "calibrated:1", "player2": "calibrated:1", "player1NoseX": 0.70, "player2NoseX": 0.30 } }
+      ]
+    }
+  ]
+}

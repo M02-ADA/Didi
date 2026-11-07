@@ -126,7 +126,7 @@ struct AvatarIntegrationTests {
             #expect(MascotColorVariantTests.close(MascotColorVariantTests.bodyColor(a), MascotColorVariantTests.lemonBody))
             #expect(MascotColorVariantTests.close(MascotColorVariantTests.bodyColor(b), MascotColorVariantTests.tangerineBody))
             #expect(a.container.scale == b.container.scale && a.container.scale == SIMD3(repeating: RobotAvatarLayer.modelScale))
-            #expect(a.retargeter.reference.calibrationRevision == revision)
+            #expect(a.retargeter.reference?.calibrationRevision == revision)
             layer.remove()
         }
     }

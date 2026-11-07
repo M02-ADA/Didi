@@ -36,6 +36,8 @@ private struct ReplayRoundView: View {
     @State private var directorPreview = DirectorLaserPreview()
     @State private var robotDemo = RobotDemoDriver()
     @State private var robotDemoActive = false
+    /// The demo's K03 mailbox (`-avatarPackets`); revoked on teardown.
+    @State private var avatarMailbox: AvatarPoseMailbox?
     #endif
 
     var body: some View {
@@ -97,10 +99,26 @@ private struct ReplayRoundView: View {
                     // 30 Hz poses shown at render rate, feet diagnostics on.
                     robots.smoothing = 0.03
                     robots.diagnosticsEnabled = true
-                    robotDemo.start(on: content, sequence: RobotDemoSequence(
-                        configuration: input.configuration, cameraGeometryRevision: input.cameraGeometryRevision, only: only),
-                                    render: { robots.render(now: $0) }) {
-                        robots.apply($0, joints: $1)
+                    let sequence = RobotDemoSequence(configuration: input.configuration,
+                                                     cameraGeometryRevision: input.cameraGeometryRevision, only: only)
+                    if arguments.contains("-avatarPackets") {
+                        // K03 path: the demo's frames as labelled SYNTHETIC D06 packets through the
+                        // bounded latest-only mailbox, drained once per render tick.
+                        let source = SyntheticAvatarSource(configuration: input.configuration,
+                                                           cameraGeometryRevision: input.cameraGeometryRevision)
+                        let mailbox = AvatarPoseMailbox(maxAge: 0.25)
+                        mailbox.publish(source.status)
+                        avatarMailbox = mailbox
+                        robotDemo.start(on: content, sequence: sequence, render: { now in
+                            robots.apply(mailbox.drain(now: now), now: now)
+                            robots.render(now: now)
+                        }) { snapshot, joints in
+                            mailbox.offer(source.output(snapshot, joints: joints))
+                        }
+                    } else {
+                        robotDemo.start(on: content, sequence: sequence, render: { robots.render(now: $0) }) {
+                            robots.apply($0, joints: $1)
+                        }
                     }
                     robotDemoActive = true
                 } catch { startupError = String(describing: error) }
@@ -205,6 +223,8 @@ private struct ReplayRoundView: View {
             directorPreview.stop()
             directorPreview = DirectorLaserPreview()
             robotDemo.stop()
+            avatarMailbox?.revoke()
+            avatarMailbox = nil
             // Preview subscriptions capture their owners weakly; replacing them releases the subscriptions.
             preview = LaserApproachPreview()
             environmentPreview = EnvironmentPreview()

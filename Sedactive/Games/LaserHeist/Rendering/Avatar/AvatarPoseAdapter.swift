@@ -48,3 +48,57 @@ extension AvatarReference {
                   laneCenterX: layout.centerX(for: calibration.playerID))
     }
 }
+
+extension AvatarReference {
+    /// From a K03 packet's compatible reference (already in game units).
+    init(standing: AvatarStandingReference, playerID: PlayerID) {
+        self.init(playerID: playerID, calibrationRevision: standing.calibrationRevision,
+                  standingHeight: standing.standingCrownY, standingHipY: standing.standingHipY,
+                  standingLeftAnkleY: standing.standingLeftAnkleY, standingRightAnkleY: standing.standingRightAnkleY,
+                  laneCenterX: standing.laneCenterX)
+    }
+}
+
+/// K03: converts one available slot into what the retargeter consumes.
+/// Presentation values only; the slot's observed joints are not altered.
+enum AvatarPoseAdapter {
+    /// B1's observed keys the retargeter uses (eyes are carried but unused).
+    /// No elbow or knee is ever filled: their bend stays procedural.
+    static let jointNames: [BodyJoint: PresentationJoint] = [
+        .nose: .nose, .leftEar: .leftEar, .rightEar: .rightEar, .neck: .neck,
+        .leftShoulder: .leftShoulder, .rightShoulder: .rightShoulder, .leftWrist: .leftWrist, .rightWrist: .rightWrist,
+        .leftHip: .leftHip, .rightHip: .rightHip, .leftAnkle: .leftAnkle, .rightAnkle: .rightAnkle,
+    ]
+
+    /// Calibrated: CP1's own `gameX`/`gameY` with the slot's accepted mapping
+    /// (player-plane game units), plus the valid visual values. Direction
+    /// only: aspect-corrected canonical image units (directions are
+    /// scale-free), with no lift, sway, crouch or crown.
+    static func observation(_ pose: AvatarSlotPose, playerID: PlayerID, imageAspect: Double) -> RobotRetargeter.Observation {
+        var observation = RobotRetargeter.Observation()
+        let reference = pose.capability.reference
+        for (joint, point) in pose.joints {
+            guard let name = jointNames[joint] else { continue }
+            let x: Double, y: Double
+            if let reference {
+                x = reference.mapping.gameX(imageX: point.x, playerID: playerID, layout: reference.layout)
+                y = reference.mapping.gameY(imageY: point.y, layout: reference.layout)
+            } else {
+                x = point.x * imageAspect
+                y = point.y
+            }
+            observation.joints[name] = PresentationPoint(x: x, y: y, confidence: point.confidence)
+        }
+        guard case .calibrated(_, let visual) = pose.capability else { return observation }
+        observation.calibrated = true
+        if let visual {
+            if visual.leftSoleY.validity == .valid, visual.rightSoleY.validity == .valid,
+               let left = visual.leftSoleY.value, let right = visual.rightSoleY.value {
+                observation.lowerSoleY = min(left, right)
+            }
+            if visual.centerX.validity == .valid { observation.centerX = visual.centerX.value }
+            if visual.crownY.validity == .valid { observation.crownY = visual.crownY.value }
+        }
+        return observation
+    }
+}

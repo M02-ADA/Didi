@@ -423,8 +423,12 @@ final class GameplayScenePresenter {
     /// Fits each pictogram to the latest body sample and places the Debug body markers.
     private func present(_ snapshot: BodySnapshot) {
         if markers.isEmpty { buildMarkers() }
-        // The avatars show the same body frame; presentation only, never judged.
+        #if DEBUG
+        // DEBUG-only synthetic bridge: in the replay round the avatars show the
+        // bundled historical replay fixture's frame (labelled synthetic). The
+        // production avatars never read CP1: they take `AvatarPoseFrame`s (K03).
         scene.robotAvatars?.apply(snapshot)
+        #endif
         for (index, player) in PlayerID.allCases.enumerated() {
             guard let geometry = snapshot.players[player]?.geometry else { continue }
             if let crown = geometry.crownY.value, let left = geometry.leftSoleY.value, let right = geometry.rightSoleY.value {

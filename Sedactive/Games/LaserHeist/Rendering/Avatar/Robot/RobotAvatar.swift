@@ -8,10 +8,12 @@ import RealityKit
 import UIKit
 import simd
 
-/// Human-to-robot retargeting for one player, from CP1's `PlayerBodySample`
-/// plus, when supplied, PROPOSED player-plane joints (`PresentationPoseSample`),
-/// against that player's `AvatarReference`. Presentation only; nothing here is
-/// a hit shape, and nothing here is fed back to judgement.
+/// Human-to-robot retargeting for one player, from one `Observation` per
+/// frame: an `AvatarPoseFrame` slot converted by `AvatarPoseAdapter` (the
+/// production path), or in DEBUG the synthetic demo/replay bridge. Uses that
+/// player's `AvatarReference` when calibrated; direction only without one.
+/// Presentation only; nothing here is a hit shape, and nothing here is fed
+/// back to judgement.
 ///
 /// Coordinates: player-plane joints are unmirrored (the person faces the
 /// camera, so their right is the image's left). Model space for the robot is
@@ -29,12 +31,28 @@ import simd
 /// So a short and a tall player both make their robot jump, duck and reach
 /// the same way for the same relative movement.
 struct RobotRetargeter {
+    /// One observation for this player, as the retargeter consumes it.
+    /// Calibrated: player-plane game units. Direction only: aspect-corrected
+    /// canonical image units (directions only; never a floor, scale or lift).
+    struct Observation: Equatable {
+        var joints: [PresentationJoint: PresentationPoint] = [:]
+        var calibrated = false
+        /// The lower of both soles, only when both are valid (calibrated only).
+        var lowerSoleY: Double?
+        /// Hip centre X, only when valid (calibrated only).
+        var centerX: Double?
+        /// Crown height, only when valid (calibrated only).
+        var crownY: Double?
+    }
+
     /// The robot's hip-to-ankle height at rest (metres, model space).
     let robotLegRest: Float
-    /// The player's standing reference (game units), from `AvatarPoseAdapter`.
-    let reference: AvatarReference
+    let robotHeight: Float
+    /// The player's compatible standing reference (game units), or `nil`:
+    /// direction-only presentation.
+    private(set) var reference: AvatarReference?
     /// Robot metres per metre of this player's motion (shared robot height / player's standing height).
-    let motionScale: Float
+    private(set) var motionScale: Float
     var maximumSway: Float = 0.3
     var maximumLean: Float = 0.35
     var maximumHeadRoll: Float = 0.4
@@ -43,6 +61,8 @@ struct RobotRetargeter {
     var crouchDeadband: Float = 0.03
     /// Foot lift below this share of standing height is ankle noise (soft zone).
     var liftDeadband: Float = 0.02
+    /// Visual joint confidence threshold: experimental presentation policy, not a tracker value.
+    var minimumJointConfidence = 0.3
     /// Presence fades in fast and out slower: losing one frame never snaps
     /// the robot to rest, and recovery never jumps to the new pose.
     static let fadeIn = 0.08
@@ -73,6 +93,8 @@ struct RobotRetargeter {
     static let stanceFrames = 10
     static let maximumFootDelta: Float = 0.35
     private(set) var isAvailable = false
+    /// Whether the last observation was calibrated (lift, sway, crouch, feet allowed).
+    private(set) var isCalibrated = false
     /// 0…1: how much of the measured pose is shown (fades on loss and recovery).
     private(set) var presence: Float = 0
     /// The latest measured pose, held through brief gaps.
@@ -87,11 +109,7 @@ struct RobotRetargeter {
     private var lastPresent: Double?
     /// Fast derivative tracking so takeoff is followed within about a frame,
     /// while standing jitter (slow) is still smoothed at 3 Hz.
-    private var liftFilter: OneEuroFilter = {
-        var f = OneEuroFilter(minimumCutoff: 3, beta: 6)
-        f.derivativeCutoff = 4
-        return f
-    }()
+    private var liftFilter = Self.makeLiftFilter()
     private var lastTime: Double?
     private var filters: [PresentationJoint: (x: OneEuroFilter, y: OneEuroFilter)] = [:]
     /// When each joint was last seen; a joint back after a gap restarts its filter.
@@ -100,17 +118,28 @@ struct RobotRetargeter {
     private var armSeen: [RobotPoseTargets.Side: Double] = [:]
     static let jointGap = 0.3
     static let armHold = 0.5
-    /// Longest projected length seen per segment (player-plane units), for foreshortening depth.
+    /// Longest projected length seen per segment, for foreshortening depth.
     private var longest: [String: Double] = [:]
 
-    init(reference: AvatarReference, robotLegRest: Float, robotHeight: Float = RobotAvatarLayer.standingHeight) {
-        self.reference = reference
-        self.robotLegRest = robotLegRest
-        let standing = Float(reference.standingHeight)
-        motionScale = standing > 0 ? robotHeight / standing : 1
+    private static func makeLiftFilter() -> OneEuroFilter {
+        var f = OneEuroFilter(minimumCutoff: 3, beta: 6)
+        f.derivativeCutoff = 4
+        return f
     }
 
-    /// Through the temporary CP1 adapter (`AvatarReference(calibration:layout:)`).
+    private static func scale(for reference: AvatarReference?, robotHeight: Float) -> Float {
+        guard let standing = reference.map({ Float($0.standingHeight) }), standing > 0 else { return 1 }
+        return robotHeight / standing
+    }
+
+    init(reference: AvatarReference?, robotLegRest: Float, robotHeight: Float = RobotAvatarLayer.standingHeight) {
+        self.reference = reference
+        self.robotLegRest = robotLegRest
+        self.robotHeight = robotHeight
+        motionScale = Self.scale(for: reference, robotHeight: robotHeight)
+    }
+
+    /// Through the temporary CP1-calibration adapter (`AvatarReference(calibration:layout:)`).
     init(calibration: PlayerCalibration, layout: PlayerPlaneLayout, robotLegRest: Float,
          robotHeight: Float = RobotAvatarLayer.standingHeight) {
         self.init(reference: AvatarReference(calibration: calibration, layout: layout),
@@ -118,42 +147,77 @@ struct RobotRetargeter {
     }
 
     /// Hip-centre drop, as a share of standing height, that bends the legs fully
-    /// in the CP1-only crouch estimate (about the leg's share of height).
+    /// in the crown crouch estimate (about the leg's share of height).
     static let crownCrouchShare: Float = 0.45
 
-    mutating func update(sample: PlayerBodySample?, joints: PresentationPoseSample?, time: Double) {
+    /// Switches to another compatible reference, or to none (direction only).
+    /// Any change drops every calibrated value first: no root lift, floor
+    /// offset, stance, crouch or lift filter survives a calibration change.
+    mutating func setReference(_ reference: AvatarReference?) {
+        guard reference != self.reference else { return }
+        resetCalibratedState()
+        self.reference = reference
+        motionScale = Self.scale(for: reference, robotHeight: robotHeight)
+    }
+
+    /// Forgets everything that depends on calibration, keeping direction-only
+    /// state (arm and lean directions, presence).
+    mutating func resetCalibratedState() {
+        measuredLift = 0
+        measuredSway = 0
+        measured.pelvisDrop = 0
+        measured.footLift = [:]
+        measured.footShift = [:]
+        measuredFootDelta = [:]
+        ankleConfidence = [:]
+        stanceRest = [:]
+        stanceSamples = [:]
+        liftSeen = nil
+        liftFilter = Self.makeLiftFilter()
+        isCalibrated = false
+        lift = 0
+        sway = 0
+        footDelta = [:]
+        targets.pelvisDrop = 0
+        targets.footLift = [:]
+        targets.footShift = [:]
+    }
+
+    /// One observation at `time` (source capture time, or render host time
+    /// when nothing fresh exists); `nil` means unavailable: hold briefly, then
+    /// fade to neutral. A calibrated observation needs `reference`.
+    mutating func update(_ observation: Observation?, time: Double) {
         let dt = lastTime.map { max(0, time - $0) } ?? 0
         lastTime = time
-        // Presentation needs a reliable, calibrated player; the feet may be briefly
-        // missing (the legs and lift hold, then settle). The checker's stricter
-        // evidence rules are separate and unchanged.
-        guard let sample, sample.playerID == reference.playerID, sample.trackingStatus == .reliable,
-              sample.calibrationRevision == reference.calibrationRevision
-        else { return relax(dt, time: time) }
+        guard let observation else { return relax(dt, time: time) }
         isAvailable = true
         lastPresent = time
-        let g = sample.geometry
-        let standing = Float(reference.standingHeight)
-
-        // JUMP: the lower sole, continuously (not only once the jump phase flips), through
-        // a soft noise zone and a fast adaptive filter: takeoff starts with the feet.
-        if let left = g.leftSoleY.value, let right = g.rightSoleY.value {
-            let raw = Float(max(0, min(left, right)))
-            measuredLift = liftFilter.filter(Self.softZone(raw, liftDeadband * standing), dt: dt) * motionScale
-            liftSeen = time
-        } else if time - (liftSeen ?? time) > Self.liftHold {
-            measuredLift *= Float(exp(-dt / Self.relaxTime))
-        }
-        // LATERAL: hip centre, mirrored once about the lane (as `GameWorldMapping.cutoutPoint`).
-        if g.centerX.validity == .valid, let x = g.centerX.value {
-            let step = Float(reference.laneCenterX - x) * motionScale
-            measuredSway = min(maximumSway, max(-maximumSway, step))
-        }
         defer { compose(dt: dt, present: true) }
+        let reference = observation.calibrated ? reference : nil
+        if reference == nil, isCalibrated { resetCalibratedState() }
+        isCalibrated = reference != nil
+
+        if let reference {
+            let standing = Float(reference.standingHeight)
+            // JUMP: the lower sole, continuously (not only once the jump phase flips), through
+            // a soft noise zone and a fast adaptive filter: takeoff starts with the feet.
+            if let sole = observation.lowerSoleY {
+                let raw = Float(max(0, sole))
+                measuredLift = liftFilter.filter(Self.softZone(raw, liftDeadband * standing), dt: dt) * motionScale
+                liftSeen = time
+            } else if time - (liftSeen ?? time) > Self.liftHold {
+                measuredLift *= Float(exp(-dt / Self.relaxTime))
+            }
+            // LATERAL: hip centre, mirrored once about the lane (as `GameWorldMapping.cutoutPoint`).
+            if let x = observation.centerX {
+                let step = Float(reference.laneCenterX - x) * motionScale
+                measuredSway = min(maximumSway, max(-maximumSway, step))
+            }
+        }
 
         // Filtered joints (1€: smooth when still, fast when moving).
         var p: [PresentationJoint: SIMD2<Double>] = [:]
-        for (joint, point) in joints?.joints ?? [:] where point.confidence >= 0.3 {
+        for (joint, point) in observation.joints where point.confidence >= minimumJointConfidence {
             if let last = seen[joint], time - last > Self.jointGap { filters[joint] = nil }
             seen[joint] = time
             var f = filters[joint] ?? (x: OneEuroFilter(minimumCutoff: 2, beta: 4), y: OneEuroFilter(minimumCutoff: 2, beta: 4))
@@ -169,7 +233,8 @@ struct RobotRetargeter {
             return SIMD3(Float(-d.x), Float(d.y), Float(-depth))
         }
 
-        // ARMS: shoulder→elbow and elbow→wrist directions per anatomical side.
+        // ARMS: shoulder→elbow and elbow→wrist directions per anatomical side
+        // (B1 has no elbows: the straight shoulder→wrist path, elbow bend procedural).
         for (side, s, e, w) in [(RobotPoseTargets.Side.left, PresentationJoint.leftShoulder, PresentationJoint.leftElbow, PresentationJoint.leftWrist),
                                 (.right, .rightShoulder, .rightElbow, .rightWrist)] {
             guard let shoulder = p[s], p[e] != nil || p[w] != nil else {
@@ -193,27 +258,42 @@ struct RobotRetargeter {
             }
         }
 
+        // LEAN: shoulders over hips. HEAD: the ear line. Scale-free: both modes.
+        if let ls = p[.leftShoulder], let rs = p[.rightShoulder], let lh = p[.leftHip], let rh = p[.rightHip] {
+            let d = (ls + rs) / 2 - (lh + rh) / 2
+            measured.lean = min(maximumLean, max(-maximumLean, Float(atan2(-d.x, d.y))))
+        }
+        if let le = p[.leftEar], let re = p[.rightEar] {
+            let roll = Float(atan2(re.y - le.y, -(re.x - le.x)))
+            measured.headRoll = min(maximumHeadRoll, max(-maximumHeadRoll, roll + measured.lean))
+        }
+
+        guard let reference else { return }
+        let standing = Float(reference.standingHeight)
         // DUCK and knee raise: each leg's hip-to-ankle height as a share of standing, onto the robot's leg.
+        var legsMeasured = false
         if let lh = p[.leftHip], let rh = p[.rightHip] {
             let hipY = (lh.y + rh.y) / 2
             let hip0 = reference.standingHipY
             var reach: [RobotPoseTargets.Side: Float] = [:]
             for (side, ankle) in [(RobotPoseTargets.Side.left, PresentationJoint.leftAnkle), (.right, .rightAnkle)] {
                 guard let a = p[ankle] else { continue }
-                let standing = hip0 - reference.standingAnkleY(side)
-                guard standing > 0 else { continue }
-                let share = Float((hipY - a.y) / standing)
+                let legStanding = hip0 - reference.standingAnkleY(side)
+                guard legStanding > 0 else { continue }
+                let share = Float((hipY - a.y) / legStanding)
                 let bend = Self.softZone(max(0, 1 - share), crouchDeadband)
                 reach[side] = robotLegRest * min(1, max(0.45, 1 - bend))
             }
             if let longest = reach.values.max() {
+                legsMeasured = true
                 measured.pelvisDrop = robotLegRest - longest
                 for side in RobotPoseTargets.Side.allCases { measured.footLift[side] = longest - (reach[side] ?? longest) }
             }
-        } else if joints == nil, let crown = g.crownY.value, standing > 0 {
-            // CP1 only (no joints, e.g. the replay): the crown's drop below standing,
-            // as a share of the leg, bends both legs. A presentation estimate: a
-            // head-only duck also lowers the avatar. Never used for judgement.
+        }
+        if !legsMeasured, let crown = observation.crownY, standing > 0 {
+            // No hip/ankle evidence: the crown's drop below standing, as a share of
+            // the leg, bends both legs. A presentation estimate: a head-only duck
+            // also lowers the avatar. Never used for judgement.
             let drop = Self.softZone(max(0, 1 - Float(crown) / standing), crouchDeadband) / Self.crownCrouchShare
             measured.pelvisDrop = robotLegRest - robotLegRest * min(1, max(0.45, 1 - drop))
             for side in RobotPoseTargets.Side.allCases { measured.footLift[side] = 0 }
@@ -237,20 +317,27 @@ struct RobotRetargeter {
                     continue
                 }
                 measuredFootDelta[side] = min(Self.maximumFootDelta, max(-Self.maximumFootDelta, relative - (stanceRest[side] ?? relative)))
-                ankleConfidence[side] = Float(joints?.joints[joint]?.confidence ?? 0)
+                ankleConfidence[side] = Float(observation.joints[joint]?.confidence ?? 0)
             }
         }
-
-        // LEAN: shoulders over hips. HEAD: the ear line.
-        if let ls = p[.leftShoulder], let rs = p[.rightShoulder], let lh = p[.leftHip], let rh = p[.rightHip] {
-            let d = (ls + rs) / 2 - (lh + rh) / 2
-            measured.lean = min(maximumLean, max(-maximumLean, Float(atan2(-d.x, d.y))))
-        }
-        if let le = p[.leftEar], let re = p[.rightEar] {
-            let roll = Float(atan2(re.y - le.y, -(re.x - le.x)))
-            measured.headRoll = min(maximumHeadRoll, max(-maximumHeadRoll, roll + measured.lean))
-        }
     }
+
+    #if DEBUG
+    /// DEBUG-only synthetic bridge: the demo's and the historical replay
+    /// fixture's CP1-shaped samples, converted to one observation. Production
+    /// avatars never read CP1; they take `AvatarPoseFrame`s.
+    mutating func update(sample: PlayerBodySample?, joints: PresentationPoseSample?, time: Double) {
+        guard let sample, let reference, sample.playerID == reference.playerID, sample.trackingStatus == .reliable,
+              sample.calibrationRevision == reference.calibrationRevision
+        else { return update(nil, time: time) }
+        let g = sample.geometry
+        var observation = Observation(joints: joints?.joints ?? [:], calibrated: true)
+        if let left = g.leftSoleY.value, let right = g.rightSoleY.value { observation.lowerSoleY = min(left, right) }
+        if g.centerX.validity == .valid { observation.centerX = g.centerX.value }
+        if joints == nil { observation.crownY = g.crownY.value }
+        update(observation, time: time)
+    }
+    #endif
 
     /// No usable player: never invent movement. Fade the held pose out (no
     /// snap) and forget joint filters, so recovery starts from fresh data and
@@ -380,7 +467,10 @@ final class RobotAvatarLayer {
     private var plantAnchor: [PlayerID: [RobotPoseTargets.Side: Float]] = [:]
     private weak var scene: LaserScene?
     private let lights = Entity()
+    #if DEBUG
+    /// The DEBUG snapshot bridge's last frame (`apply(_:joints:)`).
     private(set) var lastFrame: (generation: UUID, frameID: UInt64)?
+    #endif
     /// Render-rate smoothing time constant (seconds); `nil` shows each body
     /// frame as it arrives. The synthetic demo sets it and calls `render(now:)`
     /// every rendered frame, so 30 Hz poses move smoothly on a 60 Hz display.
@@ -478,15 +568,23 @@ final class RobotAvatarLayer {
                   templates: templates)
     }
 
-    /// `templates` from `loadTemplates()`: each player with a reference gets a
-    /// clone of its own colour variant, standing on that player's existing
+    /// Avatars for exactly the players with a reference (the CP1-calibration
+    /// adapter and the DEBUG bridge).
+    convenience init(scene: LaserScene, references: [PlayerID: AvatarReference], templates: [PlayerID: Entity]) {
+        self.init(scene: scene, players: Set(references.keys), references: references, templates: templates)
+    }
+
+    /// `templates` from `loadTemplates()`: each listed player gets a clone of
+    /// its own colour variant, standing on that player's existing
     /// `PlayerCutoutEntity` (its lane); one solver setup, size and lighting
-    /// for every player. Players without a reference get no avatar.
-    init(scene: LaserScene, references: [PlayerID: AvatarReference], templates: [PlayerID: Entity]) {
+    /// for every player. A player without a reference starts direction-only;
+    /// `AvatarPoseFrame`s supply references as calibration becomes compatible.
+    init(scene: LaserScene, players: Set<PlayerID>, references: [PlayerID: AvatarReference] = [:],
+         templates: [PlayerID: Entity]) {
         self.scene = scene
-        for player in PlayerID.allCases {
-            guard let entity = scene.players[player], let reference = references[player],
-                  let template = templates[player] else { continue }
+        for player in PlayerID.allCases where players.contains(player) {
+            guard let entity = scene.players[player], let template = templates[player] else { continue }
+            let reference = references[player]
             let robot = template.clone(recursive: true)
             guard let model = Self.skinnedModel(in: robot) else { continue }
             let skeleton = RobotSkeleton(paths: model.jointNames, bind: model.jointTransforms)
@@ -544,10 +642,84 @@ final class RobotAvatarLayer {
         return context.makeImage().flatMap { try? EnvironmentResource(equirectangular: $0, withName: "avatar.environment") }
     }
 
+    // MARK: - K03: AvatarPoseFrame input (the production path)
+
+    /// Applies one render tick's mailbox drain: first the resets it reports,
+    /// then the newest frame; with no fresh frame, every avatar relaxes toward
+    /// neutral at `now` (host time). Never reads CP1.
+    func apply(_ drain: AvatarPoseDrain, now: Double) {
+        if drain.reset.all {
+            for player in Array(robots.keys) { resetPresentation(player, now: now) }
+        }
+        for player in drain.reset.calibration where !drain.reset.all { resetCalibration(player) }
+        if let frame = drain.frame {
+            apply(frame)
+        } else if !drain.hasCurrent {
+            for player in Array(robots.keys) {
+                robots[player]?.retargeter.update(nil, time: now)
+                apply(player, time: now)
+            }
+        }
+    }
+
+    /// One validated frame: each slot independently. A slot's reference
+    /// change (recalibration, downgrade to direction-only) resets that
+    /// player's calibrated state before its observation is used.
+    func apply(_ frame: AvatarPoseFrame) {
+        let time = frame.source.capturedAt
+        let aspect = Double(frame.source.context.imageWidth) / Double(frame.source.context.imageHeight)
+        for player in Array(robots.keys) {
+            var observation: RobotRetargeter.Observation?
+            if case .available(let pose) = frame.slot(player) {
+                let reference = pose.capability.reference.map { AvatarReference(standing: $0, playerID: player) }
+                if reference != robots[player]?.retargeter.reference {
+                    resetCalibration(player)
+                    robots[player]?.retargeter.setReference(reference)
+                }
+                observation = AvatarPoseAdapter.observation(pose, playerID: player, imageAspect: aspect)
+            }
+            robots[player]?.retargeter.update(observation, time: time)
+            apply(player, time: time)
+        }
+    }
+
+    /// Drops one player's calibrated presentation: retargeter values, foot
+    /// plan, planted anchors and the smoothed pose being shown.
+    private func resetCalibration(_ player: PlayerID) {
+        guard var robot = robots[player] else { return }
+        robot.retargeter.resetCalibratedState()
+        robot.planner = RobotFootPlanner(rest: robot.planner.rest)
+        robots[player] = robot
+        shown[player] = nil
+        plantAnchor[player] = nil
+        footDiagnostics[player] = nil
+    }
+
+    /// Back to a neutral avatar at once (stop, interruption, source or control
+    /// change): a fresh retargeter with no reference, a fresh foot plan, no
+    /// smoothed pose.
+    private func resetPresentation(_ player: PlayerID, now: Double) {
+        guard var robot = robots[player] else { return }
+        robot.retargeter = RobotRetargeter(reference: nil, robotLegRest: robot.retargeter.robotLegRest,
+                                           robotHeight: robot.retargeter.robotHeight)
+        robot.planner = RobotFootPlanner(rest: robot.planner.rest)
+        robots[player] = robot
+        shown[player] = nil
+        plantAnchor[player] = nil
+        footDiagnostics[player] = nil
+        present(player, k: 1, time: now)
+    }
+
+    #if DEBUG
+    // MARK: - DEBUG synthetic bridge (CP1-shaped demo and historical replay fixtures)
+
     /// A new camera session restarts frame IDs; forget the last one shown.
     func resetFrameOrder() { lastFrame = nil }
 
-    /// Shows one body frame; `joints` only when it belongs to the same frame.
+    /// DEBUG-only: shows one CP1-shaped synthetic body frame (the demo, or the
+    /// bundled historical replay fixture); `joints` only when it belongs to the
+    /// same frame. Labelled synthetic; production avatars take `AvatarPoseFrame`s
+    /// and never read CP1.
     func apply(_ snapshot: BodySnapshot, joints: PresentationPoseFrame? = nil) {
         if let lastFrame, lastFrame.generation == snapshot.sessionGeneration, snapshot.frameID <= lastFrame.frameID { return }
         lastFrame = (snapshot.sessionGeneration, snapshot.frameID)
@@ -555,13 +727,14 @@ final class RobotAvatarLayer {
         for player in Array(robots.keys) {
             guard var robot = robots[player] else { continue }
             let sample = frameJoints?.players[player].flatMap {
-                $0.calibrationRevision == robot.retargeter.reference.calibrationRevision ? $0 : nil
+                $0.calibrationRevision == robot.retargeter.reference?.calibrationRevision ? $0 : nil
             }
             robot.retargeter.update(sample: snapshot.players[player], joints: sample, time: snapshot.capturedAt)
             robots[player] = robot
             apply(player, time: snapshot.capturedAt)
         }
     }
+    #endif
 
     private func apply(_ player: PlayerID, time: Double) {
         if smoothing == nil { present(player, k: 1, time: time) }

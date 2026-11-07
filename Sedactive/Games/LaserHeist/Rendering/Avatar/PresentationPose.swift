@@ -5,21 +5,14 @@
 
 import Foundation
 
-// PROPOSED presentation-only pose interface (Kevin → Edo). Not part of CP1 or
-// CP2, never used for judgement, and no producer exists yet.
+// The retargeter's internal presentation joint names and points. Not an
+// interface: production joints arrive as B1 `BodyJoint`s in `AvatarPoseFrame`
+// (D06) and `AvatarPoseAdapter` converts them; B1 has no elbows or knees, so
+// those keys are only ever filled by the DEBUG synthetic demo.
 //
-// CP1's `BodySnapshot` gives the avatar crown, both wrist heights, both sole
-// heights, centre X and jump phase. That drives JUMP, DUCK, per-leg lift,
-// lateral movement and frontal-plane arm raises. It cannot tell an arm raised
-// sideways from one raised forward, or show lean and head tilt. Edo's raw
-// Vision `PoseFrame` already carries the needed joints (shoulders, wrists,
-// hips, ears, nose, ankles; elbows and knees would need adding to his joint
-// table). This interface asks for them converted to the same player plane,
-// for the same frames as the `BodySnapshot`.
-//
-// Rules, matching CP1: unmirrored player-plane game units with Y up from the
-// calibrated floor; anatomical left/right unchanged (the display mirrors once);
-// missing joints are absent, never guessed; one frame per snapshot frame.
+// `PresentationPoseSample`/`PresentationPoseFrame` (below) are the earlier
+// spike's per-frame joint packet, kept DEBUG-only for the synthetic demo and
+// its tests. D06 superseded them.
 
 nonisolated enum PresentationJoint: String, CaseIterable, Sendable, Codable {
     case nose, leftEar, rightEar, neck
@@ -33,6 +26,7 @@ nonisolated struct PresentationPoint: Equatable, Sendable, Codable {
     let confidence: Double
 }
 
+#if DEBUG
 nonisolated struct PresentationPoseSample: Equatable, Sendable, Codable {
     let playerID: PlayerID
     let calibrationRevision: UInt64
@@ -58,3 +52,4 @@ nonisolated struct PresentationPoseFrame: Equatable, Sendable, Codable {
         sessionGeneration == snapshot.sessionGeneration && frameID == snapshot.frameID
     }
 }
+#endif
