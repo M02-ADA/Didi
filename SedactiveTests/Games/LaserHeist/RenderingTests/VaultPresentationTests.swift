@@ -93,7 +93,7 @@ struct VaultPresentationTests {
         let (scene, _) = scene()
         let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
         presenter.apply(state: state(17, .vault, vault: vault()), events: [], snapshot: nil)
-        let bottom = try #require(presenter.vault.root.findEntity(named: "vault.indicator.player1.bottom"))
+        let bottom = try #require(presenter.vault.buttons.findEntity(named: "vault.indicator.player1.bottom"))
         let placed = bottom.position
         let first = vault([.player1: [.bottom]])
         presenter.apply(state: state(17.4, .vault, vault: first), events: [], snapshot: nil)
@@ -110,13 +110,14 @@ struct VaultPresentationTests {
         #expect(presenter.vault.indicator(.player2, .top) == .active)
         #expect(presenter.vault.indicator(.player2, .middle) == .idle)
         #expect(presenter.vault.diagnostics.activations == 3)
-        // On the door: P1's column left of the centre seam, P2's mirroring it on the right.
+        // On the corridor walls (Sketch): P1's column on the left wall, P2's mirroring it on the right.
         for button in LaserVaultButton.allCases {
-            let p1 = try #require(presenter.vault.root.findEntity(named: "vault.indicator.player1.\(button.rawValue)"))
-            let p2 = try #require(presenter.vault.root.findEntity(named: "vault.indicator.player2.\(button.rawValue)"))
+            let p1 = try #require(presenter.vault.buttons.findEntity(named: "vault.indicator.player1.\(button.rawValue)"))
+            let p2 = try #require(presenter.vault.buttons.findEntity(named: "vault.indicator.player2.\(button.rawValue)"))
             let world1 = p1.position(relativeTo: nil), world2 = p2.position(relativeTo: nil)
             #expect(world1.x < 0 && world2.x > 0 && abs(world1.x + world2.x) < 1e-5 && world1.y == world2.y)
-            #expect(abs(world1.z - (scene.layout.vaultDoorStopZ + 0.05)) < 1e-4)
+            #expect(abs(world1.x) == VaultPresentation.indicatorColumnX && abs(world1.x) < scene.layout.corridorWidth / 2)
+            #expect(abs(world1.z - (VaultPresentation.indicatorDepthZ + 0.05)) < 1e-4)
         }
     }
 
@@ -153,8 +154,12 @@ struct VaultPresentationTests {
         let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
         presenter.apply(state: state(17, .vault, vault: vault()), events: [], snapshot: nil)
         let aspect = Float(viewport.width) / Float(viewport.height)
-        // The replay HUD panel measured in a landscape screenshot: 356 × 474 pt from the top-left, plus 8 pt.
-        let hud = SIMD4<Float>(0, 364 / Float(viewport.width), 0, 482 / Float(viewport.height))
+        // The gameplay HUD (`GameplayHUD`, Sketch 1210 × 834 pt scaled by k): its top bar with the
+        // score chip under the hearts (to y 171 pt), and the phase title band (606 pt wide, y 136–237 pt).
+        let k = min(Float(viewport.width) / 1210, Float(viewport.height) / 834)
+        let w = Float(viewport.width), h = Float(viewport.height)
+        let topBar = SIMD4<Float>(0, 1, 0, 171 * k / h)
+        let title = SIMD4<Float>(0.5 - 303 * k / w, 0.5 + 303 * k / w, 136 * k / h, 237 * k / h)
         // Each player's figure on the interaction plane, plus 0.1 m all round.
         let plane = scene.mapping.interactionPlaneZ
         let figures = PlayerID.allCases.map { player -> SIMD4<Float> in
@@ -168,17 +173,17 @@ struct VaultPresentationTests {
         // The authored lock light (VaultDoor.usda `UnlockedLight`).
         let light = screenRect([0, 2.91, door], size: [1.45, 0.24], in: scene, aspect: aspect)
         let screen = SIMD4<Float>(0, 1, 0, 1)
-        for obstacle in figures + [hud, light] {
+        for obstacle in figures + [topBar, title, light] {
             #expect(!overlaps(countdown, obstacle))
         }
         var rects: [PlayerID: [SIMD4<Float>]] = [:]
         for player in PlayerID.allCases {
             for button in LaserVaultButton.allCases {
-                let part = try #require(presenter.vault.root.findEntity(named: "vault.indicator.\(player.rawValue).\(button.rawValue)"))
+                let part = try #require(presenter.vault.buttons.findEntity(named: "vault.indicator.\(player.rawValue).\(button.rawValue)"))
                 let rect = screenRect(part.position(relativeTo: nil), size: .init(repeating: VaultPresentation.indicatorSize),
                                       in: scene, aspect: aspect)
                 #expect(rect.x >= screen.x && rect.y <= screen.y && rect.z >= screen.z && rect.w <= screen.w)
-                for obstacle in figures + [hud, countdown, light] {
+                for obstacle in figures + [topBar, title, countdown, light] {
                     #expect(!overlaps(rect, obstacle), "\(player) \(button) overlaps at \(viewport)")
                 }
                 rects[player, default: []].append(rect)
@@ -188,15 +193,15 @@ struct VaultPresentationTests {
         // column's completion outline, stay clear of the figures, HUD, countdown and light.
         let digit = screenRect([0, VaultPresentation.digitCenterY, door + 0.05],
                                size: [0.36, VaultPresentation.digitHeight], in: scene, aspect: aspect)
-        for obstacle in figures + [hud, countdown, light] {
+        for obstacle in figures + [topBar, title, countdown, light] {
             #expect(!overlaps(digit, obstacle), "number overlaps at \(viewport)")
         }
         for player in PlayerID.allCases {
             let x = (player == .player1 ? -1 : 1) * VaultPresentation.indicatorColumnX
-            let outline = screenRect([x, VaultPresentation.outlineCenterY, door + 0.045],
+            let outline = screenRect([x, VaultPresentation.outlineCenterY, VaultPresentation.indicatorDepthZ + 0.045],
                                      size: VaultPresentation.outlineSize, in: scene, aspect: aspect)
             #expect(outline.x >= 0 && outline.y <= 1 && outline.z >= 0 && outline.w <= 1)
-            for obstacle in figures + [hud, countdown, light, digit] {
+            for obstacle in figures + [topBar, title, countdown, light, digit] {
                 #expect(!overlaps(outline, obstacle), "\(player) outline overlaps at \(viewport)")
             }
         }
@@ -683,12 +688,12 @@ extension VaultPresentationTests {
         try round.open(id(1), at: 1)
         try round.touch(id(1), .player1, .top, at: 1.2)
         apply(presenter, round)
-        let top = try #require(presenter.vault.root.findEntity(named: "vault.indicator.player1.top"))
+        let top = try #require(presenter.vault.buttons.findEntity(named: "vault.indicator.player1.top"))
         #expect(presenter.vault.indicator(.player1, .top) == .active)
         #expect(top.scale == .one && presenter.vault.diagnostics.pops == 0)
         try round.completeBothSides(id(1), from: 1.4)
         apply(presenter, round)
-        let outline = try #require(presenter.vault.root.findEntity(named: "vault.outline.player1"))
+        let outline = try #require(presenter.vault.buttons.findEntity(named: "vault.outline.player1"))
         #expect(presenter.vault.diagnostics.sideCompletions == 2 && outline.isEnabled && outline.scale == .one)
         #expect(presenter.vault.diagnostics.pops == 0)
         // The door opens by fading its panels, which stay in place.

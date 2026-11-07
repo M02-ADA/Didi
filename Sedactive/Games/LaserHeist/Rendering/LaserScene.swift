@@ -52,8 +52,9 @@ struct LaserWorldLayout {
     // reaches the players at its target's crossing time, whatever this is.
     var travelSpeed: Float = 5.2
 
-    // Temporary DUCK/JUMP cue: above the players, in front of the corridor.
-    var moveCuePosition: SIMD3<Float> = [0, 2.0, 0.6]
+    // DUCK/JUMP cue (Sketch Hi-Fi 30 OCT "Game 1"): centred under the HUD's
+    // top bar and above the mascots' heads, in front of the corridor.
+    var moveCuePosition: SIMD3<Float> = [0, 1.78, 0.6]
 
     // World depth of the hoverboard's upper half. A low beam first overlaps
     // the board on screen about 0.75 m before the crossing, so this stays behind that.
@@ -100,6 +101,9 @@ final class LaserScene {
     /// Where the corridor's travel group sits within its loop (tests and debugging).
     private(set) var travelOffset: Float = 0
     private var vaultDoor: VaultDoor?
+    /// Theo's vault button states from the `VaultDoor` scene's `VaultButtons`
+    /// templates (idle red, active green, per wall side), or `nil` without them.
+    private(set) var vaultButtonArt: [VaultButtonArtKey: Entity]?
     private var diamondArt: DiamondArt?
     private let diamonds = Entity()
     /// Unmodified gate artwork; every laser is built from its own clone.
@@ -348,10 +352,22 @@ final class LaserScene {
 
     func installVaultDoor(_ artwork: Entity?) {
         guard vaultDoor == nil, let artwork, let door = VaultDoor(artwork: artwork) else { return }
+        vaultButtonArt = Self.vaultButtonTemplates(in: artwork)
         vaultDoor = door
         door.root.name = "vaultDoor"
         door.root.isEnabled = false
         root.addChild(door.root)
+    }
+
+    /// All four `VaultButtons` templates, or `nil` if any is missing (the code art shows instead).
+    private static func vaultButtonTemplates(in artwork: Entity) -> [VaultButtonArtKey: Entity]? {
+        guard let group = artwork.findEntity(named: "VaultButtons") else { return nil }
+        var templates: [VaultButtonArtKey: Entity] = [:]
+        for key in VaultButtonArtKey.allCases {
+            guard let template = group.findEntity(named: key.entityName) else { return nil }
+            templates[key] = template
+        }
+        return templates
     }
 
     func installDiamondArt(_ artwork: Entity?) {
@@ -620,5 +636,30 @@ final class LaserScene {
 
     private static func color(_ hex: UInt32) -> UIColor {
         UIColor(red: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+    }
+}
+
+/// One of Theo's vault button states, by the corridor wall it is mounted on
+/// (P1's on the left, P2's on the right).
+enum VaultButtonArtKey: CaseIterable, Hashable {
+    case leftIdle, leftActive, rightIdle, rightActive
+
+    init(player: PlayerID, active: Bool) {
+        self = switch (player, active) {
+        case (.player1, false): .leftIdle
+        case (.player1, true): .leftActive
+        case (.player2, false): .rightIdle
+        case (.player2, true): .rightActive
+        }
+    }
+
+    /// The template's name in `VaultDoor.usda`.
+    var entityName: String {
+        switch self {
+        case .leftIdle: "LeftIdle"
+        case .leftActive: "LeftActive"
+        case .rightIdle: "RightIdle"
+        case .rightActive: "RightActive"
+        }
     }
 }

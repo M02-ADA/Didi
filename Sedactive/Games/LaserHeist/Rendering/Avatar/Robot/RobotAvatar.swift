@@ -146,9 +146,8 @@ struct RobotRetargeter {
                   robotLegRest: robotLegRest, robotHeight: robotHeight)
     }
 
-    /// Hip-centre drop, as a share of standing height, that bends the legs fully
-    /// in the crown crouch estimate (about the leg's share of height).
-    static let crownCrouchShare: Float = 0.45
+    /// Deepest pelvis drop the legs can show, as a share of the rest leg.
+    static let maximumCrouchShare: Float = 0.55
 
     /// Switches to another compatible reference, or to none (direction only).
     /// Any change drops every calibrated value first: no root lift, floor
@@ -282,7 +281,7 @@ struct RobotRetargeter {
                 guard legStanding > 0 else { continue }
                 let share = Float((hipY - a.y) / legStanding)
                 let bend = Self.softZone(max(0, 1 - share), crouchDeadband)
-                reach[side] = robotLegRest * min(1, max(0.45, 1 - bend))
+                reach[side] = robotLegRest * min(1, max(1 - Self.maximumCrouchShare, 1 - bend))
             }
             if let longest = reach.values.max() {
                 legsMeasured = true
@@ -290,13 +289,21 @@ struct RobotRetargeter {
                 for side in RobotPoseTargets.Side.allCases { measured.footLift[side] = longest - (reach[side] ?? longest) }
             }
         }
-        if !legsMeasured, let crown = observation.crownY, standing > 0 {
-            // No hip/ankle evidence: the crown's drop below standing, as a share of
-            // the leg, bends both legs. A presentation estimate: a head-only duck
-            // also lowers the avatar. Never used for judgement.
-            let drop = Self.softZone(max(0, 1 - Float(crown) / standing), crouchDeadband) / Self.crownCrouchShare
-            measured.pelvisDrop = robotLegRest - robotLegRest * min(1, max(0.45, 1 - drop))
-            for side in RobotPoseTargets.Side.allCases { measured.footLift[side] = 0 }
+        if let crown = observation.crownY, standing > 0 {
+            // K04: the head goes down by the same share of the avatar's height as the
+            // crown went down of the player's (up to the legs' reach). The mascot's
+            // legs are a far smaller share of its height than a person's, so a
+            // leg-share crouch alone drew a clearing duck into the beam. Hip/ankle
+            // evidence still shapes the legs; the deeper of the two is shown. A
+            // presentation estimate: a head-only duck also lowers the avatar.
+            let share = Self.softZone(max(0, 1 - Float(crown) / standing), crouchDeadband)
+            let drop = min(robotLegRest * Self.maximumCrouchShare, share * RobotSkeleton.modelHeight)
+            if !legsMeasured {
+                measured.pelvisDrop = drop
+                for side in RobotPoseTargets.Side.allCases { measured.footLift[side] = 0 }
+            } else if drop > measured.pelvisDrop {
+                measured.pelvisDrop = drop
+            }
         }
 
         // FEET: each ankle's sideways position relative to the hip centre, against the
@@ -372,10 +379,14 @@ struct RobotRetargeter {
         targets = t
     }
 
-    /// Continuous soft dead zone: 0 below noise, a smooth ramp, then x − zone/2.
+    /// Continuous soft dead zone: small values (noise) are damped, and from
+    /// `zone` up the value passes unchanged (K04: the earlier −zone/2 offset drew
+    /// every jump 1–2 cm low, so a borderline CLEAR looked like a HIT). Smooth:
+    /// f(0) = 0, f′(0) = 0, f(zone) = zone, f′(zone) = 1; monotonic between.
     static func softZone(_ x: Float, _ zone: Float) -> Float {
-        guard zone > 0, x < zone else { return x - zone / 2 }
-        return x > 0 ? x * x / (2 * zone) : 0
+        guard zone > 0, x < zone else { return x }
+        guard x > 0 else { return 0 }
+        return 2 * x * x / zone - x * x * x / (zone * zone)
     }
 }
 
@@ -461,6 +472,26 @@ final class RobotAvatarLayer {
     var footPlanting = !ProcessInfo.processInfo.arguments.contains("-legacyFeet") {
         didSet { if footPlanting != oldValue { resetFeet() } }
     }
+    /// D07 CANDIDATE, not approved (K04): draw each player's laser bands in that
+    /// player's normalized avatar space instead of their own game units, so a
+    /// beam meets the 1.6 m mascot where it meets the player relative to their
+    /// standing height. Display only: the judged bands, the judge and every
+    /// body value are unchanged. Off by default; only the DEBUG
+    /// `-normalizedLasers` launch flag turns it on, for A/B comparison.
+    var normalizesLaserBands = false
+
+    /// The factor from a player's game-unit heights to their drawn laser
+    /// heights, or `nil`: draw the authoritative band as is (candidate off, no
+    /// avatar, or no compatible calibration, so no avatar scale to match).
+    /// It is the avatar's own `motionScale` (shared height ÷ the player's
+    /// standing height), divided by `metersPerGameUnit` because the beam
+    /// mapping multiplies by it again: the floor stays at 0, no double scaling.
+    func laserBandScale(for player: PlayerID, mapping: GameWorldMapping) -> Float? {
+        guard normalizesLaserBands, mapping.metersPerGameUnit > 0, let retargeter = robots[player]?.retargeter,
+              retargeter.reference != nil else { return nil }
+        return retargeter.motionScale / mapping.metersPerGameUnit
+    }
+
     /// Collect `footDiagnostics` (one extra forward pass per robot per frame).
     var diagnosticsEnabled = false
     private(set) var footDiagnostics: [PlayerID: FootDiagnostics] = [:]
@@ -468,6 +499,12 @@ final class RobotAvatarLayer {
     private weak var scene: LaserScene?
     private let lights = Entity()
     #if DEBUG
+    /// K04 diagnostic (`-avatarFairness`): small markers on each avatar's head
+    /// top (orange), hand centres (magenta) and soles (lime), beside the human
+    /// evidence markers and band edges the presenter already draws. Built once
+    /// per player; removed with the avatars.
+    var showsFairnessMarkers = false
+    private var fairnessMarkers: [PlayerID: [ModelEntity]] = [:]
     /// The DEBUG snapshot bridge's last frame (`apply(_:joints:)`).
     private(set) var lastFrame: (generation: UUID, frameID: UInt64)?
     #endif
@@ -711,6 +748,23 @@ final class RobotAvatarLayer {
     }
 
     #if DEBUG
+    private func updateFairnessMarkers(_ player: PlayerID) {
+        guard let scene, let points = extremityPoints(of: player) else { return }
+        if fairnessMarkers[player] == nil {
+            fairnessMarkers[player] = [UIColor.orange, .magenta, .magenta, .green, .green].map { color in
+                let marker = ModelEntity(mesh: .generateBox(size: 0.05), materials: [UnlitMaterial(color: color)])
+                marker.name = "avatar.fairness.\(player.rawValue)"
+                scene.root.addChild(marker)
+                return marker
+            }
+        }
+        let positions = [points.headTop, points.leftHand, points.rightHand, points.leftSole, points.rightSole]
+        for (marker, position) in zip(fairnessMarkers[player] ?? [], positions) {
+            // Just in front of the avatar, so the marker is not hidden inside the mesh.
+            marker.position = position + [0, 0, 0.25]
+        }
+    }
+
     // MARK: - DEBUG synthetic bridge (CP1-shaped demo and historical replay fixtures)
 
     /// A new camera session restarts frame IDs; forget the last one shown.
@@ -799,6 +853,9 @@ final class RobotAvatarLayer {
         let solved = robot.solver.solveDetailed(t)
         robot.model.jointTransforms = solved.local
         if diagnosticsEnabled { recordFeet(player, robot, solved, rootX: rootX, lift: s.lift, plan: plan, trackedLift: t.footLift) }
+        #if DEBUG
+        if showsFairnessMarkers { updateFairnessMarkers(player) }
+        #endif
         // Dimmed exactly while the player is not tracked (the pose itself fades separately).
         let opacity = r.isAvailable ? 1 : Self.unavailableOpacity
         if robot.container.components[OpacityComponent.self]?.opacity != opacity {
@@ -850,6 +907,10 @@ final class RobotAvatarLayer {
             robot.container.removeFromParent()
             scene?.players[player]?.findEntity(named: "player.\(player.rawValue).surface")?.isEnabled = true
         }
+        #if DEBUG
+        for marker in fairnessMarkers.values.flatMap({ $0 }) { marker.removeFromParent() }
+        fairnessMarkers = [:]
+        #endif
         robots = [:]
         shown = [:]
         footDiagnostics = [:]

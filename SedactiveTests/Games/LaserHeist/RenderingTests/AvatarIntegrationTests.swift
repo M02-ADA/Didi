@@ -298,7 +298,7 @@ struct AvatarIntegrationTests {
         ]
         for player in PlayerID.allCases {
             let x = (player == .player1 ? -1 : 1) * VaultPresentation.indicatorColumnX
-            feedback.append(("\(player) outline", screenRect([x, VaultPresentation.outlineCenterY, door + 0.045],
+            feedback.append(("\(player) outline", screenRect([x, VaultPresentation.outlineCenterY, VaultPresentation.indicatorDepthZ + 0.045],
                                                              size: VaultPresentation.outlineSize, in: scene, aspect: aspect)))
         }
         for (name, rect) in feedback {

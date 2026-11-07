@@ -178,7 +178,7 @@ struct RobotAvatarTests {
         #expect(r.presence > 0.95 && r.targets.pelvisDrop < 0.01 && r.lift < 0.005)
         // Hips 0.25 lower: within 100 ms (3 frames of the 1€ filter) the pelvis follows most of the way.
         t = feed(&r, try sample(c), joints(c, hipDrop: 0.25), from: t, frames: 3)
-        let expected = Float(0.25 / 0.868 - 0.015) * 0.574  // the soft noise zone takes half its width
+        let expected = Float(0.25 / 0.868) * 0.574  // above the soft noise zone the share passes unchanged (K04)
         #expect(r.targets.pelvisDrop > 0.85 * expected && r.targets.pelvisDrop <= expected + 1e-3)
         // Shoulders shifted toward the player's right (−X unmirrored): lean toward screen right (+).
         t = feed(&r, try sample(c), joints(c, shoulderShift: -0.15), from: t, frames: 3)
@@ -186,7 +186,7 @@ struct RobotAvatarTests {
         // Jump lift follows the lower sole continuously, without waiting for the
         // jump phase (presentation only): most of it within one frame, all of it within four.
         let standing = RobotAvatarLayer.standingHeight / r.motionScale
-        let full = (0.3 - r.liftDeadband * standing / 2) * r.motionScale
+        let full = 0.3 * r.motionScale  // above the dead zone the lift passes unchanged (K04)
         t = feed(&r, try sample(c, phase: .grounded, soles: (0.3, 0.32)), joints(c), from: t, frames: 1)
         #expect(r.lift > 0.75 * full)
         t = feed(&r, try sample(c, phase: .grounded, soles: (0.3, 0.32)), joints(c), from: t, frames: 3)
@@ -339,8 +339,8 @@ struct RobotAvatarTests {
         // Both jump 15% of their own height.
         feed(&tall, try jump(calibrations[.player1]!, 0.15 * 1.7), nil, from: 0, frames: 20)
         feed(&short, try jump(calibrations[.player2]!, 0.15 * 1.2), nil, from: 0, frames: 20)
-        // The soft noise zone (2% of height) takes 1% off, also per player height.
-        #expect(abs(tall.lift - 0.14 * RobotAvatarLayer.standingHeight) < 2e-3)
+        // Above the soft noise zone (2% of height) the lift passes unchanged (K04).
+        #expect(abs(tall.lift - 0.15 * RobotAvatarLayer.standingHeight) < 2e-3)
         #expect(abs(short.lift - tall.lift) < 1e-3)
     }
 

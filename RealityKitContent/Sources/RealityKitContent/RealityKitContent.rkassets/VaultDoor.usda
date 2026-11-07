@@ -207,6 +207,165 @@ def Xform "Root" (
                 float outputs:outa
             }
         }
+        def Material "ButtonLeftIdle"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/ButtonLeftIdle/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/ButtonLeftIdle/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/ButtonLeftIdle/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/vault_button_left_idle.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/ButtonLeftIdle/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/ButtonLeftIdle/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+
+        def Material "ButtonLeftActive"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/ButtonLeftActive/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/ButtonLeftActive/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/ButtonLeftActive/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/vault_button_left_active.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/ButtonLeftActive/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/ButtonLeftActive/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+
+        def Material "ButtonRightIdle"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/ButtonRightIdle/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/ButtonRightIdle/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/ButtonRightIdle/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/vault_button_right_idle.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/ButtonRightIdle/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/ButtonRightIdle/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+
+        def Material "ButtonRightActive"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/ButtonRightActive/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/ButtonRightActive/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/ButtonRightActive/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/vault_button_right_active.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/ButtonRightActive/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/ButtonRightActive/Image.outputs:out>
+                float outputs:outa
+            }
+        }
     }
 
     def Xform "VaultDoorRoot" (
@@ -358,6 +517,99 @@ def Xform "Root" (
                 float3 xformOp:translate = (0, 0, 0)
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
+        }
+    }
+    def Xform "VaultButtons" (
+        doc = "Theo's vault button states (Sketch Hi-Fi 30 OCT, Opening the Door). Templates: VaultPresentation clones them onto the corridor walls; this group is never shown as placed here."
+    )
+    {
+        quatf xformOp:orient = (1, 0, 0, 0)
+        float3 xformOp:scale = (1, 1, 1)
+        float3 xformOp:translate = (0, 0, 0.05)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+        def Mesh "LeftIdle" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            rel material:binding = </Root/Materials/ButtonLeftIdle>
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "vertex"
+            )
+            point3f[] points = [(-0.155, -0.21, 0), (0.155, -0.21, 0), (0.155, 0.21, 0), (-0.155, 0.21, 0)]
+            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                interpolation = "vertex"
+            )
+            uniform token subdivisionScheme = "none"
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:translate = (-3.0, 2.15, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Mesh "LeftActive" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            rel material:binding = </Root/Materials/ButtonLeftActive>
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "vertex"
+            )
+            point3f[] points = [(-0.155, -0.21, 0), (0.155, -0.21, 0), (0.155, 0.21, 0), (-0.155, 0.21, 0)]
+            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                interpolation = "vertex"
+            )
+            uniform token subdivisionScheme = "none"
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:translate = (-3.0, 1.6, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Mesh "RightIdle" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            rel material:binding = </Root/Materials/ButtonRightIdle>
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "vertex"
+            )
+            point3f[] points = [(-0.155, -0.21, 0), (0.155, -0.21, 0), (0.155, 0.21, 0), (-0.155, 0.21, 0)]
+            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                interpolation = "vertex"
+            )
+            uniform token subdivisionScheme = "none"
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:translate = (3.0, 2.15, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Mesh "RightActive" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            rel material:binding = </Root/Materials/ButtonRightActive>
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "vertex"
+            )
+            point3f[] points = [(-0.155, -0.21, 0), (0.155, -0.21, 0), (0.155, 0.21, 0), (-0.155, 0.21, 0)]
+            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                interpolation = "vertex"
+            )
+            uniform token subdivisionScheme = "none"
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:translate = (3.0, 1.6, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
     }
 }

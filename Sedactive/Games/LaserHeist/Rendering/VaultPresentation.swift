@@ -27,9 +27,10 @@ import UIKit
 ///   button columns. In the last `urgentRemaining` seconds the bar thickens
 ///   and turns warm. Game time freezes on pause, so do both.
 /// - `vault.buttons[player]`: three indicators per player (top, middle,
-///   bottom): a ring when idle, a check when active. A newly activated one
-///   pops once. When all three of a player's buttons are active, an outline
-///   frames that player's column, once.
+///   bottom), Theo's wall buttons (Sketch Hi-Fi 30 OCT "Opening the Door",
+///   `VaultDoor` scene `VaultButtons`): red when idle, green with a check
+///   when active. A newly activated one pops once. When all three of a
+///   player's buttons are active, an outline frames that player's column, once.
 /// - `vault.opened` or `coopGateSucceeded`: the door opens, once. It then
 ///   stays put in the corridor and passes the players as travel resumes, and
 ///   is hidden before it reaches the camera.
@@ -39,12 +40,14 @@ import UIKit
 ///
 /// Reduce Motion: no pops; the outline and the exiting door change at once;
 /// the door panels fade instead of sliding. Nothing is conveyed by colour
-/// alone: idle/active differ in shape (ring/check), completion adds an
-/// outline, urgency thickens the bar, and failure shows 0.
+/// alone: an active button adds a check, completion adds an outline,
+/// urgency thickens the bar, and failure shows 0.
 ///
-/// The indicators are status only, not hit targets: their positions and
-/// look are provisional until G11 (contact geometry) and Theo's design.
-/// They sit on the door, so they move and fade with it.
+/// The indicators are status only, not hit targets; activation comes only
+/// from Jevon's `vault.buttons`. Their placement is provisional until G11
+/// (contact geometry). The countdown and number sit on the door and move
+/// with it; the button columns stand on the corridor walls beside the
+/// players, as in the Sketch, and travel with the door once it opens.
 @MainActor
 final class VaultPresentation {
     struct Diagnostics: Equatable {
@@ -62,18 +65,21 @@ final class VaultPresentation {
 
     enum Indicator: Equatable { case idle, active }
 
-    /// Provisional indicator layout on the door face (pending G11 and Theo),
-    /// chosen from the game camera's projection at the door's stop: in the
-    /// landscape view the players cover the door's sides (P1 from head height
-    /// down, the replay HUD the top-left corner), so the one place clear of
-    /// both figures, the HUD, the countdown and the lock light on every iPad
-    /// landscape size is the middle of the door. P1's column is left of the
-    /// centre seam and P2's mirrors it on the right, both below the countdown
-    /// and above the hoverboard. `VaultPresentationTests` checks this projection.
-    static let indicatorColumnX: Float = 0.55
+    /// Provisional indicator layout (pending G11), after Theo's Sketch: one
+    /// column of buttons on each corridor wall, P1's on the left and P2's on
+    /// the right, at the screen's outer edges. At the door's stop the door
+    /// projects behind the two mascots, so the columns stand nearer, on the
+    /// walls just ahead of the players, clear of both figures, the HUD, the
+    /// countdown and the lock light on every iPad landscape size.
+    /// `VaultPresentationTests` checks this projection.
+    static let indicatorColumnX: Float = 2.8
+    /// World depth of the columns while the door stands at its stop.
+    static let indicatorDepthZ: Float = -2.4
     static let indicatorHeights: [LaserVaultButton: Float] = [.top: 2.15, .middle: 1.6, .bottom: 1.05]
-    /// About 35 pt across at the door's distance.
-    static let indicatorSize: Float = 0.34
+    /// Bounding square of one button (its art is `buttonSize`).
+    static let indicatorSize: Float = 0.42
+    /// Theo's button art, 772 × 1050 px.
+    static let buttonSize: SIMD2<Float> = [0.31, 0.42]
     /// Countdown bar just below the lock light, narrow enough to stay clear of P1.
     static let countdownHeight: Float = 2.55
     static let countdownWidth: Float = 1.4
@@ -90,8 +96,10 @@ final class VaultPresentation {
 
     private let scene: LaserScene
     private let vaultDuration: Double
-    /// Parent of the countdown, number, indicators and outlines, on the door.
+    /// Parent of the countdown and number, on the door.
     let root = Entity()
+    /// Parent of the button columns and outlines, on the corridor walls.
+    let buttons = Entity()
     private var indicators: [PlayerID: [LaserVaultButton: (part: Entity, idle: Entity, active: Entity)]] = [:]
     private var outlines: [PlayerID: Entity] = [:]
     private let countdown = Entity()
@@ -151,18 +159,23 @@ final class VaultPresentation {
             digits[value] = digit
         }
         root.addChild(digitsRoot)
+        buttons.name = "vault.buttons"
+        buttons.isEnabled = false
+        buttons.position = [0, 0, Self.indicatorDepthZ]
+        scene.root.addChild(buttons)
+        let art = scene.vaultButtonArt
         for player in PlayerID.allCases {
             let x = (player == .player1 ? -1 : 1) * Self.indicatorColumnX
             var parts: [LaserVaultButton: (Entity, Entity, Entity)] = [:]
             for button in LaserVaultButton.allCases {
                 let part = Entity()
                 part.name = "vault.indicator.\(player.rawValue).\(button.rawValue)"
-                let idle = Self.face(Self.indicatorArt(active: false), fallback: 0x2A2560)
-                let active = Self.face(Self.indicatorArt(active: true), fallback: 0x3BCF7E)
+                let idle = Self.button(art?[VaultButtonArtKey(player: player, active: false)], player: player, active: false)
+                let active = Self.button(art?[VaultButtonArtKey(player: player, active: true)], player: player, active: true)
                 part.addChild(idle)
                 part.addChild(active)
                 part.position = [x, Self.indicatorHeights[button] ?? 1.6, 0.05]
-                root.addChild(part)
+                buttons.addChild(part)
                 parts[button] = (part, idle, active)
             }
             indicators[player] = parts
@@ -170,7 +183,7 @@ final class VaultPresentation {
             outline.name = "vault.outline.\(player.rawValue)"
             outline.position = [x, Self.outlineCenterY, 0.045]
             outline.isEnabled = false
-            root.addChild(outline)
+            buttons.addChild(outline)
             outlines[player] = outline
         }
     }
@@ -286,9 +299,11 @@ final class VaultPresentation {
             outline.scale = .one
             outline.isEnabled = false
         }
-        root.stopAllAnimations()
-        root.components.set(OpacityComponent(opacity: 1))
-        root.isEnabled = true
+        for part in [root, buttons] {
+            part.stopAllAnimations()
+            part.components.set(OpacityComponent(opacity: 1))
+            part.isEnabled = true
+        }
         indicatorsShown = true
         diagnostics.reveals += 1
     }
@@ -348,6 +363,7 @@ final class VaultPresentation {
         countdownDigit = nil
         // Let the last activation read, then fade the indicators out (cosmetic).
         Self.fadeOut(root, after: 0.3, duration: 0.5)
+        Self.fadeOut(buttons, after: 0.3, duration: 0.5)
         indicatorsShown = false
         diagnostics.opens += 1
     }
@@ -399,6 +415,8 @@ final class VaultPresentation {
     private func place(travelDistance: Float) {
         guard let anchor else { return }
         let depth = scene.mapping.interactionPlaneZ - (anchor - travelDistance)
+        // The wall columns travel with the door once it opens.
+        buttons.position.z = Self.indicatorDepthZ + (depth - scene.layout.vaultDoorStopZ)
         let nearCamera = scene.layout.cameraPosition.z - GameplayScenePresenter.cameraClearance
         scene.setVaultDoorDepth(depth < nearCamera ? depth : nil)
     }
@@ -414,6 +432,8 @@ final class VaultPresentation {
         countdownDigit = nil
         root.stopAllAnimations()
         root.isEnabled = false
+        buttons.stopAllAnimations()
+        buttons.isEnabled = false
         indicatorsShown = false
     }
 
@@ -498,6 +518,50 @@ final class VaultPresentation {
             material.opacityThreshold = 0.02
         }
         return ModelEntity(mesh: .generatePlane(width: indicatorSize, height: indicatorSize), materials: [material])
+    }
+
+    /// One button state: a clone of Theo's art from the `VaultDoor` scene, or the
+    /// code art without it. Active adds a white check, so state never relies on colour.
+    private static func button(_ template: Entity?, player: PlayerID, active: Bool) -> Entity {
+        guard let template else {
+            return face(indicatorArt(active: active), fallback: active ? 0x3BCF7E : 0x2A2560)
+        }
+        let face = template.clone(recursive: true)
+        face.transform = .identity
+        guard active else { return face }
+        var material = UnlitMaterial(applyPostProcessToneMap: false)
+        if let image = checkArt(), let texture = try? TextureResource(image: image, options: .init(semantic: .color)) {
+            material.color = .init(tint: .white, texture: .init(texture))
+            material.blending = .transparent(opacity: 1.0)
+            material.opacityThreshold = 0.02
+        }
+        let check = ModelEntity(mesh: .generatePlane(width: 0.2, height: 0.2), materials: [material])
+        check.name = "vault.indicator.check"
+        // Centred on the button's face, which sits toward the corridor in each side's art.
+        check.position = [(player == .player1 ? 1 : -1) * buttonSize.x * 0.14, 0, 0.003]
+        face.addChild(check)
+        return face
+    }
+
+    /// A white check with a dark rim, readable on the green button.
+    private static func checkArt() -> CGImage? {
+        let size = CGSize(width: 128, height: 128)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            let check = UIBezierPath()
+            check.move(to: CGPoint(x: 30, y: 66))
+            check.addLine(to: CGPoint(x: 54, y: 90))
+            check.addLine(to: CGPoint(x: 98, y: 38))
+            check.lineCapStyle = .round
+            check.lineJoinStyle = .round
+            color(0x1C1944).setStroke()
+            check.lineWidth = 26
+            check.stroke()
+            UIColor.white.setStroke()
+            check.lineWidth = 14
+            check.stroke()
+        }.cgImage
     }
 
     /// Idle: a lavender ring on a dark disc. Active: a green disc with a white check.

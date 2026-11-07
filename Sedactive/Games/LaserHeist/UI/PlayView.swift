@@ -153,10 +153,17 @@ private struct ReplayRoundView: View {
         .ignoresSafeArea()
         .background(.black)
         .overlay {
+            // One HUD at a time: the Sketch gameplay HUD, or (Debug, `-replayDebugHUD`)
+            // Jevon's text HUD for replay diagnostics. Results replaces either.
+            if let session, session.summary == nil, !Self.showsReplayDebugHUD {
+                GameplayHUD(model: hudModel(session)) { Task { await session.stop() } }
+            }
+        }
+        .overlay {
             if let final = session?.summary { ResultsView(summary: final, onRetry: retry) }
         }
         .overlay(alignment: .topLeading) {
-            if let session, session.summary == nil { ReplaySliceHUD(session: session) }
+            if let session, session.summary == nil, Self.showsReplayDebugHUD { ReplaySliceHUD(session: session) }
             if let startupError { Text("Replay could not start: \(startupError)").padding().background(.black).foregroundStyle(.white) }
             #if DEBUG
             if robotDemoActive {
@@ -197,7 +204,8 @@ private struct ReplayRoundView: View {
             #endif
         }
         .overlay(alignment: .bottomTrailing) {
-            if let session, session.phase == .running {
+            // The gameplay HUD's pause menu carries Leave Game; the debug HUD keeps this button.
+            if let session, session.phase == .running, Self.showsReplayDebugHUD {
                 Button("End round") { Task { await session.stop() } }
                     .buttonStyle(.borderedProminent)
                     .padding()
@@ -235,6 +243,30 @@ private struct ReplayRoundView: View {
     }
 
     #if DEBUG
+    private static let showsReplayDebugHUD = ProcessInfo.processInfo.arguments.contains("-replayDebugHUD")
+    #else
+    private static let showsReplayDebugHUD = false
+    #endif
+
+    /// The HUD's view of the session's authoritative state and events.
+    private func hudModel(_ session: GameSessionCoordinator) -> GameplayHUDModel {
+        var collected: Int?
+        var fixture = false
+        #if DEBUG
+        // `-diamondFixture`: the labelled synthetic Diamond Time (J05 pending), counted
+        // from the same script the scene's fixture diamonds follow.
+        if DiamondTimeFixture.isRequested, let state = session.state, state.phase == .diamondTime,
+           let start = session.events.last(where: { $0.kind == .phaseChanged(.diamondTime) })?.gameTime {
+            collected = DiamondTimeFixture.collectedCount(elapsed: state.gameTime - start)
+            fixture = true
+        }
+        #endif
+        return GameplayHUDModel(state: session.state, events: session.events, configuration: session.script.configuration,
+                                activityDuration: session.script.activityDuration,
+                                diamondsCollected: collected, diamondsAreFixture: fixture)
+    }
+
+    #if DEBUG
     /// Stands the mascots on the players' lanes, from the shared templates
     /// (loaded once per app run). `nil` if this view went away while loading:
     /// nothing is attached to a scene being discarded. Throws if an asset is
@@ -245,6 +277,12 @@ private struct ReplayRoundView: View {
         guard !Task.isCancelled else { return nil }
         scene.robotAvatars?.remove()
         let robots = RobotAvatarLayer(scene: scene, calibrations: calibrations, layout: layout, templates: templates)
+        // `-avatarFairness` (K04): mark the avatars' head tops, hands and soles beside the
+        // human evidence markers and band edges, to compare them at the laser plane.
+        robots.showsFairnessMarkers = ProcessInfo.processInfo.arguments.contains("-avatarFairness")
+        // `-normalizedLasers` (D07 candidate, not approved): draw each player's laser bands in
+        // their normalized avatar space for A/B comparison. Without it, beams stay as judged.
+        robots.normalizesLaserBands = ProcessInfo.processInfo.arguments.contains("-normalizedLasers")
         scene.robotAvatars = robots
         return robots
     }
