@@ -98,6 +98,27 @@
         }
       }
     }
+    func armTracking() {
+      do { _ = try camera.armBinding(request: camera.makeBindingRequest()) }
+      catch { message = "Binding refused: \(error). Full rebind starts a new capture generation." }
+    }
+    func cancelTracking() { camera.cancelBinding() }
+    @discardableResult func rebindTracking() -> Task<Void, Never>? {
+      guard control == nil, shutdown == nil else { return nil }
+      let request: CameraBindingRequest
+      do { request = try camera.makeBindingRequest() } // stamp the actual button intent, not a later Task
+      catch { message = "Full rebind refused: \(error)"; return nil }
+      let token = UUID()
+      controlToken = token
+      let task = Task { [weak self] in
+        guard let self else { return }
+        defer { if self.controlToken == token { self.control = nil; self.controlToken = nil } }
+        do { try await self.camera.requestFullRebind(request: request) }
+        catch { if self.controlToken == token { self.message = "Full rebind refused: \(error)" } }
+      }
+      control = task
+      return task
+    }
     func start(observeFor30Seconds: Bool = false) {
       guard control == nil, shutdown == nil, !runningObservation else { return }
       let token = UUID()
@@ -229,6 +250,23 @@
           "Center Stage active \(negotiated.centerStageActive); stabilization \(negotiated.stabilizationEnabled); no mirrored source"
         )
       }
+      let tracking = camera.frames.tracking.snapshot
+      lines.append("B2b EXPERIMENTAL DIAGNOSTICS ONLY — no calibrated gameplay or identity guarantee.")
+      lines.append("Policy: \(tracking.policyVersion); control revision \(tracking.revision); request \(tracking.requestID?.uuidString ?? "none"); status \(tracking.reason)")
+      lines.append("Tracking accepted / rejected / refused: \(tracking.accepted) / \(tracking.rejected) / \(tracking.refusals); expiry / invalidation: \(tracking.expiries) / \(tracking.invalidations); watermark \(tracking.watermark)")
+      lines.append("Stale source/control/order/age rejects: \(tracking.staleRejected); last capture → final tracking commit: \(number(tracking.captureToCommitAge)) s")
+      lines.append("Last accepted pair coverage: \(tracking.mutualCoreCount.map(String.init) ?? "unavailable")/4 (Option A; not identity confidence)")
+      if let ack = tracking.acknowledgment {
+        lines.append("Atomic binding acknowledgment #\(tracking.acknowledgments): request \(ack.requestID), revision \(ack.source.controlRevision), frame \(ack.source.frameID), capturedAt \(ack.source.capturedAt)")
+      }
+      if let current = tracking.latest {
+        if let source = current.source {
+          lines.append("Tracking source: generation \(source.context.generation), epoch \(source.context.epoch), geometry \(source.context.geometryRevision), frame \(source.frameID), control \(source.controlRevision), capturedAt \(source.capturedAt), age \(number(now() - source.capturedAt)) s; evaluatedAt \(number(current.evaluatedAt))")
+        }
+        for (label, slot) in [("P1", current.player1), ("P2", current.player2)] {
+          lines.append("\(label): \(slot.state.rawValue) / \(slot.reason.rawValue), frame-local candidate \(slot.candidateID.map(String.init) ?? "none"), rebind \(slot.requiresRebind), last confirmed \(number(slot.lastConfirmedAt))")
+        }
+      } else { lines.append("No current authorized tracking result.") }
       let rawPose = camera.frames.poses.snapshot
       let poseStats = rawPose.statistics
       lines.append("LH-13B1 RAW VISION ONLY — temporary candidates; no P1/P2 binding or calibration.")
@@ -335,6 +373,12 @@
               Button("Observe 30 seconds") { model.start(observeFor30Seconds: true) }
                 .disabled(model.runningObservation)
             }.buttonStyle(.bordered)
+            HStack {
+              Button("Arm pair binding") { model.armTracking() }
+              Button("Cancel binding") { model.cancelTracking() }
+              Button("Full rebind (restart camera)") { model.rebindTracking() }
+            }.buttonStyle(.bordered)
+            Text("P1 = canonical image-right (mirrored preview-left). Binding is diagnostic only.")
             Toggle(
               "DEBUG preview (max 5 Hz)",
               isOn: Binding(get: { model.previewEnabled }, set: { model.setPreviewEnabled($0) }))

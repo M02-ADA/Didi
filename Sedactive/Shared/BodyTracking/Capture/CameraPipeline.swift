@@ -4,6 +4,7 @@ import CoreVideo
 import Dispatch
 import Foundation
 import Synchronization
+import UIKit
 
 // Capture-only configuration and status. CP1 hardware-independent contracts stay unchanged.
 nonisolated enum CameraFailure: Error, Equatable, Sendable {
@@ -128,27 +129,46 @@ nonisolated final class CameraEventChannel: Sendable {
   let context: CameraSourceContext
   let stream: AsyncStream<CameraHardwareEvent>
   private let continuation: AsyncStream<CameraHardwareEvent>.Continuation
-  private struct Signals { var closed = false }
+  private struct Signals {
+    var closed = false
+    var background: (any NSObjectProtocol)?
+  }
   private let signals = Mutex(Signals())
   private let frames: FrameStore
-  init(context: CameraSourceContext, frames: FrameStore) {
+  private let notificationCenter: NotificationCenter
+  init(context: CameraSourceContext, frames: FrameStore,
+    notificationCenter: NotificationCenter = .default) {
+    self.notificationCenter = notificationCenter
     self.context = context
     self.frames = frames
     let pair = AsyncStream<CameraHardwareEvent>.makeStream(bufferingPolicy: .bufferingNewest(16))
     stream = pair.stream
     continuation = pair.continuation
+    signals.withLock {
+      $0.background = notificationCenter.addObserver(
+        forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil
+      ) { [weak self] _ in self?.emit(.interrupted(nil)) }
+    }
+  }
+  deinit {
+    signals.withLock {
+      if let token = $0.background { notificationCenter.removeObserver(token) }
+    }
   }
   func emit(_ event: CameraHardwareEvent) {
     signals.withLock {
       guard !$0.closed else { return }
       switch event {
-      case .interrupted:
+      case .interrupted, .stopped:
+        frames.tracking.sourceLost(context)
         frames.suspend(context)
-      case .stopped: frames.suspend(context)
-      case .failure: frames.end(context)
+      case .failure:
+        frames.tracking.sourceLost(context)
+        frames.end(context)
       default: break
       }
       if case .dropped = continuation.yield(event) {
+        frames.tracking.sourceLost(context)
         frames.end(context)
         continuation.yield(.failure(.eventOverflow))
         $0.closed = true
@@ -163,6 +183,8 @@ nonisolated final class CameraEventChannel: Sendable {
     signals.withLock {
       $0.closed = true
       continuation.finish()
+      if let token = $0.background { notificationCenter.removeObserver(token) }
+      $0.background = nil
     }
   }
 }
@@ -192,7 +214,9 @@ protocol CameraDriving: Actor {
   private var signals: Task<Void, Never>?
   private var channel: CameraEventChannel?
   private var observer: (UUID, @MainActor (CameraPipelineState) -> Void)?
+  private let notificationCenter: NotificationCenter
   private var notifying = false
+  private var bindingRestart: (request: CameraBindingRequest, token: UUID, task: Task<Void, Error>)?
   private(set) var status: CameraPipelineStatus = .stopped
   private(set) var negotiated: CameraNegotiatedConfiguration?
   var state: CameraPipelineState {
@@ -201,16 +225,21 @@ protocol CameraDriving: Actor {
   }
   init(
     permission: any CameraPermissionChecking = SystemCameraPermission(),
-    driver: any CameraDriving = AVCameraDriver(), sink: (any CameraFrameSink)? = nil
+    driver: any CameraDriving = AVCameraDriver(), sink: (any CameraFrameSink)? = nil,
+    notificationCenter: NotificationCenter = .default
   ) {
+    self.notificationCenter = notificationCenter
     self.permission = permission
     self.driver = driver
     let store = FrameStore()
     frames = store
-    self.sink = sink ?? CameraCopySink(metrics: store.metrics, poses: store.poses)
+    store.tracking.observeApplicationLifecycle(notificationCenter,
+      initiallyForeground: UIApplication.shared.applicationState != .background)
+    self.sink = sink ?? CameraCopySink(metrics: store.metrics, poses: store.poses, tracking: store.tracking)
   }
   deinit {
     operation?.cancel()
+    bindingRestart?.task.cancel()
     signals?.cancel()
     processing?.task.cancel()
     channel?.finish()
@@ -219,6 +248,65 @@ protocol CameraDriving: Actor {
       let native = driver
       Task { await native.stop(context: context) }
     }
+  }
+  func makeBindingRequest() throws -> CameraBindingRequest {
+    guard !notifying else { throw CameraFailure.operationConflict }
+    return try frames.tracking.makeBindingRequest()
+  }
+  /// Diagnostic control boundary; camera activation never invokes this implicitly.
+  @discardableResult func armBinding(request: CameraBindingRequest) throws -> UInt64 {
+    guard !notifying, bindingRestart == nil, status == .running else {
+      throw CameraFailure.operationConflict
+    }
+    return try frames.tracking.arm(request: request)
+  }
+  func cancelBinding() {
+    bindingRestart?.task.cancel()
+    // Keep the single operation occupied until native/worker cleanup actually exits.
+    frames.tracking.revoke()
+  }
+  func requestFullRebind(request: CameraBindingRequest) async throws {
+    guard !notifying else { throw CameraFailure.operationConflict }
+    try frames.tracking.validateRequest(request)
+    if let bindingRestart {
+      guard bindingRestart.request == request else { throw CameraFailure.operationConflict }
+      try await awaitRestart(bindingRestart.task, request: request)
+      return
+    }
+    guard try frames.tracking.prepareRestart(request) else { return }
+    let config = configuration ?? .experimental
+    let token = UUID()
+    let task = Task { @MainActor [weak self] in
+      guard let self else { throw CancellationError() }
+      try self.checkRestart(request)
+      await self.stopCapture()
+      try self.checkRestart(request)
+      try await self.startCapture(generation: UUID(), configuration: config, bindingRequest: request)
+      try self.checkRestart(request)
+      guard let context = self.context, self.status == .running else {
+        throw CameraFailure.operationConflict
+      }
+      _ = try self.frames.tracking.completeRestart(request, context: context)
+    }
+    bindingRestart = (request, token, task)
+    defer { if bindingRestart?.token == token { bindingRestart = nil } }
+    do { try await awaitRestart(task, request: request) }
+    catch { frames.tracking.abandonRequest(request); throw error }
+  }
+  private func awaitRestart(_ task: Task<Void, Error>, request: CameraBindingRequest) async throws {
+    let gate = frames.tracking
+    try await withTaskCancellationHandler {
+      try await task.value
+    } onCancel: {
+      task.cancel()
+      gate.abandonRequest(request)
+    }
+  }
+  private func checkRestart(_ request: CameraBindingRequest?) throws {
+    try Task.checkCancellation()
+    guard let request else { return }
+    do { try frames.tracking.validateRestart(request) }
+    catch { throw CancellationError() }
   }
   func permissionStatus() async -> CameraPermission { await permission.status() }
   func observe(_ callback: @escaping @MainActor (CameraPipelineState) -> Void) throws -> UUID {
@@ -237,9 +325,17 @@ protocol CameraDriving: Actor {
     observer.1(state)
   }
   func start(generation: UUID, configuration: CameraCaptureConfiguration = .experimental)
-    async throws
+    async throws {
+    try await startCapture(generation: generation, configuration: configuration, bindingRequest: nil)
+  }
+  private func startCapture(generation: UUID, configuration: CameraCaptureConfiguration,
+    bindingRequest: CameraBindingRequest?) async throws
   {
-    guard !notifying else { throw CameraFailure.operationConflict }
+    guard !notifying, frames.tracking.isForeground else { throw CameraFailure.operationConflict }
+    if bindingRestart != nil, bindingRestart?.request != bindingRequest {
+      throw CameraFailure.operationConflict
+    }
+    try checkRestart(bindingRequest)
     if let context {
       guard context.generation == generation, self.configuration == configuration else {
         throw CameraFailure.operationConflict
@@ -253,18 +349,25 @@ protocol CameraDriving: Actor {
     guard !usedGenerations.contains(generation), geometryRevision < .max else {
       throw CameraFailure.staleOperation
     }
-    usedGenerations.insert(generation)
-    geometryRevision += 1
-    let current = CameraSourceContext(
-      generation: generation, epoch: UUID(), geometryRevision: geometryRevision)
-    context = current
-    self.configuration = configuration
-    negotiated = nil
+    let allocate = {
+      self.usedGenerations.insert(generation)
+      self.geometryRevision += 1
+      let current = CameraSourceContext(
+        generation: generation, epoch: UUID(), geometryRevision: self.geometryRevision)
+      self.context = current
+      self.configuration = configuration
+      self.negotiated = nil
+      return current
+    }
+    let current: CameraSourceContext
+    if let bindingRequest {
+      current = try frames.tracking.authorizeRestartSource(bindingRequest, allocate: allocate)
+    } else { current = allocate() }
     status = .requestingPermission
     notify()
     let task = Task { @MainActor [weak self] in
       guard let self else { throw CancellationError() }
-      try await self.startSource(current, configuration: configuration)
+      try await self.startSource(current, configuration: configuration, bindingRequest: bindingRequest)
     }
     operation = task
     do {
@@ -275,7 +378,10 @@ protocol CameraDriving: Actor {
         task.cancel()
         store.end(current)
         Task { @MainActor [weak self] in
-          if self?.context == current { await self?.stop() }
+          if self?.context == current {
+            if bindingRequest != nil { await self?.stopCapture() }
+            else { await self?.stop() }
+          }
         }
       }
       if context == current { operation = nil }
@@ -283,8 +389,12 @@ protocol CameraDriving: Actor {
       if context == current {
         operation = nil
         if error is CancellationError {
-          await stop()
+          if bindingRequest != nil { await stopCapture() }
+          else { await stop() }
         } else {
+          // Permission/configuration can fail before FrameStore attaches this replacement.
+          // Revoke only its exact receipt before awaiting native teardown.
+          if let bindingRequest { frames.tracking.abandonRequest(bindingRequest) }
           await fail(current, error: (error as? CameraFailure) ?? .processingFailure)
         }
       }
@@ -295,25 +405,29 @@ protocol CameraDriving: Actor {
     guard context == current, !Task.isCancelled else { throw CancellationError() }
   }
   private func startSource(
-    _ current: CameraSourceContext, configuration: CameraCaptureConfiguration
+    _ current: CameraSourceContext, configuration: CameraCaptureConfiguration,
+    bindingRequest: CameraBindingRequest?
   ) async throws {
     let authorization = await permission.status()
     try check(current)
+    try checkRestart(bindingRequest)
     switch authorization {
     case .denied: throw CameraFailure.permissionDenied
     case .restricted: throw CameraFailure.permissionRestricted
     case .notDetermined:
       let granted = await permission.request()
       try check(current)
+      try checkRestart(bindingRequest)
       guard granted else { throw CameraFailure.permissionDenied }
     case .authorized: break
     }
     if let previous = processing { await previous.task.value }
     try check(current)
+    try checkRestart(bindingRequest)
     status = .configuring
     notify()
     let wake = frames.begin(current)
-    let events = CameraEventChannel(context: current, frames: frames)
+    let events = CameraEventChannel(context: current, frames: frames, notificationCenter: notificationCenter)
     channel = events
     signals = Task { @MainActor [weak self] in
       for await event in events.stream {
@@ -326,6 +440,7 @@ protocol CameraDriving: Actor {
     let pump = Task { @concurrent in
       for await _ in wake {
         if Task.isCancelled { break }
+        await sink.updateTracking()
         do {
           if let lease = try store.acquire(current) {
             do {
@@ -352,15 +467,22 @@ protocol CameraDriving: Actor {
       await sink.reset()
     }
     processing = (current.epoch, pump)
+    try checkRestart(bindingRequest)
     let result = try await driver.start(
       configuration: configuration, context: current, frames: frames, events: events)
     try check(current)
+    try checkRestart(bindingRequest)
     if case .failed(let failure) = status { throw failure }
     negotiated = result
     if case .configuring = status { status = .running }
     notify()
   }
   func stop() async {
+    guard !notifying else { return }
+    cancelBinding()
+    await stopCapture()
+  }
+  private func stopCapture() async {
     guard !notifying else { return }
     guard let old = context else { return }
     context = nil
@@ -384,6 +506,7 @@ protocol CameraDriving: Actor {
   }
   private func fail(_ current: CameraSourceContext, error: CameraFailure) async {
     guard context == current else { return }
+    frames.tracking.sourceLost(current)
     frames.end(current)
     channel?.finish()
     channel = nil

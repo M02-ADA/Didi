@@ -105,11 +105,14 @@ nonisolated private final class CameraSourceReservation: Sendable {
 /// Private Data keeps its reservation alive through every reader, including retired epochs.
 nonisolated final class CameraSourceFrame: Sendable {
   let metadata: CameraFrameMetadata
+  let trackingAdmission: CameraTrackingAdmission
   let admittedAt: Double
   private let bytes: Data
   private let reservation: CameraSourceReservation
-  fileprivate init(metadata: CameraFrameMetadata, bytes: Data, reservation: CameraSourceReservation)
+  fileprivate init(metadata: CameraFrameMetadata, bytes: Data, reservation: CameraSourceReservation,
+    admission: CameraTrackingAdmission)
   {
+    trackingAdmission = admission
     self.metadata = metadata
     admittedAt = CameraHostClock.now()
     self.bytes = bytes
@@ -140,12 +143,15 @@ nonisolated final class FrameStore: Sendable {
   let maximumFrameBytes: Int
   let metrics: CameraCaptureMetrics
   let poses = CameraPoseResults()
+  let tracking: CameraTrackingGate
   #if DEBUG
     let preview: CameraDiagnosticPreview
   #endif
   private let budget: CameraSourceBudget
   private let state = Mutex(State())
-  init(maximumFrameBytes: Int = 4 * 1024 * 1024, maximumRetainedBytes: Int = 12 * 1024 * 1024) {
+  init(maximumFrameBytes: Int = 4 * 1024 * 1024, maximumRetainedBytes: Int = 12 * 1024 * 1024,
+    tracking: CameraTrackingGate = CameraTrackingGate()) {
+    self.tracking = tracking
     precondition(maximumFrameBytes > 0 && maximumRetainedBytes > 0)
     self.maximumFrameBytes = maximumFrameBytes
     let metrics = CameraCaptureMetrics()
@@ -166,6 +172,7 @@ nonisolated final class FrameStore: Sendable {
       $0.context = context
       $0.admitting = true
       poses.begin(context)
+      tracking.begin(context, wake: pair.continuation)
       #if DEBUG
         preview.updateContext(context)
       #endif
@@ -183,6 +190,7 @@ nonisolated final class FrameStore: Sendable {
       $0.context = nil
       $0.admitting = false
       poses.invalidate(context)
+      tracking.invalidate(context, ended: true)
       #if DEBUG
         preview.invalidate(context)
       #endif
@@ -196,6 +204,7 @@ nonisolated final class FrameStore: Sendable {
       guard $0.context == context else { return }
       $0.admitting = false
       poses.invalidate(context)
+      tracking.invalidate(context, ended: false)
       #if DEBUG
         preview.invalidate(context)
       #endif
@@ -207,6 +216,7 @@ nonisolated final class FrameStore: Sendable {
       if $0.context == context {
         $0.admitting = true
         poses.begin(context)
+        tracking.resume(context)
         #if DEBUG
           preview.updateContext(context)
         #endif
@@ -241,7 +251,7 @@ nonisolated final class FrameStore: Sendable {
       CVPixelBufferGetPixelFormatType(buffer) == d.pixelFormat,
       d.byteCount <= maximumFrameBytes
     else { throw CameraFrameError.invalidDescriptor }
-    let reservation: CameraSourceReservation = try state.withLock {
+    let (reservation, admission): (CameraSourceReservation, CameraTrackingAdmission) = try state.withLock {
       guard $0.context == metadata.context, $0.admitting else {
         $0.diagnostics.increment(\.staleDrops)
         throw CameraFrameError.staleContext
@@ -255,10 +265,11 @@ nonisolated final class FrameStore: Sendable {
         $0.diagnostics.increment(\.capacityDrops)
         throw CameraFrameError.capacity
       }
+      guard let admission = tracking.admit(metadata) else { throw CameraFrameError.staleContext }
       do {
         let reservation = try budget.reserve(d.byteCount)
         $0.construction = true
-        return reservation
+        return (reservation, admission)
       } catch {
         $0.diagnostics.increment(\.budgetDrops)
         $0.diagnostics.increment(\.capacityDrops)
@@ -282,7 +293,7 @@ nonisolated final class FrameStore: Sendable {
       }
     }
     metrics.copied(metadata.context, seconds: CameraHostClock.now() - copyStart)
-    let frame = CameraSourceFrame(metadata: metadata, bytes: data, reservation: reservation)
+    let frame = CameraSourceFrame(metadata: metadata, bytes: data, reservation: reservation, admission: admission)
     try state.withLock {
       guard $0.context == metadata.context, $0.admitting else {
         $0.diagnostics.increment(\.staleDrops)
@@ -341,20 +352,28 @@ nonisolated enum CameraSourceTime {
 protocol CameraFrameSink: Actor {
   func consume(_ frame: CameraSourceFrame) async throws
   func reset() async
+  func updateTracking() async
 }
+extension CameraFrameSink { func updateTracking() async {} }
 actor CameraCopySink: CameraFrameSink {
   private let metrics: CameraCaptureMetrics?
   private let poses: CameraPoseResults?
+  private let tracking: CameraTrackingGate?
+  private var motion: MotionEngine?
   private let makeDetector: @Sendable () -> any CameraPoseDetecting
   private var detector: (any CameraPoseDetecting)?
   init(metrics: CameraCaptureMetrics? = nil, poses: CameraPoseResults? = nil,
+    tracking: CameraTrackingGate? = nil,
     makeDetector: @escaping @Sendable () -> any CameraPoseDetecting = { PoseEstimator() }) {
     self.metrics = metrics
     self.poses = poses
+    self.tracking = tracking
+    if let tracking { motion = try? MotionEngine(policy: tracking.policy) }
     self.makeDetector = makeDetector
   }
   private var workspace: CameraReconstructionWorkspace?
   func consume(_ frame: CameraSourceFrame) throws {
+    updateTracking()
     if workspace?.width != frame.metadata.descriptor.width
       || workspace?.height != frame.metadata.descriptor.height
     {
@@ -374,15 +393,53 @@ actor CameraCopySink: CameraFrameSink {
         let observations = try detector!.detect(in: buffer)
         let completed = CameraHostClock.now()
         let result = try CameraPoseAdapter.convert(observations, source: frame.metadata)
-        poses.finish(result, ticket: ticket, startedAt: started, completedAt: completed,
-          cancelled: Task.isCancelled)
+        if poses.finish(result, ticket: ticket, startedAt: started, completedAt: completed,
+          cancelled: Task.isCancelled) {
+          track(result, frame: frame)
+        }
       }
     } catch {
       poses.failed(ticket)
+      trackFailure(frame)
       throw error  // No fallback to fabricated poses or to copy-only production behavior.
     }
   }
+  func updateTracking() {
+    guard let tracking, motion != nil else { return }
+    tracking.synchronize { control in
+      var staged = motion!
+      let snapshot = try staged.synchronize(control)
+      motion = staged
+      return snapshot
+    }
+  }
+  private func track(_ result: CameraPoseResult, frame: CameraSourceFrame) {
+    guard let tracking, motion != nil, frame.trackingAdmission.requestID != nil else { return }
+    updateTracking()
+    do {
+      let staged = try motion!.staged(result, admission: frame.trackingAdmission)
+      let core: Set<BodyJoint> = [.leftShoulder, .rightShoulder, .leftHip, .rightHip]
+      let observed = result.frame.candidates.map { candidate in
+        Set(candidate.joints.filter { core.contains($0.key)
+          && $0.value.confidence >= tracking.policy.minimumJointConfidence }.map(\.key))
+      }
+      let mutual = observed.count == 2 ? observed[0].intersection(observed[1]).count : nil
+      tracking.finish(staged, admission: frame.trackingAdmission, source: frame.metadata,
+        mutualCoreCount: mutual, cancelled: Task.isCancelled) { motion = staged }
+    } catch { tracking.rejected(error) } // Tracking refusal never becomes a fabricated pose/camera failure.
+  }
+  private func trackFailure(_ frame: CameraSourceFrame) {
+    guard let tracking, motion != nil, frame.trackingAdmission.requestID != nil else { return }
+    updateTracking()
+    do {
+      let staged = try motion!.stagedFailure(frame.metadata, admission: frame.trackingAdmission)
+      tracking.finish(staged, admission: frame.trackingAdmission, source: frame.metadata,
+        mutualCoreCount: nil, cancelled: Task.isCancelled) { motion = staged }
+    } catch { tracking.rejected(error) }
+  }
   func reset() {
+    // Retain the core's last-bound-generation guard across native stop/restart.
+    updateTracking()
     workspace = nil
     detector = nil
     metrics?.workspace(bytes: 0)
