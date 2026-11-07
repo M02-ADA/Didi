@@ -90,7 +90,7 @@ final class LiveAvatarLabModel {
     @ObservationIgnored private var lastSyntheticEmit = 0.0
 
     @ObservationIgnored let scene = LaserScene()
-    @ObservationIgnored private var template: Entity?
+    @ObservationIgnored private var templates: [PlayerID: Entity]?
     @ObservationIgnored private var layer: RobotAvatarLayer?
     @ObservationIgnored private var pipeline: CameraPipeline?
     @ObservationIgnored private var sink: LivePoseSink?
@@ -139,8 +139,8 @@ final class LiveAvatarLabModel {
         }
         content.add(scene.root)
         tracker.setJumpTuning(jumpTuning)
-        template = await RobotAvatarLayer.loadTemplate()
-        if template == nil { cameraStatus = "Robot asset failed to load" }
+        templates = await RobotAvatarLayer.loadTemplates()
+        if templates == nil { cameraStatus = "Robot asset failed to load" }
         renderSubscription = content.subscribe(to: SceneEvents.Update.self) { [weak self] _ in
             self?.rendered()
         }
@@ -151,14 +151,14 @@ final class LiveAvatarLabModel {
     /// stand in the bind pose, dimmed, from a placeholder calibration that nothing drives.
     private func rebuildRigs() {
         layer?.remove()
-        guard let template else { return }
+        guard let templates else { return }
         var calibrations = tracker.calibrations
         var layout = tracker.layout
         if calibrations.isEmpty, let input = try? LaserReplayScript.load().input {
             calibrations = input.configuration.calibrations.filter { mode.players.contains($0.key) }
             layout = input.configuration.playerPlaneLayout
         }
-        layer = RobotAvatarLayer(scene: scene, calibrations: calibrations, layout: layout, template: template)
+        layer = RobotAvatarLayer(scene: scene, calibrations: calibrations, layout: layout, templates: templates)
         // 30 Hz camera poses shown smoothly at render rate; 30 ms keeps the lag to about one camera frame.
         layer?.smoothing = 0.03
         layer?.footPlanting = footPlanting

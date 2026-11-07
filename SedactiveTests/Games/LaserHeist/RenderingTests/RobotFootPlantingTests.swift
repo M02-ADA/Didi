@@ -36,13 +36,13 @@ struct RobotFootPlantingTests {
         }
     }
 
-    private func template() async throws -> Entity { try #require(await RobotAvatarLayer.loadTemplate()) }
+    private func templates() async throws -> [PlayerID: Entity] { try #require(await RobotAvatarLayer.loadTemplates()) }
 
     /// Plays one scenario (4 s) and returns every rendered frame's diagnostics.
     private func play(_ scenario: RobotDemoScenario, planting: Bool, seconds: Double = RobotDemoScenario.duration) async throws -> [Tick] {
         let input = try LaserReplayScript.load().input
         let layer = RobotAvatarLayer(scene: LaserScene(), calibrations: input.configuration.calibrations,
-                                     layout: input.configuration.playerPlaneLayout, template: try await template())
+                                     layout: input.configuration.playerPlaneLayout, templates: try await templates())
         layer.footPlanting = planting
         layer.diagnosticsEnabled = true
         layer.smoothing = 0.03
@@ -308,7 +308,7 @@ struct RobotFootPlantingTests {
     @Test func plannerAndSolveForTwoRobotsFitAFrame() async throws {
         let input = try LaserReplayScript.load().input
         let layer = RobotAvatarLayer(scene: LaserScene(), calibrations: input.configuration.calibrations,
-                                     layout: input.configuration.playerPlaneLayout, template: try await template())
+                                     layout: input.configuration.playerPlaneLayout, templates: try await templates())
         layer.smoothing = 0.03
         let sequence = RobotDemoSequence(configuration: input.configuration, cameraGeometryRevision: input.cameraGeometryRevision,
                                          only: .stepRight)

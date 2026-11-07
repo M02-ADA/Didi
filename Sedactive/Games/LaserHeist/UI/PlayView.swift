@@ -117,9 +117,9 @@ private struct ReplayRoundView: View {
             // time-varying body and joint data (no camera, no session, no lasers); see `RobotDemo`.
             if let only = RobotDemoDriver.requested() {
                 scene.isLaserVisible = false
-                if let input = try? LaserReplayScript.load().input, let template = await RobotAvatarLayer.loadTemplate() {
+                if let input = try? LaserReplayScript.load().input, let templates = await RobotAvatarLayer.loadTemplates() {
                     let robots = RobotAvatarLayer(scene: scene, calibrations: input.configuration.calibrations,
-                                                  layout: input.configuration.playerPlaneLayout, template: template)
+                                                  layout: input.configuration.playerPlaneLayout, templates: templates)
                     scene.robotAvatars = robots
                     // As in the live lab: 30 Hz poses shown at render rate, feet diagnostics on.
                     robots.smoothing = 0.03
@@ -146,9 +146,9 @@ private struct ReplayRoundView: View {
                 #if DEBUG
                 // 3D robot in the replay round: `-robotReplay` stands the robots in place of the
                 // pictograms, driven by the replay's body snapshots through the gameplay presenter.
-                if arguments.contains("-robotReplay"), let template = await RobotAvatarLayer.loadTemplate() {
+                if arguments.contains("-robotReplay"), let templates = await RobotAvatarLayer.loadTemplates() {
                     scene.robotAvatars = RobotAvatarLayer(scene: scene, calibrations: script.input.configuration.calibrations,
-                                                          layout: script.input.configuration.playerPlaneLayout, template: template)
+                                                          layout: script.input.configuration.playerPlaneLayout, templates: templates)
                 }
                 #endif
                 let replay = GameSessionCoordinator(script: script)

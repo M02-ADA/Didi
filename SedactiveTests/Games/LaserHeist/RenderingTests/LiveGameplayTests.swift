@@ -136,9 +136,9 @@ struct LiveGameplayTests {
     @Test func posingRobotsDoesNotChangeTheVerdicts() async throws {
         let script = [LiveSyntheticPlayer(missEvery: 2)]
         let plain = try play(.single, script)
-        let template = try #require(await RobotAvatarLayer.loadTemplate())
+        let templates = try #require(await RobotAvatarLayer.loadTemplates())
         let (tracker, _) = try calibrated(script.map(\.body), mode: .single)
-        let robots = RobotAvatarLayer(scene: LaserScene(), calibrations: tracker.calibrations, layout: tracker.layout, template: template)
+        let robots = RobotAvatarLayer(scene: LaserScene(), calibrations: tracker.calibrations, layout: tracker.layout, templates: templates)
         let posed = try play(.single, script, robots: robots)
         #expect(plain.reports.map(\.judgement) == posed.reports.map(\.judgement))
         #expect(plain.reports.map(\.frameID) == posed.reports.map(\.frameID))

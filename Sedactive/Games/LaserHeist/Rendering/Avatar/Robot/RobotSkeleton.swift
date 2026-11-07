@@ -8,8 +8,9 @@ import Foundation
 import RealityKit
 import simd
 
-// The avatar (`mascot.usdz`, Codex's final colour-corrected orange mascot,
-// unchanged): one skinned mesh on a 20-joint UsdSkel, 1.398 m tall, origin
+// The avatar (`mascot-p1-lemon.usdz` / `mascot-p2-tangerine.usdz`, Codex's
+// two colour variants of the final mascot, unchanged; identical rig and
+// geometry, so this one description and `modelHeight` hold for both): one skinned mesh on a 20-joint UsdSkel, 1.398 m tall, origin
 // between the feet with the soles on it, +Y up, facing −Z, +X = the
 // avatar's anatomical right. Under our camera at +Z looking down −Z the
 // virtual camera sees its back, and its right side is on screen right.

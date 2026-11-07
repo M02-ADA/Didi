@@ -6,7 +6,7 @@
 #if DEBUG
 import simd
 
-/// Arm clearance for the orange mascot's oversized head (Codex's
+/// Arm clearance for the mascot's oversized head, both colour variants (Codex's
 /// `handoff/MascotPoseEnvelope.swift`, values unchanged). Its shoulders sit
 /// under the cheeks, so an upper arm aimed straight up would pass through
 /// the head. Rising arm directions are turned outward before the solver

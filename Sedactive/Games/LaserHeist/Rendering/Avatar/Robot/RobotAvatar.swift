@@ -328,12 +328,23 @@ final class RobotAvatarLayer {
         }
     }
 
-    /// The bundled avatar (`mascot.usdz`, Codex's final colour-corrected
-    /// orange mascot, unchanged). Rollback: see the robot README.
-    static let resourceName = "mascot"
+    /// Each player's bundled avatar: the two approved colour variants of the
+    /// same mascot (Codex's `LaserHeist-Mascot-Color-Variants`; identical mesh,
+    /// skin weights, 20-joint skeleton and bind pose, only the body colour
+    /// differs). P1 Lemon `#F6CA58`, P2 Tangerine `#F78146` (byte-identical
+    /// to the earlier orange `mascot.usdz`). Keyed only by the established
+    /// `PlayerID`: never by screen position, lane or body size. Rollback: see
+    /// the robot README.
+    nonisolated static func resourceName(for player: PlayerID) -> String {
+        switch player {
+        case .player1: "mascot-p1-lemon"
+        case .player2: "mascot-p2-tangerine"
+        }
+    }
     /// Turn rising arm targets outward so they clear the mascot's large head
-    /// (`MascotPoseEnvelope`). Tied to the asset: another avatar never gets it.
-    static let headClearance = resourceName == "mascot"
+    /// (`MascotPoseEnvelope`). Tied to the asset: every player's resource is a
+    /// variant of that mascot; another avatar never gets it.
+    static let headClearance = PlayerID.allCases.allSatisfy { resourceName(for: $0).hasPrefix("mascot") }
     /// Every robot's standing height on screen, in metres: one shared size for
     /// P1 and P2 (the size P1's robot had before sizes were equalised). Player
     /// height never changes it; see `RobotRetargeter.motionScale`.
@@ -369,9 +380,25 @@ final class RobotAvatarLayer {
     private var shown: [PlayerID: Shown] = [:]
     private var lastRender: Double?
 
-    static func loadTemplate(bundle: Bundle = .main) async -> Entity? {
-        guard let url = bundle.url(forResource: resourceName, withExtension: "usdz") else { return nil }
+    /// One player's avatar, loaded from the bundle.
+    static func loadTemplate(for player: PlayerID, bundle: Bundle = .main) async -> Entity? {
+        guard let url = bundle.url(forResource: resourceName(for: player), withExtension: "usdz") else { return nil }
         return try? await Entity(contentsOf: url)
+    }
+
+    /// Every player's avatar, each resource loaded once; `nil` unless all load.
+    static func loadTemplates(bundle: Bundle = .main) async -> [PlayerID: Entity]? {
+        var byResource: [String: Entity] = [:]
+        var templates: [PlayerID: Entity] = [:]
+        for player in PlayerID.allCases {
+            let name = resourceName(for: player)
+            if byResource[name] == nil {
+                guard let template = await loadTemplate(for: player, bundle: bundle) else { return nil }
+                byResource[name] = template
+            }
+            templates[player] = byResource[name]
+        }
+        return templates
     }
 
     /// The skinned model: the descendant with joints.
@@ -381,10 +408,13 @@ final class RobotAvatarLayer {
         return nil
     }
 
-    init(scene: LaserScene, calibrations: [PlayerID: PlayerCalibration], layout: PlayerPlaneLayout, template: Entity) {
+    /// `templates` from `loadTemplates()`: each player gets a clone of its own
+    /// colour variant; one solver setup, size and lighting for every player.
+    init(scene: LaserScene, calibrations: [PlayerID: PlayerCalibration], layout: PlayerPlaneLayout, templates: [PlayerID: Entity]) {
         self.scene = scene
         for player in PlayerID.allCases {
-            guard let entity = scene.players[player], let calibration = calibrations[player] else { continue }
+            guard let entity = scene.players[player], let calibration = calibrations[player],
+                  let template = templates[player] else { continue }
             let robot = template.clone(recursive: true)
             guard let model = Self.skinnedModel(in: robot) else { continue }
             let skeleton = RobotSkeleton(paths: model.jointNames, bind: model.jointTransforms)
@@ -422,7 +452,8 @@ final class RobotAvatarLayer {
         // The avatars' own dim, neutral environment light in place of RealityView's
         // default one, which over-exposed the matte orange (red clipped on 81% of
         // its pixels, washing it to peach). With only key/fill plus this, the lit
-        // orange matches the colour validated for the asset (#F78146). Only the
+        // bodies match the colours validated for the assets (P2 #F78146, P1
+        // #F6CA58, measured #F5CA58), under the same lights. Only the
         // avatars receive it; the corridor and lasers are unlit and unaffected.
         if let environment = Self.neutralEnvironment() {
             lights.components.set(ImageBasedLightComponent(source: .single(environment)))

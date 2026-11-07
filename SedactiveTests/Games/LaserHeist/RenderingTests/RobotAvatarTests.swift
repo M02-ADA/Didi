@@ -9,7 +9,11 @@ import Testing
 @MainActor
 struct RobotAvatarTests {
     private func template() async throws -> Entity {
-        try #require(await RobotAvatarLayer.loadTemplate())
+        try #require(await RobotAvatarLayer.loadTemplate(for: .player1))
+    }
+
+    private func templates() async throws -> [PlayerID: Entity] {
+        try #require(await RobotAvatarLayer.loadTemplates())
     }
 
     private func rig() async throws -> (ModelEntity, RobotSkeleton, RobotPoseSolver) {
@@ -232,7 +236,7 @@ struct RobotAvatarTests {
     @Test func layerAcceptsRestartedFrameIDsAfterReset() async throws {
         let input = try LaserReplayScript.load().input
         let layer = RobotAvatarLayer(scene: LaserScene(), calibrations: input.configuration.calibrations,
-                                     layout: input.configuration.playerPlaneLayout, template: try await template())
+                                     layout: input.configuration.playerPlaneLayout, templates: try await templates())
         let sequence = RobotDemoSequence(configuration: input.configuration, cameraGeometryRevision: 1, only: .p1JumpLand)
         let late = try sequence.frame(40)
         layer.apply(late.snapshot, joints: late.joints)
@@ -300,7 +304,7 @@ struct RobotAvatarTests {
     @Test func bothRobotsShareOneSizeWhateverThePlayersHeights() async throws {
         let (calibrations, layout) = try calibrations(p1Height: 1.7, p2Height: 1.2)
         let scene = LaserScene()
-        let layer = RobotAvatarLayer(scene: scene, calibrations: calibrations, layout: layout, template: try await template())
+        let layer = RobotAvatarLayer(scene: scene, calibrations: calibrations, layout: layout, templates: try await templates())
         let p1 = try #require(layer.robots[.player1]), p2 = try #require(layer.robots[.player2])
         // Same uniform model scale for both, from one place.
         #expect(p1.container.scale == p2.container.scale)
@@ -356,7 +360,11 @@ struct RobotAvatarTests {
                      "chibi-leg-left", "chibi-leg-right", "mascot-rear-idle", "chibi-master"] {
             #expect(bundle.url(forResource: name, withExtension: "png") == nil && bundle.url(forResource: name, withExtension: "json") == nil)
         }
-        #expect(bundle.url(forResource: RobotAvatarLayer.resourceName, withExtension: "usdz") != nil)
+        for player in PlayerID.allCases {
+            #expect(bundle.url(forResource: RobotAvatarLayer.resourceName(for: player), withExtension: "usdz") != nil)
+        }
+        // The single orange `mascot.usdz` was replaced by its byte-identical P2 copy.
+        #expect(bundle.url(forResource: "mascot", withExtension: "usdz") == nil)
     }
 
     // MARK: - Two players in the scene
@@ -365,7 +373,7 @@ struct RobotAvatarTests {
         let input = try LaserReplayScript.load().input
         let scene = LaserScene()
         let layer = RobotAvatarLayer(scene: scene, calibrations: input.configuration.calibrations,
-                                     layout: input.configuration.playerPlaneLayout, template: try await template())
+                                     layout: input.configuration.playerPlaneLayout, templates: try await templates())
         #expect(layer.robots.count == 2)
         // P1 ducks while P2 jumps (synthetic sequence, scenario 7, around 1.2 s).
         let sequence = RobotDemoSequence(configuration: input.configuration, cameraGeometryRevision: input.cameraGeometryRevision,
@@ -392,7 +400,7 @@ struct RobotAvatarTests {
         let input = try LaserReplayScript.load().input
         let scene = LaserScene()
         let layer = RobotAvatarLayer(scene: scene, calibrations: input.configuration.calibrations,
-                                     layout: input.configuration.playerPlaneLayout, template: try await template())
+                                     layout: input.configuration.playerPlaneLayout, templates: try await templates())
         let lights = try #require(scene.root.findEntity(named: "robot.lights"))
         #expect(lights.components[ImageBasedLightComponent.self] != nil)
         for robot in layer.robots.values {

@@ -74,8 +74,8 @@ struct LiveAvatarTests {
 
     /// The robot layer the Live Avatar Lab uses, as the readout for live tracking.
     private func layer(for tracker: LiveAvatarTracker) async throws -> RobotAvatarLayer {
-        let template = try #require(await RobotAvatarLayer.loadTemplate())
-        return RobotAvatarLayer(scene: LaserScene(), calibrations: tracker.calibrations, layout: tracker.layout, template: template)
+        let templates = try #require(await RobotAvatarLayer.loadTemplates())
+        return RobotAvatarLayer(scene: LaserScene(), calibrations: tracker.calibrations, layout: tracker.layout, templates: templates)
     }
 
     /// What one robot shows: lift and sway (metres), lean (radians, + toward screen right),
@@ -396,6 +396,40 @@ struct LiveAvatarTests {
         // The croucher ducks by the same share of the avatar's leg as 3 cm of the first robot's 0.574 m leg.
         let leg = try #require(layer.robots[.player2]).retargeter.robotLegRest
         #expect(p2.lift == 0 && p2.pelvisDrop > 0.03 / 0.574 * leg, "drop \(p2.pelvisDrop) of leg \(leg)")
+    }
+
+    /// Colour follows the established PlayerID: a SHORTER P1 is still Lemon at
+    /// the same size as P2, through crossing, tracking loss and recalibration.
+    @Test func coloursFollowThePlayerIDThroughCrossingLossAndRecalibration() async throws {
+        let lemon = MascotColorVariantTests.lemonBody, tangerine = MascotColorVariantTests.tangerineBody
+        var (tracker, last) = try calibrated([Body(cx: 0.7, h: 0.55), Body(cx: 0.3, h: 0.85)], mode: .two)
+        let layer = try await layer(for: tracker)
+        func check(_ layer: RobotAvatarLayer, _ when: String) {
+            #expect(MascotColorVariantTests.close(MascotColorVariantTests.bodyColor(layer.robots[.player1]), lemon), "P1 \(when)")
+            #expect(MascotColorVariantTests.close(MascotColorVariantTests.bodyColor(layer.robots[.player2]), tangerine), "P2 \(when)")
+            #expect(layer.robots[.player1]?.container.scale == layer.robots[.player2]?.container.scale, "scale \(when)")
+        }
+        let models = layer.robots.mapValues { ObjectIdentifier($0.model) }
+        check(layer, "after calibration")
+        // They walk past each other (overlapping mid-way); detection order shuffles.
+        for n in 0..<20 {
+            let id = last + 1 + UInt64(n)
+            let a = Body(cx: 0.7 - 0.02 * Double(n), h: 0.55), b = Body(cx: 0.3 + 0.02 * Double(n), h: 0.85)
+            if let out = tracker.process(frame(id, n.isMultiple(of: 3) ? [b, a] : [a, b]), now: Double(id) / 30) {
+                layer.apply(out.snapshot, joints: out.joints)
+            }
+        }
+        check(layer, "after crossing")
+        // Nobody in view for 1.5 s, then both back.
+        _ = run(&tracker, layer, from: last + 21, count: 45, [])
+        #expect(layer.robots.values.allSatisfy { !$0.retargeter.isAvailable })
+        check(layer, "while lost")
+        _ = run(&tracker, layer, from: last + 66, count: 3, [Body(cx: 0.3, h: 0.55), Body(cx: 0.7, h: 0.85)])
+        check(layer, "after reacquisition")
+        #expect(layer.robots.mapValues { ObjectIdentifier($0.model) } == models)  // never recreated
+        // Recalibration rebuilds the rig (as the lab does): colours stay with the IDs.
+        let (recalibrated, _) = try calibrated([Body(cx: 0.7, h: 0.85), Body(cx: 0.3, h: 0.55)], mode: .two)
+        check(try await self.layer(for: recalibrated), "after recalibration")
     }
 
     @Test func singlePlayerModeNeedsOnlyOnePerson() async throws {

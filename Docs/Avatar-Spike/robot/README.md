@@ -1,14 +1,24 @@
-# 3D avatar: orange LaserHeist mascot (Debug spike)
+# 3D avatar: LaserHeist mascot, P1 Lemon and P2 Tangerine (Debug spike)
 
 > **Status:** Debug only, presentation only. The live camera path is verified on an iPad Pro 13" for frames, Vision and latency. Avatar motion is verified with synthetic data in the Simulator; on hardware it still needs a person in front of the camera.
 
 ## Asset
 
-**Active avatar: the final colour-corrected orange mascot.** `Rendering/Avatar/Robot/mascot.usdz` is Codex's `mascot.usdz` from `LaserHeist-Original-Mascot-3D-Color/`, byte-identical (sha1 `61d0a911…a2d3ec`, 1.6 MiB). `RobotAvatarLayer.resourceName` is `"mascot"`, and it is the only avatar in the app bundle. Every 3D path loads it through `RobotAvatarLayer.loadTemplate()`, once per layer: the robot demo, the Live Avatar Lab, the live round and `-robotReplay`.
+**Active avatars: two colour variants of the final mascot, one per player.** Both come byte-identical from Codex's `LaserHeist-Mascot-Color-Variants/models/` (7 November 2026):
+
+| Player | Lane | Resource (`Rendering/Avatar/Robot/`) | Body colour | SHA-256 | Bytes |
+|---|---|---|---|---|---:|
+| P1 (`PlayerID.player1`) | left | `mascot-p1-lemon.usdz` | Lemon `#F6CA58` | `6e085003…7a1f1b` | 1,685,830 |
+| P2 (`PlayerID.player2`) | right | `mascot-p2-tangerine.usdz` | Tangerine `#F78146` | `fd7ce80f…485687` | 1,685,571 |
+
+- **P2 is the earlier orange mascot.** `mascot-p2-tangerine.usdz` is byte-identical to the former `mascot.usdz` (sha1 `61d0a911…a2d3ec`). That file was removed from the bundle, so the app ships two copies of the character, not three; it stays in Git history (`b130d5a`) and in Codex's `LaserHeist-Original-Mascot-3D-Color/`.
+- **P1 differs only in two diffuse colours:** the body (`Mascot_orange` slot, name kept) and the ear highlight. Mesh, UVs, skin weights, the 20-joint skeleton, bind transforms and every other material are identical (Codex's USD/GLB comparison; `MascotColorVariantTests` checks joints, bind pose, vertices, triangles, bounds and materials in the app).
+- **Selection is by `PlayerID` only.** `RobotAvatarLayer.resourceName(for:)` maps P1 → Lemon and P2 → Tangerine; never screen position, lane, body height or a re-detected identity. `loadTemplates()` loads each resource once and returns both or nothing (the existing load-failure path). Each player's robot is a clone of its own template, made once per layer, with the same solver, retargeter, foot planner, scale and lights. Every 3D path uses it: the robot demo, the Live Avatar Lab, the live round and `-robotReplay`.
+- **What keeps a colour on its player:** the layer stores robots by `PlayerID`, so tracking loss, reacquisition, crossing and recalibration (which rebuilds the layer from calibrations keyed by `PlayerID`) never swap or recreate a colour. Solo mode builds only P1 (Lemon); P2 is never fabricated.
 
 - One skinned mesh on a 20-joint UsdSkel: 14,309 vertices and 27,066 triangles per instance. The head shell and face are weighted to `Head` only.
 - 7 matte PBR materials (roughness 0.94, metallic 0, specular 0.12, no emission on the body), used unchanged.
-- 1.398 m tall, soles at y = 0, +Y up, facing −Z, with +X as the mascot's anatomical right. It is shown at the shared 1.6 m (scale 1.1445) for P1 and P2.
+- 1.398 m tall, soles at y = 0, +Y up, facing −Z, with +X as the mascot's anatomical right. Both variants are shown at the shared 1.6 m (scale 1.1445), at the same depth, on the same board.
 - Under our camera (at +Z, looking down −Z) we see its back, with its right side on screen right. P1 is on the left, P2 on the right, and no extra rotation or flip is applied.
 
 **Rig compatibility.** Joint names, paths, order and parents match the earlier robots. The bind transforms differ:
@@ -26,11 +36,11 @@ Everything geometric is read from the loaded bind pose, never assumed:
 - **Knee plane:** knees bend in the bind pose's own plane, so the rest targets reproduce the bind exactly (`restTargetsReproduceTheBindPose`).
 - **Foot planner:** its board-metre constants needed no change. Every foot scenario keeps 0.0 mm planted drift, no IK reach shortfall and no sole below the deck.
 
-**Arm clearance (`MascotPoseEnvelope.swift`).** The shoulders sit under the large head, so an upper arm aimed straight up goes through it. Codex's helper is used with its values unchanged. It runs in `RobotAvatarLayer.present`, after smoothing and foot planning and immediately before the solve, only while `RobotAvatarLayer.headClearance` is on (tied to the mascot resource). It reads and writes presentation targets only, never Vision joints, body samples or anything judged. Its effect:
+**Arm clearance (`MascotPoseEnvelope.swift`).** The shoulders sit under the large head, so an upper arm aimed straight up goes through it. Codex's helper is used with its values unchanged. It runs in `RobotAvatarLayer.present`, after smoothing and foot planning and immediately before the solve, only while `RobotAvatarLayer.headClearance` is on (tied to the mascot resources; on for both variants). It reads and writes presentation targets only, never Vision joints, body samples or anything judged. Its effect:
 - Rising arms are turned outward: the upper arm settles about 9° above horizontal and the forearm about 34°, with more clearance when the trunk or head tilts.
 - Downward arms are untouched, the change eases in over the first part of a raise, and left and right mirror each other.
 
-`MascotArmClearanceTests` checks it on the real mesh, skinned on the CPU from the imported weights and inverse bind matrices (bind reproduced to < 0.1 mm) and posed by our solver:
+`MascotArmClearanceTests` checks it for each variant on the real mesh, skinned on the CPU from the imported weights and inverse bind matrices (bind reproduced to < 0.1 mm) and posed by our solver:
 
 | | Raw targets | With the helper |
 |---|---|---|
@@ -44,9 +54,15 @@ The 10 poses: left, right or both arms up, forward-up, both up in a deep crouch,
 - **The fix:** the avatars now receive their own uniform dark-grey environment light (`neutralEnvironment()`, sRGB 0.18) instead of the default one. The lit-orange median is #F68046, against #F47E44 in Codex's rear render under the same lights and the asset target #F78146.
 - **Scope:** only the avatar containers receive it. The corridor and lasers are unlit, and they were pixel-identical in before/after captures.
 - **How it was measured:** Simulator screenshots are sRGB-tagged and verified against a control in the same capture (the system-blue button reads exactly #0088FF). The figure is the median of orange pixels in the 45–85% luminance band. `evidence/mascot-color-check.png` shows before, after and the reference.
+- **Both variants in the corridor (7 November 2026):** median sRGB of a lit 120 × 120 px patch on the back of the head and torso, landscape iPad Pro 11" Simulator, `-robotDemo idle`. Lemon reads #F8CF5B (head) and #F7CD5A (torso) against the #F6CA58 target (Codex measured #F5CA58 under neutral light). Tangerine reads #F78046 and #F88147 against #F78146. No runtime tint, emission, gloss or lighting change was added; the USDZ materials are used as imported.
 - **Not covered:** the iPad display itself (P3 panel, True Tone, brightness) has not been looked at.
 
-**Verified (Simulator, synthetic poses; not yet a person on the iPad).** All 276 tests pass.
+**Colour variants verified (7 November 2026; Simulator, synthetic poses).** All 284 tests pass, including `MascotColorVariantTests`, the per-variant arm-clearance tests and `LiveAvatarTests.coloursFollowThePlayerIDThroughCrossingLossAndRecalibration`. Debug and Release builds succeed.
+- **Watched in the landscape iPad Simulator:** Lemon left and Tangerine right from behind at one size, feet planted (`evidence/mascot-variants-idle-landscape.png`). P1 jumps while P2 stands, P2 ducks while P1 stands, asymmetric arms, P1 steps right, P2 tracking loss (dimmed Tangerine, recovered as Tangerine), and the `-robotReplay` round with lasers and CLEAR/HIT (`evidence/mascot-variants-motion-sheet.png`).
+- **Paths:** `-liveGame solo -liveGameSynthetic` shows Lemon only. `-liveGame coop -liveGameSynthetic` and `-liveAvatarLab` (no camera in the Simulator) show dimmed placeholders with the right colours until players calibrate.
+- **Cost:** per-frame work is unchanged (same solver, same mesh per instance). The bundle carries one more 1.69 MB USDZ than before. iPad memory, frame time and colour on the display are unmeasured.
+
+**Earlier verification (single orange mascot, Simulator, synthetic poses).** All 276 tests passed.
 - **Watched in the landscape iPad Simulator:** idle, arms overhead (the new `-robotDemo arms-up`: both up, duck with arms up, P2 stepping with an arm up), asymmetric arms, duck, jump, P1 ducking while P2 jumps, step right, lean right, tracking loss and recovery, and the live round (lasers, JUMP cue, CLEAR/HIT).
 - **Cost:** about 20 µs per solve, and about 80 µs per rendered frame for both avatars (retarget, planner, envelope, solve, joint write; Simulator). The pair is about 54k triangles, against 168k for the previous mech. iPad frame time and thermals are unmeasured.
 
@@ -57,15 +73,16 @@ The 10 poses: left, right or both arms up, forward-up, both up in a deep crouch,
 - **Arms overhead:** a straight-up arm is shown out to the side by design, so it never matches the player's vertical arm.
 
 **Rollback.**
-- **Pilot mech (previous version):** Codex's `LaserHeist-Mascot-Pilot-Mech/mascot-pilot-mech.usdz` (sha1 `73ba1683…`).
+- **Single orange mascot (previous version):** map both players to `"mascot-p2-tangerine"` in `RobotAvatarLayer.resourceName(for:)` (it is the same file) and delete `mascot-p1-lemon.usdz`; `loadTemplates()` then loads one resource and shares it. `MascotColorVariantTests` and the colour check in `LiveAvatarTests` expect Lemon for P1 and fail after this rollback.
+- **Pilot mech:** Codex's `LaserHeist-Mascot-Pilot-Mech/mascot-pilot-mech.usdz` (sha1 `73ba1683…`).
 - **Blue-and-white robot:** Codex's `LaserHeist-Robot/avatar.usdz` (sha1 `ed1be8dd…`), also in Git at `6cd0626` as `laserheist-robot.usdz`.
 - **How to restore:**
-  1. Copy the file in as `Rendering/Avatar/Robot/<name>.usdz`, remove `mascot.usdz`, and set `RobotAvatarLayer.resourceName` to `<name>`. `headClearance` then switches off on its own.
+  1. Copy the file in as `Rendering/Avatar/Robot/<name>.usdz`, remove both `mascot-*.usdz`, and return `<name>` for every player from `RobotAvatarLayer.resourceName(for:)`. `headClearance` then switches off on its own.
   2. Rebuild.
-- **Tests that are mascot-specific:** `MascotArmClearanceTests.raisedArmsClearTheHeadOnlyWithTheEnvelope` expects `headClearance` and expects raw arms to hit the head, so it fails after a rollback; skip or remove it.
+- **Tests that are mascot-specific:** `MascotColorVariantTests`, and `MascotArmClearanceTests.raisedArmsClearTheHeadOnlyWithTheEnvelope`, which expects `headClearance` and expects raw arms to hit the head, so it fails after a rollback; skip or remove it.
 
 **Evidence** (`evidence/`, Simulator, synthetic):
-- **Images:** `mascot-idle-landscape.png`, `mascot-color-check.png`, `mascot-live-round-sheet.png`.
+- **Images:** `mascot-variants-idle-landscape.png`, `mascot-variants-motion-sheet.png` (both variants); `mascot-idle-landscape.png`, `mascot-color-check.png`, `mascot-live-round-sheet.png` (single orange mascot).
 - **Animations:** `mascot-arms-up.gif`, `mascot-arms.gif`, `mascot-duck.gif`, `mascot-jump.gif`, `mascot-duck-jump.gif`, `mascot-step-right.gif`, `mascot-lean-right.gif`, `mascot-tracking-loss.gif`, `mascot-live-round.gif`.
 
 ## Pipeline
@@ -119,7 +136,7 @@ A player's own height never sizes the robot. It still normalises that player's m
 - **Crouch depth** is a share of the player's own leg length.
 - **Arm and trunk directions** don't depend on size.
 
-**Evidence:** `mascot-idle-landscape.png` is current (orange mascot). `robot-equal-size.png` shows the earlier robot. The older `robot-synthetic-*.png/.gif` and `live-avatar-lab-robot-simulator.png` predate equal sizing and still show a smaller P2.
+**Evidence:** `mascot-variants-idle-landscape.png` is current (Lemon and Tangerine). `mascot-idle-landscape.png` shows the earlier single orange mascot. `robot-equal-size.png` shows the earlier robot. The older `robot-synthetic-*.png/.gif` and `live-avatar-lab-robot-simulator.png` predate equal sizing and still show a smaller P2.
 
 ## Removed 2D chibi experiment
 

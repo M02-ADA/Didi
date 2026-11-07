@@ -3,7 +3,7 @@ import RealityKit
 import Testing
 @testable import Sedactive
 
-/// The orange mascot's arms against its oversized head, on the real skinned
+/// The mascot's arms against its oversized head, on each colour variant's real skinned
 /// mesh: vertices are skinned on the CPU from the imported joint weights and
 /// inverse bind matrices, posed by the game's own `RobotPoseSolver`.
 /// Targets are SYNTHETIC model-space directions (what the retargeter emits).
@@ -19,8 +19,8 @@ struct MascotArmClearanceTests {
         var arm: [Int] = []
     }
 
-    private func load() async throws -> (RobotSkeleton, RobotPoseSolver, Mesh) {
-        let template = try #require(await RobotAvatarLayer.loadTemplate())
+    private func load(_ player: PlayerID) async throws -> (RobotSkeleton, RobotPoseSolver, Mesh) {
+        let template = try #require(await RobotAvatarLayer.loadTemplate(for: player))
         let model = try #require(RobotAvatarLayer.skinnedModel(in: template))
         let skeleton = RobotSkeleton(paths: model.jointNames, bind: model.jointTransforms)
         let contents = try #require(model.model?.mesh.contents)
@@ -161,18 +161,19 @@ struct MascotArmClearanceTests {
                 ("right up while stepping", step), ("bent elbow, forearm up", bentElbow), ("reach across, up", across)]
     }()
 
-    @Test func skinningReproducesTheBindMesh() async throws {
-        let (s, _, mesh) = try await load()
+    @Test(arguments: PlayerID.allCases)
+    func skinningReproducesTheBindMesh(player: PlayerID) async throws {
+        let (s, _, mesh) = try await load(player)
         #expect(mesh.head.count > 100 && mesh.arm.count > 100 && mesh.headTriangles.count > 100,
                 "head \(mesh.head.count) arm \(mesh.arm.count) tris \(mesh.headTriangles.count)")
         let posed = skin(s, mesh, s.bind, Array(mesh.positions.indices))
         let error = posed.map { simd_distance($0.value, mesh.positions[$0.key]) }.max() ?? .infinity
         #expect(error < 1e-4, "bind skinning error \(error)")
-        let template = try #require(await RobotAvatarLayer.loadTemplate())
+        let template = try #require(await RobotAvatarLayer.loadTemplate(for: player))
         let model = try #require(RobotAvatarLayer.skinnedModel(in: template))
         let triangles = model.model?.mesh.contents.models.reduce(0) { $0 + $1.parts.reduce(0) { $0 + ($1.triangleIndices?.count ?? 0) / 3 } } ?? 0
         let materials = model.model?.materials.compactMap { $0 as? PhysicallyBasedMaterial } ?? []
-        print("MASCOTMESH vertices \(mesh.positions.count) triangles \(triangles) materials \(model.model?.materials.count ?? 0)",
+        print("MASCOTMESH \(player.rawValue) vertices \(mesh.positions.count) triangles \(triangles) materials \(model.model?.materials.count ?? 0)",
               materials.map { String(format: "%@ rough %.2f metal %.2f spec %.3f", $0.name ?? "?", $0.roughness.scale, $0.metallic.scale, $0.specular.scale) })
         // Matte: no metal, high roughness on every surface.
         #expect(!materials.isEmpty && materials.allSatisfy { $0.metallic.scale < 0.01 && $0.roughness.scale > 0.85 })
@@ -182,15 +183,16 @@ struct MascotArmClearanceTests {
 
     /// Without the envelope a raised arm goes through the head; with it, no
     /// arm vertex enters the head in any tested pose.
-    @Test func raisedArmsClearTheHeadOnlyWithTheEnvelope() async throws {
-        let (s, solver, mesh) = try await load()
+    @Test(arguments: PlayerID.allCases)
+    func raisedArmsClearTheHeadOnlyWithTheEnvelope(player: PlayerID) async throws {
+        let (s, solver, mesh) = try await load(player)
         var without = 0
         for (name, raw) in Self.poses {
             var t = raw
             MascotPoseEnvelope.apply(to: &t)
             let bare = clearance(s, mesh, solver.solve(raw), firstOnly: true), fitted = clearance(s, mesh, solver.solve(t))
             without += bare.inside
-            print(String(format: "ARMCLEAR %@ | raw: %@ | envelope: %d inside, nearest %.1f mm",
+            print(String(format: "ARMCLEAR \(player.rawValue) %@ | raw: %@ | envelope: %d inside, nearest %.1f mm",
                          name, bare.inside > 0 ? "arm inside head" : "clear", fitted.inside, fitted.nearest * 1000))
             #expect(fitted.inside == 0, "\(name): \(fitted.inside) arm vertices inside the head")
         }
