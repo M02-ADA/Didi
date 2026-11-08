@@ -135,13 +135,11 @@ private struct ReplayRoundView: View {
                 guard !Task.isCancelled else { return }
                 let script = try LaserReplayScript.load().freshRound(generation: generation)
                 #if DEBUG
-                // `-robotReplay`: the Lemon (P1) and Tangerine (P2) mascots stand in place of the
-                // pictograms in the replay round, driven by its body snapshots through the
-                // gameplay presenter, alongside the lasers and the vault. Presentation only.
-                if ProcessInfo.processInfo.arguments.contains("-robotReplay") {
-                    guard try await installAvatars(calibrations: script.input.configuration.calibrations,
-                                                   layout: script.input.configuration.playerPlaneLayout) != nil else { return }
-                }
+                // The Lemon (P1) and Tangerine (P2) mascots stand in place of the pictograms in the
+                // replay round, driven by its body snapshots through the gameplay presenter (the
+                // DEBUG bridge), alongside the lasers and the vault. Presentation only.
+                guard try await installAvatars(calibrations: script.input.configuration.calibrations,
+                                               layout: script.input.configuration.playerPlaneLayout) != nil else { return }
                 #endif
                 let replay = GameSessionCoordinator(script: script)
                 session = replay

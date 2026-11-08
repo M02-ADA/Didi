@@ -3080,7 +3080,7 @@ def Xform "Root" (
     }
 
     def Xform "EditorPreviews" (
-        doc = "Editor-only stand-ins. LaserScene removes this group at runtime."
+        doc = "Editor-only references for authoring. LaserScene removes this whole group at runtime (Debug -showEditorPreviews keeps it to compare alignment). The players here are flat, unrigged rear-view pictures of the approved mascots; the real avatars are created and animated only by RobotAvatarLayer."
     )
     {
         quatf xformOp:orient = (1, 0, 0, 0)
@@ -3090,9 +3090,9 @@ def Xform "Root" (
 
         def Scope "PreviewMaterials"
         {
-            def Material "PlayerParent"
+            def Material "P1Lemon"
             {
-                token outputs:mtlx:surface.connect = </Root/EditorPreviews/PreviewMaterials/PlayerParent/Unlit.outputs:out>
+                token outputs:mtlx:surface.connect = </Root/EditorPreviews/PreviewMaterials/P1Lemon/Unlit.outputs:out>
                 token outputs:realitykit:vertex
                 token outputs:surface
 
@@ -3100,15 +3100,15 @@ def Xform "Root" (
                 {
                     uniform token info:id = "ND_realitykit_unlit_surfaceshader"
                     bool inputs:applyPostProcessToneMap = 0
-                    color3f inputs:color.connect = </Root/EditorPreviews/PreviewMaterials/PlayerParent/Color.outputs:out>
-                    float inputs:opacity.connect = </Root/EditorPreviews/PreviewMaterials/PlayerParent/Channels.outputs:outa>
+                    color3f inputs:color.connect = </Root/EditorPreviews/PreviewMaterials/P1Lemon/Color.outputs:out>
+                    float inputs:opacity.connect = </Root/EditorPreviews/PreviewMaterials/P1Lemon/Channels.outputs:outa>
                     token outputs:out
                 }
 
                 def Shader "Image"
                 {
                     uniform token info:id = "ND_image_color4"
-                    asset inputs:file = @Textures/preview_parent.png@
+                    asset inputs:file = @Textures/preview_p1_lemon.png@
                     string inputs:filtertype = "linear"
                     string inputs:uaddressmode = "clamp"
                     string inputs:vaddressmode = "clamp"
@@ -3118,21 +3118,21 @@ def Xform "Root" (
                 def Shader "Color"
                 {
                     uniform token info:id = "ND_convert_color4_color3"
-                    color4f inputs:in.connect = </Root/EditorPreviews/PreviewMaterials/PlayerParent/Image.outputs:out>
+                    color4f inputs:in.connect = </Root/EditorPreviews/PreviewMaterials/P1Lemon/Image.outputs:out>
                     color3f outputs:out
                 }
 
                 def Shader "Channels"
                 {
                     uniform token info:id = "ND_separate4_color4"
-                    color4f inputs:in.connect = </Root/EditorPreviews/PreviewMaterials/PlayerParent/Image.outputs:out>
+                    color4f inputs:in.connect = </Root/EditorPreviews/PreviewMaterials/P1Lemon/Image.outputs:out>
                     float outputs:outa
                 }
             }
 
-            def Material "PlayerChild"
+            def Material "P2Tangerine"
             {
-                token outputs:mtlx:surface.connect = </Root/EditorPreviews/PreviewMaterials/PlayerChild/Unlit.outputs:out>
+                token outputs:mtlx:surface.connect = </Root/EditorPreviews/PreviewMaterials/P2Tangerine/Unlit.outputs:out>
                 token outputs:realitykit:vertex
                 token outputs:surface
 
@@ -3140,15 +3140,15 @@ def Xform "Root" (
                 {
                     uniform token info:id = "ND_realitykit_unlit_surfaceshader"
                     bool inputs:applyPostProcessToneMap = 0
-                    color3f inputs:color.connect = </Root/EditorPreviews/PreviewMaterials/PlayerChild/Color.outputs:out>
-                    float inputs:opacity.connect = </Root/EditorPreviews/PreviewMaterials/PlayerChild/Channels.outputs:outa>
+                    color3f inputs:color.connect = </Root/EditorPreviews/PreviewMaterials/P2Tangerine/Color.outputs:out>
+                    float inputs:opacity.connect = </Root/EditorPreviews/PreviewMaterials/P2Tangerine/Channels.outputs:outa>
                     token outputs:out
                 }
 
                 def Shader "Image"
                 {
                     uniform token info:id = "ND_image_color4"
-                    asset inputs:file = @Textures/preview_child.png@
+                    asset inputs:file = @Textures/preview_p2_tangerine.png@
                     string inputs:filtertype = "linear"
                     string inputs:uaddressmode = "clamp"
                     string inputs:vaddressmode = "clamp"
@@ -3158,30 +3158,31 @@ def Xform "Root" (
                 def Shader "Color"
                 {
                     uniform token info:id = "ND_convert_color4_color3"
-                    color4f inputs:in.connect = </Root/EditorPreviews/PreviewMaterials/PlayerChild/Image.outputs:out>
+                    color4f inputs:in.connect = </Root/EditorPreviews/PreviewMaterials/P2Tangerine/Image.outputs:out>
                     color3f outputs:out
                 }
 
                 def Shader "Channels"
                 {
                     uniform token info:id = "ND_separate4_color4"
-                    color4f inputs:in.connect = </Root/EditorPreviews/PreviewMaterials/PlayerChild/Image.outputs:out>
+                    color4f inputs:in.connect = </Root/EditorPreviews/PreviewMaterials/P2Tangerine/Image.outputs:out>
                     float outputs:outa
                 }
             }
         }
 
-        def Mesh "ParentPreview" (
+        def Mesh "P1LemonPreview" (
+            doc = "Editor-only: static rear view of mascot-p1-lemon at the shared 1.6 m height, on P1's lane. Not a player entity."
             prepend apiSchemas = ["MaterialBindingAPI"]
         )
         {
             int[] faceVertexCounts = [4]
             int[] faceVertexIndices = [0, 1, 2, 3]
-            rel material:binding = </Root/EditorPreviews/PreviewMaterials/PlayerParent>
+            rel material:binding = </Root/EditorPreviews/PreviewMaterials/P1Lemon>
             normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
                 interpolation = "vertex"
             )
-            point3f[] points = [(-0.37, 0, 0), (0.37, 0, 0), (0.37, 1.75, 0), (-0.37, 1.75, 0)]
+            point3f[] points = [(-0.46, 0, 0), (0.46, 0, 0), (0.46, 1.6, 0), (-0.46, 1.6, 0)]
             texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
                 interpolation = "vertex"
             )
@@ -3192,17 +3193,18 @@ def Xform "Root" (
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
 
-        def Mesh "ChildPreview" (
+        def Mesh "P2TangerinePreview" (
+            doc = "Editor-only: static rear view of mascot-p2-tangerine at the shared 1.6 m height, on P2's lane. Not a player entity."
             prepend apiSchemas = ["MaterialBindingAPI"]
         )
         {
             int[] faceVertexCounts = [4]
             int[] faceVertexIndices = [0, 1, 2, 3]
-            rel material:binding = </Root/EditorPreviews/PreviewMaterials/PlayerChild>
+            rel material:binding = </Root/EditorPreviews/PreviewMaterials/P2Tangerine>
             normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
                 interpolation = "vertex"
             )
-            point3f[] points = [(-0.26, 0, 0), (0.26, 0, 0), (0.26, 1.2, 0), (-0.26, 1.2, 0)]
+            point3f[] points = [(-0.46, 0, 0), (0.46, 0, 0), (0.46, 1.6, 0), (-0.46, 1.6, 0)]
             texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
                 interpolation = "vertex"
             )
