@@ -116,11 +116,12 @@ struct GameplayHUDModel: Equatable {
 /// and the DUCK/JUMP cue stays the 3D one (`LaserFeedback`), so there is one cue.
 struct GameplayHUD: View {
     let model: GameplayHUDModel
-    /// Approved player intent: end the round (the session's existing stop).
-    let onLeave: () -> Void
+    /// The session's player intents; the HUD offers only those it is given.
+    let actions: GameplayHUDActions
     #if DEBUG
-    /// `-hudPauseMenu` opens the menu at launch, for reviewing its layout (Debug only).
-    @State private var menuShown = ProcessInfo.processInfo.arguments.contains("-hudPauseMenu")
+    /// `-hudPauseMenu` opens the menu at launch, for reviewing its layout (Debug
+    /// only). Without a session pause it is a labelled preview: the round runs on.
+    @State private var menuShown = GameplayHUDActions.previewsPauseMenu
     #else
     @State private var menuShown = false
     #endif
@@ -160,11 +161,20 @@ struct GameplayHUD: View {
                 scoreChip(k)
             }
             progress(k)
-            Button { menuShown = true } label: {
+            // Without the session's pause (Jevon), pausing is not offered: the button
+            // keeps its Sketch place but reads as unavailable, so nobody expects the
+            // round to stop while lasers keep coming.
+            Button {
+                actions.pause?()
+                menuShown = true
+            } label: {
                 Image("LaserHeistHUD/pause").resizable().frame(width: 82 * k, height: 63 * k)
+                    .saturation(actions.canPause ? 1 : 0)
+                    .opacity(actions.canPause ? 1 : 0.45)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Pause menu")
+            .disabled(!actions.canPause)
+            .accessibilityLabel(actions.canPause ? "Pause" : "Pause unavailable")
             .accessibilityIdentifier("pauseMenu")
         }
     }
@@ -318,22 +328,34 @@ struct GameplayHUD: View {
 
     // MARK: - Pause menu
 
-    /// Sketch Game 1 pause state. The session has no pause yet (Jevon), so the
-    /// round keeps running behind this menu; Resume closes it and Leave Game
-    /// ends the round, the session's existing intent.
+    /// Sketch Game 1 pause state, shown only once the session has paused the
+    /// round (`actions.pause`); Resume asks the session to resume and Leave Game
+    /// ends the round. A Debug preview without a session pause says so.
     private func pauseMenu(_ k: CGFloat) -> some View {
         ZStack {
             Color.black.opacity(0.66).ignoresSafeArea()
-                .onTapGesture { menuShown = false }
                 .accessibilityHidden(true)
             VStack(spacing: 38 * k) {
-                menuButton("Resume", fill: Self.sun, k: k) { menuShown = false }
-                    .accessibilityIdentifier("resume")
-                menuButton("Leave Game", fill: Color(white: 0.933), k: k) {
-                    menuShown = false
-                    onLeave()
+                if !actions.canPause {
+                    Text("PREVIEW · the round keeps running (session pause pending)")
+                        .font(.system(size: 16 * k, weight: .heavy, design: .monospaced))
+                        .padding(.horizontal, 10 * k)
+                        .padding(.vertical, 4 * k)
+                        .background(Self.sun, in: Capsule())
+                        .foregroundStyle(Self.ink)
                 }
-                .accessibilityIdentifier("endRound")
+                menuButton("Resume", fill: Self.sun, k: k) {
+                    actions.resume?()
+                    menuShown = false
+                }
+                .accessibilityIdentifier("resume")
+                if let leave = actions.leave {
+                    menuButton("Leave Game", fill: Color(white: 0.933), k: k) {
+                        menuShown = false
+                        leave()
+                    }
+                    .accessibilityIdentifier("leaveGame")
+                }
             }
         }
         .transition(.opacity)
@@ -360,6 +382,25 @@ struct GameplayHUD: View {
     static let buttonShadow = Color(red: 0xB9 / 255, green: 0x84 / 255, blue: 0x00 / 255)
     static let fillTop = Color(red: 0xEA / 255, green: 0xA8 / 255, blue: 0x52 / 255)
     static let fillBottom = Color(red: 0xE9 / 255, green: 0x6D / 255, blue: 0x2F / 255)
+}
+
+/// The player intents the HUD may emit, supplied by the host from Jevon's
+/// session. `nil` means the session has no such action yet, and the HUD does
+/// not offer it: no second clock, pause state or timer lives here.
+struct GameplayHUDActions {
+    /// Pause and resume the round through the session (its `GameClock`).
+    /// PENDING Jevon: the session exposes neither yet.
+    var pause: (() -> Void)?
+    var resume: (() -> Void)?
+    /// End the round (the session's existing stop).
+    var leave: (() -> Void)?
+
+    /// Pausing is offered only when the session can both pause and resume.
+    var canPause: Bool { pause != nil && resume != nil }
+
+    #if DEBUG
+    static var previewsPauseMenu: Bool { ProcessInfo.processInfo.arguments.contains("-hudPauseMenu") }
+    #endif
 }
 
 /// Sketch title type: white SF Pro Rounded Black with a hard drop shadow

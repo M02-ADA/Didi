@@ -1,5 +1,6 @@
 import Foundation
 import RealityKit
+import simd
 import Testing
 @testable import Sedactive
 
@@ -146,11 +147,35 @@ struct AvatarFairnessTests {
                                   candidates: candidates, calibration: calibration)
     }
 
+    /// The same synthetic bodies as one CP1-shaped frame (geometry and jump
+    /// state, as the judge reads them) with its player-plane joints.
+    static func snapshot(frame: UInt64, time: Double,
+                         bodies: [PlayerID: (body: (joints: [BodyJoint: (Double, Double)], geometry: BodyGeometry, jump: JumpState),
+                                             tracking: TrackingStatus, revision: UInt64)]) -> (BodySnapshot, PresentationPoseFrame) {
+        var samples: [PlayerID: PlayerBodySample] = [:], poses: [PlayerID: PresentationPoseSample] = [:]
+        for (player, entry) in bodies {
+            samples[player] = PlayerBodySample(playerID: player, calibrationRevision: entry.revision, trackingStatus: entry.tracking,
+                                               geometry: entry.body.geometry, jumpState: entry.body.jump)
+            var joints: [PresentationJoint: PresentationPoint] = [:]
+            for (joint, point) in entry.body.joints {
+                if let name = AvatarPoseAdapter.jointNames[joint] { joints[name] = PresentationPoint(x: point.0, y: point.1, confidence: 0.9) }
+            }
+            poses[player] = PresentationPoseSample(playerID: player, calibrationRevision: entry.revision, joints: joints)
+        }
+        return (BodySnapshot(sessionGeneration: generation, frameID: frame, capturedAt: time, cameraGeometryRevision: 1, players: samples),
+                PresentationPoseFrame(sessionGeneration: generation, frameID: frame, capturedAt: time, players: poses))
+    }
+
     static var status: AvatarSourceStatus {
         AvatarSourceStatus(revision: 1, isActive: true, context: context, controlRevision: 1, layout: layout,
                            calibrations: [.player1: AvatarCalibrationStatus(revision: 1, cutover: BodyInputCutover(frameID: 0, capturedAt: 0)),
                                           .player2: AvatarCalibrationStatus(revision: 1, cutover: BodyInputCutover(frameID: 0, capturedAt: 0))])
     }
+
+    /// What drives the avatar. `.packets`: K03 (D06) packets, which carry no
+    /// airborne evidence. `.snapshot`: the CP1-shaped Debug bridge, which carries
+    /// the jump state the judge also reads.
+    enum Source { case packets, snapshot }
 
     struct Case {
         let name: String
@@ -173,24 +198,40 @@ struct AvatarFairnessTests {
     /// before its crossing through the real presenter and compares the posed
     /// rig with the gate as drawn. P1 runs the case; P2 stands at 1.6.
     /// `normalized`: the D07 candidate (`normalizesLaserBands`) on.
-    func run(_ c: Case, normalized: Bool = false) async throws -> Result {
+    func run(_ c: Case, normalized: Bool = false, source: Source = .packets) async throws -> Result {
         let heights: [PlayerID: Double] = [.player1: c.height, .player2: 1.6]
         let encounter = try Self.encounter(heights: heights, move: c.move)
         let target = try #require(encounter.targets.first { $0.playerID == .player1 })
         let p1 = try Self.body(.player1, height: c.height, c.pose)
         let p2 = try Self.body(.player2, height: 1.6, Pose())
         let scene = LaserScene()
-        let layer = RobotAvatarLayer(scene: scene, players: Set(PlayerID.allCases), templates: try await RobotAvatarLayer.sharedTemplates())
+        let templates = try await RobotAvatarLayer.sharedTemplates()
+        let layer: RobotAvatarLayer
+        switch source {
+        case .packets:
+            layer = RobotAvatarLayer(scene: scene, players: Set(PlayerID.allCases), templates: templates)
+        case .snapshot:
+            layer = RobotAvatarLayer(scene: scene, calibrations: [.player1: try Self.calibration(.player1, height: c.height),
+                                                                  .player2: try Self.calibration(.player2, height: 1.6)],
+                                     layout: Self.layout, templates: templates)
+        }
         layer.normalizesLaserBands = normalized
         scene.robotAvatars = layer
         let mailbox = AvatarPoseMailbox(maxAge: 0.25)
         mailbox.publish(Self.status)
         for n in 1...30 {
             let t = Double(n) / 30
-            mailbox.offer(Self.packet(frame: UInt64(n), time: t, heights: heights,
-                                      bodies: [.player1: (p1.joints, p1.geometry, c.pose.tracking), .player2: (p2.joints, p2.geometry, .reliable)],
-                                      calibrationRevisions: [.player1: c.pose.calibrationRevision]))
-            layer.apply(mailbox.drain(now: t + 0.005), now: t + 0.005)
+            switch source {
+            case .packets:
+                mailbox.offer(Self.packet(frame: UInt64(n), time: t, heights: heights,
+                                          bodies: [.player1: (p1.joints, p1.geometry, c.pose.tracking), .player2: (p2.joints, p2.geometry, .reliable)],
+                                          calibrationRevisions: [.player1: c.pose.calibrationRevision]))
+                layer.apply(mailbox.drain(now: t + 0.005), now: t + 0.005)
+            case .snapshot:
+                let (snapshot, joints) = Self.snapshot(frame: UInt64(n), time: t, bodies: [
+                    .player1: (p1, c.pose.tracking, c.pose.calibrationRevision), .player2: (p2, .reliable, 1)])
+                layer.apply(snapshot, joints: joints)
+            }
         }
         // The gate as the presenter draws it, just before the crossing.
         let presenter = GameplayScenePresenter(scene: scene, configuration: try LaserReplayScript.load().configuration, encounters: [encounter])
@@ -239,8 +280,8 @@ struct AvatarFairnessTests {
         case none
         case equalSizeShorter = "D07: equal 1.6 m mascot, shorter player (band in the player's units)"
         case equalSizeTaller = "D07: equal 1.6 m mascot, taller player"
-        case armEnvelope = "D07: outward-arm envelope + mascot reach keep the hand below a raised wrist"
-        case noJumpPhase = "D06: the packet carries no jump phase; the avatar shows the soles' lift"
+        case armEnvelope = "mascot anatomy: its hand cannot reach a duck band (see aRaisedHandCannotReachADuckBand); the HIT badge and impact carry the verdict"
+        case noAirborneEvidence = "PENDING D06/E07: the packet carries no airborne evidence, so the avatar shows no jump (K04)"
         case unavailable = "not judged (UNAVAILABLE); the avatar holds/fades and dims"
     }
 
@@ -267,8 +308,9 @@ struct AvatarFairnessTests {
                             expected: shorter ? .avatarLooksHit : .agrees, cause: shorter ? .equalSizeShorter : .none))
             rows.append(Row(c: Case(name: "jump: standing", move: .jump, height: h, pose: Pose()), expected: .agrees, cause: .none))
             rows.append(Row(c: Case(name: "jump: just clear", move: .jump, height: h, pose: Pose(lift: 0.02 * h + 0.01)),
-                            expected: .agrees, cause: .none))
-            rows.append(Row(c: Case(name: "jump: high", move: .jump, height: h, pose: Pose(lift: 0.15 * h)), expected: .agrees, cause: .none))
+                            expected: .avatarLooksHit, cause: .noAirborneEvidence))
+            rows.append(Row(c: Case(name: "jump: high", move: .jump, height: h, pose: Pose(lift: 0.15 * h)),
+                            expected: .avatarLooksHit, cause: .noAirborneEvidence))
         }
         rows += [
             Row(c: Case(name: "duck deep, left wrist up", move: .duck, height: 1.6, pose: Pose(crownDrop: 0.2, leftWristY: 1.7)),
@@ -280,7 +322,7 @@ struct AvatarFairnessTests {
             Row(c: Case(name: "jump, one foot raised (grounded)", move: .jump, height: 1.6, pose: Pose(rightFootRaise: 0.1)),
                 expected: .agrees, cause: .none),
             Row(c: Case(name: "soles up but not airborne", move: .jump, height: 1.6, pose: Pose(lift: 0.1, airborne: false)),
-                expected: .avatarLooksClear, cause: .noJumpPhase),
+                expected: .agrees, cause: .none),
             Row(c: Case(name: "duck, left wrist missing", move: .duck, height: 1.6,
                         pose: Pose(crownDrop: 0.2, leftWristValidity: .missingLandmarks)), expected: .notJudged, cause: .unavailable),
             Row(c: Case(name: "tracking lost", move: .duck, height: 1.6, pose: Pose(crownDrop: 0.2, tracking: .lost)),
@@ -326,15 +368,85 @@ struct AvatarFairnessTests {
     }
 
     /// At the mascot's own height the shown margin equals the human margin
-    /// (duck and jump), so the avatar agrees right up to the boundary.
+    /// (duck, and jump where airborne evidence exists), so the avatar agrees
+    /// right up to the boundary.
     @Test func atMatchedHeightTheShownMarginTracksTheHumanMargin() async throws {
         for (move, pose) in [(LaserMove.duck, Pose(crownDrop: 0.08 + 0.01 / 1.6)), (.jump, Pose(lift: 0.02 * 1.6 + 0.01)),
                              (.duck, Pose(crownDrop: 0.08 + 0.002 / 1.6)), (.jump, Pose(lift: 0.02 * 1.6 + 0.002))] {
-            let r = try await run(Case(name: "matched \(move)", move: move, height: 1.6, pose: pose))
+            let r = try await run(Case(name: "matched \(move)", move: move, height: 1.6, pose: pose),
+                                  source: move == .jump ? .snapshot : .packets)
             report(r)
             #expect(r.comparison.agreement == .agrees)
             #expect(abs(r.comparison.shownMargin - (r.comparison.humanMargin ?? .nan)) < 0.003, "\(move)")
         }
+    }
+
+    // MARK: Airborne evidence (K04)
+
+    /// Where the source carries the jump state (the CP1-shaped Debug bridge),
+    /// a valid airborne jump shows its clearance and agrees; soles raised while
+    /// the evidence says grounded keep the avatar on the floor (agrees with the
+    /// HIT). The same bodies through K03 packets are the table's PENDING rows.
+    @Test(arguments: [false, true])
+    func withAirborneEvidenceJumpsAgreeAndGroundedSolesStayDown(normalized: Bool) async throws {
+        for h in [1.0, 1.3, 1.6, 1.75] {
+            for (name, pose) in [("jump: just clear", Pose(lift: 0.02 * h + 0.01)), ("jump: high", Pose(lift: 0.15 * h)),
+                                 ("jump: standing", Pose()), ("soles up but not airborne", Pose(lift: 0.1 * h, airborne: false))] {
+                let r = try await run(Case(name: "\(name) (jump state)", move: .jump, height: h, pose: pose),
+                                      normalized: normalized, source: .snapshot)
+                report(r)
+                #expect(r.comparison.agreement == .agrees, "\(normalized ? "B" : "A") \(name) H \(h): \(r.comparison.agreement)")
+                if pose.airborne == false { #expect(r.extremities.lowestSoleY < 0.01, "grounded soles shown lifted at H \(h)") }
+            }
+        }
+    }
+
+    // MARK: Raised wrists (K04)
+
+    /// Why the two raised-wrist HITs look clear: the mascot's hand cannot reach
+    /// any duck band at all. Arm straight up from the shoulder, with no
+    /// head-clearance envelope, the hand stays below every drawn duck band
+    /// (D07 option B: bands normalized to the 1.6 m mascot, any player height).
+    /// So no retargeting can show the wrist in the beam without changing the
+    /// mascot's proportions; the verdict badge and impact carry the HIT.
+    @Test func aRaisedHandCannotReachADuckBand() async throws {
+        let layer = RobotAvatarLayer(scene: LaserScene(), players: Set(PlayerID.allCases), templates: try await RobotAvatarLayer.sharedTemplates())
+        var lowestBand = Float.infinity
+        for h in [1.0, 1.3, 1.6, 1.75] {
+            let target = try #require(try Self.targets(heights: [.player1: h, .player2: 1.6], move: .duck)[.player1])
+            lowestBand = min(lowestBand, Float(target.beam.lowerY) * Float(RobotAvatarLayer.standingHeight) / Float(h))
+        }
+        for player in PlayerID.allCases {
+            let skeleton = try #require(layer.robots[player]).solver.skeleton
+            let bind = skeleton.world(skeleton.bind)
+            for side in ["L", "R"] {
+                let upper = try #require(skeleton("UpperArm_\(side)")), fore = try #require(skeleton("Forearm_\(side)"))
+                let hand = try #require(skeleton("Hand_\(side)"))
+                let shoulder = bind.position[upper]
+                let arm = simd_distance(shoulder, bind.position[fore]) + simd_distance(bind.position[fore], bind.position[hand])
+                let reach = (shoulder.y + arm) * RobotAvatarLayer.modelScale
+                print(String(format: "K04 | %@ %@ hand reach %.3f m (shoulder %.3f + arm %.3f), lowest drawn duck band %.3f m",
+                             player.rawValue, side, reach, shoulder.y * RobotAvatarLayer.modelScale, arm * RobotAvatarLayer.modelScale, lowestBand))
+                #expect(reach < lowestBand, "\(player) \(side)")
+            }
+        }
+        layer.remove()
+    }
+
+    /// The verdict badge sits above the mascot as shown, not above the hidden
+    /// pictogram (which is fitted to the player's own, possibly shorter, crown):
+    /// a raised-wrist HIT stays visible on the 1.6 m mascot.
+    @Test func theVerdictBadgeSitsAboveTheShownMascot() async throws {
+        let scene = LaserScene()
+        let layer = RobotAvatarLayer(scene: scene, players: Set(PlayerID.allCases), templates: try await RobotAvatarLayer.sharedTemplates())
+        scene.robotAvatars = layer
+        for player in PlayerID.allCases {
+            scene.presentOutcome(.hit, for: player, band: 1.45...1.5)
+            let badge = try #require(scene.root.findEntity(named: "laserFeedback.badge.\(player.rawValue)"))
+            let head = try #require(layer.extremityPoints(of: player)).headTop.y
+            #expect(badge.isEnabled && badge.position(relativeTo: nil).y > head + 0.2, "\(player)")
+        }
+        layer.remove()
     }
 
     // MARK: Smoothing and display delay

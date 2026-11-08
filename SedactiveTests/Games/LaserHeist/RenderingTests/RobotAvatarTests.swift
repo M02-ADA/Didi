@@ -183,13 +183,16 @@ struct RobotAvatarTests {
         // Shoulders shifted toward the player's right (−X unmirrored): lean toward screen right (+).
         t = feed(&r, try sample(c), joints(c, shoulderShift: -0.15), from: t, frames: 3)
         #expect(r.targets.lean > 0.1)
-        // Jump lift follows the lower sole continuously, without waiting for the
-        // jump phase (presentation only): most of it within one frame, all of it within four.
-        let standing = RobotAvatarLayer.standingHeight / r.motionScale
+        // K04: raised soles alone never lift the root; only valid airborne evidence
+        // does (as the judge requires for a jump to clear).
+        t = feed(&r, try sample(c, phase: .grounded, soles: (0.3, 0.32)), joints(c), from: t, frames: 4)
+        #expect(r.lift < 0.001)
+        // Validly airborne: the lift follows the lower sole, most of it within one
+        // frame, all of it within four.
         let full = 0.3 * r.motionScale  // above the dead zone the lift passes unchanged (K04)
-        t = feed(&r, try sample(c, phase: .grounded, soles: (0.3, 0.32)), joints(c), from: t, frames: 1)
+        t = feed(&r, try sample(c, phase: .airborne, soles: (0.3, 0.32)), joints(c), from: t, frames: 1)
         #expect(r.lift > 0.75 * full)
-        t = feed(&r, try sample(c, phase: .grounded, soles: (0.3, 0.32)), joints(c), from: t, frames: 3)
+        t = feed(&r, try sample(c, phase: .airborne, soles: (0.3, 0.32)), joints(c), from: t, frames: 3)
         #expect(abs(r.lift - full) < 0.01)
         // Landing: back to (almost) 0 within four frames, never below the floor.
         var lifts: [Float] = []

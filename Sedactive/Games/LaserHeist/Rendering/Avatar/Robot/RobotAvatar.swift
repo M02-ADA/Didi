@@ -43,6 +43,11 @@ struct RobotRetargeter {
         var centerX: Double?
         /// Crown height, only when valid (calibrated only).
         var crownY: Double?
+        /// K04: valid airborne jump evidence. `true` only for a valid
+        /// `.airborne` jump phase; `false` for a valid other phase or invalid
+        /// jump evidence; `nil` when the source carries no jump evidence at all
+        /// (the D06 avatar packet today). The root lifts off only when `true`.
+        var airborne: Bool?
     }
 
     /// The robot's hip-to-ankle height at rest (metres, model space).
@@ -198,10 +203,13 @@ struct RobotRetargeter {
 
         if let reference {
             let standing = Float(reference.standingHeight)
-            // JUMP: the lower sole, continuously (not only once the jump phase flips), through
-            // a soft noise zone and a fast adaptive filter: takeoff starts with the feet.
+            // JUMP (K04): the lower sole, through a soft noise zone and a fast adaptive
+            // filter, but only while the evidence says the player is validly airborne,
+            // as the judge requires for a jump to clear. Soles that rise without it
+            // (or with no jump evidence carried) keep the root on the floor: the legs
+            // still show a knee raise, never a jump that the evidence cannot back.
             if let sole = observation.lowerSoleY {
-                let raw = Float(max(0, sole))
+                let raw = observation.airborne == true ? Float(max(0, sole)) : 0
                 measuredLift = liftFilter.filter(Self.softZone(raw, liftDeadband * standing), dt: dt) * motionScale
                 liftSeen = time
             } else if time - (liftSeen ?? time) > Self.liftHold {
@@ -340,6 +348,7 @@ struct RobotRetargeter {
         let g = sample.geometry
         var observation = Observation(joints: joints?.joints ?? [:], calibrated: true)
         if let left = g.leftSoleY.value, let right = g.rightSoleY.value { observation.lowerSoleY = min(left, right) }
+        observation.airborne = sample.jumpState.validity == .valid && sample.jumpState.phase == .airborne
         if g.centerX.validity == .valid { observation.centerX = g.centerX.value }
         if joints == nil { observation.crownY = g.crownY.value }
         update(observation, time: time)

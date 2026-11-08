@@ -96,6 +96,8 @@ enum AvatarPoseAdapter {
                let left = visual.leftSoleY.value, let right = visual.rightSoleY.value {
                 observation.lowerSoleY = min(left, right)
             }
+            // PENDING D06/E07: the packet carries no jump evidence, so `airborne`
+            // stays nil and the avatar never shows a jump it cannot back (K04).
             if visual.centerX.validity == .valid { observation.centerX = visual.centerX.value }
             if visual.crownY.validity == .valid { observation.crownY = visual.crownY.value }
         }

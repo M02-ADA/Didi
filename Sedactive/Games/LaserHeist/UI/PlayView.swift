@@ -156,7 +156,7 @@ private struct ReplayRoundView: View {
             // One HUD at a time: the Sketch gameplay HUD, or (Debug, `-replayDebugHUD`)
             // Jevon's text HUD for replay diagnostics. Results replaces either.
             if let session, session.summary == nil, !Self.showsReplayDebugHUD {
-                GameplayHUD(model: hudModel(session)) { Task { await session.stop() } }
+                GameplayHUD(model: hudModel(session), actions: hudActions(session))
             }
         }
         .overlay {
@@ -204,8 +204,10 @@ private struct ReplayRoundView: View {
             #endif
         }
         .overlay(alignment: .bottomTrailing) {
-            // The gameplay HUD's pause menu carries Leave Game; the debug HUD keeps this button.
-            if let session, session.phase == .running, Self.showsReplayDebugHUD {
+            // Ending a round stays reachable: here while the session offers no pause
+            // (the HUD's pause menu, which carries Leave Game, needs one), and always
+            // with the debug HUD.
+            if let session, session.phase == .running, Self.showsReplayDebugHUD || !hudActions(session).canPause {
                 Button("End round") { Task { await session.stop() } }
                     .buttonStyle(.borderedProminent)
                     .padding()
@@ -247,6 +249,13 @@ private struct ReplayRoundView: View {
     #else
     private static let showsReplayDebugHUD = false
     #endif
+
+    /// The session's player intents for the HUD. PENDING Jevon: when the
+    /// session exposes pause and resume (its `GameClock`), pass them here; until
+    /// then the HUD offers no pause.
+    private func hudActions(_ session: GameSessionCoordinator) -> GameplayHUDActions {
+        GameplayHUDActions(pause: nil, resume: nil, leave: { Task { await session.stop() } })
+    }
 
     /// The HUD's view of the session's authoritative state and events.
     private func hudModel(_ session: GameSessionCoordinator) -> GameplayHUDModel {

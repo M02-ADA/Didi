@@ -487,7 +487,14 @@ final class LaserScene {
         guard let player = players[id] else { return }
         var impact = mapping.laserPosition(heightAboveFloor: bandCenter, worldZ: mapping.interactionPlaneZ + 0.06)
         impact.x = player.position.x
-        feedback.showOutcome(outcome, for: id, badgeAt: player.position + [0, player.visibleTop + 0.25, 0.08], impactAt: impact)
+        var badge = player.position + [0, player.visibleTop + 0.25, 0.08]
+        // K04: with a mascot shown, the pictogram is hidden but still fitted to the
+        // player's own crown, so a short player's verdict sat inside the 1.6 m
+        // mascot's head. Anchor it above the head as posed instead.
+        if let headTop = robotAvatars?.extremityPoints(of: id)?.headTop.y {
+            badge.y = headTop + 0.25
+        }
+        feedback.showOutcome(outcome, for: id, badgeAt: badge, impactAt: impact)
     }
 
     /// Clears the move cue and outcome feedback, e.g. when the next encounter starts.

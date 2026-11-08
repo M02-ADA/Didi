@@ -328,10 +328,10 @@ struct AvatarPoseContractTests {
         RobotAvatarLayer(scene: LaserScene(), players: Set(PlayerID.allCases), templates: try await RobotAvatarLayer.sharedTemplates())
     }
 
-    /// F09 with root lift (R3/R5): a calibrated jump is fully reset when the
-    /// calibration is replaced; old-revision packets stay direction-only; a
-    /// compatible packet after the cutover re-establishes calibrated motion;
-    /// the peer is unaffected throughout.
+    /// F09 (R3/R5): calibrated motion (a crown duck; the packet's soles never
+    /// lift the root, K04) is fully reset when the calibration is replaced;
+    /// old-revision packets stay direction-only; a compatible packet after the
+    /// cutover re-establishes calibrated motion; the peer is unaffected throughout.
     @Test func calibrationReplacementResetsThenUpgradesWithoutStaleState() async throws {
         let file = try Self.load()
         let builder = Builder(file: file)
@@ -343,43 +343,44 @@ struct AvatarPoseContractTests {
             layer.apply(mailbox.drain(now: now), now: now)
             return result
         }
-        let up: [String: (crown: Double, sole: Double?)] = ["player1": (1.85, 0.25), "player2": (1.85, 0.25)]
+        let up: [String: (crown: Double, sole: Double?)] = ["player1": (1.36, 0), "player2": (1.36, 0)]
         for n in 0..<15 { #expect(step(builder.offer(10 + UInt64(n), at: 1 + Double(n) / 30, context: 1, visual: up), now: 1 + Double(n) / 30 + 0.01) == nil) }
         let p1 = { layer.robots[.player1]! }, p2 = { layer.robots[.player2]! }
-        #expect(p1().retargeter.lift > 0.1 && p1().container.position.y > 0.1 && p1().retargeter.reference?.calibrationRevision == 1)
-        let p2Lift = p2().retargeter.lift
-        #expect(p2Lift > 0.1)
+        #expect(p1().retargeter.targets.pelvisDrop > 0.03 && p1().retargeter.reference?.calibrationRevision == 1)
+        let p2Drop = p2().retargeter.targets.pelvisDrop
+        #expect(p2Drop > 0.03)
 
-        // Replacement: P1 revision 2 from frame 30. The old jump is dropped at once.
+        // Replacement: P1 revision 2 from frame 30. The old duck is dropped at once.
         mailbox.publish(builder.status(FixtureFile.Status(revision: 2, calibrationRevisions: ["player1": 2],
                                                           cutovers: ["player1": .init(frameID: 30, capturedAt: 3.0)])))
         let reset = mailbox.drain(now: 1.6)
         #expect(reset.reset.calibration == [.player1] && !reset.reset.all)
         layer.apply(reset, now: 1.6)
         #expect(p1().retargeter.lift == 0 && p1().container.position.y == 0 && p1().retargeter.targets.pelvisDrop == 0)
-        #expect(abs(p2().retargeter.lift - p2Lift) < 1e-6)  // the peer holds its pose
+        #expect(abs(p2().retargeter.targets.pelvisDrop - p2Drop) < 1e-6)  // the peer holds its pose
 
         // Delayed packet of the old context: refused. Old-reference packet: direction-only, no lift.
         #expect(step(builder.offer(26, at: 1.7, context: 1, visual: up), now: 1.71) == .staleContext)
         #expect(step(builder.offer(27, at: 1.8, context: 2, visual: up), now: 1.81) == nil)
-        #expect(p1().retargeter.reference == nil && p1().retargeter.lift == 0 && !p1().retargeter.isCalibrated)
-        #expect(p2().retargeter.lift > 0.1)
+        #expect(p1().retargeter.reference == nil && p1().retargeter.targets.pelvisDrop == 0 && !p1().retargeter.isCalibrated)
+        #expect(p2().retargeter.targets.pelvisDrop > 0.03)
 
-        // Compatible packets after the cutover: calibrated again, revision 2, and the jump shows.
+        // Compatible packets after the cutover: calibrated again, revision 2, and the duck shows.
         for n in 0..<15 {
             #expect(step(builder.offer(31 + UInt64(n), at: 3.1 + Double(n) / 30, context: 2, p1Revision: 2, visual: up),
                          now: 3.1 + Double(n) / 30 + 0.01) == nil)
         }
-        #expect(p1().retargeter.reference?.calibrationRevision == 2 && p1().retargeter.lift > 0.1)
+        #expect(p1().retargeter.reference?.calibrationRevision == 2 && p1().retargeter.targets.pelvisDrop > 0.03)
         // A NEWER frame that still carries revision 1 (an incompatible calibration, not a
-        // late packet) is shown direction-only with no stale lift (R3). A genuinely late
+        // late packet) is shown direction-only with no stale duck (R3). A genuinely late
         // packet never reaches this point: it is refused as staleFrame or staleContext.
         #expect(step(builder.offer(60, at: 4.0, context: 2, visual: up), now: 4.01) == nil)
-        #expect(p1().retargeter.reference == nil && p1().retargeter.lift == 0)
+        #expect(p1().retargeter.reference == nil && p1().retargeter.targets.pelvisDrop == 0 && p1().retargeter.lift == 0)
     }
 
-    /// F10 on the layer: valid soles lift the root; stale soles let it settle;
-    /// a valid crown drop with no hip evidence lowers the pelvis.
+    /// F10 on the layer (K04): valid raised soles alone never lift the root,
+    /// because the packet carries no airborne evidence (PENDING D06/E07); a
+    /// valid crown drop with no hip evidence lowers the pelvis.
     @Test func visualValuesDriveLiftAndCrownDuckOnlyWhenValid() async throws {
         let file = try Self.load()
         let builder = Builder(file: file)
@@ -396,10 +397,9 @@ struct AvatarPoseContractTests {
         }
         let r = { layer.robots[.player1]!.retargeter }
         feed(15, ["player1": (1.85, 0.25)])
-        #expect(r().lift > 0.1)
-        let lifted = r().lift
-        feed(30, ["player1": (1.6, nil)])  // soles stale: hold, then settle
-        #expect(r().lift < lifted * 0.2)
+        #expect(r().isCalibrated && r().lift == 0 && layer.robots[.player1]!.container.position.y == 0)
+        feed(30, ["player1": (1.6, nil)])  // soles stale: still on the floor
+        #expect(r().lift == 0)
         feed(20, ["player1": (1.36, 0)], edit: ["player1": FixtureFile.Edit(drop: ["leftHip", "rightHip"], set: nil)])
         #expect(r().targets.pelvisDrop > 0.03, "crown duck \(r().targets.pelvisDrop)")
     }
@@ -441,7 +441,7 @@ struct AvatarPoseContractTests {
         func feed(_ frames: Int, p2Lost: Bool) {
             for _ in 0..<frames {
                 t += 1.0 / 30; id += 1
-                mailbox.offer(builder.offer(id, at: t, context: 1, visual: ["player1": (1.85, 0.25), "player2": (1.6, 0)], p2Lost: p2Lost))
+                mailbox.offer(builder.offer(id, at: t, context: 1, visual: ["player1": (1.36, 0), "player2": (1.6, 0)], p2Lost: p2Lost))
                 layer.apply(mailbox.drain(now: t + 0.005), now: t + 0.005)
             }
         }
@@ -450,12 +450,12 @@ struct AvatarPoseContractTests {
         let p2 = layer.robots[.player2]!
         #expect(!p2.retargeter.isAvailable && p2.retargeter.presence < 0.1)
         #expect(p2.container.components[OpacityComponent.self]?.opacity == RobotAvatarLayer.unavailableOpacity)
-        #expect(layer.robots[.player1]!.retargeter.lift > 0.1 && layer.robots[.player1]!.retargeter.isAvailable)
+        #expect(layer.robots[.player1]!.retargeter.targets.pelvisDrop > 0.03 && layer.robots[.player1]!.retargeter.isAvailable)
         feed(10, p2Lost: false)
         #expect(layer.robots[.player2]!.retargeter.isAvailable && layer.robots[.player2]!.retargeter.presence > 0.9)
     }
 
-    /// Stop: neutral at once (no fade, no held jump); a late frame is refused;
+    /// Stop: neutral at once (no fade, no held duck); a late frame is refused;
     /// no-frame expiry then relaxes a fresh session to neutral too.
     @Test func stopIsImmediateAndExpiryRelaxes() async throws {
         let file = try Self.load()
@@ -465,16 +465,17 @@ struct AvatarPoseContractTests {
         mailbox.publish(builder.status(FixtureFile.Status(revision: 1)))
         for n in 0..<15 {
             let t = 1 + Double(n) / 30
-            mailbox.offer(builder.offer(10 + UInt64(n), at: t, context: 1, visual: ["player1": (1.85, 0.25), "player2": (1.85, 0.25)]))
+            mailbox.offer(builder.offer(10 + UInt64(n), at: t, context: 1, visual: ["player1": (1.36, 0), "player2": (1.36, 0)]))
             layer.apply(mailbox.drain(now: t + 0.005), now: t + 0.005)
         }
-        #expect(layer.robots.values.allSatisfy { $0.retargeter.lift > 0.1 })
+        #expect(layer.robots.values.allSatisfy { $0.retargeter.targets.pelvisDrop > 0.03 })
         var stop = FixtureFile.Status(revision: 2)
         stop.isActive = false
         mailbox.publish(builder.status(stop))
         layer.apply(mailbox.drain(now: 1.6), now: 1.6)
         for robot in layer.robots.values {
-            #expect(robot.retargeter.presence == 0 && robot.retargeter.lift == 0 && robot.container.position.y == 0)
+            #expect(robot.retargeter.presence == 0 && robot.retargeter.lift == 0 && robot.container.position.y == 0
+                    && robot.retargeter.targets.pelvisDrop == 0)
             #expect(robot.retargeter.reference == nil)
         }
         #expect(mailbox.offer(builder.offer(40, at: 1.61, context: 1)) == .inactive)
@@ -553,8 +554,9 @@ struct AvatarPoseContractTests {
     // MARK: Synthetic demo through packets; presentation unchanged
 
     /// The synthetic demo, converted to labelled synthetic packets, drives the
-    /// Lemon/Tangerine pair through the mailbox: P1 jumps while P2 stands, P2
-    /// ducks while P1 stands, arms move; equal size and colours unchanged.
+    /// Lemon/Tangerine pair through the mailbox: P2 ducks while P1 stands, arms
+    /// move; equal size and colours unchanged. P1's jump shows no root lift: the
+    /// packet carries no airborne evidence (K04, PENDING D06/E07).
     @Test func syntheticDemoDrivesBothMascotsThroughPackets() async throws {
         let input = try LaserReplayScript.load().input
         let source = SyntheticAvatarSource(configuration: input.configuration, cameraGeometryRevision: input.cameraGeometryRevision)
@@ -578,7 +580,7 @@ struct AvatarPoseContractTests {
             return (layer, lift, drop, arm)
         }
         let (jumpLayer, jump, _, _) = try await play(.p1JumpLand)
-        #expect((jump[.player1] ?? 0) > 0.1 && (jump[.player2] ?? 1) < 0.01, "lift \(jump)")
+        #expect((jump[.player1] ?? 1) == 0 && (jump[.player2] ?? 1) == 0, "lift \(jump)")
         let (_, _, duck, _) = try await play(.p2DuckStand)
         #expect((duck[.player2] ?? 0) > 0.03 && (duck[.player1] ?? 1) < 0.01, "drop \(duck)")
         let (_, _, _, arms) = try await play(.asymmetricArms)

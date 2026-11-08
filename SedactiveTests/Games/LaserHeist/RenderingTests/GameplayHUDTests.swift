@@ -103,6 +103,23 @@ struct GameplayHUDTests {
         #expect(foreign.diamondSecondsLeft == nil)
     }
 
+    // MARK: - Pause safety
+
+    /// Pausing is offered only when the session supplies both pause and resume
+    /// (Jevon); today's session supplies neither, so the HUD shows no working
+    /// pause while the round keeps running. Leaving stays its own intent.
+    @Test func pauseIsOfferedOnlyWithTheSessionsPauseAndResume() {
+        #expect(!GameplayHUDActions(pause: nil, resume: nil, leave: {}).canPause)
+        #expect(!GameplayHUDActions(pause: {}, resume: nil, leave: {}).canPause)
+        #expect(!GameplayHUDActions(pause: nil, resume: {}, leave: nil).canPause)
+        var calls: [String] = []
+        let actions = GameplayHUDActions(pause: { calls.append("pause") }, resume: { calls.append("resume") }, leave: nil)
+        #expect(actions.canPause && actions.leave == nil)
+        actions.pause?()
+        actions.resume?()
+        #expect(calls == ["pause", "resume"])
+    }
+
     // MARK: - Vault buttons from Reality Composer Pro
 
     @Test func theVaultDoorSceneCarriesTheoButtonTemplates() async throws {
