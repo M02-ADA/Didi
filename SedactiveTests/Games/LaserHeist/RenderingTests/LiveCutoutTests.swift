@@ -527,6 +527,25 @@ struct LiveCutoutTests {
         #expect(rig.budget.usage.images == 0)
     }
 
+    /// A mascot is the player's only body: cutouts stay hidden beside it, even
+    /// as new frames arrive, and return only with a frame after it leaves.
+    @Test func aMascotTakesPrecedenceOverALiveCutout() async throws {
+        let rig = try Rig()
+        try await rig.start()
+        try await rig.offer(1)
+        #expect(PlayerID.allCases.allSatisfy { rig.entity($0).isShowingLive })
+
+        let mascots = RobotAvatarLayer(scene: rig.scene, players: Set(PlayerID.allCases),
+                                       templates: try await RobotAvatarLayer.sharedTemplates())
+        #expect(PlayerID.allCases.allSatisfy { !rig.entity($0).isShowingLive })
+        try await rig.offer(2)
+        #expect(PlayerID.allCases.allSatisfy { !rig.entity($0).isShowingLive })
+
+        mascots.remove()
+        try await rig.offer(3)
+        #expect(PlayerID.allCases.allSatisfy { rig.entity($0).isShowingLive })
+    }
+
     @Test func sceneAttachAndDetachRestorePictograms() async throws {
         let rig = try Rig()
         try rig.input()

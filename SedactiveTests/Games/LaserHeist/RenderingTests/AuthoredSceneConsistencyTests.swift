@@ -16,6 +16,19 @@ struct AuthoredSceneConsistencyTests {
         entity.children.flatMap { [$0] + descendants(of: $0) }
     }
 
+    /// Scenes are read once and cloned: what one round changes in its copy
+    /// must never reach the next round's.
+    @Test func eachLoadIsAnIndependentCopy() async throws {
+        let first = try await authored()
+        let second = try await authored()
+        #expect(first !== second)
+        LaserScene().installEnvironment(authored: first)
+        #expect(first.findEntity(named: LaserScene.editorPreviewsName) == nil)
+        #expect(second.findEntity(named: LaserScene.editorPreviewsName) != nil)
+        let later = try await authored()
+        #expect(later.findEntity(named: LaserScene.editorPreviewsName) != nil)
+    }
+
     @Test func editorReferencesAreStaticMascotsOnTheirLanesAtTheSharedHeight() async throws {
         let scene = try await authored()
         let previews = try #require(scene.findEntity(named: LaserScene.editorPreviewsName))

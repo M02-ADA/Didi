@@ -648,7 +648,7 @@ final class RobotAvatarLayer {
             container.scale = SIMD3(repeating: Self.modelScale)
             container.addChild(robot)
             entity.addChild(container)
-            entity.isPlaceholderSuppressed = true
+            entity.hasMascot = true
             let bindWorld = skeleton.world(skeleton.bind).position
             let legRest = skeleton("Thigh_L").flatMap { t in skeleton("Foot_L").map { bindWorld[t].y - bindWorld[$0].y } } ?? solver.legLength
             var ankleX: [RobotPoseTargets.Side: Float] = [:]
@@ -921,7 +921,7 @@ final class RobotAvatarLayer {
     func remove() {
         for (player, robot) in robots {
             robot.container.removeFromParent()
-            scene?.players[player]?.isPlaceholderSuppressed = false
+            scene?.players[player]?.hasMascot = false
         }
         #if DEBUG
         for marker in fairnessMarkers.values.flatMap({ $0 }) { marker.removeFromParent() }

@@ -70,10 +70,14 @@ final class PlayerCutoutEntity: Entity {
     /// Whether a live cutout is on screen rather than the pictogram.
     var isShowingLive: Bool { liveSurfaces.contains(where: \.isEnabled) }
 
-    /// While a mascot stands here the pictogram never shows, whatever a live
-    /// cutout's fallback asks for, so one player is never drawn twice.
-    var isPlaceholderSuppressed = false {
-        didSet { placeholder?.isEnabled = !isPlaceholderSuppressed && !isShowingLive }
+    /// While a mascot stands here it is this player's only body: the pictogram
+    /// and any live cutout stay hidden, whatever their fallbacks ask for, so
+    /// one player is never drawn twice.
+    var hasMascot = false {
+        didSet {
+            if hasMascot { liveSurfaces.forEach { $0.isEnabled = false } }
+            placeholder?.isEnabled = !hasMascot && !isShowingLive
+        }
     }
 
     /// Top of whatever body is visible, in meters above this entity's origin:
@@ -139,7 +143,7 @@ final class PlayerCutoutEntity: Entity {
         quad.position = [center.x / own.x, center.y / own.y, 0]
         quad.scale = [size.x / own.x, size.y / own.y, 1]
         for (other, surface) in liveSurfaces.enumerated() {
-            surface.isEnabled = other == index
+            surface.isEnabled = other == index && !hasMascot
         }
         placeholder?.isEnabled = false
     }
@@ -149,7 +153,7 @@ final class PlayerCutoutEntity: Entity {
         for surface in liveSurfaces {
             surface.isEnabled = false
         }
-        placeholder?.isEnabled = !isPlaceholderSuppressed
+        placeholder?.isEnabled = !hasMascot
         setDebugMarkers([])
     }
 

@@ -346,6 +346,21 @@ struct GameplayScenePresenterTests {
         #expect(first.targets[0].beam != first.targets[1].beam)
     }
 
+    /// UNAVAILABLE is neither a pass nor a hit: a calm badge, no spark, and the gate powers down.
+    @Test func unavailableShowsItsOwnBadgeWithoutASparkOrAHitGate() throws {
+        let scene = LaserScene()
+        let laser = try encounter(1, crossing: [.player1: 10, .player2: 10])
+        let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [laser])
+        let unavailable = Judgement.unavailable(.noSample)
+        presenter.apply(state: state(10.4, [laser], judged: [laser.id: [.player1: unavailable]]),
+                        events: [event(1, 10.35, .targetJudged(encounterID: laser.id, playerID: .player1, judgement: unavailable))], snapshot: nil)
+        #expect(presenter.diagnostics.badges == 1)
+        let badge = try #require(scene.root.findEntity(named: "laserFeedback.badge.\(PlayerID.player1.rawValue)"))
+        #expect(badge.isEnabled)
+        #expect(scene.root.findEntity(named: "laserFeedback.impact.\(PlayerID.player1.rawValue)")?.isEnabled != true)
+        #expect(presenter.hazard(for: key(laser, .player1))?.state == .disabled)
+    }
+
     /// A new generation on the same scene never inherits the old round's badge.
     @Test func aNewGenerationClearsTheOldRoundsBadges() throws {
         let scene = LaserScene()

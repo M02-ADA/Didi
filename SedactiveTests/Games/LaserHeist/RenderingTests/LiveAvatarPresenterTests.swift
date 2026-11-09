@@ -79,6 +79,23 @@ struct LiveAvatarPresenterTests {
         #expect(avatars.robots.values.allSatisfy { !$0.retargeter.isAvailable && $0.retargeter.presence < 0.05 })
     }
 
+    /// One player drops out while the other stays tracked: only that mascot
+    /// dims and relaxes, and it stays that player's only body.
+    @Test func onlyTheLostPlayerDimsAndRelaxes() async throws {
+        let (scene, mailbox, source) = try await attached()
+        mailbox.publish(source.status)
+        // The scenario loses P2 from 1.0 s to 2.6 s; stop at about 2.4 s.
+        try play(.trackingLoss, frames: 72, into: scene, mailbox: mailbox, source: source)
+        let avatars = try #require(scene.robotAvatars)
+        let p1 = try #require(avatars.robots[.player1]), p2 = try #require(avatars.robots[.player2])
+        #expect(p1.retargeter.isAvailable && p1.retargeter.presence > 0.95)
+        #expect(p1.container.components[OpacityComponent.self]?.opacity == 1)
+        #expect(!p2.retargeter.isAvailable && p2.retargeter.presence < 0.05)
+        #expect(p2.container.components[OpacityComponent.self]?.opacity == RobotAvatarLayer.unavailableOpacity)
+        try oneMascotEach(scene)
+        #expect(PlayerID.allCases.allSatisfy { surface(scene, $0)?.isEnabled == false })
+    }
+
     @Test func detachRevokesAndRestoresThePictograms() async throws {
         let (scene, mailbox, source) = try await attached()
         mailbox.publish(source.status)

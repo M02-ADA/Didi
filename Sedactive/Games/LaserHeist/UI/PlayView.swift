@@ -17,11 +17,14 @@ struct PlayView: View {
     /// one, Release keeps its temporary pictograms. Never a synthetic source
     /// outside Debug.
     var avatarSource: (@MainActor (AvatarPoseMailbox) -> Void)?
+    /// CP2 attachment seam, PENDING Edo's production composition: shows the
+    /// players' live cutouts. A mascot feed takes precedence over it.
+    var cutoutSource: LiveCutoutSource?
 
     @State private var generation = UUID()
 
     var body: some View {
-        ReplayRoundView(generation: generation, avatarSource: avatarSource, retry: { generation = UUID() })
+        ReplayRoundView(generation: generation, avatarSource: avatarSource, cutoutSource: cutoutSource, retry: { generation = UUID() })
             .id(generation)
     }
 }
@@ -30,6 +33,7 @@ struct PlayView: View {
 private struct ReplayRoundView: View {
     let generation: UUID
     let avatarSource: (@MainActor (AvatarPoseMailbox) -> Void)?
+    let cutoutSource: LiveCutoutSource?
     let retry: () -> Void
     @State private var scene = LaserScene()
     @State private var presentation = LaserReplayPresentation()
@@ -80,6 +84,13 @@ private struct ReplayRoundView: View {
                 } catch {
                     startupError = String(describing: error)
                     return
+                }
+            } else if let cutoutSource {
+                do {
+                    try scene.attachLiveCutouts(cutoutSource.provider, layout: cutoutSource.layout,
+                                                maximumDisplayAge: cutoutSource.maximumDisplayAge)
+                } catch {
+                    print("PlayView: live cutouts unavailable, keeping the pictograms: \(error)")
                 }
             }
             // Optional world-construction guides. Replay body markers live in the presentation adapter.
@@ -159,7 +170,7 @@ private struct ReplayRoundView: View {
                 // The Lemon (P1) and Tangerine (P2) mascots stand in place of the pictograms in the
                 // replay round, driven by its body snapshots through the gameplay presenter (the
                 // DEBUG bridge), alongside the lasers and the vault. Presentation only.
-                if scene.liveAvatars == nil {
+                if scene.liveAvatars == nil, scene.liveCutouts == nil {
                     guard try await installAvatars(calibrations: script.input.configuration.calibrations,
                                                    layout: script.input.configuration.playerPlaneLayout) != nil else { return }
                 }

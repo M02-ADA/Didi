@@ -6,6 +6,15 @@
 import QuartzCore
 import RealityKit
 
+/// What a scene needs to show an authoritative CP2 cutout feed: Edo's
+/// provider, the accepted player-plane layout, and the display-freshness limit
+/// (`nil` until one is agreed with Edo).
+struct LiveCutoutSource {
+    let provider: any PlayerCutoutProviding
+    let layout: PlayerPlaneLayout
+    var maximumDisplayAge: Double?
+}
+
 /// Shows Edo's CP2 player cutouts on the players' surfaces: the RealityKit
 /// consumer of `PlayerCutoutProviding` (CP2 Phase 2, LH-14).
 ///

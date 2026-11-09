@@ -170,14 +170,28 @@ final class LaserScene {
         await loadContent(named: diamondSceneName, fallback: "no diamonds")
     }
 
+    /// Each scene read from the bundle once per app run. These entities are
+    /// only ever cloned, never shown, so Retry skips the file load. A failed
+    /// load is not kept, so a later call tries again.
+    private static var contentLoads: [String: Task<Entity?, Never>] = [:]
+
+    /// A scene copy for one `LaserScene` to own and change.
     private static func loadContent(named name: String, fallback: String) async -> Entity? {
         #if canImport(RealityKitContent)
-        do {
-            return try await Entity(named: name, in: realityKitContentBundle)
-        } catch {
-            print("LaserScene: \(name) failed to load, using \(fallback): \(error)")
+        let load = contentLoads[name] ?? Task {
+            do {
+                return try await Entity(named: name, in: realityKitContentBundle)
+            } catch {
+                print("LaserScene: \(name) failed to load, using \(fallback): \(error)")
+                return nil
+            }
+        }
+        contentLoads[name] = load
+        guard let template = await load.value else {
+            contentLoads[name] = nil
             return nil
         }
+        return template.clone(recursive: true)
         #else
         return nil
         #endif
