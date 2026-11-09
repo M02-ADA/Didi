@@ -305,6 +305,20 @@ final class GameSessionCoordinator {
         synchronizeLiveGame()
     }
 
+    /// Phase intent from the session's reviewed round plan, never a button/contact detector.
+    /// Due laser effects must be settled before entering the vault opportunity.
+    func beginLiveVault(id: UUID) throws {
+        guard !isReplay, lifetime != nil else { throw LaserDataError.invalidValue("inactive live vault intent") }
+        advanceLive()
+        guard phase == .running, game?.roundPhase == .activity,
+              state?.encounters.allSatisfy({ $0.effectsCommitted }) == true,
+              let time = liveReadiness?.gameTime else {
+            throw LaserDataError.invalidValue("unresolved laser effects before vault")
+        }
+        try game?.openVault(id: id, at: time)
+        collectLiveState()
+    }
+
     func continueLiveRound() {
         guard !isReplay, phase == .paused, lifetime != nil else { return }
         do { try liveReadiness?.setManualPause(false, at: hostNow()) }

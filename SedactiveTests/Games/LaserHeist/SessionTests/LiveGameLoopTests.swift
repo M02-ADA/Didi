@@ -157,6 +157,56 @@ struct LiveGameLoopTests {
         await rig.session.stop()
     }
 
+    @Test func liveVaultTimeoutUsesGameClockAndPreservesLaserTotals() async throws {
+        let rig = try LiveGameRig()
+        try await rig.run()
+        #expect(throws: LaserDataError.self) { try rig.session.beginLiveVault(id: UUID()) }
+        for index in 6...11 { try await rig.send(Double(index) * 0.125) }
+        let activity = rig.session.state?.activityProgress
+        let vaultID = UUID()
+        try rig.session.beginLiveVault(id: vaultID)
+        #expect(rig.session.state?.phase == .vault && rig.session.state?.vault?.id == vaultID)
+        for index in 12...51 {
+            if rig.session.summary != nil { break }
+            try await rig.send(Double(index) * 0.125)
+        }
+        let summary = try #require(rig.session.summary)
+        #expect(summary.outcome == .vaultFailed && summary.remainingTeamHealth == 5 && summary.teamScore == 200)
+        #expect(summary.activityDuration == activity && summary.vaultsOpened == 0)
+        #expect(summary.coopResults.first?.gateID == vaultID && summary.coopResults.first?.outcome == .timedOut)
+        #expect(rig.session.events.last?.kind == .roundEnded(.vaultFailed))
+        await rig.session.stop()
+        #expect(rig.controls.input.stopCount == 1)
+    }
+
+    @Test func liveVaultPauseContinuesSameDeadlineWithoutARecoveryLaserPlan() async throws {
+        let rig = try LiveGameRig()
+        try await rig.run()
+        for index in 6...11 { try await rig.send(Double(index) * 0.125) }
+        let id = UUID()
+        try rig.session.beginLiveVault(id: id)
+        try await rig.send(1.5)
+        rig.session.pauseLiveRound()
+        let paused = try #require(rig.session.state)
+        let deadline = try #require(paused.vault?.deadline)
+        for time in [1.625, 1.75, 1.875, 2.0] { try await rig.send(time) }
+        #expect(rig.session.state?.gameTime == paused.gameTime)
+        #expect(rig.session.state?.vault == paused.vault)
+        rig.session.continueLiveRound()
+        for time in [2.125, 2.25, 2.375, 2.5] { try await rig.send(time) }
+        #expect(rig.session.phase == .running && !rig.session.recoveryNeedsPlan)
+        #expect(rig.session.state?.vault?.id == id && rig.session.state?.vault?.deadline == deadline)
+        #expect(rig.session.state?.gameTime == paused.gameTime && rig.session.state?.activityProgress == paused.activityProgress)
+        for index in 21...59 {
+            if rig.session.summary != nil { break }
+            try await rig.send(Double(index) * 0.125)
+        }
+        #expect(rig.session.summary?.outcome == .vaultFailed)
+        #expect(rig.session.summary?.gameDuration == deadline)
+        #expect(rig.session.events.filter { $0.kind == .phaseChanged(.vault) }.count == 1)
+        await rig.session.stop()
+    }
+
     private static func recovery(_ request: LaserLiveRecoveryRequest) throws -> [LaserEncounter]? {
         try request.withdrawn.map { old in
             try LaserEncounter(id: old.id, attemptID: UUID(), targets: old.targets.map {
