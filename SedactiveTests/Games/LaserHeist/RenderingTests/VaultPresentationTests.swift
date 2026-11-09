@@ -306,7 +306,7 @@ struct VaultPresentationTests {
 
     @Test func replayVaultShowsSixActivationsOpensOnceAndClearsTheScreen() async throws {
         let script = try LaserReplayScript.load().freshRound(generation: UUID())
-        let session = GameSessionCoordinator(script: script)
+        let session = try LaserReplayDriver.makeSession(script: script)
         try await session.start()
         let (scene, _) = scene()
         let presenter = GameplayScenePresenter(scene: scene, configuration: script.configuration, encounters: script.encounters)

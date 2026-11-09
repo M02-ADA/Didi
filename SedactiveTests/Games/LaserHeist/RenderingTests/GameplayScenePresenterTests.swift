@@ -391,7 +391,7 @@ struct GameplayScenePresenterTests {
 
     @Test func endingTheRoundMidLaserStopsHazardsAndCue() async throws {
         let script = try LaserReplayScript.load().freshRound(generation: UUID())
-        let session = GameSessionCoordinator(script: script)
+        let session = try LaserReplayDriver.makeSession(script: script)
         try await session.start()
         let scene = LaserScene()
         let presenter = GameplayScenePresenter(scene: scene, configuration: script.configuration, encounters: script.encounters)
@@ -416,7 +416,7 @@ struct GameplayScenePresenterTests {
 
     @Test func replayRoundShowsEachVerdictOnceAndNoCueOutsideActivity() async throws {
         let script = try LaserReplayScript.load().freshRound(generation: UUID())
-        let session = GameSessionCoordinator(script: script)
+        let session = try LaserReplayDriver.makeSession(script: script)
         try await session.start()
         let scene = LaserScene()
         let presenter = GameplayScenePresenter(scene: scene, configuration: script.configuration, encounters: script.encounters)

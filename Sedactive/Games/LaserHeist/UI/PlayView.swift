@@ -175,7 +175,7 @@ private struct ReplayRoundView: View {
                                                    layout: script.input.configuration.playerPlaneLayout) != nil else { return }
                 }
                 #endif
-                let replay = GameSessionCoordinator(script: script)
+                let replay = try LaserReplayDriver.makeSession(script: script)
                 session = replay
                 try await replay.start()
                 guard !Task.isCancelled else { await replay.stop(); return }
@@ -302,8 +302,8 @@ private struct ReplayRoundView: View {
             fixture = true
         }
         #endif
-        return GameplayHUDModel(state: session.state, events: session.events, configuration: session.script.configuration,
-                                activityDuration: session.script.activityDuration,
+        return GameplayHUDModel(state: session.state, events: session.events, configuration: session.configuration,
+                                activityDuration: session.activityDuration,
                                 diamondsCollected: collected, diamondsAreFixture: fixture)
     }
 

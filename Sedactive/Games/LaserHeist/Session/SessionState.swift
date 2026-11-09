@@ -8,7 +8,7 @@
 import Foundation
 
 nonisolated enum SessionState: Equatable, Sendable {
-    case idle, running, finished, failed(String)
+    case idle, starting, awaitingSetup, running, finished, failed(String)
 }
 
 nonisolated struct ReplayTargetResult: Equatable, Sendable {

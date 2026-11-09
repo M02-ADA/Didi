@@ -10,7 +10,7 @@ struct ReplaySliceHUD: View {
             Text("Health \(session.state?.teamHealth ?? 5) / 5   ·   Team score \(session.state?.teamScore ?? 0)")
             Text("P1: left · P2: right").font(.caption)
             Text("Vault progress \(session.state?.missionProgress ?? 0) / \(session.state?.missionTarget ?? 1)")
-            ProgressView(value: session.state?.activityProgress ?? 0, total: session.script.activityDuration)
+            ProgressView(value: session.state?.activityProgress ?? 0, total: session.activityDuration)
                 .frame(maxWidth: 280)
                 .accessibilityLabel("Replay progress")
             switch session.phase {
@@ -18,7 +18,8 @@ struct ReplaySliceHUD: View {
                 Text("Replay complete").font(.title2.bold())
                 Text("\(session.results.count) target results · no camera used")
             case .failed(let message): Text("Replay stopped: \(message)")
-            case .idle: Text("Preparing body replay…")
+            case .idle, .starting: Text("Preparing body replay…")
+            case .awaitingSetup: Text("Waiting for session setup…")
             case .running: Text("Follow DUCK / JUMP; badges show each player's result.")
             }
             if let state = session.state {
@@ -47,9 +48,9 @@ struct ReplaySliceHUD: View {
                 Text("Cyan: crown · Purple: wrists · Green: soles")
                     .font(.caption)
                 Text("Yellow: judged band edges").font(.caption)
-                if let encounter = session.script.encounters.last(where: { $0.targets[0].crossingTime - 4 <= (session.state?.gameTime ?? 0) }) {
+                if let encounter = session.encounters.last(where: { $0.targets[0].crossingTime - 4 <= (session.state?.gameTime ?? 0) }) {
                     let target = encounter.targets[0]
-                    Text("Band \(target.beam.lowerY, specifier: "%.3f")–\(target.beam.upperY, specifier: "%.3f") · margin \(session.script.configuration.clearanceMargin, specifier: "%.3f")")
+                    Text("Band \(target.beam.lowerY, specifier: "%.3f")–\(target.beam.upperY, specifier: "%.3f") · margin \(session.configuration.clearanceMargin, specifier: "%.3f")")
                         .font(.caption.monospaced())
                 }
             }

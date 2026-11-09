@@ -15,7 +15,7 @@ final class LaserReplayPresentation {
 
     func start(on content: RealityViewCameraContent, scene: LaserScene,
                session: GameSessionCoordinator) {
-        guard subscription == nil else { return }
+        guard subscription == nil, session.isReplay else { return }
         self.session = session
         elapsed = 0
         #if DEBUG
@@ -23,8 +23,8 @@ final class LaserReplayPresentation {
         #else
         let markers = false
         #endif
-        presenter = GameplayScenePresenter(scene: scene, configuration: session.script.configuration,
-                                           encounters: session.script.encounters, showsDebugMarkers: markers)
+        presenter = GameplayScenePresenter(scene: scene, configuration: session.configuration,
+                                           encounters: session.encounters, showsDebugMarkers: markers)
         subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self, weak scene] event in
             guard let self, let scene, session.phase == .running else { return }
             self.elapsed += event.deltaTime
