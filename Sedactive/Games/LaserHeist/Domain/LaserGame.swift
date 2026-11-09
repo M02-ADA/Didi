@@ -111,11 +111,16 @@ nonisolated struct LaserGame: Sendable {
     var historyCount: Int { history.values.reduce(0) { $0 + $1.count } }
     var crossingCount: Int { crossings.count }
     var isPaused: Bool { blocked && !exited && roundOutcome == nil }
+    func hasUsedAttempt(_ id: UUID) -> Bool {
+        withdrawnAttemptIDs.contains(id) || crossings.keys.contains { $0.attemptID == id }
+            || processedTargets.contains { $0.attemptID == id }
+    }
 
     mutating func register(_ encounter: LaserEncounter) throws {
         try requireLaserValue(!blocked && !exited && roundOutcome == nil && roundPhase == .activity
             && !effectEncounters.contains(encounter.id) && !withdrawnAttemptIDs.contains(encounter.attemptID),
                               "inactive/consumed encounter")
+        try requireLaserValue(!hasUsedAttempt(encounter.attemptID), "attempt identity already used in round")
         try requireLaserValue(!crossings.contains { $0.key.encounterID == encounter.id && $0.value.result == .pending },
                               "previous attempt still pending")
         for target in encounter.targets {

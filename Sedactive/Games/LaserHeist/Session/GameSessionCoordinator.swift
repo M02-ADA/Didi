@@ -336,6 +336,8 @@ final class GameSessionCoordinator {
                             recoveryNeedsPlan = true; phase = .paused; return
                         }
                         try LaserLiveRecovery.validate(replacement, request: request, configuration: configuration)
+                        try requireLaserValue(replacement.allSatisfy { game?.hasUsedAttempt($0.attemptID) == false },
+                                              "recovery attempt identity already used in round")
                         approvedRecovery = replacement
                     } catch { recoveryNeedsPlan = true; phase = .paused; return }
                 }

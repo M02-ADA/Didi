@@ -132,6 +132,31 @@ struct LiveGameLoopTests {
         await rig.session.stop()
     }
 
+    @Test func recoveryCannotBorrowTheAttemptOfAnAlreadyCommittedEncounter() async throws {
+        let committedAttempt = UUID(uuidString: "34000000-0000-4000-8000-000000000001")!
+        let rig = try LiveGameRig(encounterCount: 2, planner: { request in
+            try request.withdrawn.map { old in
+                try LaserEncounter(id: old.id, attemptID: committedAttempt, targets: old.targets.map {
+                    let warning = request.gameTime + 0.125
+                    return try LaserTarget(playerID: $0.playerID, calibrationRevision: $0.calibrationRevision,
+                        requiredMove: $0.requiredMove, beam: $0.beam, warningTime: warning,
+                        crossingTime: warning + $0.crossingTime - $0.warningTime)
+                })
+            }
+        })
+        try await rig.run()
+        for index in 6...11 { try await rig.send(Double(index) * 0.125) }
+        #expect(rig.session.state?.teamScore == 200)
+        let oldPendingAttempt = rig.session.encounters[1].attemptID
+        rig.session.pauseLiveRound()
+        rig.session.continueLiveRound()
+        try await rig.send(1.5); try await rig.send(1.625)
+        #expect(rig.session.phase == .paused && rig.session.recoveryNeedsPlan)
+        #expect(rig.session.encounters[1].attemptID == oldPendingAttempt)
+        #expect(rig.session.state?.teamScore == 200 && rig.session.summary == nil)
+        await rig.session.stop()
+    }
+
     private static func recovery(_ request: LaserLiveRecoveryRequest) throws -> [LaserEncounter]? {
         try request.withdrawn.map { old in
             try LaserEncounter(id: old.id, attemptID: UUID(), targets: old.targets.map {
