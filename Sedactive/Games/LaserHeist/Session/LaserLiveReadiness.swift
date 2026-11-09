@@ -71,7 +71,12 @@ nonisolated struct LaserLiveReadiness: Sendable {
         guard PlayerID.allCases.allSatisfy({ value.calibrationRevisions[$0] != nil }), value.accepts(packet) else {
             try block(.calibration, at: time); return
         }
-        guard (try? packet.validate()) != nil, PlayerID.allCases.allSatisfy({ id in
+        guard (try? packet.validate()) != nil else { try block(.measurements, at: time); return }
+        // History may receive out-of-order captures. An older packet's measurement validity must
+        // not replace current readiness (the same packet still reaches the domain evidence path).
+        if let lastFrame, let lastCapture,
+           packet.frameID <= lastFrame || packet.capturedAt <= lastCapture { return }
+        guard PlayerID.allCases.allSatisfy({ id in
             guard let sample = packet.players[id] else { return false }
             return sample.trackingStatus == .reliable
                 && [sample.geometry.crownY, sample.geometry.leftWristY, sample.geometry.rightWristY,
@@ -83,9 +88,6 @@ nonisolated struct LaserLiveReadiness: Sendable {
             try block(.staleEvidence, at: time); return
         }
         if let evidenceCutover, packet.capturedAt <= evidenceCutover { return }
-        // Duplicate/out-of-order transport cannot add settling observations or refresh capture age.
-        if let lastFrame, let lastCapture,
-           packet.frameID <= lastFrame || packet.capturedAt <= lastCapture { return }
         if manualPause { try block(.manualPause, at: time); return }
         if let lastCapture, packet.capturedAt - lastCapture >= policy.maximumEvidenceAge {
             try block(.staleEvidence, at: time)

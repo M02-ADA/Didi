@@ -126,4 +126,12 @@ nonisolated struct LaserLiveReadinessTests {
         try value.evaluate(at: 2000)
         #expect(value.phase == .paused && value.gameTime == time)
     }
+
+    @Test func lateUnavailablePacketCannotReplaceNewerReliableReadiness() throws {
+        var value = try running()
+        try value.observe(packet(3, 1000.25, valid: false), context: context,
+                          bindingConfirmed: true, at: 1000.5)
+        #expect(value.phase == .running && value.blocker == nil)
+        #expect(value.gameTime == 0.125)
+    }
 }

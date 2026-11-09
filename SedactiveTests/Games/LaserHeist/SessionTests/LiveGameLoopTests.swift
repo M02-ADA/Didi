@@ -245,6 +245,22 @@ struct LiveGameLoopTests {
         #expect(rig.controls.input.stopCount == 1 && rig.controls.input.releaseCount == 1)
     }
 
+    @Test func delayedUnavailableEvidenceDoesNotCancelANewerReliableAttempt() async throws {
+        let rig = try LiveGameRig()
+        try await rig.run()
+        // Each source frame is delivered at most once; completion order differs from capture order.
+        let delayed = try await rig.send(0.75, crown: nil, deliver: false)
+        try await rig.send(0.875)
+        let newest = rig.session.latestSnapshot
+        rig.controls.fixture.clock.time = 1
+        await rig.controls.input.sendAndWaitForContextRead(delayed)
+        #expect(rig.session.phase == .running && rig.session.latestSnapshot == newest)
+        for time in [1.125, 1.25, 1.375] { try await rig.send(time) }
+        #expect(rig.session.state?.teamScore == 200 && rig.session.state?.teamHealth == 5)
+        #expect(!rig.session.events.contains { if case .attemptWithdrawn = $0.kind { true } else { false } })
+        await rig.session.stop()
+    }
+
     private static func recovery(_ request: LaserLiveRecoveryRequest) throws -> [LaserEncounter]? {
         try request.withdrawn.map { old in
             try LaserEncounter(id: old.id, attemptID: UUID(), targets: old.targets.map {
@@ -301,8 +317,9 @@ struct LiveGameLoopTests {
         try await send(0.25); try await send(0.375)
         #expect(session.canStartLiveRound)
     }
+    @discardableResult
     func send(_ capture: Double, arrivedAt: Double? = nil, crown: Double? = 0.5,
-              notifyBeforeDelivery: Bool = false) async throws {
+              notifyBeforeDelivery: Bool = false, deliver: Bool = true) async throws -> BodySnapshot {
         let id = frame; frame += 1
         try #require(try controls.fixture.finish(controls.fixture.result(id, capture, LiveVisionFixtures.standingPair),
                                                age: (arrivedAt ?? capture) - capture))
@@ -325,8 +342,10 @@ struct LiveGameLoopTests {
                     rightSoleY: reliable ? feet : missing, centerX: reliable ? center : missing),
                 jumpState: JumpState(phase: reliable ? .grounded : .unknown, validity: reliable ? .valid : .identityUncertain)))
         })
-        await controls.input.sendAndWaitForContextRead(BodySnapshot(
+        let packet = BodySnapshot(
             sessionGeneration: controls.fixture.context.generation, frameID: id, capturedAt: capture,
-            cameraGeometryRevision: 1, players: players))
+            cameraGeometryRevision: 1, players: players)
+        if deliver { await controls.input.sendAndWaitForContextRead(packet) }
+        return packet
     }
 }
