@@ -2,6 +2,12 @@ import Foundation
 
 /// E06 numeric extraction. No mask-extrema-as-anatomy, fixed offsets, game rules or clock.
 nonisolated enum BodyMeasurementExtractor {
+  static func experimentalAnatomy(source: CameraFrameMetadata, controlRevision: UInt64,
+    candidate: PoseCandidate, region: PersonMaskRegion, width: Int, height: Int,
+    labelAt: (Int, Int) -> UInt8) -> AnatomicalPlayerCandidate {
+    AnatomicalCandidateExtractor.extract(source: source, controlRevision: controlRevision,
+      candidate: candidate, region: region, width: width, height: height, labelAt: labelAt)
+  }
   static func unavailable(_ reason: EvidenceValidity) -> EstimatedScalar {
     // The constructor's invariant is structural and independent of input.
     try! EstimatedScalar(value: nil, validity: reason)

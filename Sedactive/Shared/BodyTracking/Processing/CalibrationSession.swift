@@ -76,6 +76,11 @@ nonisolated struct CalibrationSession: Sendable {
   private var lastAttemptHost: Double?
   private var lastFrame: UInt64 = 0
   private var pendingSource: CameraFrameMetadata?
+  private var anatomicalSums: [PlayerID: [Double]] = [:]
+  private var anatomicalMin: [PlayerID: [Double]] = [:]
+  private var anatomicalMax: [PlayerID: [Double]] = [:]
+  private var anatomicalCount = 0
+  private(set) var latestAnatomy: [PlayerID: AnatomicalPlayerCandidate] = [:]
   private var sums: [PlayerID: [Double]] = [:] // exactly 2 x 9 numeric scalars
   private(set) var reason = "No calibration requested"
 
@@ -115,6 +120,7 @@ nonisolated struct CalibrationSession: Sendable {
   }
   private mutating func resetWindow() {
     count = 0; sums = [:]; firstSource = nil; lastFrame = 0; pendingSource = nil
+    anatomicalSums = [:]; anatomicalMin = [:]; anatomicalMax = [:]; anatomicalCount = 0; latestAnatomy = [:]
   }
   mutating func beginSample(_ stamp: CalibrationAdmission, source: CameraFrameMetadata,
     at time: Double) -> Bool {
@@ -166,6 +172,20 @@ nonisolated struct CalibrationSession: Sendable {
       values[id] = [nose.y, la.y, ra.y, hip, shoulder - hip,
         (ls.x + rs.x + lh.x + rh.x) / 4, region.minY, region.maxY, 1]
     }
+    latestAnatomy = mask.anatomy.filter { id, value in
+      value.source == pose.source && value.controlRevision == stamp.bindingRevision
+        && value.candidateID == association[id].candidateID
+    }
+    if latestAnatomy.count == 2, latestAnatomy.values.allSatisfy({ $0.experimentalReferences != nil }) {
+      for id in PlayerID.allCases {
+        let a = latestAnatomy[id]!.experimentalReferences!
+        let v = [a.crownY, a.leftSoleY, a.rightSoleY]
+        anatomicalSums[id] = zip(anatomicalSums[id] ?? [0, 0, 0], v).map(+)
+        anatomicalMin[id] = zip(anatomicalMin[id] ?? v, v).map { min($0, $1) }
+        anatomicalMax[id] = zip(anatomicalMax[id] ?? v, v).map { max($0, $1) }
+      }
+      anatomicalCount += 1
+    }
     firstSource = firstSource ?? pose.source; lastFrame = pose.source.frameID
     for id in PlayerID.allCases {
       let previous = sums[id] ?? Array(repeating: 0.0, count: 9)
@@ -176,8 +196,15 @@ nonisolated struct CalibrationSession: Sendable {
       var players: [PlayerID: StandingPlayerObservation] = [:]
       for id in PlayerID.allCases {
         let v = sums[id]!.map { $0 / Double(count) }
+        var anatomy: StandingAnatomicalReferences?
+        if anatomicalCount == count, let total = anatomicalSums[id],
+          let lo = anatomicalMin[id], let hi = anatomicalMax[id],
+          zip(lo, hi).allSatisfy({ ($1 - $0) * Double(pose.frame.imageHeight) <= AnatomicalCandidatePolicyV1.standingSpreadPixels }) {
+          let mean = total.map { $0 / Double(count) }
+          anatomy = .init(crownY: mean[0], leftSoleY: mean[1], rightSoleY: mean[2], quality: .experimental)
+        }
         players[id] = .init(noseY: v[0], leftAnkleY: v[1], rightAnkleY: v[2], hipY: v[3],
-          torsoLength: v[4], originX: v[5], maskMinY: v[6], maskMaxY: v[7], anatomy: nil)
+          torsoLength: v[4], originX: v[5], maskMinY: v[6], maskMaxY: v[7], anatomy: anatomy)
       }
       candidate = .init(id: UUID(), admission: stamp, firstFrameID: firstSource.frameID,
         lastFrameID: pose.source.frameID, firstCapturedAt: firstSource.capturedAt,
@@ -185,7 +212,7 @@ nonisolated struct CalibrationSession: Sendable {
         expiresAt: min(deadline, time + StandingCollectionPolicyV1.candidateLifetime),
         players: players, imageWidth: pose.frame.imageWidth, imageHeight: pose.frame.imageHeight,
         rotationAngle: pose.source.rotationAngle, mirrored: pose.source.mirrored, samples: count)
-      phase = .candidateReady; reason = "Unaccepted paired candidate; crown/independent soles UNAVAILABLE"
+      phase = .candidateReady; reason = "Unaccepted paired candidate; any silhouette estimates are EXPERIMENTAL, never authoritative"
     }
   }
   private func sourceIsFresh(_ source: CameraFrameMetadata, _ time: Double) -> Bool {

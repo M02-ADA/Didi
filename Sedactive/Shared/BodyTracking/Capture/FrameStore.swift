@@ -401,6 +401,10 @@ actor CameraCopySink: CameraFrameSink {
           cancelled: Task.isCancelled) {
           let receipt = track(result, frame: frame)
           tracking?.publishBody(result, admission: frame.trackingAdmission, receipt: receipt)
+          if let receipt, !Task.isCancelled {
+            tracking?.publishPresentation(result, admission: frame.trackingAdmission, receipt: receipt)
+          }
+          var measurementMask: PersonMaskObservation?
           if let tracking, let receipt,
             tracking.beginMask(pose: result, admission: frame.trackingAdmission, receipt: receipt) {
             if segmenter == nil {
@@ -417,9 +421,14 @@ actor CameraCopySink: CameraFrameSink {
                 quality: error is PersonMaskError ? .unsupportedOutput : .requestFailed,
                 regions: [:], outputBytes: 0, serviceSeconds: CameraHostClock.now() - maskStart)
             }
+            measurementMask = mask
             if !Task.isCancelled {
               tracking.finishMask(mask, pose: result, admission: frame.trackingAdmission, receipt: receipt)
             }
+          }
+          if !Task.isCancelled {
+            tracking?.publishMeasurements(result, admission: frame.trackingAdmission,
+              receipt: receipt, mask: measurementMask)
           }
         }
       }

@@ -6,6 +6,7 @@ import Foundation
   static let shared = AppDependencies()
   let camera: CameraPipeline
   let bodyInput: BodyInputService
+  let visionPoseBridge: VisionNumericPoseBridge
   #if DEBUG
   let cameraDiagnostics: LiveInputDiagnosticsModel
   #endif
@@ -13,6 +14,7 @@ import Foundation
     let camera = CameraPipeline()
     self.camera = camera
     bodyInput = BodyInputService(camera: camera)
+    visionPoseBridge = VisionNumericPoseBridge(gate: camera.frames.tracking)
     #if DEBUG
     cameraDiagnostics = LiveInputDiagnosticsModel(camera: camera, bodyInput: bodyInput)
     #endif

@@ -18,6 +18,7 @@ nonisolated struct LiveBodyInputState: Sendable {
   var revisionHighWater: [PlayerID: UInt64] = [:]
   var cutovers: [PlayerID: BodyInputCutover] = [:]
   var calibration = CalibrationSession()
+  var measurements = LiveMeasurementFlow()
   var latest: BodySnapshot?
   var lastAdmission: CameraFrameMetadata?
   var lastPublication: UInt64 = 0
@@ -32,6 +33,7 @@ nonisolated struct LiveBodyInputState: Sendable {
   var stopped = true
 
   mutating func invalidate(at time: Double) {
+    measurements.invalidate()
     latest = nil; calibration.invalidate("Source/control invalidated")
     if let configuration {
       self.configuration = configuration.replacingCalibrations([:])
@@ -143,6 +145,7 @@ nonisolated struct LiveBodyInputRead: Sendable {
   let calibration: StandingCalibrationProgress
   let acceptedRevision: UInt64
   let progress: BodyInputProgress
+  let measurements: LiveMeasurementSnapshot?
 }
 
 /// One-shot live CP1 provider per session. App injects the existing retained CameraPipeline.

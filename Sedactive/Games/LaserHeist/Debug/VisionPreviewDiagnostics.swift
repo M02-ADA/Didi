@@ -9,11 +9,14 @@ nonisolated enum VisionPreviewDiagnostics {
       && arguments.contains("--camera-diagnostics")
   }
   static func text(body: LiveBodyInputRead, mask: VisionPreviewMaskRead) -> String {
+    let neverRequested = body.calibration.request == nil && body.calibration.candidate == nil
+      && body.calibration.sampleCount == 0 && body.calibration.reason == "Source/control invalidated"
+    let phase = neverRequested ? "inactive / no current collection" : body.calibration.phase.rawValue
     var lines = [
       "DEVELOPMENT PREVIEW — no physical/calibration/gameplay acceptance",
       "E05 provider: \(body.status); source active: \(body.context?.isActive == true)",
       "Accepted calibration context revision: \(body.acceptedRevision); accepted players: \(body.context?.calibrationRevisions.count ?? 0)/2",
-      "E04: \(body.calibration.phase.rawValue); samples \(body.calibration.sampleCount)/\(StandingCollectionPolicyV1.sampleCount); request \(body.calibration.request?.id.uuidString ?? "none")",
+      "E04: \(phase); samples \(body.calibration.sampleCount)/\(StandingCollectionPolicyV1.sampleCount); request \(body.calibration.request?.id.uuidString ?? "none")",
       body.calibration.reason,
     ]
     if let last = mask.last {
@@ -24,6 +27,18 @@ nonisolated enum VisionPreviewDiagnostics {
         "Torso-label support and mask row/alignment convention remain unverified; labels are not PlayerIDs.",
       ]
     } else { lines.append("E03: NOT RUN / no compatible numeric mask result. Requires current confirmed pair + explicit collection.") }
+    if let flow = body.measurements {
+      lines.append("MULTI-RATE EXPERIMENT: numeric samples \(flow.samples), adjacent capture interval \(flow.captureInterval.map { String(format: "%.4f s", $0) } ?? "not measured"); mask requests \(flow.maskRequests), request interval \(flow.maskRequestCaptureInterval.map { String(format: "%.3f s", $0) } ?? "not measured"); committed mask results \(flow.maskCompletions), result interval \(flow.maskCaptureInterval.map { String(format: "%.3f s", $0) } ?? "not measured") (configured <=1Hz, collection only)")
+      lines.append("Numeric source frame \(flow.source.frameID), capturedAt \(flow.source.capturedAt), generation \(flow.source.context.generation), epoch \(flow.source.context.epoch), geometry \(flow.source.context.geometryRevision), control \(flow.controlRevision), context revision \(flow.acceptedContextRevision)")
+      for id in PlayerID.allCases {
+        guard let player = flow.players[id] else { continue }
+        lines.append("\(id) confirmed association \(player.confirmedAssociation); observed ankles L/R \(player.observedLeftAnkleY != nil)/\(player.observedRightAnkleY != nil) (NOT soles); current crown/soles \(player.anatomy.crown.status.rawValue)/\(player.anatomy.leftSole.status.rawValue)/\(player.anatomy.rightSole.status.rawValue); temporal \(player.temporal.phase.rawValue): \(player.temporal.reason)")
+        if let last = flow.lastMaskAnatomy[id] {
+          lines.append("\(id) HISTORICAL mask frame \(last.source.frameID), capturedAt \(last.source.capturedAt): crown/soles \(last.crown.status.rawValue)/\(last.leftSole.status.rawValue)/\(last.rightSole.status.rawValue). Not substituted for this numeric frame.")
+        }
+      }
+      lines.append("Last committed mask outcome \(flow.lastMaskQuality?.rawValue ?? "NOT RUN"); service \(flow.lastMaskServiceSeconds.map { String(format: "%.1f ms", $0 * 1000) } ?? "not measured"). Accepted calibration and authoritative airborne remain separate/unavailable.")
+    }
     if let candidate = body.calibration.candidate {
       lines.append("Candidate \(candidate.id): UNACCEPTED; validated anatomical references: \(candidate.hasValidatedAnatomy). No baseline is fabricated.")
     }

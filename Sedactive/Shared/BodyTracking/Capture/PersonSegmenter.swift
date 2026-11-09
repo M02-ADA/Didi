@@ -17,6 +17,7 @@ nonisolated struct PersonMaskObservation: Sendable {
   let regions: [PlayerID: PersonMaskRegion]
   let outputBytes: Int
   let serviceSeconds: Double
+  var anatomy: [PlayerID: AnatomicalPlayerCandidate] = [:]
   // Native labels do NOT establish crown or separate anatomical soles.
 }
 nonisolated protocol PersonMaskDetecting: AnyObject {
@@ -80,10 +81,20 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
         bounds: bounds, width: w, height: h) { x, y in
           base.advanced(by: y * stride).assumingMemoryBound(to: UInt8.self)[x]
         }
+      var anatomy: [PlayerID: AnatomicalPlayerCandidate] = [:]
+      for (id, region) in result {
+        if let candidate = pose.frame.candidates.first(where: { $0.candidateID == region.candidateID }) {
+          anatomy[id] = BodyMeasurementExtractor.experimentalAnatomy(source: pose.source,
+            controlRevision: association.controlRevision, candidate: candidate, region: region,
+            width: w, height: h) { x, y in
+              base.advanced(by: y * stride).assumingMemoryBound(to: UInt8.self)[x]
+            }
+        }
+      }
       return .init(source: pose.source,
         quality: result.count == 2 ? .torsoSupportedGeometryUnverified : .insufficientEvidence,
         regions: result, outputBytes: max(bytes, CVPixelBufferGetDataSize(mask)),
-        serviceSeconds: CameraHostClock.now() - start)
+        serviceSeconds: CameraHostClock.now() - start, anatomy: anatomy)
     }
   }
 
