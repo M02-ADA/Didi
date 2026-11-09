@@ -198,6 +198,7 @@ nonisolated final class CameraTrackingGate: Sendable {
     var lifecycleObservers: [any NSObjectProtocol] = []
     var requestSerial: UInt64 = 0
     var command: CameraBindingRequest?
+    var bodySessionOwner: UUID?
     var body = LiveBodyInputState()
     var presentation = VisionNumericPoseChannel()
     #if DEBUG
@@ -590,21 +591,50 @@ nonisolated final class CameraTrackingGate: Sendable {
       let pair = s.latest, pair.controlRevision == s.revision else { return false }
     return [pair.player1, pair.player2].allSatisfy { $0.state == .tracking && !$0.requiresRebind }
   }
-  func configureBody(_ configuration: BodyInputConfiguration) throws {
+  // CameraPipeline reserves/releases this lease only at fully drained capture boundaries.
+  // It does not reset B2 control/request serials or the worker's retained-generation guard.
+  func reserveBodySession(_ owner: UUID) throws {
     try state.withLock {
-      guard $0.active, $0.foreground, let context = $0.context else { throw LiveVisionError.inactiveSource }
+      guard $0.bodySessionOwner == nil, $0.body.configuration == nil, $0.body.stopped,
+        !$0.active, $0.context == nil else { throw BodyInputOperationError.configurationChanged }
+      revoke(&$0)
+      $0.presentation.endSession()
+      $0.bodySessionOwner = owner
+    }
+  }
+  func stopBodySession(_ owner: UUID) {
+    state.withLock {
+      guard $0.bodySessionOwner == owner else { return }
+      revoke(&$0)
+      $0.presentation.endSession()
+      stopBody(&$0)
+    }
+  }
+  func releaseBodySession(_ owner: UUID) -> Bool {
+    state.withLock {
+      guard $0.bodySessionOwner == owner, !$0.active, $0.context == nil,
+        $0.body.stopped else { return false }
+      var calibration = $0.body.calibration
+      calibration.resetForNewSession()
+      $0.body = LiveBodyInputState()
+      $0.body.calibration = calibration
+      $0.bodySessionOwner = nil
+      return true
+    }
+  }
+  func configureBody(_ configuration: BodyInputConfiguration, session: UUID? = nil) throws {
+    try state.withLock {
+      guard $0.bodySessionOwner == session, $0.active, $0.foreground, let context = $0.context else { throw LiveVisionError.inactiveSource }
       try $0.body.configure(configuration, source: context, at: now())
     }
   }
   func bodyWake(_ wake: AsyncStream<Void>.Continuation) { state.withLock { $0.body.wake = wake } }
-  func stopBody() {
-    state.withLock {
-      $0.presentation.invalidate()
-      $0.body.invalidate(at: now()); $0.body.subscription = nil
-      $0.body.continuation?.finish(); $0.body.continuation = nil
-      $0.body.delivery = .closed; $0.body.stopped = true
-      $0.body.wake?.finish(); $0.body.wake = nil
-    }
+  private func stopBody(_ s: inout State) {
+    s.presentation.invalidate()
+    s.body.invalidate(at: now()); s.body.subscription = nil
+    s.body.continuation?.finish(); s.body.continuation = nil
+    s.body.delivery = .closed; s.body.stopped = true
+    s.body.wake?.finish(); s.body.wake = nil
   }
   func readBody() -> LiveBodyInputRead {
     state.withLock {

@@ -148,18 +148,29 @@ nonisolated struct LiveBodyInputRead: Sendable {
   let measurements: LiveMeasurementSnapshot?
 }
 
-/// One-shot live CP1 provider per session. App injects the existing retained CameraPipeline.
+/// Sequential live CP1 sessions on the existing retained CameraPipeline. Await stop before Retry.
 /// Binding is explicit. This provider never chooses game time, phases, verdicts or render output.
 @MainActor final class BodyInputService: BodyInputProviding {
   let camera: CameraPipeline
-  private var used = false
+  private enum Lifecycle: Equatable { case idle, starting, running, stopping }
+  private var lifecycle = Lifecycle.idle
+  private var session: UUID?
+  private var starting: Task<Void, Error>?
+  private var stopping: Task<Void, Never>?
+  private var stoppedRead = LiveBodyInputRead(context: nil, latest: nil, status: .stopped,
+    diagnostics: .init(), delivery: .closed,
+    calibration: CalibrationSession().progress, acceptedRevision: 0, progress: .waiting,
+    measurements: nil)
   private var startConfiguration: BodyInputConfiguration?
   private var observer: (@MainActor (BodyInputStatusEvent) -> Void)?
   private var observerToken: UUID?
   private var notifying = false
   private var eventRevision: UInt64 = 0
   private var statusTask: Task<Void, Never>?
-  private var read: LiveBodyInputRead { camera.frames.tracking.readBody() }
+  private var read: LiveBodyInputRead {
+    guard let session, camera.ownsBodySession(session) else { return stoppedRead }
+    return camera.frames.tracking.readBody()
+  }
   var latestSnapshot: BodySnapshot? { read.latest }
   var currentContext: BodyInputContext? { read.context }
   var status: BodyInputStatus { read.status }
@@ -171,67 +182,116 @@ nonisolated struct LiveBodyInputRead: Sendable {
 
   func start(configuration: BodyInputConfiguration) async throws {
     guard !notifying else { throw BodyInputOperationError.reentrantControl }
-    if currentContext?.isActive == true {
+    guard lifecycle != .stopping else { throw BodyInputOperationError.notRunning }
+    if lifecycle == .starting || lifecycle == .running {
       guard startConfiguration == configuration else { throw BodyInputOperationError.configurationChanged }
+      if let starting { try await starting.value }
+      guard lifecycle == .running, currentContext?.isActive == true else {
+        throw BodyInputOperationError.notRunning
+      }
       return
     }
-    guard !used, configuration.calibrations.isEmpty else { throw LiveVisionError.invalidConfiguration }
     try configuration.validate()
-    guard configuration.snapshotBufferCapacity <= 64 else { throw LiveVisionError.invalidConfiguration }
-    used = true; startConfiguration = configuration
-    try await camera.start(generation: configuration.sessionGeneration)
-    let gate = camera.frames.tracking
-    try gate.configureBody(configuration)
-    let signals = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
-    gate.bodyWake(signals.continuation)
-    statusTask = Task { @MainActor [weak self] in
-      for await _ in signals.stream {
-        guard !Task.isCancelled, let self else { break }
-        self.notify()
-      }
+    guard configuration.calibrations.isEmpty, configuration.snapshotBufferCapacity <= 64 else {
+      throw LiveVisionError.invalidConfiguration
     }
-    notify()
+    let owner = try camera.reserveBodySession()
+    session = owner; lifecycle = .starting; startConfiguration = configuration
+    let gate = camera.frames.tracking
+    let task = Task { @MainActor in
+      try await self.camera.startBodySession(owner, generation: configuration.sessionGeneration)
+      try Task.checkCancellation()
+      guard self.session == owner, self.lifecycle == .starting else { throw CancellationError() }
+      try gate.configureBody(configuration, session: owner)
+      let signals = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+      gate.bodyWake(signals.continuation)
+      self.statusTask = Task { @MainActor [weak self] in
+        for await _ in signals.stream {
+          guard !Task.isCancelled, let self else { break }
+          self.notify()
+        }
+      }
+      self.lifecycle = .running
+      self.notify()
+    }
+    starting = task
+    do {
+      try await withTaskCancellationHandler { try await task.value } onCancel: {
+        task.cancel()
+        gate.stopBodySession(owner) // old cancellation cannot affect a replacement lease
+      }
+      try Task.checkCancellation()
+      guard session == owner, lifecycle == .running else { throw CancellationError() }
+      starting = nil
+    } catch {
+      if session == owner { await stop() }
+      throw error
+    }
   }
   func stop() async {
     guard !notifying else { return }
-    camera.frames.tracking.stopBody()
-    await camera.stop()
-    statusTask?.cancel(); statusTask = nil
-    notify()
+    if let stopping { await stopping.value; return }
+    guard let owner = session else { return }
+    lifecycle = .stopping
+    starting?.cancel()
+    camera.stopBodySession(owner)
+    let startup = starting
+    statusTask?.cancel()
+    let statusUpdates = statusTask
+    notify() // unavailable immediately, even while native/worker cleanup remains blocked
+    let task = Task { @MainActor in
+      await self.camera.stop()
+      if let startup { _ = try? await startup.value }
+      if let statusUpdates { await statusUpdates.value }
+      // Keep the stopped context available to old callers without exposing a future session.
+      self.stoppedRead = self.camera.frames.tracking.readBody()
+      let released = await self.camera.releaseBodySession(owner)
+      self.starting = nil; self.statusTask = nil; self.stopping = nil
+      if released {
+        self.session = nil; self.startConfiguration = nil; self.lifecycle = .idle
+      } // Failed drain retains exclusive ownership and refuses Retry.
+      self.notify()
+    }
+    stopping = task
+    await task.value
+  }
+  private func requireRunning() throws {
+    guard !notifying else { throw BodyInputOperationError.reentrantControl }
+    guard lifecycle == .running else { throw BodyInputOperationError.notRunning }
   }
   func makeBindingRequest() throws -> CameraBindingRequest {
-    guard !notifying else { throw BodyInputOperationError.reentrantControl }
+    try requireRunning()
     return try camera.makeBindingRequest()
   }
   func armBinding(_ request: CameraBindingRequest) throws {
-    guard !notifying else { throw BodyInputOperationError.reentrantControl }
+    try requireRunning()
     _ = try camera.armBinding(request: request)
   }
-  func cancelBinding() { guard !notifying else { return }; camera.cancelBinding() }
+  func cancelBinding() { guard !notifying, lifecycle == .running else { return }; camera.cancelBinding() }
   func requestStandingCalibration(id: UUID) throws -> CalibrationRequest {
-    guard !notifying else { throw BodyInputOperationError.reentrantControl }
+    try requireRunning()
     return try camera.frames.tracking.requestCalibration(id: id)
   }
   func cancelStandingCalibration(_ request: CalibrationRequest) {
-    guard !notifying else { return }
+    guard !notifying, lifecycle == .running else { return }
     camera.frames.tracking.cancelCalibration(request)
   }
   @discardableResult func confirmStandingCandidate(_ id: UUID,
     expectedContextRevision: UInt64) throws -> BodyInputContext {
-    guard !notifying else { throw BodyInputOperationError.reentrantControl }
+    try requireRunning()
     return try camera.frames.tracking.acceptBodyCandidate(id, expectedRevision: expectedContextRevision)
   }
   @discardableResult func setCalibrations(_ values: [PlayerID: PlayerCalibration],
     generation: UUID) async throws -> BodyInputContext {
-    guard !notifying else { throw BodyInputOperationError.reentrantControl }
+    try requireRunning()
     return try camera.frames.tracking.replaceBodyCalibrations(values, generation: generation)
   }
   func snapshotStream(generation: UUID) throws -> AsyncStream<BodySnapshot> {
-    guard !notifying else { throw BodyInputOperationError.reentrantControl }
+    try requireRunning()
     return try camera.frames.tracking.bodyStream(generation: generation)
   }
   func releaseSnapshotSubscription(generation: UUID) throws {
-    guard !notifying else { throw BodyInputOperationError.reentrantControl }
+    try requireRunning()
     try camera.frames.tracking.releaseBodyStream(generation: generation)
   }
   func statusUpdates(_ observer: @escaping @MainActor (BodyInputStatusEvent) -> Void) throws -> UUID {

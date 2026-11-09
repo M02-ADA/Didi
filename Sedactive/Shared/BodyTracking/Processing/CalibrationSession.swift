@@ -84,6 +84,12 @@ nonisolated struct CalibrationSession: Sendable {
   private var sums: [PlayerID: [Double]] = [:] // exactly 2 x 9 numeric scalars
   private(set) var reason = "No calibration requested"
 
+  /// Drop the entire collection while retaining token anti-replay/exhaustion across sessions.
+  mutating func resetForNewSession() {
+    let highWater = serial
+    self = Self()
+    serial = highWater
+  }
   mutating func request(id: UUID, source: CameraSourceContext, revision: UInt64,
     bindingRequest: UUID, at time: Double) throws -> CalibrationRequest {
     if let admission, admission.request.id == id {
