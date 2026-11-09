@@ -52,8 +52,9 @@ struct LaserWorldLayout {
     // reaches the players at its target's crossing time, whatever this is.
     var travelSpeed: Float = 5.2
 
-    // Temporary DUCK/JUMP cue: above the players, in front of the corridor.
-    var moveCuePosition: SIMD3<Float> = [0, 2.0, 0.6]
+    // DUCK/JUMP cue (Sketch Hi-Fi 30 OCT "Game 1"): centred under the HUD's
+    // top bar and above the mascots' heads, in front of the corridor.
+    var moveCuePosition: SIMD3<Float> = [0, 1.78, 0.6]
 
     // World depth of the hoverboard's upper half. A low beam first overlaps
     // the board on screen about 0.75 m before the crossing, so this stays behind that.
@@ -77,7 +78,7 @@ final class LaserScene {
 
     /// Scene name inside the `RealityKitContent` package.
     static let authoredSceneName = "LaserCorridor"
-    /// Group of flat player and laser stand-ins that exist only for arranging
+    /// Group of static player and laser stand-ins that exist only for arranging
     /// the corridor in Reality Composer Pro. The runtime builds the real ones.
     static let editorPreviewsName = "EditorPreviews"
     /// Option 1 laser gate artwork inside the `RealityKitContent` package.
@@ -100,6 +101,9 @@ final class LaserScene {
     /// Where the corridor's travel group sits within its loop (tests and debugging).
     private(set) var travelOffset: Float = 0
     private var vaultDoor: VaultDoor?
+    /// Theo's vault button states from the `VaultDoor` scene's `VaultButtons`
+    /// templates (idle red, active green, per wall side), or `nil` without them.
+    private(set) var vaultButtonArt: [VaultButtonArtKey: Entity]?
     private var diamondArt: DiamondArt?
     private let diamonds = Entity()
     /// Unmodified gate artwork; every laser is built from its own clone.
@@ -111,6 +115,10 @@ final class LaserScene {
     /// Live player cutouts; `nil` until `attachLiveCutouts` (pictograms show).
     private(set) var liveCutouts: LiveCutoutPresenter?
     private(set) var cutoutStore: CutoutTextureStore?
+    /// 3D mascot avatars standing on the players' lanes in place of the
+    /// pictograms, or `nil` (pictograms). Installed and removed by the host
+    /// (`PlayView`); fed body frames by `GameplayScenePresenter`.
+    var robotAvatars: RobotAvatarLayer?
     /// Wall mount x positions, from the authored `LaserMount_*` anchors when available.
     private var laserSpan: ClosedRange<Float>
 
@@ -344,10 +352,22 @@ final class LaserScene {
 
     func installVaultDoor(_ artwork: Entity?) {
         guard vaultDoor == nil, let artwork, let door = VaultDoor(artwork: artwork) else { return }
+        vaultButtonArt = Self.vaultButtonTemplates(in: artwork)
         vaultDoor = door
         door.root.name = "vaultDoor"
         door.root.isEnabled = false
         root.addChild(door.root)
+    }
+
+    /// All four `VaultButtons` templates, or `nil` if any is missing (the code art shows instead).
+    private static func vaultButtonTemplates(in artwork: Entity) -> [VaultButtonArtKey: Entity]? {
+        guard let group = artwork.findEntity(named: "VaultButtons") else { return nil }
+        var templates: [VaultButtonArtKey: Entity] = [:]
+        for key in VaultButtonArtKey.allCases {
+            guard let template = group.findEntity(named: key.entityName) else { return nil }
+            templates[key] = template
+        }
+        return templates
     }
 
     func installDiamondArt(_ artwork: Entity?) {
@@ -371,12 +391,40 @@ final class LaserScene {
     }
 
     /// Presents a vault state decided elsewhere (Jevon's vault events).
-    func setVaultDoorState(_ state: VaultDoor.State, animated: Bool) {
-        vaultDoor?.setState(state, animated: animated)
+    /// `reduceMotion` defaults to the system setting.
+    func setVaultDoorState(_ state: VaultDoor.State, animated: Bool, reduceMotion: Bool? = nil) {
+        vaultDoor?.setState(state, animated: animated, reduceMotion: reduceMotion)
     }
 
     func resetVaultDoor() {
         vaultDoor?.reset()
+    }
+
+    /// The door's presented state, or `nil` without door artwork.
+    var vaultDoorState: VaultDoor.State? { vaultDoor?.state }
+
+    /// Fades the door in, e.g. on entering a vault.
+    func revealVaultDoor() {
+        vaultDoor?.reveal()
+    }
+
+    /// A copy of the door as it stands now (place, open panels), added to the
+    /// scene without its child named `childName`; the caller removes it. `nil`
+    /// without door artwork or while the door is hidden.
+    func makeVaultDoorCopy(excluding childName: String) -> Entity? {
+        guard let door = vaultDoor?.root, door.isEnabled else { return nil }
+        let copy = door.clone(recursive: true)
+        copy.findEntity(named: childName)?.removeFromParent()
+        root.addChild(copy)
+        return copy
+    }
+
+    /// Adds a part that moves with the door (vault countdown). Returns whether a door exists.
+    @discardableResult
+    func attachToVaultDoor(_ part: Entity) -> Bool {
+        guard let vaultDoor else { return false }
+        vaultDoor.attach(part)
+        return true
     }
 
     /// A new diamond in the world, not yet placed; the caller positions its
@@ -439,7 +487,14 @@ final class LaserScene {
         guard let player = players[id] else { return }
         var impact = mapping.laserPosition(heightAboveFloor: bandCenter, worldZ: mapping.interactionPlaneZ + 0.06)
         impact.x = player.position.x
-        feedback.showOutcome(outcome, for: id, badgeAt: player.position + [0, player.visibleTop + 0.25, 0.08], impactAt: impact)
+        var badge = player.position + [0, player.visibleTop + 0.25, 0.08]
+        // K04: with a mascot shown, the pictogram is hidden but still fitted to the
+        // player's own crown, so a short player's verdict sat inside the 1.6 m
+        // mascot's head. Anchor it above the head as posed instead.
+        if let headTop = robotAvatars?.extremityPoints(of: id)?.headTop.y {
+            badge.y = headTop + 0.25
+        }
+        feedback.showOutcome(outcome, for: id, badgeAt: badge, impactAt: impact)
     }
 
     /// Clears the move cue and outcome feedback, e.g. when the next encounter starts.
@@ -588,5 +643,30 @@ final class LaserScene {
 
     private static func color(_ hex: UInt32) -> UIColor {
         UIColor(red: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+    }
+}
+
+/// One of Theo's vault button states, by the corridor wall it is mounted on
+/// (P1's on the left, P2's on the right).
+enum VaultButtonArtKey: CaseIterable, Hashable {
+    case leftIdle, leftActive, rightIdle, rightActive
+
+    init(player: PlayerID, active: Bool) {
+        self = switch (player, active) {
+        case (.player1, false): .leftIdle
+        case (.player1, true): .leftActive
+        case (.player2, false): .rightIdle
+        case (.player2, true): .rightActive
+        }
+    }
+
+    /// The template's name in `VaultDoor.usda`.
+    var entityName: String {
+        switch self {
+        case .leftIdle: "LeftIdle"
+        case .leftActive: "LeftActive"
+        case .rightIdle: "RightIdle"
+        case .rightActive: "RightActive"
+        }
     }
 }

@@ -84,6 +84,12 @@ final class GameplayScenePresenter {
     private var markers: [ModelEntity] = []
     private var bandEdges: [PlayerID: [ModelEntity]] = [:]
     private(set) var diagnostics = Diagnostics()
+    /// The Dual Key Vault's door, countdown and button indicators (LH-18).
+    let vault: VaultPresentation
+    /// Diamond Time's diamonds (J05 pending: Debug fixture only).
+    let diamondTime: DiamondTimePresentation
+    /// Game time of the authoritative `phaseChanged(.diamondTime)` event, if seen.
+    private(set) var diamondTimeStartedAt: Double?
 
     /// - Parameters:
     ///   - encounters: the round's schedule as known now, used only to estimate
@@ -95,6 +101,8 @@ final class GameplayScenePresenter {
         self.configuration = configuration
         capacity = Self.capacity(for: encounters, configuration: configuration,
                                  approachLead: Self.approachLead(in: scene))
+        vault = VaultPresentation(scene: scene, configuration: configuration)
+        diamondTime = DiamondTimePresentation(scene: scene)
         debug.name = "gameplay.debug"
         debug.isEnabled = showsDebugMarkers
         scene.isLaserVisible = false
@@ -152,6 +160,8 @@ final class GameplayScenePresenter {
         let time = state.gameTime
         if case .ended = state.phase, endedAt == nil { endedAt = time }
         travel(state: state, to: time)
+        vault.update(state: state, travelDistance: travelDistance)
+        diamondTime.update(state: state, diamondTimeStartedAt: diamondTimeStartedAt)
         updateHazards(state: state, at: time)
         updateCue(state: state, at: time)
         if let snapshot, snapshot.sessionGeneration == state.sessionGeneration { present(snapshot) }
@@ -163,6 +173,8 @@ final class GameplayScenePresenter {
         for key in Array(slots.keys) { release(key) }
         scene.setMoveCue(nil, actionRemaining: nil)
         scene.clearLaserFeedback()
+        vault.stop()
+        diamondTime.clear()
         debug.removeFromParent()
     }
 
@@ -172,6 +184,9 @@ final class GameplayScenePresenter {
         travelledUntil = nil
         anchors = [:]
         scene.setTravelDistance(0)
+        vault.reset()
+        diamondTime.clear()
+        diamondTimeStartedAt = nil
         judgedAt = [:]
         withdrawnAt = [:]
         endedAt = nil
@@ -197,7 +212,7 @@ final class GameplayScenePresenter {
                 case .pending: nil
                 }
                 if let outcome {
-                    scene.presentOutcome(outcome, for: player, band: Float(target.beam.lowerY)...Float(target.beam.upperY))
+                    scene.presentOutcome(outcome, for: player, band: displayedBand(target))
                     diagnostics.badges += 1
                 }
             case .teamEffectsCommitted(_, let healthDelta, let scoreDelta):
@@ -205,8 +220,14 @@ final class GameplayScenePresenter {
                 diagnostics.teamEffects += 1
             case .attemptWithdrawn(_, let attemptID):
                 withdrawnAt[attemptID] = withdrawnAt[attemptID] ?? event.gameTime
+            case .coopGateSucceeded(let gateID, _):
+                vault.markSucceeded(gateID)
+            case .coopGateFailed(let gateID):
+                vault.markFailed(gateID)
             case .roundEnded:
                 endedAt = endedAt ?? event.gameTime
+            case .phaseChanged(.diamondTime):
+                diamondTimeStartedAt = event.gameTime
             default:
                 break
             }
@@ -310,8 +331,23 @@ final class GameplayScenePresenter {
         return scene.mapping.interactionPlaneZ - (anchor - travelDistance)
     }
 
+    /// The band a target's gate is drawn at: its judged band, or with the D07
+    /// candidate (`RobotAvatarLayer.normalizesLaserBands`, DEBUG flag, off by
+    /// default) that band in the player's normalized avatar space. Display only.
+    func displayedBand(_ target: LaserTarget) -> ClosedRange<Float> {
+        let band = Float(target.beam.lowerY)...Float(target.beam.upperY)
+        guard let scale = scene.robotAvatars?.laserBandScale(for: target.playerID, mapping: scene.mapping) else { return band }
+        return (band.lowerBound * scale)...(band.upperBound * scale)
+    }
+
+    /// The same display mapping for one body height (the Debug evidence markers).
+    private func displayedHeight(_ y: Float, for player: PlayerID) -> Float {
+        y * (scene.robotAvatars?.laserBandScale(for: player, mapping: scene.mapping) ?? 1)
+    }
+
     private func show(_ hazard: LaserHazard, target: LaserTarget, status: Status, depth: Float, at time: Double) {
-        hazard.setBand(lowerEdge: Float(target.beam.lowerY), upperEdge: Float(target.beam.upperY))
+        let band = displayedBand(target)
+        hazard.setBand(lowerEdge: band.lowerBound, upperEdge: band.upperBound)
         hazard.setDepth(depth)
         let cue = cueTime(for: target)
         switch status {
@@ -413,6 +449,12 @@ final class GameplayScenePresenter {
     /// Fits each pictogram to the latest body sample and places the Debug body markers.
     private func present(_ snapshot: BodySnapshot) {
         if markers.isEmpty { buildMarkers() }
+        #if DEBUG
+        // DEBUG-only synthetic bridge: in the replay round the avatars show the
+        // bundled historical replay fixture's frame (labelled synthetic). The
+        // production avatars never read CP1: they take `AvatarPoseFrame`s (K03).
+        scene.robotAvatars?.apply(snapshot)
+        #endif
         for (index, player) in PlayerID.allCases.enumerated() {
             guard let geometry = snapshot.players[player]?.geometry else { continue }
             if let crown = geometry.crownY.value, let left = geometry.leftSoleY.value, let right = geometry.rightSoleY.value {
@@ -423,7 +465,7 @@ final class GameplayScenePresenter {
                 let marker = markers[index * points.count + offset]
                 marker.isEnabled = point.validity == .valid
                 if let y = point.value {
-                    marker.position = scene.mapping.playerPosition(player, heightAboveFloor: Float(y))
+                    marker.position = scene.mapping.playerPosition(player, heightAboveFloor: displayedHeight(Float(y), for: player))
                     marker.position.x += [Float(0), -0.16, 0.16, -0.08, 0.08][offset]
                     marker.position.z += 0.06
                 }
@@ -456,10 +498,11 @@ final class GameplayScenePresenter {
             }
             let target = slots.values.map(\.target).filter { $0.playerID == player }.min { $0.crossingTime < $1.crossingTime }
             let span = scene.laneSpan(for: player)
-            for (edge, y) in zip(bandEdges[player] ?? [], [target?.beam.lowerY, target?.beam.upperY]) {
+            let band = target.map(displayedBand)
+            for (edge, y) in zip(bandEdges[player] ?? [], [band?.lowerBound, band?.upperBound]) {
                 edge.isEnabled = y != nil
                 guard let y else { continue }
-                edge.position = scene.mapping.laserPosition(heightAboveFloor: Float(y), worldZ: scene.mapping.interactionPlaneZ + 0.03)
+                edge.position = scene.mapping.laserPosition(heightAboveFloor: y, worldZ: scene.mapping.interactionPlaneZ + 0.03)
                 edge.position.x = (span.lowerBound + span.upperBound) / 2
                 edge.scale.x = span.upperBound - span.lowerBound
             }

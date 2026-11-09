@@ -11,8 +11,9 @@ import UIKit
 ///
 /// It presents what the caller passes and decides nothing: the move, the cue
 /// and crossing times and every verdict come from Jevon's encounter and game
-/// state (TEAM_ALIGNMENT §B). The art is temporary and drawn in code until
-/// Theo's HUD and VFX assets exist; the final HUD layout is out of scope.
+/// state (TEAM_ALIGNMENT §B). The cue follows Theo's Sketch type style
+/// (drawn in code: the hand-off has no cue bitmap); the badges remain
+/// temporary code art until Theo's VFX assets exist.
 /// Animations are cosmetic RealityKit time; with Reduce Motion they become fades.
 @MainActor
 final class LaserFeedback {
@@ -254,32 +255,48 @@ final class LaserFeedback {
 
     // MARK: - Temporary art
 
-    /// Panel with an arrow and a label, so the move never depends on colour alone.
+    /// The move as Theo's Sketch cue ("Hi-Fi Revisi 30 OCT", Game 1): an arrow
+    /// and "DUCK!"/"JUMP!" in white SF Pro Rounded Black with a hard dark drop
+    /// shadow and a soft halo, no panel, so it reads over the corridor at a
+    /// distance. The arrow and word carry the move, never colour alone.
     private static func cueArt(for move: Move) -> CGImage? {
         let size = CGSize(width: 720, height: 224)
-        return render(size) { _ in
-            let shape = UIBezierPath(roundedRect: CGRect(origin: .zero, size: size).insetBy(dx: 6, dy: 6), cornerRadius: (size.height - 12) / 2)
-            color(0x1C1944).withAlphaComponent(0.92).setFill()
-            shape.fill()
-            color(0xE5484D).setStroke()
-            shape.lineWidth = 8
-            shape.stroke()
-
+        return render(size) { context in
+            let cg = context.cgContext
+            // Sketch: 52.7 pt text, shadows (3, 5) 0 blur at 91 % black and (0, 4) 8 blur at 25 %.
+            let scale: CGFloat = 2.6
             let symbol = UIImage(systemName: move == .duck ? "arrow.down" : "arrow.up",
-                                 withConfiguration: UIImage.SymbolConfiguration(pointSize: 92, weight: .heavy))?
+                                 withConfiguration: UIImage.SymbolConfiguration(pointSize: 52.7 * scale * 0.86, weight: .black))?
                 .withTintColor(.white, renderingMode: .alwaysOriginal)
-            let label = NSAttributedString(string: move == .duck ? "DUCK" : "JUMP", attributes: [
-                .font: roundedFont(size: 116, weight: .heavy),
+            let label = NSAttributedString(string: move == .duck ? "DUCK!" : "JUMP!", attributes: [
+                .font: roundedFont(size: 52.7 * scale, weight: .black),
                 .foregroundColor: UIColor.white,
-                .kern: 6,
             ])
             let symbolSize = symbol?.size ?? .zero
             let labelSize = label.size()
-            let gap: CGFloat = 30
-            var x = (size.width - symbolSize.width - gap - labelSize.width) / 2
-            symbol?.draw(in: CGRect(x: x, y: (size.height - symbolSize.height) / 2, width: symbolSize.width, height: symbolSize.height))
-            x += symbolSize.width + gap
-            label.draw(at: CGPoint(x: x, y: (size.height - labelSize.height) / 2))
+            let gap: CGFloat = 4 * scale
+            let total = symbolSize.width + gap + labelSize.width
+            let x = (size.width - total) / 2
+            let symbolRect = CGRect(x: x, y: (size.height - symbolSize.height) / 2, width: symbolSize.width, height: symbolSize.height)
+            let labelOrigin = CGPoint(x: x + symbolSize.width + gap, y: (size.height - labelSize.height) / 2)
+            let draw = {
+                symbol?.draw(in: symbolRect)
+                label.draw(at: labelOrigin)
+            }
+            // Halo, then the soft and hard shadows, then the white face.
+            cg.saveGState()
+            cg.setShadow(offset: .zero, blur: 18 * scale, color: UIColor.black.withAlphaComponent(0.55).cgColor)
+            draw()
+            cg.restoreGState()
+            cg.saveGState()
+            cg.setShadow(offset: CGSize(width: 0, height: 4 * scale), blur: 8 * scale, color: UIColor.black.withAlphaComponent(0.25).cgColor)
+            draw()
+            cg.restoreGState()
+            cg.saveGState()
+            cg.setShadow(offset: CGSize(width: 3 * scale, height: 5 * scale), blur: 0, color: UIColor.black.withAlphaComponent(0.91).cgColor)
+            draw()
+            cg.restoreGState()
+            draw()
         }
     }
 

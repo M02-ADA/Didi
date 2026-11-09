@@ -3080,7 +3080,7 @@ def Xform "Root" (
     }
 
     def Xform "EditorPreviews" (
-        doc = "Editor-only stand-ins. LaserScene removes this group at runtime."
+        doc = "Editor-only references for authoring. LaserScene removes this whole group at runtime (Debug -showEditorPreviews keeps it to compare alignment). The players here are static 3D references to the approved mascots; the real avatars are created and animated only by RobotAvatarLayer."
     )
     {
         quatf xformOp:orient = (1, 0, 0, 0)
@@ -3088,129 +3088,56 @@ def Xform "Root" (
         float3 xformOp:translate = (0, 0, 0)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-        def Scope "PreviewMaterials"
-        {
-            def Material "PlayerParent"
-            {
-                token outputs:mtlx:surface.connect = </Root/EditorPreviews/PreviewMaterials/PlayerParent/Unlit.outputs:out>
-                token outputs:realitykit:vertex
-                token outputs:surface
-
-                def Shader "Unlit"
-                {
-                    uniform token info:id = "ND_realitykit_unlit_surfaceshader"
-                    bool inputs:applyPostProcessToneMap = 0
-                    color3f inputs:color.connect = </Root/EditorPreviews/PreviewMaterials/PlayerParent/Color.outputs:out>
-                    float inputs:opacity.connect = </Root/EditorPreviews/PreviewMaterials/PlayerParent/Channels.outputs:outa>
-                    token outputs:out
-                }
-
-                def Shader "Image"
-                {
-                    uniform token info:id = "ND_image_color4"
-                    asset inputs:file = @Textures/preview_parent.png@
-                    string inputs:filtertype = "linear"
-                    string inputs:uaddressmode = "clamp"
-                    string inputs:vaddressmode = "clamp"
-                    color4f outputs:out
-                }
-
-                def Shader "Color"
-                {
-                    uniform token info:id = "ND_convert_color4_color3"
-                    color4f inputs:in.connect = </Root/EditorPreviews/PreviewMaterials/PlayerParent/Image.outputs:out>
-                    color3f outputs:out
-                }
-
-                def Shader "Channels"
-                {
-                    uniform token info:id = "ND_separate4_color4"
-                    color4f inputs:in.connect = </Root/EditorPreviews/PreviewMaterials/PlayerParent/Image.outputs:out>
-                    float outputs:outa
-                }
-            }
-
-            def Material "PlayerChild"
-            {
-                token outputs:mtlx:surface.connect = </Root/EditorPreviews/PreviewMaterials/PlayerChild/Unlit.outputs:out>
-                token outputs:realitykit:vertex
-                token outputs:surface
-
-                def Shader "Unlit"
-                {
-                    uniform token info:id = "ND_realitykit_unlit_surfaceshader"
-                    bool inputs:applyPostProcessToneMap = 0
-                    color3f inputs:color.connect = </Root/EditorPreviews/PreviewMaterials/PlayerChild/Color.outputs:out>
-                    float inputs:opacity.connect = </Root/EditorPreviews/PreviewMaterials/PlayerChild/Channels.outputs:outa>
-                    token outputs:out
-                }
-
-                def Shader "Image"
-                {
-                    uniform token info:id = "ND_image_color4"
-                    asset inputs:file = @Textures/preview_child.png@
-                    string inputs:filtertype = "linear"
-                    string inputs:uaddressmode = "clamp"
-                    string inputs:vaddressmode = "clamp"
-                    color4f outputs:out
-                }
-
-                def Shader "Color"
-                {
-                    uniform token info:id = "ND_convert_color4_color3"
-                    color4f inputs:in.connect = </Root/EditorPreviews/PreviewMaterials/PlayerChild/Image.outputs:out>
-                    color3f outputs:out
-                }
-
-                def Shader "Channels"
-                {
-                    uniform token info:id = "ND_separate4_color4"
-                    color4f inputs:in.connect = </Root/EditorPreviews/PreviewMaterials/PlayerChild/Image.outputs:out>
-                    float outputs:outa
-                }
-            }
-        }
-
-        def Mesh "ParentPreview" (
-            prepend apiSchemas = ["MaterialBindingAPI"]
+        def Xform "P1LemonPreview" (
+            doc = "Editor-only: the approved mascot-p1-lemon.usdz at the shared 1.6 m height on the left lane, viewed from behind. References the app's USDZ, with its skeleton disabled so it is a static mesh in the bind pose. Not a player entity: LaserScene removes this group at runtime and RobotAvatarLayer creates the real avatar."
         )
         {
-            int[] faceVertexCounts = [4]
-            int[] faceVertexIndices = [0, 1, 2, 3]
-            rel material:binding = </Root/EditorPreviews/PreviewMaterials/PlayerParent>
-            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
-                interpolation = "vertex"
-            )
-            point3f[] points = [(-0.37, 0, 0), (0.37, 0, 0), (0.37, 1.75, 0), (-0.37, 1.75, 0)]
-            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
-                interpolation = "vertex"
-            )
-            uniform token subdivisionScheme = "none"
             quatf xformOp:orient = (1, 0, 0, 0)
-            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:scale = (1.144492, 1.144492, 1.144492)
             float3 xformOp:translate = (-0.7, 0, 0)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+            def "Model" (
+                prepend references = @../../../../Sedactive/Games/LaserHeist/Rendering/Avatar/Robot/mascot-p1-lemon.usdz@
+            )
+            {
+                over "Skeleton" (
+                    active = false
+                )
+                {
+                }
+
+                over "Surface"
+                {
+                    rel skel:skeleton = None
+                }
+            }
         }
 
-        def Mesh "ChildPreview" (
-            prepend apiSchemas = ["MaterialBindingAPI"]
+        def Xform "P2TangerinePreview" (
+            doc = "Editor-only: the approved mascot-p2-tangerine.usdz at the shared 1.6 m height on the right lane, viewed from behind. References the app's USDZ, with its skeleton disabled so it is a static mesh in the bind pose. Not a player entity: LaserScene removes this group at runtime and RobotAvatarLayer creates the real avatar."
         )
         {
-            int[] faceVertexCounts = [4]
-            int[] faceVertexIndices = [0, 1, 2, 3]
-            rel material:binding = </Root/EditorPreviews/PreviewMaterials/PlayerChild>
-            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
-                interpolation = "vertex"
-            )
-            point3f[] points = [(-0.26, 0, 0), (0.26, 0, 0), (0.26, 1.2, 0), (-0.26, 1.2, 0)]
-            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
-                interpolation = "vertex"
-            )
-            uniform token subdivisionScheme = "none"
             quatf xformOp:orient = (1, 0, 0, 0)
-            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:scale = (1.144492, 1.144492, 1.144492)
             float3 xformOp:translate = (0.7, 0, 0)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+            def "Model" (
+                prepend references = @../../../../Sedactive/Games/LaserHeist/Rendering/Avatar/Robot/mascot-p2-tangerine.usdz@
+            )
+            {
+                over "Skeleton" (
+                    active = false
+                )
+                {
+                }
+
+                over "Surface"
+                {
+                    rel skel:skeleton = None
+                }
+            }
         }
 
         def Xform "LaserPreview" (
