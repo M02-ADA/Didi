@@ -44,6 +44,10 @@ nonisolated struct VisionNumericPoseChannel: Sendable {
   mutating func invalidate() {
     advance(); active = false; pending = nil; resetAll = true
   }
+  /// Session teardown retires the lease, not only its current pose. Reattach for Retry.
+  mutating func endSession() {
+    invalidate(); attachment = nil; context = nil; lastFrame = 0; lastCapture = nil
+  }
   mutating func attach() throws -> VisionPoseAttachment {
     guard !exhausted, revision < .max else { throw LiveVisionError.revisionExhausted }
     invalidate()

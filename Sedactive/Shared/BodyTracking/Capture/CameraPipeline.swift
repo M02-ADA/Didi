@@ -216,6 +216,8 @@ protocol CameraDriving: Actor {
   private var observer: (UUID, @MainActor (CameraPipelineState) -> Void)?
   private let notificationCenter: NotificationCenter
   private var notifying = false
+  private var bodySessionOwner: UUID?
+  private var bodySessionStopping = false
   private var bindingRestart: (request: CameraBindingRequest, token: UUID, task: Task<Void, Error>)?
   private(set) var status: CameraPipelineStatus = .stopped
   private(set) var negotiated: CameraNegotiatedConfiguration?
@@ -249,13 +251,57 @@ protocol CameraDriving: Actor {
       Task { await native.stop(context: context) }
     }
   }
+  /// One provider owns the retained capture composition until all old work has exited.
+  func reserveBodySession() throws -> UUID {
+    guard !notifying, bodySessionOwner == nil, context == nil, operation == nil,
+      processing == nil, bindingRestart == nil, status == .stopped else {
+      throw CameraFailure.operationConflict
+    }
+    let owner = UUID()
+    try frames.tracking.reserveBodySession(owner)
+    bodySessionOwner = owner
+    return owner
+  }
+  func ownsBodySession(_ owner: UUID) -> Bool { bodySessionOwner == owner }
+  func startBodySession(_ owner: UUID, generation: UUID) async throws {
+    guard bodySessionOwner == owner, !bodySessionStopping else { throw CameraFailure.operationConflict }
+    try await startCapture(generation: generation, configuration: .experimental, bindingRequest: nil)
+  }
+  func stopBodySession(_ owner: UUID) {
+    guard bodySessionOwner == owner else { return }
+    bodySessionStopping = true
+    frames.tracking.stopBodySession(owner) // synchronous revocation, including issued receipts
+    cancelBinding()
+  }
+  /// Caller has also joined its provider-start task. No new capture may start during this drain.
+  func releaseBodySession(_ owner: UUID) async -> Bool {
+    guard bodySessionOwner == owner, bodySessionStopping else { return false }
+    let restart = bindingRestart
+    let startup = operation
+    await stop()
+    if let restart {
+      _ = try? await restart.task.value
+      if bindingRestart?.token == restart.token { bindingRestart = nil }
+    }
+    if let startup { _ = try? await startup.value }
+    await stop()
+    if let previous = processing {
+      await previous.task.value
+      if processing?.epoch == previous.epoch { processing = nil }
+    }
+    guard context == nil, operation == nil, processing == nil, bindingRestart == nil,
+      frames.tracking.releaseBodySession(owner) else { return false }
+    bodySessionOwner = nil
+    bodySessionStopping = false
+    return true
+  }
   func makeBindingRequest() throws -> CameraBindingRequest {
-    guard !notifying else { throw CameraFailure.operationConflict }
+    guard !notifying, !bodySessionStopping else { throw CameraFailure.operationConflict }
     return try frames.tracking.makeBindingRequest()
   }
   /// Diagnostic control boundary; camera activation never invokes this implicitly.
   @discardableResult func armBinding(request: CameraBindingRequest) throws -> UInt64 {
-    guard !notifying, bindingRestart == nil, status == .running else {
+    guard !notifying, !bodySessionStopping, bindingRestart == nil, status == .running else {
       throw CameraFailure.operationConflict
     }
     return try frames.tracking.arm(request: request)
@@ -266,7 +312,7 @@ protocol CameraDriving: Actor {
     frames.tracking.revoke()
   }
   func requestFullRebind(request: CameraBindingRequest) async throws {
-    guard !notifying else { throw CameraFailure.operationConflict }
+    guard !notifying, !bodySessionStopping else { throw CameraFailure.operationConflict }
     try frames.tracking.validateRequest(request)
     if let bindingRestart {
       guard bindingRestart.request == request else { throw CameraFailure.operationConflict }
@@ -326,12 +372,13 @@ protocol CameraDriving: Actor {
   }
   func start(generation: UUID, configuration: CameraCaptureConfiguration = .experimental)
     async throws {
+    guard bodySessionOwner == nil else { throw CameraFailure.operationConflict }
     try await startCapture(generation: generation, configuration: configuration, bindingRequest: nil)
   }
   private func startCapture(generation: UUID, configuration: CameraCaptureConfiguration,
     bindingRequest: CameraBindingRequest?) async throws
   {
-    guard !notifying, frames.tracking.isForeground else { throw CameraFailure.operationConflict }
+    guard !notifying, !bodySessionStopping, frames.tracking.isForeground else { throw CameraFailure.operationConflict }
     if bindingRestart != nil, bindingRestart?.request != bindingRequest {
       throw CameraFailure.operationConflict
     }
