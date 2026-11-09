@@ -1,22 +1,20 @@
-//
-//  AppDependencies.swift
-//  Sedactive
-//
-//  Created by Edward Geraldo Kristian on 25/10/26.
-//
-
 import Foundation
 
-#if DEBUG
-  /// Stable app composition: rebuilding/dismissing a diagnostics view never allocates another source.
-  @MainActor final class AppDependencies {
-    static let shared = AppDependencies()
-    let camera: CameraPipeline
-    let cameraDiagnostics: LiveInputDiagnosticsModel
-    private init() {
-      let camera = CameraPipeline()
-      self.camera = camera
-      cameraDiagnostics = LiveInputDiagnosticsModel(camera: camera)
-    }
+/// App owns one retained capture composition and its live provider. Selecting replay/live and
+/// driving setup/game phases remains an explicit Jevon integration, never an automatic switch.
+@MainActor final class AppDependencies {
+  static let shared = AppDependencies()
+  let camera: CameraPipeline
+  let bodyInput: BodyInputService
+  #if DEBUG
+  let cameraDiagnostics: LiveInputDiagnosticsModel
+  #endif
+  private init() {
+    let camera = CameraPipeline()
+    self.camera = camera
+    bodyInput = BodyInputService(camera: camera)
+    #if DEBUG
+    cameraDiagnostics = LiveInputDiagnosticsModel(camera: camera, bodyInput: bodyInput)
+    #endif
   }
-#endif
+}

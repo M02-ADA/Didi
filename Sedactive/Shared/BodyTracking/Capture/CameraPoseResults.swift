@@ -117,6 +117,7 @@ nonisolated struct CameraTrackingAdmission: Equatable, Sendable {
   let context: CameraSourceContext
   let revision: UInt64
   let requestID: UUID?
+  var calibration: CalibrationAdmission? = nil
 }
 nonisolated struct CameraTrackingControl: Sendable {
   let revision: UInt64
@@ -147,6 +148,23 @@ nonisolated struct CameraTrackingDiagnostics: Sendable {
   let mutualCoreCount: Int?
   let watermark: Double
 }
+
+#if DEBUG
+/// One non-authoritative numeric observation, never an image, pose history or accepted reference.
+nonisolated struct VisionPreviewMaskDiagnostic: Sendable {
+  let source: CameraFrameMetadata
+  let bindingRevision: UInt64
+  let calibrationRequest: UUID
+  let quality: PersonMaskQuality
+  let supportedRegions: Int
+  let reportedOutputBytes: Int
+  let serviceSeconds: Double
+}
+nonisolated struct VisionPreviewMaskRead: Sendable {
+  let last: VisionPreviewMaskDiagnostic?
+  let isCurrentSourceAndFresh: Bool
+}
+#endif
 
 /// Sole source/control linearization authority. The worker supplies a synchronous nonescaping
 /// commit closure; only that actor owns/mutates its MotionEngine. No inference occurs under lock.
@@ -179,6 +197,10 @@ nonisolated final class CameraTrackingGate: Sendable {
     var lifecycleObservers: [any NSObjectProtocol] = []
     var requestSerial: UInt64 = 0
     var command: CameraBindingRequest?
+    var body = LiveBodyInputState()
+    #if DEBUG
+    var visionPreviewMask: VisionPreviewMaskDiagnostic?
+    #endif
     var commandPhase: CameraBindingCommandPhase = .revoked
     var restartFromGeneration: UUID?
   }
@@ -216,6 +238,10 @@ nonisolated final class CameraTrackingGate: Sendable {
   }
   private func increment(_ value: inout UInt64) { if value < .max { value += 1 } }
   private func clear(_ s: inout State, reason: String) {
+    s.body.invalidate(at: now())
+    #if DEBUG
+    s.visionPreviewMask = nil
+    #endif
     s.requestID = nil
     s.acknowledgment = nil
     s.latest = nil
@@ -420,7 +446,10 @@ nonisolated final class CameraTrackingGate: Sendable {
   func admit(_ source: CameraFrameMetadata) -> CameraTrackingAdmission? {
     state.withLock {
       guard $0.validPolicy, $0.foreground, $0.active, $0.context == source.context else { return nil }
-      return .init(context: source.context, revision: $0.revision, requestID: $0.requestID)
+      $0.body.calibration.expire(at: now())
+      if $0.body.source == source.context { $0.body.lastAdmission = source }
+      return .init(context: source.context, revision: $0.revision, requestID: $0.requestID,
+        calibration: $0.body.calibration.admission)
     }
   }
   func rejected(_ error: Error? = nil) {
@@ -468,6 +497,8 @@ nonisolated final class CameraTrackingGate: Sendable {
         increment(&$0.staleRejected)
         return false
       }
+      if result.player1.state != .tracking || result.player2.state != .tracking
+        || result.player1.requiresRebind || result.player2.requiresRebind { $0.body.calibration.uncertain() }
       commit() // LINEARIZATION: authoritative worker assignment inside the revocation critical section.
       $0.latest = result
       $0.lastFrame = source.frameID
@@ -515,7 +546,10 @@ nonisolated final class CameraTrackingGate: Sendable {
       if acquisitionExpiry > time { deadlines.append(acquisitionExpiry) }
     }
     s.deadline = deadlines.min()
-    if let deadline = s.deadline {
+    programTimer(&s, at: time)
+  }
+  private func programTimer(_ s: inout State, at time: Double) {
+    if let deadline = [s.deadline, s.body.calibration.nextDeadline].compactMap({ $0 }).min() {
       s.timer?.schedule(deadline: .now() + max(0, deadline - time))
     } else { s.timer?.schedule(deadline: .distantFuture) }
   }
@@ -525,8 +559,16 @@ nonisolated final class CameraTrackingGate: Sendable {
     state.withLock { expire(&$0, at: time) }
   }
   private func expire(_ s: inout State, at time: Double) {
+    guard time.isFinite else { return }
+    let old = s.body.calibration.phase
+    s.body.calibration.expire(at: time)
+    if old != s.body.calibration.phase { s.body.wake?.yield(()) }
+    defer { programTimer(&s, at: time) }
     guard time.isFinite, let deadline = s.deadline, time >= deadline,
       s.active, s.requestID != nil else { return }
+    s.body.calibration.uncertain()
+    s.body.latest = nil
+    s.body.wake?.yield(())
     s.watermark = max(s.watermark, time)
     s.latest = nil
     s.reason = "expired — worker application pending"
@@ -534,6 +576,200 @@ nonisolated final class CameraTrackingGate: Sendable {
     s.timer?.schedule(deadline: .distantFuture)
     increment(&s.expiries)
     s.wake?.yield(())
+  }
+
+  // E03-E06 additions never call FrameStore, inference, lifecycle APIs or client callbacks in lock.
+  private func pairEligible(_ s: State) -> Bool {
+    guard s.active, s.foreground, s.requestID != nil, s.acknowledgment != nil,
+      let pair = s.latest, pair.controlRevision == s.revision else { return false }
+    return [pair.player1, pair.player2].allSatisfy { $0.state == .tracking && !$0.requiresRebind }
+  }
+  func configureBody(_ configuration: BodyInputConfiguration) throws {
+    try state.withLock {
+      guard $0.active, $0.foreground, let context = $0.context else { throw LiveVisionError.inactiveSource }
+      try $0.body.configure(configuration, source: context, at: now())
+    }
+  }
+  func bodyWake(_ wake: AsyncStream<Void>.Continuation) { state.withLock { $0.body.wake = wake } }
+  func stopBody() {
+    state.withLock {
+      $0.body.invalidate(at: now()); $0.body.subscription = nil
+      $0.body.continuation?.finish(); $0.body.continuation = nil
+      $0.body.delivery = .closed; $0.body.stopped = true
+      $0.body.wake?.finish(); $0.body.wake = nil
+    }
+  }
+  func readBody() -> LiveBodyInputRead {
+    state.withLock {
+      let time = now(); expire(&$0, at: time); $0.body.calibration.expire(at: time)
+      $0.body.reapSubscription()
+      let active = $0.active && $0.foreground && !$0.body.stopped && $0.context == $0.body.source
+      let latest = $0.body.latest.flatMap { snapshot -> BodySnapshot? in
+        guard active, time >= snapshot.capturedAt, time - snapshot.capturedAt < policy.freshness else { return nil }
+        return snapshot
+      }
+      let status: BodyInputStatus = $0.body.terminalFailure.map { .failed($0) }
+        ?? ($0.body.configuration == nil || $0.body.stopped ? .stopped : active ? .running : .interrupted(.system))
+      return .init(context: $0.body.context(active: active), latest: latest, status: status,
+        diagnostics: $0.body.diagnostics, delivery: $0.body.delivery,
+        calibration: $0.body.calibration.progress, acceptedRevision: $0.body.acceptedRevision,
+        progress: $0.body.progress(at: time))
+    }
+  }
+  func requestCalibration(id: UUID) throws -> CalibrationRequest {
+    try state.withLock {
+      let time = now(); expire(&$0, at: time)
+      guard pairEligible($0), let source = $0.context, let request = $0.requestID,
+        $0.body.source == source, $0.body.configuration != nil else { throw LiveVisionError.inactiveSource }
+      let result = try $0.body.calibration.request(id: id, source: source, revision: $0.revision,
+        bindingRequest: request, at: time)
+      programTimer(&$0, at: time); $0.body.wake?.yield(())
+      return result
+    }
+  }
+  func cancelCalibration(_ request: CalibrationRequest) {
+    state.withLock {
+      guard $0.body.calibration.admission?.request == request else { return }
+      $0.body.calibration.invalidate("Explicit calibration cancel"); $0.body.wake?.yield(())
+      programTimer(&$0, at: now())
+    }
+  }
+  func beginMask(pose: CameraPoseResult, admission: CameraTrackingAdmission,
+    receipt: PlayerTrackingSnapshot) -> Bool {
+    state.withLock {
+      let time = now(); expire(&$0, at: time)
+      guard pairEligible($0), $0.latest == receipt, $0.lastFrame == pose.source.frameID,
+        $0.context == pose.source.context, admission.revision == $0.revision,
+        admission.requestID == $0.requestID, let stamp = admission.calibration else { return false }
+      return $0.body.calibration.beginSample(stamp, source: pose.source, at: time)
+    }
+  }
+  func finishMask(_ observation: PersonMaskObservation, pose: CameraPoseResult,
+    admission: CameraTrackingAdmission, receipt: PlayerTrackingSnapshot) {
+    state.withLock {
+      let time = now()
+      #if DEBUG
+      if let stamp = admission.calibration, $0.body.calibration.admission == stamp,
+        admission.context == pose.source.context, $0.context == pose.source.context,
+        $0.active, $0.foreground, admission.revision == $0.revision,
+        admission.requestID == $0.requestID, $0.latest == receipt,
+        $0.lastFrame == pose.source.frameID, observation.source == pose.source {
+        $0.visionPreviewMask = .init(source: pose.source, bindingRevision: admission.revision,
+          calibrationRequest: stamp.request.id, quality: observation.quality,
+          supportedRegions: observation.regions.count, reportedOutputBytes: observation.outputBytes,
+          serviceSeconds: observation.serviceSeconds)
+      }
+      #endif
+      // A slow optional call cannot erase its STOP/REVIEW latch merely by becoming too old
+      // to contribute calibration evidence. This never publishes the stale observation.
+      if let stamp = admission.calibration, $0.context == pose.source.context,
+        admission.revision == $0.revision, admission.requestID == $0.requestID,
+        observation.serviceSeconds > StandingCollectionPolicyV1.serviceTripwire {
+        $0.body.calibration.stopForReview(stamp)
+      }
+      expire(&$0, at: time)
+      guard pairEligible($0), $0.latest == receipt, $0.lastFrame == pose.source.frameID,
+        $0.context == pose.source.context, admission.context == pose.source.context,
+        admission.revision == $0.revision, admission.requestID == $0.requestID,
+        let stamp = admission.calibration, $0.body.calibration.admission == stamp,
+        time >= pose.source.capturedAt, time - pose.source.capturedAt < policy.freshness,
+        pose.source.capturedAt >= $0.watermark else { return }
+      $0.body.calibration.observe(observation, pose: pose, association: receipt, stamp: stamp, at: time)
+      $0.body.wake?.yield(())
+      programTimer(&$0, at: time)
+    }
+  }
+  #if DEBUG
+  func readVisionPreviewMask() -> VisionPreviewMaskRead {
+    state.withLock {
+      let time = now()
+      let fresh = $0.visionPreviewMask.map {
+        time >= $0.source.capturedAt && time - $0.source.capturedAt < policy.freshness
+      } ?? false
+      return .init(last: $0.visionPreviewMask, isCurrentSourceAndFresh: fresh && $0.active
+        && $0.foreground && $0.visionPreviewMask?.source.context == $0.context
+        && $0.visionPreviewMask?.bindingRevision == $0.revision)
+    }
+  }
+  #endif
+  func publishBody(_ pose: CameraPoseResult, admission: CameraTrackingAdmission,
+    receipt: PlayerTrackingSnapshot?) {
+    state.withLock {
+      let time = now(); expire(&$0, at: time)
+      guard $0.active, $0.foreground, $0.context == pose.source.context,
+        admission.context == pose.source.context, admission.revision == $0.revision,
+        admission.requestID == $0.requestID, pose.matchesSource,
+        time.isFinite, time >= pose.source.capturedAt, time - pose.source.capturedAt < policy.freshness,
+        pose.source.capturedAt >= $0.watermark else { return }
+      if admission.requestID != nil {
+        guard let receipt, $0.latest == receipt, $0.lastFrame == pose.source.frameID else { return }
+      }
+      $0.body.publish(pose, association: receipt)
+    }
+  }
+  func acceptBodyCandidate(_ id: UUID, expectedRevision: UInt64) throws -> BodyInputContext {
+    try state.withLock {
+      let time = now(); expire(&$0, at: time)
+      guard pairEligible($0), let stamp = $0.body.calibration.admission,
+        stamp.source == $0.context, stamp.bindingRevision == $0.revision,
+        stamp.bindingRequest == $0.requestID else { throw LiveVisionError.staleEvidence }
+      let context = try $0.body.accept(candidateID: id, expectedRevision: expectedRevision, at: time)
+      programTimer(&$0, at: time)
+      return context
+    }
+  }
+  func replaceBodyCalibrations(_ values: [PlayerID: PlayerCalibration], generation: UUID) throws -> BodyInputContext {
+    try state.withLock {
+      guard $0.active, $0.foreground, $0.context == $0.body.source,
+        let config = $0.body.configuration else { throw BodyInputOperationError.notRunning }
+      guard config.sessionGeneration == generation else { throw BodyInputOperationError.wrongGeneration }
+      for (id, value) in values {
+        guard config.calibrations[id] == value else { throw LiveVisionError.unsupportedAnatomy }
+      }
+      if values != config.calibrations {
+        guard $0.body.acceptedRevision < .max else { throw LiveVisionError.revisionExhausted }
+        for id in PlayerID.allCases where values[id] != config.calibrations[id] {
+          $0.body.cutovers[id] = .init(frameID: $0.body.lastAdmission?.frameID ?? 0, capturedAt: now())
+        }
+        $0.body.configuration = config.replacingCalibrations(values)
+        $0.body.acceptedRevision += 1; $0.body.latest = nil; $0.body.wake?.yield(())
+      }
+      return $0.body.context(active: true)!
+    }
+  }
+  func bodyStream(generation: UUID) throws -> AsyncStream<BodySnapshot> {
+    try state.withLock {
+      guard !$0.body.stopped, let config = $0.body.configuration, config.sessionGeneration == generation else {
+        throw BodyInputOperationError.wrongGeneration
+      }
+      $0.body.reapSubscription()
+      guard $0.body.delivery != .claimed else { throw BodyInputOperationError.consumerAlreadyClaimed }
+      let pair = AsyncStream<BodySnapshot>.makeStream(bufferingPolicy: .bufferingNewest(config.snapshotBufferCapacity))
+      let signal = LiveBodySubscriptionSignal()
+      let wake = $0.body.wake
+      pair.continuation.onTermination = { termination in
+        switch termination {
+        case .cancelled: signal.finish(.cancelled)
+        case .finished: signal.finish(.finished)
+        @unknown default: signal.finish(.finished)
+        }
+        wake?.yield(()) // no source-gate entry, callbacks or tasks under yield/finish
+      }
+      $0.body.subscription = signal
+      $0.body.continuation = pair.continuation; $0.body.delivery = .claimed
+      return pair.stream
+    }
+  }
+  func releaseBodyStream(generation: UUID) throws {
+    try state.withLock {
+      guard $0.body.configuration?.sessionGeneration == generation else { throw BodyInputOperationError.wrongGeneration }
+      $0.body.reapSubscription()
+      if $0.body.delivery != .closed {
+        $0.body.subscription = nil
+        $0.body.continuation?.finish(); $0.body.continuation = nil; $0.body.delivery = .closed
+        $0.body.diagnostics.terminated(.released)
+      }
+    }
   }
   var snapshot: CameraTrackingDiagnostics {
     state.withLock {

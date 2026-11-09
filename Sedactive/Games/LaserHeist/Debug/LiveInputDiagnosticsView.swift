@@ -7,6 +7,10 @@
   /// App-retained diagnostic controller. Views only observe it; they never allocate a camera.
   @MainActor @Observable final class LiveInputDiagnosticsModel {
     let camera: CameraPipeline
+    let visionPreviewEnabled: Bool
+    @ObservationIgnored private let bodyInput: BodyInputService?
+    private(set) var visionRunStarted = false
+    private(set) var visionDetails = "Vision provider has not started"
     private(set) var permission = "Not checked"
     private(set) var details = "No observations yet"
     private(set) var message = "Camera is stopped"
@@ -34,8 +38,13 @@
     private var stopDuration: Double?
     private var negotiated: CameraNegotiatedConfiguration?
     private var automatedRunStarted = false
-    init(camera: CameraPipeline, now: @escaping @MainActor () -> Double = CameraHostClock.now) {
+    init(camera: CameraPipeline, bodyInput: BodyInputService? = nil,
+      visionPreview: Bool = VisionPreviewDiagnostics.enabled(bundleID: Bundle.main.bundleIdentifier,
+        arguments: ProcessInfo.processInfo.arguments),
+      now: @escaping @MainActor () -> Double = CameraHostClock.now) {
       self.camera = camera
+      self.bodyInput = bodyInput
+      visionPreviewEnabled = visionPreview && bodyInput != nil
       self.now = now
       let preview = camera.frames.preview
       previewWorker = Task { @concurrent in await preview.run() }
@@ -105,6 +114,10 @@
     func cancelTracking() { camera.cancelBinding() }
     @discardableResult func rebindTracking() -> Task<Void, Never>? {
       guard control == nil, shutdown == nil else { return nil }
+      guard !visionPreviewEnabled else {
+        message = "Vision preview uses one provider session per launch. Stop and relaunch for a new generation."
+        return nil
+      }
       let request: CameraBindingRequest
       do { request = try camera.makeBindingRequest() } // stamp the actual button intent, not a later Task
       catch { message = "Full rebind refused: \(error)"; return nil }
@@ -119,8 +132,12 @@
       control = task
       return task
     }
-    func start(observeFor30Seconds: Bool = false) {
-      guard control == nil, shutdown == nil, !runningObservation else { return }
+    @discardableResult func start(observeFor30Seconds: Bool = false) -> Task<Void, Never>? {
+      guard control == nil, shutdown == nil, !runningObservation else { return nil }
+      if visionPreviewEnabled {
+        guard !visionRunStarted else { message = "Relaunch the preview app for another camera run."; return nil }
+        visionRunStarted = true
+      }
       let token = UUID()
       controlToken = token
       negotiated = nil
@@ -137,7 +154,10 @@
         await self.camera.stop()
         do {
           try Task.checkCancellation()
-          try await self.camera.start(generation: UUID())
+          if self.visionPreviewEnabled, let provider = self.bodyInput {
+            try await provider.start(configuration: .init(sessionGeneration: UUID(), calibrations: [:],
+              playerPlaneLayout: .init(leftCenterX: -1, rightCenterX: 1, gameUnitsPerImageHeight: 2)))
+          } else { try await self.camera.start(generation: UUID()) }
           self.startDuration = self.startedAt.map { self.now() - $0 }
           if observeFor30Seconds, self.controlToken == token, !Task.isCancelled {
             self.runningObservation = true
@@ -155,6 +175,7 @@
           if case .failed = self.camera.status { self.export() }
         }
       }
+      return control
     }
     func stopAndExport(reason: String = "explicit stop/close") async {
       if let shutdown {
@@ -176,7 +197,10 @@
       runningObservation = false
       let stopStart = now()
       let camera = self.camera
-      let stopping = Task { await camera.stop() }
+      let provider = visionPreviewEnabled ? bodyInput : nil
+      let stopping = Task {
+        if let provider { await provider.stop() } else { await camera.stop() }
+      }
       shutdown = stopping
       await stopping.value
       endedAt = endedAt ?? now()
@@ -309,7 +333,21 @@
       )
       lines.append(
         "Recent lifecycle transitions (host seconds):\n" + history.joined(separator: "\n"))
+      if visionPreviewEnabled {
+        visionDetails = VisionPreviewDiagnostics.text(body: camera.frames.tracking.readBody(),
+          mask: camera.frames.tracking.readVisionPreviewMask())
+        lines.append(visionDetails)
+      }
       details = lines.joined(separator: "\n\n")
+    }
+    func collectStandingCandidate() {
+      guard visionPreviewEnabled, let bodyInput else { return }
+      do { _ = try bodyInput.requestStandingCalibration(id: UUID()) }
+      catch { message = "Standing collection refused: \(error). Requires a current confirmed pair; no retry was issued." }
+    }
+    func cancelStandingCollection() {
+      guard visionPreviewEnabled, let bodyInput, let request = bodyInput.calibrationProgress.request else { return }
+      bodyInput.cancelStandingCalibration(request)
     }
     func export() {
       do {
@@ -322,7 +360,7 @@
       } catch { message = "Diagnostics export failed: \(error.localizedDescription)" }
     }
     func runExplicitLaunchExperimentIfRequested() {
-      guard !automatedRunStarted,
+      guard !visionPreviewEnabled, !automatedRunStarted,
         ProcessInfo.processInfo.arguments.contains("--camera-diagnostics-run")
       else { return }
       automatedRunStarted = true
@@ -368,16 +406,29 @@
             Text("Capture diagnostics only — not calibrated gameplay evidence.").font(.headline)
             Text(model.message)
             HStack {
-              Button("Start Camera") { model.start() }
+              Button(model.visionPreviewEnabled ? "Start Vision pipeline" : "Start Camera") { model.start() }
+                .disabled(model.visionPreviewEnabled && model.visionRunStarted)
               Button("Stop Camera") { Task { await model.stopAndExport() } }
-              Button("Observe 30 seconds") { model.start(observeFor30Seconds: true) }
-                .disabled(model.runningObservation)
+              if !model.visionPreviewEnabled {
+                Button("Observe 30 seconds") { model.start(observeFor30Seconds: true) }
+                  .disabled(model.runningObservation)
+              }
             }.buttonStyle(.bordered)
             HStack {
               Button("Arm pair binding") { model.armTracking() }
               Button("Cancel binding") { model.cancelTracking() }
-              Button("Full rebind (restart camera)") { model.rebindTracking() }
+              if !model.visionPreviewEnabled {
+                Button("Full rebind (restart camera)") { model.rebindTracking() }
+              }
             }.buttonStyle(.bordered)
+            if model.visionPreviewEnabled {
+              HStack {
+                Button("Collect standing candidate") { model.collectStandingCandidate() }
+                Button("Cancel calibration") { model.cancelStandingCollection() }
+              }.buttonStyle(.bordered)
+              Text(model.visionDetails).font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+            }
             Text("P1 = canonical image-right (mirrored preview-left). Binding is diagnostic only.")
             Toggle(
               "DEBUG preview (max 5 Hz)",
@@ -405,7 +456,7 @@
             )
           }.padding()
         }
-        .navigationTitle("LH-13A2 Camera")
+        .navigationTitle(model.visionPreviewEnabled ? "Vision E03–E06 Preview" : "LH-13A2 Camera")
         .toolbar {
           ToolbarItem(placement: .confirmationAction) {
             Button("Close") {
