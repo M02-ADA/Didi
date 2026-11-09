@@ -17,11 +17,11 @@ import Foundation
 //
 // PROVISIONAL SEAM (pending the production field freeze and D02/D03): the
 // `AvatarSource*` input values below mirror, field for field, Edo's tracker
-// values on `staging` (`PlayerTrackingContext`, `PlayerTrackingSource`,
-// `PlayerTrackingSlotResult`), which this branch does not contain yet, plus
-// the proposed calibration input and ordered status. They carry distinct
-// names so they never collide with Edo's types; E07 replaces them with a
-// one-to-one mapping. Nothing here is a production token contract: the
+// values (`PlayerTrackingContext`, `PlayerTrackingSource`,
+// `PlayerTrackingSlotResult`; see the one-to-one mapping at the end of this
+// file), plus the proposed calibration input and ordered status. They carry
+// distinct names until E07 fixes the packet's fields. Nothing here is a
+// production token contract: the
 // `contextRevision` fence is this seam's synthetic model of "ordered
 // presentation context", not a claim about how D02/D03 will version stop,
 // resume or rebind. The renderer never accepts calibration, assigns
@@ -255,5 +255,34 @@ nonisolated enum AvatarPoseProjection {
             standingRightAnkleY: gameY(input.standingRightAnkleImageY), laneCenterX: layout.centerX(for: player),
             mapping: input.mapping, layout: layout)
         return .success(.calibrated(reference, visual: input.visual))
+    }
+}
+
+// MARK: - One-to-one mapping from Edo's tracker values (K05)
+
+extension AvatarSourceContext {
+    nonisolated init(_ context: PlayerTrackingContext) {
+        self.init(generation: context.generation, epoch: context.epoch, geometryRevision: context.geometryRevision,
+                  imageWidth: context.imageWidth, imageHeight: context.imageHeight,
+                  rotationAngle: context.rotationAngle, mirrored: context.mirrored)
+    }
+}
+
+extension AvatarSourceFrame {
+    nonisolated init(_ source: PlayerTrackingSource) {
+        self.init(context: AvatarSourceContext(source.context), frameID: source.frameID,
+                  capturedAt: source.capturedAt, controlRevision: source.controlRevision)
+    }
+}
+
+extension AvatarTrackedSlot {
+    nonisolated init(_ result: PlayerTrackingSlotResult) {
+        let state: AvatarTrackedState = switch result.state {
+        case .unbound: .unbound
+        case .tracking: .tracking
+        case .uncertain: .uncertain
+        case .lost: .lost
+        }
+        self.init(state: state, candidateID: result.candidateID, requiresRebind: result.requiresRebind)
     }
 }

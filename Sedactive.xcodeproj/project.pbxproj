@@ -18,10 +18,18 @@
 			remoteGlobalIDString = FAFDB8FD3084B8E100EC2199;
 			remoteInfo = Sedactive;
 		};
+		FB2300000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = FAFDB8F63084B8E100EC2199 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FAFDB8FD3084B8E100EC2199;
+			remoteInfo = Sedactive;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		FA2300000000000000000002 /* SedactiveTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SedactiveTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		FB2300000000000000000002 /* SedactiveUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SedactiveUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FAFDB8FE3084B8E100EC2199 /* Sedactive.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Sedactive.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -34,6 +42,11 @@
 		FAFDB9003084B8E100EC2199 /* Sedactive */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Sedactive;
+			sourceTree = "<group>";
+		};
+		FB2300000000000000000003 /* SedactiveUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SedactiveUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -54,6 +67,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FB2300000000000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -63,6 +83,7 @@
 				FAFDB9003084B8E100EC2199 /* Sedactive */,
 				FAFDB8FF3084B8E100EC2199 /* Products */,
 				FA69AAF33091B571008BD429 /* SedactiveTests */,
+				FB2300000000000000000003 /* SedactiveUITests */,
 			);
 			sourceTree = "<group>";
 		};
@@ -71,6 +92,7 @@
 			children = (
 				FAFDB8FE3084B8E100EC2199 /* Sedactive.app */,
 				FA2300000000000000000002 /* SedactiveTests.xctest */,
+				FB2300000000000000000002 /* SedactiveUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -124,6 +146,29 @@
 			productReference = FAFDB8FE3084B8E100EC2199 /* Sedactive.app */;
 			productType = "com.apple.product-type.application";
 		};
+		FB2300000000000000000008 /* SedactiveUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FB2300000000000000000009 /* Build configuration list for PBXNativeTarget "SedactiveUITests" */;
+			buildPhases = (
+				FB2300000000000000000006 /* Sources */,
+				FB2300000000000000000004 /* Frameworks */,
+				FB2300000000000000000005 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FB2300000000000000000007 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				FB2300000000000000000003 /* SedactiveUITests */,
+			);
+			name = SedactiveUITests;
+			packageProductDependencies = (
+			);
+			productName = SedactiveUITests;
+			productReference = FB2300000000000000000002 /* SedactiveUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -140,6 +185,10 @@
 					};
 					FAFDB8FD3084B8E100EC2199 = {
 						CreatedOnToolsVersion = 26.6;
+					};
+					FB2300000000000000000008 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = FAFDB8FD3084B8E100EC2199;
 					};
 				};
 			};
@@ -162,6 +211,7 @@
 			targets = (
 				FAFDB8FD3084B8E100EC2199 /* Sedactive */,
 				FA2300000000000000000004 /* SedactiveTests */,
+				FB2300000000000000000008 /* SedactiveUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -175,6 +225,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		FAFDB8FC3084B8E100EC2199 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FB2300000000000000000005 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -198,6 +255,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FB2300000000000000000006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -205,6 +269,11 @@
 			isa = PBXTargetDependency;
 			target = FAFDB8FD3084B8E100EC2199 /* Sedactive */;
 			targetProxy = FA2300000000000000000001 /* PBXContainerItemProxy */;
+		};
+		FB2300000000000000000007 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FAFDB8FD3084B8E100EC2199 /* Sedactive */;
+			targetProxy = FB2300000000000000000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -446,6 +515,38 @@
 			};
 			name = Release;
 		};
+		FB230000000000000000000A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PVFTHNYZFD;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.Edward-Kristian.SedactiveUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Sedactive;
+			};
+			name = Debug;
+		};
+		FB230000000000000000000B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PVFTHNYZFD;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.Edward-Kristian.SedactiveUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Sedactive;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -472,6 +573,15 @@
 			buildConfigurations = (
 				FAFDB90A3084B8E100EC2199 /* Debug */,
 				FAFDB90B3084B8E100EC2199 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FB2300000000000000000009 /* Build configuration list for PBXNativeTarget "SedactiveUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FB230000000000000000000A /* Debug */,
+				FB230000000000000000000B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -11,10 +11,20 @@ import RealityKit
 /// Hosts the LaserHeist RealityKit world. Uses RealityKit's virtual camera,
 /// not the device camera; live input arrives through Edo's pipeline instead.
 struct PlayView: View {
+    /// K05 attachment seam, PENDING E07/J03: given a fresh pose mailbox for
+    /// each scene (Retry included), the authoritative producer publishes into
+    /// it. With a source the mascots follow it in every configuration; without
+    /// one, Release keeps its temporary pictograms. Never a synthetic source
+    /// outside Debug.
+    var avatarSource: (@MainActor (AvatarPoseMailbox) -> Void)?
+    /// CP2 attachment seam, PENDING Edo's production composition: shows the
+    /// players' live cutouts. A mascot feed takes precedence over it.
+    var cutoutSource: LiveCutoutSource?
+
     @State private var generation = UUID()
 
     var body: some View {
-        ReplayRoundView(generation: generation, retry: { generation = UUID() })
+        ReplayRoundView(generation: generation, avatarSource: avatarSource, cutoutSource: cutoutSource, retry: { generation = UUID() })
             .id(generation)
     }
 }
@@ -22,13 +32,15 @@ struct PlayView: View {
 /// Identity replacement disposes the old scene, driver, provider, clock and coordinator on Retry.
 private struct ReplayRoundView: View {
     let generation: UUID
+    let avatarSource: (@MainActor (AvatarPoseMailbox) -> Void)?
+    let cutoutSource: LiveCutoutSource?
     let retry: () -> Void
     @State private var scene = LaserScene()
     @State private var presentation = LaserReplayPresentation()
     @State private var session: GameSessionCoordinator?
     @State private var startupError: String?
-    /// Per-frame expiry check for live cutouts (`refreshLiveCutouts`).
-    @State private var cutoutRefresh: EventSubscription?
+    /// The per-frame host-clock tick: live cutout expiry and live avatars.
+    @State private var frameRefresh: EventSubscription?
     #if DEBUG
     @State private var preview = LaserApproachPreview()
     @State private var environmentPreview = EnvironmentPreview()
@@ -36,8 +48,8 @@ private struct ReplayRoundView: View {
     @State private var directorPreview = DirectorLaserPreview()
     @State private var robotDemo = RobotDemoDriver()
     @State private var robotDemoActive = false
-    /// The demo's K03 mailbox (`-avatarPackets`); revoked on teardown.
-    @State private var avatarMailbox: AvatarPoseMailbox?
+    /// The demo's K03 attachment (`-avatarPackets`); revoked on teardown.
+    @State private var demoAvatars: LiveAvatarPresenter?
     #endif
 
     var body: some View {
@@ -55,10 +67,31 @@ private struct ReplayRoundView: View {
             scene.installVaultDoor(await LaserScene.loadVaultDoorArtwork())
             scene.installDiamondArt(await LaserScene.loadDiamondArtwork())
             content.add(scene.root)
-            // Live cutouts expire on the render loop, on the host clock their capture times use,
-            // so a cutout older than its agreed freshness limit falls back without a newer frame.
-            cutoutRefresh = content.subscribe(to: SceneEvents.Update.self) { [weak scene] _ in
-                scene?.refreshLiveCutouts(now: CACurrentMediaTime())
+            // Live cutouts and avatars update on the render loop, on the host clock their capture
+            // times use, so stale input falls back or relaxes without waiting for a newer frame.
+            frameRefresh = content.subscribe(to: SceneEvents.Update.self) { [weak scene] _ in
+                let now = CACurrentMediaTime()
+                scene?.refreshLiveCutouts(now: now)
+                scene?.refreshLiveAvatars(now: now)
+            }
+            if let avatarSource {
+                do {
+                    let templates = try await RobotAvatarLayer.sharedTemplates()
+                    guard !Task.isCancelled else { return }
+                    let mailbox = AvatarPoseMailbox(maxAge: LiveAvatarPresenter.maximumPoseAge)
+                    scene.attachLiveAvatars(mailbox: mailbox, templates: templates)
+                    avatarSource(mailbox)
+                } catch {
+                    startupError = String(describing: error)
+                    return
+                }
+            } else if let cutoutSource {
+                do {
+                    try scene.attachLiveCutouts(cutoutSource.provider, layout: cutoutSource.layout,
+                                                maximumDisplayAge: cutoutSource.maximumDisplayAge)
+                } catch {
+                    print("PlayView: live cutouts unavailable, keeping the pictograms: \(error)")
+                }
             }
             // Optional world-construction guides. Replay body markers live in the presentation adapter.
             #if DEBUG
@@ -106,13 +139,12 @@ private struct ReplayRoundView: View {
                         // bounded latest-only mailbox, drained once per render tick.
                         let source = SyntheticAvatarSource(configuration: input.configuration,
                                                            cameraGeometryRevision: input.cameraGeometryRevision)
-                        let mailbox = AvatarPoseMailbox(maxAge: 0.25)
+                        let mailbox = AvatarPoseMailbox(maxAge: LiveAvatarPresenter.maximumPoseAge)
                         mailbox.publish(source.status)
-                        avatarMailbox = mailbox
-                        robotDemo.start(on: content, sequence: sequence, render: { now in
-                            robots.apply(mailbox.drain(now: now), now: now)
-                            robots.render(now: now)
-                        }) { snapshot, joints in
+                        // The production presenter, ticked on the demo's own timeline.
+                        let live = LiveAvatarPresenter(avatars: robots, mailbox: mailbox)
+                        demoAvatars = live
+                        robotDemo.start(on: content, sequence: sequence, render: { live.tick(now: $0) }) { snapshot, joints in
                             mailbox.offer(source.output(snapshot, joints: joints))
                         }
                     } else {
@@ -138,8 +170,10 @@ private struct ReplayRoundView: View {
                 // The Lemon (P1) and Tangerine (P2) mascots stand in place of the pictograms in the
                 // replay round, driven by its body snapshots through the gameplay presenter (the
                 // DEBUG bridge), alongside the lasers and the vault. Presentation only.
-                guard try await installAvatars(calibrations: script.input.configuration.calibrations,
-                                               layout: script.input.configuration.playerPlaneLayout) != nil else { return }
+                if scene.liveAvatars == nil, scene.liveCutouts == nil {
+                    guard try await installAvatars(calibrations: script.input.configuration.calibrations,
+                                                   layout: script.input.configuration.playerPlaneLayout) != nil else { return }
+                }
                 #endif
                 let replay = GameSessionCoordinator(script: script)
                 session = replay
@@ -217,22 +251,22 @@ private struct ReplayRoundView: View {
         }
         .onDisappear {
             presentation.stop()
-            cutoutRefresh?.cancel()
-            cutoutRefresh = nil
+            frameRefresh?.cancel()
+            frameRefresh = nil
             // Release the cutout consumer and revoke any upload still on the GPU
             // before this scene is replaced (Retry).
             scene.detachLiveCutouts()
-            // Remove the avatars and their lights before this scene is replaced (Retry).
-            scene.robotAvatars?.remove()
-            scene.robotAvatars = nil
+            // Revoke any pose attachment and remove the avatars and their lights
+            // before this scene is replaced (Retry).
+            scene.detachLiveAvatars()
             #if DEBUG
             cutoutFeed?.stop()
             cutoutFeed = nil
             directorPreview.stop()
             directorPreview = DirectorLaserPreview()
             robotDemo.stop()
-            avatarMailbox?.revoke()
-            avatarMailbox = nil
+            demoAvatars?.stop()
+            demoAvatars = nil
             // Preview subscriptions capture their owners weakly; replacing them releases the subscriptions.
             preview = LaserApproachPreview()
             environmentPreview = EnvironmentPreview()

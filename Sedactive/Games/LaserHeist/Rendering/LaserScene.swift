@@ -119,6 +119,8 @@ final class LaserScene {
     /// pictograms, or `nil` (pictograms). Installed and removed by the host
     /// (`PlayView`); fed body frames by `GameplayScenePresenter`.
     var robotAvatars: RobotAvatarLayer?
+    /// The authoritative pose attachment driving `robotAvatars`, if any (K05).
+    private(set) var liveAvatars: LiveAvatarPresenter?
     /// Wall mount x positions, from the authored `LaserMount_*` anchors when available.
     private var laserSpan: ClosedRange<Float>
 
@@ -168,14 +170,28 @@ final class LaserScene {
         await loadContent(named: diamondSceneName, fallback: "no diamonds")
     }
 
+    /// Each scene read from the bundle once per app run. These entities are
+    /// only ever cloned, never shown, so Retry skips the file load. A failed
+    /// load is not kept, so a later call tries again.
+    private static var contentLoads: [String: Task<Entity?, Never>] = [:]
+
+    /// A scene copy for one `LaserScene` to own and change.
     private static func loadContent(named name: String, fallback: String) async -> Entity? {
         #if canImport(RealityKitContent)
-        do {
-            return try await Entity(named: name, in: realityKitContentBundle)
-        } catch {
-            print("LaserScene: \(name) failed to load, using \(fallback): \(error)")
+        let load = contentLoads[name] ?? Task {
+            do {
+                return try await Entity(named: name, in: realityKitContentBundle)
+            } catch {
+                print("LaserScene: \(name) failed to load, using \(fallback): \(error)")
+                return nil
+            }
+        }
+        contentLoads[name] = load
+        guard let template = await load.value else {
+            contentLoads[name] = nil
             return nil
         }
+        return template.clone(recursive: true)
         #else
         return nil
         #endif
@@ -346,6 +362,33 @@ final class LaserScene {
     func detachLiveCutouts() {
         liveCutouts?.detach()
         liveCutouts = nil
+    }
+
+    // MARK: - Live avatars (K05)
+
+    /// Stands both mascots on their lanes, driven only by `mailbox`. They stay
+    /// dimmed and neutral until the producer delivers a tracked pose. The
+    /// mailbox serves this one attachment: a new scene needs a new one.
+    func attachLiveAvatars(mailbox: AvatarPoseMailbox, templates: [PlayerID: Entity]) {
+        detachLiveAvatars()
+        let avatars = RobotAvatarLayer(scene: self, players: Set(PlayerID.allCases), templates: templates)
+        robotAvatars = avatars
+        liveAvatars = LiveAvatarPresenter(avatars: avatars, mailbox: mailbox)
+    }
+
+    /// One render tick for the live avatars. Call once per rendered frame with
+    /// host-clock time (`CACurrentMediaTime()`, the capture clock).
+    func refreshLiveAvatars(now: Double) {
+        liveAvatars?.tick(now: now)
+    }
+
+    /// Revokes the live attachment and removes every mascot and its lights;
+    /// the pictograms return. Safe to call when nothing is attached.
+    func detachLiveAvatars() {
+        liveAvatars?.stop()
+        liveAvatars = nil
+        robotAvatars?.remove()
+        robotAvatars = nil
     }
 
     // MARK: - Vault door and diamonds

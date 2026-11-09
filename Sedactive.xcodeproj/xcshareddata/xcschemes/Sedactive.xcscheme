@@ -8,12 +8,18 @@
          <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="NO">
             <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="FA2300000000000000000004" BuildableName="SedactiveTests.xctest" BlueprintName="SedactiveTests" ReferencedContainer="container:Sedactive.xcodeproj"/>
          </BuildActionEntry>
+         <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="NO">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="FB2300000000000000000008" BuildableName="SedactiveUITests.xctest" BlueprintName="SedactiveUITests" ReferencedContainer="container:Sedactive.xcodeproj"/>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="YES">
       <Testables>
          <TestableReference skipped="NO">
             <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="FA2300000000000000000004" BuildableName="SedactiveTests.xctest" BlueprintName="SedactiveTests" ReferencedContainer="container:Sedactive.xcodeproj"/>
+         </TestableReference>
+         <TestableReference skipped="NO">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="FB2300000000000000000008" BuildableName="SedactiveUITests.xctest" BlueprintName="SedactiveUITests" ReferencedContainer="container:Sedactive.xcodeproj"/>
          </TestableReference>
       </Testables>
       <MacroExpansion>
