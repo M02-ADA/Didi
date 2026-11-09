@@ -207,6 +207,44 @@ struct LiveGameLoopTests {
         await rig.session.stop()
     }
 
+    @Test func abortWhilePausedFreezesSummaryAndLateTicksCannotResumeIt() async throws {
+        let rig = try LiveGameRig()
+        try await rig.run()
+        try await rig.send(0.75)
+        rig.session.pauseLiveRound()
+        let time = rig.session.state?.gameTime
+        await rig.session.stop()
+        let summary = try #require(rig.session.summary)
+        let events = rig.session.events
+        #expect(summary.outcome == .aborted && summary.gameDuration == time)
+        #expect(summary.teamScore == 0 && summary.remainingTeamHealth == 5)
+        rig.controls.fixture.clock.time = 100
+        rig.session.advanceLive()
+        rig.session.continueLiveRound()
+        await rig.session.stop(reason: .technicalInterruption)
+        #expect(rig.session.summary == summary && rig.session.events == events)
+        #expect(rig.controls.input.stopCount == 1 && rig.controls.input.releaseCount == 1)
+        #expect(events.last?.kind == .roundEnded(.aborted))
+    }
+
+    @Test func sourceLossDuringCountdownCannotCreateARoundOrResults() async throws {
+        let rig = try LiveGameRig()
+        try await rig.prepare()
+        try rig.session.beginLiveCountdown()
+        let context = try #require(rig.controls.input.currentContext)
+        rig.controls.fixture.clock.time = 0.5
+        rig.controls.input.replaceContext(BodyInputContext(sessionGeneration: context.sessionGeneration,
+            cameraGeometryRevision: context.cameraGeometryRevision, calibrationRevisions: [:],
+            cutovers: [:], isActive: false))
+        #expect(rig.session.phase == .restartRequired && rig.session.state == nil)
+        #expect(rig.session.summary == nil && rig.session.results.isEmpty && rig.session.events.isEmpty)
+        await rig.session.stop()
+        rig.controls.fixture.clock.time = 10
+        rig.session.advanceLive()
+        #expect(rig.session.state == nil && rig.session.summary == nil)
+        #expect(rig.controls.input.stopCount == 1 && rig.controls.input.releaseCount == 1)
+    }
+
     private static func recovery(_ request: LaserLiveRecoveryRequest) throws -> [LaserEncounter]? {
         try request.withdrawn.map { old in
             try LaserEncounter(id: old.id, attemptID: UUID(), targets: old.targets.map {
@@ -246,6 +284,12 @@ struct LiveGameLoopTests {
             hostNow: { controls.fixture.clock.time }, recoveryPlanner: planner)
     }
     func run() async throws {
+        try await prepare()
+        try session.beginLiveCountdown()
+        #expect(session.phase == .countdown && session.state == nil)
+        try await send(0.5); try await send(0.625)
+    }
+    func prepare() async throws {
         try await session.start()
         let setup = try #require(session.setup)
         try setup.beginBinding()
@@ -256,9 +300,6 @@ struct LiveGameLoopTests {
         try setup.confirmCandidate(id: try #require(controls.calibration.candidate?.id))
         try await send(0.25); try await send(0.375)
         #expect(session.canStartLiveRound)
-        try session.beginLiveCountdown()
-        #expect(session.phase == .countdown && session.state == nil)
-        try await send(0.5); try await send(0.625)
     }
     func send(_ capture: Double, arrivedAt: Double? = nil, crown: Double? = 0.5,
               notifyBeforeDelivery: Bool = false) async throws {
