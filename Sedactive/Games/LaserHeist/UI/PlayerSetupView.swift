@@ -51,6 +51,10 @@ struct PlayerSetupView: View {
                         }
                         .buttonStyle(.borderedProminent).controlSize(.large).accessibilityIdentifier("startLiveRound")
                     }
+                    if flow.session?.hasLiveRoundPlan == true,
+                       flow.session?.liveReadiness?.phase == .ready, flow.session?.liveFrameHostReady == false {
+                        ProgressView("Preparing the corridor…").accessibilityIdentifier("liveScenePreparing")
+                    }
                     if flow.session?.phase == .paused {
                         Text("Round paused").font(.title2.bold())
                         Text(flow.session?.recoveryNeedsPlan == true

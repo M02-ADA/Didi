@@ -20,7 +20,7 @@ nonisolated enum LaserLiveReadinessPhase: Equatable, Sendable {
     case blocked(LaserLiveReadinessBlocker), settling, ready, countdown, running, paused, restartRequired
 }
 nonisolated enum LaserLiveReadinessBlocker: Equatable, Sendable {
-    case source, binding, calibration, measurements, staleEvidence, timingPolicy, manualPause
+    case source, binding, calibration, measurements, staleEvidence, timingPolicy, manualPause, presentation
 }
 
 /// Bounded numeric J03 core. It consumes accepted values, never accepts calibration or judges lasers.
@@ -152,6 +152,12 @@ nonisolated struct LaserLiveReadiness: Sendable {
         try validateTime(time)
         guard phase != .restartRequired else { return }
         try block(.measurements, at: time)
+    }
+
+    mutating func invalidatePresentation(at time: Double) throws {
+        try validateTime(time)
+        guard phase != .restartRequired else { return }
+        try block(.presentation, at: time)
     }
 
     func capturedGameTime(for packet: BodySnapshot) -> Double? {

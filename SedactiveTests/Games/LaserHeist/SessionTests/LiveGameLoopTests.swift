@@ -261,6 +261,58 @@ struct LiveGameLoopTests {
         await rig.session.stop()
     }
 
+    @Test func readyBodyCannotStartUntilAttachedSceneSignalsItsFirstUpdate() async throws {
+        let rig = try LiveGameRig()
+        try await rig.prepare(attachHost: false)
+        #expect(rig.session.liveReadiness?.phase == .ready && !rig.session.canStartLiveRound)
+        #expect(throws: LaserDataError.self) { try rig.session.beginLiveCountdown() }
+        let host = try rig.session.attachLiveFrameHost()
+        #expect(!rig.session.liveFrameHostReady)
+        #expect(throws: LaserDataError.self) { try rig.session.beginLiveCountdown() }
+        rig.session.advanceLive(frameHost: host)
+        #expect(rig.session.canStartLiveRound)
+        try rig.session.beginLiveCountdown()
+        #expect(rig.session.phase == .countdown && rig.session.state == nil)
+        await rig.session.stop()
+        rig.session.advanceLive(frameHost: host)
+        #expect(!rig.session.liveFrameHostReady && rig.session.summary == nil)
+    }
+
+    @Test func oldFrameHostCannotDriveOrCancelItsReplacement() async throws {
+        let rig = try LiveGameRig(planner: Self.recovery)
+        try await rig.run()
+        let old = try #require(rig.frameHost)
+        #expect(throws: LaserDataError.self) { try rig.session.attachLiveFrameHost() }
+        try await rig.send(0.75)
+        rig.session.detachLiveFrameHost(old)
+        let frozen = rig.session.state?.gameTime
+        #expect(rig.session.phase == .paused && !rig.session.liveFrameHostReady)
+        try await rig.send(0.875); try await rig.send(1.0)
+        #expect(rig.session.phase == .paused && rig.session.state?.gameTime == frozen)
+        let current = try rig.session.attachLiveFrameHost()
+        rig.session.advanceLive(frameHost: old)
+        rig.session.detachLiveFrameHost(old)
+        #expect(!rig.session.liveFrameHostReady)
+        rig.session.advanceLive(frameHost: current)
+        #expect(rig.session.liveFrameHostReady && rig.session.phase == .countdown)
+        #expect(rig.session.state?.gameTime == frozen && rig.controls.input.claimCount == 1)
+        await rig.session.stop()
+    }
+
+    @Test func losingSceneDuringCountdownCannotStartAnUnseenGame() async throws {
+        let rig = try LiveGameRig()
+        try await rig.prepare()
+        try rig.session.beginLiveCountdown()
+        rig.session.detachLiveFrameHost(try #require(rig.frameHost))
+        try await rig.send(0.5); try await rig.send(0.625)
+        #expect(rig.session.phase == .paused && rig.session.state == nil)
+        #expect(rig.session.liveReadiness?.gameTime == 0 && rig.session.events.isEmpty)
+        let current = try rig.session.attachLiveFrameHost()
+        rig.session.advanceLive(frameHost: current)
+        #expect(rig.session.phase == .countdown && rig.session.state == nil)
+        await rig.session.stop()
+    }
+
     private static func recovery(_ request: LaserLiveRecoveryRequest) throws -> [LaserEncounter]? {
         try request.withdrawn.map { old in
             try LaserEncounter(id: old.id, attemptID: UUID(), targets: old.targets.map {
@@ -278,6 +330,7 @@ struct LiveGameLoopTests {
     let controls: GateSetupControls
     let session: GameSessionCoordinator
     private var frame: UInt64 = 3
+    private(set) var frameHost: LaserLiveFrameAttachment?
     init(encounterCount: Int = 1,
          planner: (@MainActor (LaserLiveRecoveryRequest) throws -> [LaserEncounter]?)? = nil) throws {
         let controls = try GateSetupControls()
@@ -305,8 +358,13 @@ struct LiveGameLoopTests {
         #expect(session.phase == .countdown && session.state == nil)
         try await send(0.5); try await send(0.625)
     }
-    func prepare() async throws {
+    func prepare(attachHost: Bool = true) async throws {
         try await session.start()
+        if attachHost {
+            let host = try session.attachLiveFrameHost()
+            frameHost = host
+            session.advanceLive(frameHost: host)
+        }
         let setup = try #require(session.setup)
         try setup.beginBinding()
         try controls.bindPair()
@@ -315,7 +373,7 @@ struct LiveGameLoopTests {
         controls.showCandidate(validated: true)
         try setup.confirmCandidate(id: try #require(controls.calibration.candidate?.id))
         try await send(0.25); try await send(0.375)
-        #expect(session.canStartLiveRound)
+        #expect(session.canStartLiveRound == attachHost)
     }
     @discardableResult
     func send(_ capture: Double, arrivedAt: Double? = nil, crown: Double? = 0.5,

@@ -14,11 +14,16 @@ final class LaserReplayPresentation {
     private var elapsed = 0.0
     private var busy = false
     private var presenter: GameplayScenePresenter?
+    private var liveAttachment: LaserLiveFrameAttachment?
 
     func start(on content: RealityViewCameraContent, scene: LaserScene,
                session: GameSessionCoordinator) {
         guard subscription == nil, let configuration = session.configuration,
               session.isReplay || session.hasLiveRoundPlan else { return }
+        if !session.isReplay {
+            guard let attachment = try? session.attachLiveFrameHost() else { return }
+            liveAttachment = attachment
+        }
         self.session = session
         elapsed = 0
         #if DEBUG
@@ -29,9 +34,10 @@ final class LaserReplayPresentation {
         presenter = GameplayScenePresenter(scene: scene, configuration: configuration,
                                            encounters: session.encounters, showsDebugMarkers: markers)
         subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self, weak scene] event in
-            guard let self, let scene else { return }
+            guard let self, let scene, self.session === session, self.subscription != nil else { return }
             if !session.isReplay {
-                session.advanceLive()
+                guard let attachment = self.liveAttachment else { return }
+                session.advanceLive(frameHost: attachment)
                 self.render(scene: scene, session: session)
                 return
             }
@@ -54,6 +60,8 @@ final class LaserReplayPresentation {
     func stop() {
         subscription?.cancel()
         subscription = nil
+        if let liveAttachment { session?.detachLiveFrameHost(liveAttachment) }
+        liveAttachment = nil
         presenter?.stop()
         presenter = nil
         session = nil

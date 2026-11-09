@@ -8,6 +8,11 @@
 import Foundation
 import Observation
 
+/// Scene/update ownership only. This token is not player identity or capture generation.
+nonisolated struct LaserLiveFrameAttachment: Equatable, Sendable {
+    fileprivate let id: UUID
+}
+
 /// One CP1 consumer per round. Replay uses synthetic time; configured live rounds use host-time readiness.
 @MainActor @Observable
 final class GameSessionCoordinator {
@@ -29,7 +34,10 @@ final class GameSessionCoordinator {
     private(set) var liveReadiness: LaserLiveReadiness?
     private(set) var recoveryNeedsPlan = false
     var hasLiveRoundPlan: Bool { !isReplay && configuration != nil && !encounters.isEmpty && liveReadiness?.policy != nil }
-    var canStartLiveRound: Bool { hasLiveRoundPlan && phase == .awaitingSetup && liveReadiness?.phase == .ready }
+    private(set) var liveFrameHostReady = false
+    var canStartLiveRound: Bool {
+        hasLiveRoundPlan && liveFrameHostReady && phase == .awaitingSetup && liveReadiness?.phase == .ready
+    }
     var canPauseLiveRound: Bool { !isReplay && (phase == .running || phase == .countdown) }
     private let hostNow: @MainActor () -> Double
     private let provider: any BodyInputProviding
@@ -52,6 +60,7 @@ final class GameSessionCoordinator {
     private var approvedRecovery: [LaserEncounter]?
     private let recoveryPlanner: (@MainActor (LaserLiveRecoveryRequest) throws -> [LaserEncounter]?)?
     private var liveTerminationTask: Task<Void, Never>?
+    private var liveFrameAttachment: LaserLiveFrameAttachment?
 
     init(provider: any BodyInputProviding, inputConfiguration: BodyInputConfiguration,
          configuration: LaserRoundConfiguration? = nil, encounters: [LaserEncounter] = [],
@@ -212,6 +221,8 @@ final class GameSessionCoordinator {
         let hadLifetime = lifetime != nil
         lifetime = nil
         phase = .finished
+        liveFrameAttachment = nil
+        liveFrameHostReady = false
         setup?.close()
         liveReadiness?.requireRestart()
         game?.exit(outcome: reason)
@@ -286,8 +297,34 @@ final class GameSessionCoordinator {
         synchronizeLiveGame()
     }
 
+    func attachLiveFrameHost() throws -> LaserLiveFrameAttachment {
+        guard hasLiveRoundPlan, lifetime != nil, liveFrameAttachment == nil else {
+            throw LaserDataError.invalidValue("inactive or already attached live frame host")
+        }
+        let token = LaserLiveFrameAttachment(id: UUID())
+        liveFrameAttachment = token
+        liveFrameHostReady = false
+        return token
+    }
+
+    func advanceLive(frameHost token: LaserLiveFrameAttachment) {
+        guard lifetime != nil, liveFrameAttachment == token else { return }
+        liveFrameHostReady = true
+        advanceLive()
+    }
+
+    func detachLiveFrameHost(_ token: LaserLiveFrameAttachment) {
+        guard liveFrameAttachment == token else { return }
+        liveFrameAttachment = nil
+        liveFrameHostReady = false
+        guard lifetime != nil else { return }
+        do { try liveReadiness?.invalidatePresentation(at: hostNow()) }
+        catch { liveReadiness?.requireRestart() }
+        synchronizeLiveGame()
+    }
+
     func beginLiveCountdown() throws {
-        guard !isReplay, lifetime != nil, hasLiveRoundPlan else {
+        guard !isReplay, lifetime != nil, hasLiveRoundPlan, liveFrameHostReady else {
             throw LaserDataError.invalidValue("missing live plan/policy")
         }
         readInputStatus()
@@ -339,6 +376,7 @@ final class GameSessionCoordinator {
                 finishLiveInput()
                 return
             case .ready where countdownRequested:
+                guard liveFrameHostReady else { return }
                 guard let configuration, let context = inputContext, provider.currentContext == context else { return }
                 if game != nil, !withdrawnLiveEncounters.isEmpty, approvedRecovery == nil {
                     guard !recoveryAttempted else { return }
@@ -370,7 +408,7 @@ final class GameSessionCoordinator {
             case .running:
                 // Coalesced status callbacks may overtake a queued CP1 packet. They can pause or
                 // invalidate immediately, but only the stream/frame path finalizes evidence.
-                guard allowAdvance else { return }
+                guard allowAdvance, liveFrameHostReady else { return }
                 guard let configuration, let context = inputContext,
                       provider.currentContext == context, setup?.hasConfirmedReliablePair == true else { return }
                 if game == nil {
@@ -455,6 +493,8 @@ final class GameSessionCoordinator {
     private func finishLiveInput() {
         guard liveTerminationTask == nil else { return }
         lifetime = nil
+        liveFrameAttachment = nil
+        liveFrameHostReady = false
         setup?.close()
         liveReadiness?.requireRestart()
         liveTerminationTask = Task { @MainActor [weak self] in await self?.releaseInput() }
