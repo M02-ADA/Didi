@@ -170,7 +170,7 @@ struct GameSessionCoordinatorTests {
 
 /// Deterministic CP1 test source. No camera, clock, sleeps, or inferred gameplay measurements.
 @MainActor
-private final class ControlledSessionInput: BodyInputProviding {
+final class ControlledSessionInput: BodyInputProviding {
     var latestSnapshot: BodySnapshot?
     private var context: BodyInputContext?
     var currentContext: BodyInputContext? {

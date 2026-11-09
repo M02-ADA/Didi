@@ -14,6 +14,7 @@ final class GameSessionCoordinator {
     let configuration: LaserRoundConfiguration
     let encounters: [LaserEncounter]
     let inputConfiguration: BodyInputConfiguration
+    let setup: LaserSessionSetup?
     var isReplay: Bool { replayDriver != nil }
     var activityDuration: Double { replayDriver?.script.activityDuration ?? configuration.activityDuration }
     private(set) var phase: SessionState = .idle
@@ -42,7 +43,7 @@ final class GameSessionCoordinator {
 
     init(provider: any BodyInputProviding, inputConfiguration: BodyInputConfiguration,
          configuration: LaserRoundConfiguration, encounters: [LaserEncounter],
-         replayDriver: LaserReplayDriver? = nil) {
+         replayDriver: LaserReplayDriver? = nil, setupControls: (any LaserSetupControlling)? = nil) {
         precondition(replayDriver == nil || replayDriver?.provider === provider,
                      "Replay driving must use the injected provider")
         self.provider = provider
@@ -50,6 +51,15 @@ final class GameSessionCoordinator {
         self.configuration = configuration
         self.encounters = encounters
         self.replayDriver = replayDriver
+        precondition(setupControls == nil || (replayDriver == nil && setupControls?.provider === provider),
+                     "Setup must control the injected live provider")
+        setup = setupControls.map { LaserSessionSetup(controls: $0, generation: inputConfiguration.sessionGeneration) }
+    }
+
+    convenience init(liveProvider: BodyInputService, inputConfiguration: BodyInputConfiguration,
+                     configuration: LaserRoundConfiguration, encounters: [LaserEncounter]) {
+        self.init(provider: liveProvider, inputConfiguration: inputConfiguration, configuration: configuration,
+                  encounters: encounters, setupControls: LaserLiveSetupControls(service: liveProvider))
     }
 
     func start() async throws {
@@ -102,6 +112,7 @@ final class GameSessionCoordinator {
             } else {
                 // Source activity/uncalibrated CP1 packets are not permission to run a game.
                 phase = .awaitingSetup
+                setup?.activate()
                 inputTask = Task { @MainActor [weak self] in
                     guard self?.lifetime == token else { return }
                     for await packet in stream {
@@ -181,6 +192,7 @@ final class GameSessionCoordinator {
         let hadLifetime = lifetime != nil
         lifetime = nil
         phase = .finished
+        setup?.close()
         game?.exit(outcome: reason)
         if let more = game?.drainEvents() { events.append(contentsOf: more) }
         if summary == nil { summary = game?.summary }
@@ -217,6 +229,7 @@ final class GameSessionCoordinator {
         }
         inputContext = context
         inputStatus = status
+        setup?.refresh()
     }
 
     private func releaseInput() async {
