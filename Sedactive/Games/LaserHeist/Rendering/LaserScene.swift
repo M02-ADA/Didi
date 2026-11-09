@@ -78,7 +78,7 @@ final class LaserScene {
 
     /// Scene name inside the `RealityKitContent` package.
     static let authoredSceneName = "LaserCorridor"
-    /// Group of flat player and laser stand-ins that exist only for arranging
+    /// Group of static player and laser stand-ins that exist only for arranging
     /// the corridor in Reality Composer Pro. The runtime builds the real ones.
     static let editorPreviewsName = "EditorPreviews"
     /// Option 1 laser gate artwork inside the `RealityKitContent` package.

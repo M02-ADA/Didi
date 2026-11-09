@@ -26,6 +26,8 @@ struct AuthoredSceneConsistencyTests {
             #expect(abs(preview.position(relativeTo: scene).x - lanes[player]!) < 0.001)
             #expect(abs(bounds.min.y) < 0.001)
             #expect(abs(bounds.max.y - RobotAvatarLayer.standingHeight) < 0.001)
+            // Real volume, not a flat picture: the mascot is about 0.6 m deep.
+            #expect(bounds.extents.z > 0.5)
         }
         #expect(previews.findEntity(named: "ParentPreview") == nil)
         #expect(previews.findEntity(named: "ChildPreview") == nil)
