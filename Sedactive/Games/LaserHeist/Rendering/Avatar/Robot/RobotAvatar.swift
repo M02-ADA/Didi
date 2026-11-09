@@ -478,8 +478,15 @@ final class RobotAvatarLayer {
     /// planted feet and stepping. Off: the earlier behaviour, where the whole
     /// avatar, feet included, translates with the hip centre. This one switch
     /// is its whole activation; `-legacyFeet` starts with it off.
-    var footPlanting = !ProcessInfo.processInfo.arguments.contains("-legacyFeet") {
+    var footPlanting = RobotAvatarLayer.startsWithFootPlanting {
         didSet { if footPlanting != oldValue { resetFeet() } }
+    }
+    private static var startsWithFootPlanting: Bool {
+        #if DEBUG
+        !ProcessInfo.processInfo.arguments.contains("-legacyFeet")
+        #else
+        true
+        #endif
     }
     /// D07 CANDIDATE, not approved (K04): draw each player's laser bands in that
     /// player's normalized avatar space instead of their own game units, so a
@@ -641,7 +648,7 @@ final class RobotAvatarLayer {
             container.scale = SIMD3(repeating: Self.modelScale)
             container.addChild(robot)
             entity.addChild(container)
-            entity.findEntity(named: "player.\(player.rawValue).surface")?.isEnabled = false
+            entity.isPlaceholderSuppressed = true
             let bindWorld = skeleton.world(skeleton.bind).position
             let legRest = skeleton("Thigh_L").flatMap { t in skeleton("Foot_L").map { bindWorld[t].y - bindWorld[$0].y } } ?? solver.legLength
             var ankleX: [RobotPoseTargets.Side: Float] = [:]
@@ -914,7 +921,7 @@ final class RobotAvatarLayer {
     func remove() {
         for (player, robot) in robots {
             robot.container.removeFromParent()
-            scene?.players[player]?.findEntity(named: "player.\(player.rawValue).surface")?.isEnabled = true
+            scene?.players[player]?.isPlaceholderSuppressed = false
         }
         #if DEBUG
         for marker in fairnessMarkers.values.flatMap({ $0 }) { marker.removeFromParent() }

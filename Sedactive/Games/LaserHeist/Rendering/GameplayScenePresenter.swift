@@ -180,6 +180,7 @@ final class GameplayScenePresenter {
 
     private func reset() {
         for key in Array(slots.keys) { release(key) }
+        scene.clearLaserFeedback()
         travelDistance = 0
         travelledUntil = nil
         anchors = [:]
@@ -452,8 +453,9 @@ final class GameplayScenePresenter {
         #if DEBUG
         // DEBUG-only synthetic bridge: in the replay round the avatars show the
         // bundled historical replay fixture's frame (labelled synthetic). The
-        // production avatars never read CP1: they take `AvatarPoseFrame`s (K03).
-        scene.robotAvatars?.apply(snapshot)
+        // production avatars never read CP1: they take `AvatarPoseFrame`s (K03),
+        // so a live attachment is the only driver while one exists.
+        if scene.liveAvatars == nil { scene.robotAvatars?.apply(snapshot) }
         #endif
         for (index, player) in PlayerID.allCases.enumerated() {
             guard let geometry = snapshot.players[player]?.geometry else { continue }
