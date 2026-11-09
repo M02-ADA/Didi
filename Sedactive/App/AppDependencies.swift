@@ -32,6 +32,8 @@ import Foundation
         #if DEBUG
         await diagnostics.stopAndExport()
         #endif
+        // Native loss can leave no camera context while the body-session lease still needs release.
+        await bodyInput.stop()
       })
   }
 }

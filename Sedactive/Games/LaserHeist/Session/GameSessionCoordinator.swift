@@ -26,6 +26,8 @@ final class GameSessionCoordinator {
     private(set) var inputStatus: BodyInputStatus = .stopped
     private(set) var inputContext: BodyInputContext?
     private(set) var inputStreamEnded = false
+    private(set) var liveReadiness: LaserLiveReadiness?
+    private let hostNow: @MainActor () -> Double
     private let provider: any BodyInputProviding
     private let replayDriver: LaserReplayDriver?
     private var iterator: AsyncStream<BodySnapshot>.Iterator?
@@ -43,7 +45,9 @@ final class GameSessionCoordinator {
 
     init(provider: any BodyInputProviding, inputConfiguration: BodyInputConfiguration,
          configuration: LaserRoundConfiguration? = nil, encounters: [LaserEncounter] = [],
-         replayDriver: LaserReplayDriver? = nil, setupControls: (any LaserSetupControlling)? = nil) {
+         replayDriver: LaserReplayDriver? = nil, setupControls: (any LaserSetupControlling)? = nil,
+         liveTimingPolicy: LaserLiveTimingPolicy? = nil,
+         hostNow: @escaping @MainActor () -> Double = CameraHostClock.now) {
         precondition(replayDriver == nil || replayDriver?.provider === provider,
                      "Replay driving must use the injected provider")
         self.provider = provider
@@ -51,6 +55,8 @@ final class GameSessionCoordinator {
         self.configuration = configuration
         self.encounters = encounters
         self.replayDriver = replayDriver
+        self.hostNow = hostNow
+        liveReadiness = replayDriver == nil ? LaserLiveReadiness(policy: liveTimingPolicy) : nil
         precondition(setupControls == nil || (replayDriver == nil && setupControls?.provider === provider),
                      "Setup must control the injected live provider")
         setup = setupControls.map { LaserSessionSetup(controls: $0, generation: inputConfiguration.sessionGeneration) }
@@ -122,6 +128,7 @@ final class GameSessionCoordinator {
                     guard let self, self.lifetime == token else { return }
                     self.inputStreamEnded = true
                     self.latestSnapshot = nil
+                    self.liveReadiness?.requireRestart()
                 }
             }
         } catch {
@@ -193,6 +200,7 @@ final class GameSessionCoordinator {
         lifetime = nil
         phase = .finished
         setup?.close()
+        liveReadiness?.requireRestart()
         game?.exit(outcome: reason)
         if let more = game?.drainEvents() { events.append(contentsOf: more) }
         if summary == nil { summary = game?.summary }
@@ -214,6 +222,13 @@ final class GameSessionCoordinator {
               inputContext?.accepts(packet) == true else { return }
         // One bounded presentation/debug value only; no game, clock, scoring or readiness here.
         if latestSnapshot == nil || packet.frameID > latestSnapshot!.frameID { latestSnapshot = packet }
+        if let context = inputContext {
+            do {
+                try liveReadiness?.observe(packet, context: context,
+                    bindingConfirmed: setup?.hasConfirmedReliablePair == true && setup?.canCancelCalibration == false,
+                    at: hostNow())
+            } catch { liveReadiness?.requireRestart() }
+        }
     }
 
     private func readInputStatus() {
@@ -230,6 +245,23 @@ final class GameSessionCoordinator {
         inputContext = context
         inputStatus = status
         setup?.refresh()
+        guard liveReadiness != nil else { return } // Replay never reads a host-time source.
+        do {
+            let time = hostNow()
+            try liveReadiness?.updateContext(context, at: time)
+            if setup != nil, setup?.hasConfirmedReliablePair != true {
+                latestSnapshot = nil
+                try liveReadiness?.invalidateBinding(at: time)
+            }
+        }
+        catch { liveReadiness?.requireRestart() }
+        if setup?.phase == .restartRequired { liveReadiness?.requireRestart() }
+    }
+
+    /// A future agreed live frame/deadline host can call this without publishing a fake snapshot.
+    func refreshLiveReadiness() {
+        guard !isReplay, lifetime != nil else { return }
+        readInputStatus()
     }
 
     private func releaseInput() async {
@@ -252,12 +284,13 @@ final class GameSessionCoordinator {
             if claimed {
                 try? provider.releaseSnapshotSubscription(generation: inputConfiguration.sessionGeneration)
             }
+            // CP1 Retry ordering: cancel/close and join the old reader before source cleanup.
+            await task?.value
             await provider.stop()
             // Retain the status claim until pending source startup has really exited. A delayed
             // start cannot stop or publish into a new session taking over the same provider.
             _ = try? await startup?.value
             if provider.status != .stopped { await provider.stop() }
-            await task?.value
             if let observer { try? provider.removeStatusObserver(observer) }
         }
         cleanupTask = cleanup

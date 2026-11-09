@@ -4,6 +4,19 @@ import Testing
 
 @MainActor
 struct GameSessionCoordinatorTests {
+    @Test func replayLifecycleNeverReadsTheLiveHostClock() async throws {
+        let script = try LaserReplayScript.load()
+        let driver = try LaserReplayDriver(script: script)
+        var hostReads = 0
+        let session = GameSessionCoordinator(provider: driver.provider, inputConfiguration: script.input.configuration,
+            configuration: script.configuration, encounters: script.encounters, replayDriver: driver,
+            hostNow: { hostReads += 1; return 0 })
+        try await session.start()
+        try await session.advance(to: 100)
+        await session.stop()
+        #expect(hostReads == 0 && session.summary?.teamScore == 400)
+    }
+
     private func makeSession(_ provider: ControlledSessionInput,
                              configuration: BodyInputConfiguration? = nil) throws -> GameSessionCoordinator {
         let script = try LaserReplayScript.load()

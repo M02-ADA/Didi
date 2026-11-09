@@ -5,7 +5,7 @@ import Testing
 @MainActor
 struct LaserInputFlowTests {
     private func session(_ input: ControlledSessionInput) throws -> GameSessionCoordinator {
-        let script = try LaserReplayScript.load()
+        let script = try LaserReplayScript.load().freshRound(generation: UUID())
         return GameSessionCoordinator(provider: input,
             inputConfiguration: script.input.configuration.replacingCalibrations([:]))
     }
@@ -20,7 +20,7 @@ struct LaserInputFlowTests {
         #expect(flow.route == .selection && flow.canStartLive && constructions == 0)
     }
 
-    @Test func liveSetupHasNoSyntheticGamePlanAndCannotBeRestartedByRouteRecreation() async throws {
+    @Test func liveSetupHasNoSyntheticGamePlanAndOnlyRetriesAfterCleanup() async throws {
         let input = ControlledSessionInput()
         var constructions = 0
         let flow = LaserInputFlow(makeLiveSession: { constructions += 1; return try session(input) })
@@ -33,10 +33,12 @@ struct LaserInputFlowTests {
         flow.showReplay()
         #expect(flow.route == .liveSetup && constructions == 1 && input.startCount == 1)
         await flow.closeLiveSetup()
-        #expect(flow.route == .selection && flow.session == nil && !flow.canStartLive)
+        #expect(flow.route == .selection && flow.session == nil && flow.canStartLive)
         #expect(input.stopCount == 1 && input.releaseCount == 1)
         await flow.startLiveSetup()
-        #expect(constructions == 1)
+        #expect(constructions == 2 && input.startCount == 2)
+        #expect(flow.session?.inputConfiguration.sessionGeneration != active.inputConfiguration.sessionGeneration)
+        await flow.closeLiveSetup()
         flow.showReplay()
         #expect(flow.route == .replay)
     }
@@ -54,7 +56,7 @@ struct LaserInputFlowTests {
         await close.value
         await start.value
         #expect(flow.route == .selection && flow.session == nil && !flow.isStarting && !flow.isClosing)
-        #expect(input.currentContext?.isActive == false && !flow.canStartLive)
+        #expect(input.currentContext?.isActive == false && flow.canStartLive)
         #expect(flow.message?.contains("setup has ended") == true)
     }
 
@@ -64,19 +66,19 @@ struct LaserInputFlowTests {
         await flow.startLiveSetup()
         await flow.handleBackground()
         #expect(flow.route == .selection && input.stopCount == 1)
-        #expect(!flow.canStartLive && flow.session == nil)
+        #expect(flow.canStartLive && flow.session == nil)
         await flow.handleBackground()
         #expect(input.stopCount == 1)
     }
 
-    @Test func permissionErrorHasUsefulCopyAndDoesNotOfferAnUnsafeRetry() async {
+    @Test func permissionErrorHasUsefulCopyAndAllowsExplicitFreshSetup() async {
         let flow = LaserInputFlow(makeLiveSession: { throw CameraFailure.permissionDenied })
         await flow.startLiveSetup()
         #expect(flow.route == .liveSetup && flow.session == nil && !flow.isStarting)
         #expect(flow.message?.contains("Settings") == true)
         #expect(flow.message?.contains("permissionDenied") == false)
         await flow.closeLiveSetup()
-        #expect(flow.route == .selection && !flow.canStartLive)
+        #expect(flow.route == .selection && flow.canStartLive)
     }
 
     @Test func diagnosticsReserveTheSharedSourceAndAreJoinedBeforeLeaving() async throws {
@@ -90,7 +92,7 @@ struct LaserInputFlowTests {
         flow.showReplay()
         #expect(flow.route == .diagnostics && constructions == 0)
         await flow.closeDiagnostics()
-        #expect(diagnosticsStops == 1 && flow.route == .selection && !flow.canStartLive)
+        #expect(diagnosticsStops == 1 && flow.route == .selection && flow.canStartLive)
         await flow.closeDiagnostics()
         #expect(diagnosticsStops == 1)
     }

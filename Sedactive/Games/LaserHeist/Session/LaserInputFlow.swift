@@ -7,21 +7,19 @@ final class LaserInputFlow {
     nonisolated enum Route: Equatable, Sendable { case selection, replay, liveSetup, diagnostics }
     private(set) var route: Route
     private(set) var session: GameSessionCoordinator?
-    private(set) var liveWasUsed: Bool
     private(set) var isStarting = false
     private(set) var isClosing = false
     private(set) var message: String?
     private var operation: UUID?
     private let makeLiveSession: @MainActor () throws -> GameSessionCoordinator
     private let stopDiagnostics: @MainActor () async -> Void
-    var canStartLive: Bool { route == .selection && !liveWasUsed && !isStarting && !isClosing }
+    var canStartLive: Bool { route == .selection && !isStarting && !isClosing }
 
     init(initialRoute: Route = .selection,
          makeLiveSession: @escaping @MainActor () throws -> GameSessionCoordinator,
          stopDiagnostics: @escaping @MainActor () async -> Void = {}) {
         precondition(initialRoute == .selection || initialRoute == .replay || initialRoute == .diagnostics)
         route = initialRoute
-        liveWasUsed = initialRoute == .diagnostics
         self.makeLiveSession = makeLiveSession
         self.stopDiagnostics = stopDiagnostics
     }
@@ -51,7 +49,6 @@ final class LaserInputFlow {
 
     func startLiveSetup() async {
         guard canStartLive else { return }
-        liveWasUsed = true // One-shot provider/gate: never replace only its facade or retry implicitly.
         route = .liveSetup
         isStarting = true
         message = nil
@@ -80,12 +77,19 @@ final class LaserInputFlow {
         isStarting = false
         isClosing = false
         route = .selection
-        message = "Camera setup has ended. Close and reopen the app before using the camera again. Replay is still available."
+        message = "Camera setup has ended. You can start a fresh setup or use the replay demo."
+    }
+
+    /// Explicit user intent only. The same App-retained provider gets a new coordinator/generation.
+    func retryLiveSetup() async {
+        guard route == .liveSetup, !isStarting, !isClosing else { return }
+        await closeLiveSetup()
+        guard canStartLive else { return }
+        await startLiveSetup()
     }
 
     func showDiagnostics() {
         guard canStartLive else { return }
-        liveWasUsed = true // Diagnostics may consume the same one-shot Vision provider.
         route = .diagnostics
     }
 
@@ -95,7 +99,7 @@ final class LaserInputFlow {
         await stopDiagnostics()
         isClosing = false
         route = .selection
-        message = "Camera diagnostics have ended. Reopen the app before starting camera setup."
+        message = "Camera diagnostics have ended. Camera setup is available."
     }
 
     func handleBackground() async {
@@ -106,13 +110,13 @@ final class LaserInputFlow {
     private static func explain(_ error: any Error) -> String {
         switch error {
         case CameraFailure.permissionDenied, CameraFailure.permissionRestricted:
-            "Camera access is unavailable. Review camera access in Settings, then close and reopen the app."
+            "Camera access is unavailable. Review camera access in Settings, then try camera setup again."
         case CameraFailure.unsupported, CameraFailure.cameraUnavailable:
-            "Camera setup needs a supported front camera and an iPad held in landscape. Check the device and position, then close and reopen the app before trying again. Replay is still available."
+            "Camera setup needs a supported front camera and an iPad held in landscape. Check the device and position before trying again. Replay is still available."
         case is CancellationError:
-            "Camera setup was stopped. Close and reopen the app before trying again."
+            "Camera setup was stopped. You can start a fresh setup when ready."
         default:
-            "Camera setup could not continue. Close and reopen the app to try again, or use the replay demo."
+            "Camera setup could not continue. Try a fresh setup, or use the replay demo."
         }
     }
 }

@@ -56,4 +56,31 @@ final class RoundSmokeUITests: XCTestCase {
         XCTAssertTrue(camera.isEnabled)
         XCTAssertFalse(app.buttons["endRound"].exists)
     }
+
+    func testSimulatorCameraUnavailableCanRetryAndReturnToSelection() throws {
+        #if targetEnvironment(simulator)
+        let app = XCUIApplication()
+        app.launch()
+        let camera = app.buttons["chooseLive"]
+        XCTAssertTrue(camera.waitForExistence(timeout: timeout))
+        camera.tap()
+        // Real Simulator permission UI, if this app has not requested camera access before.
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        if permission.waitForExistence(timeout: 3) {
+            if permission.buttons["Allow"].exists { permission.buttons["Allow"].tap() }
+            else if permission.buttons["OK"].exists { permission.buttons["OK"].tap() }
+        }
+        let error = app.staticTexts["liveSetupError"]
+        XCTAssertTrue(error.waitForExistence(timeout: timeout), "Simulator must show the unavailable-camera path")
+        let retry = app.buttons["retryLiveSetup"]
+        XCTAssertTrue(retry.exists && retry.isEnabled)
+        retry.tap()
+        XCTAssertTrue(error.waitForExistence(timeout: timeout))
+        app.buttons["leaveLiveSetup"].tap()
+        XCTAssertTrue(camera.waitForExistence(timeout: timeout))
+        XCTAssertTrue(camera.isEnabled, "A stopped source must allow a new explicit setup")
+        #else
+        throw XCTSkip("This checks the Simulator's unavailable-camera path, not physical tracking")
+        #endif
+    }
 }

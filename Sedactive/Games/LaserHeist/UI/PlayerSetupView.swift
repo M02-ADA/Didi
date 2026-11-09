@@ -41,6 +41,14 @@ struct PlayerSetupView: View {
                     }
                 }
                 if let actionError { Text(actionError).foregroundStyle(.orange).accessibilityIdentifier("setupActionError") }
+                if !flow.isStarting, flow.message != nil || flow.session?.setup?.phase == .restartRequired {
+                    Button("Retry camera setup") {
+                        actionError = nil
+                        Task { await flow.retryLiveSetup() }
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.large)
+                    .disabled(flow.isClosing).accessibilityIdentifier("retryLiveSetup")
+                }
                 Button(flow.isClosing ? "Stopping camera…" : "Leave camera setup", role: .cancel) {
                     Task { await flow.closeLiveSetup() }
                 }

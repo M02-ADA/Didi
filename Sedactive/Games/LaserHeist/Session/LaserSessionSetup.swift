@@ -69,6 +69,10 @@ final class LaserSessionSetup {
     private(set) var reason = ""
     var candidateIDForConfirmation: UUID? { phase == .reviewCandidate ? candidateTicket?.id : nil }
     var canCancelCalibration: Bool { active && calibrationRequest != nil }
+    var hasConfirmedReliablePair: Bool {
+        guard let binding = currentReliableBinding() else { return false }
+        return confirmed == binding
+    }
 
     init(controls: any LaserSetupControlling, generation: UUID) {
         self.controls = controls

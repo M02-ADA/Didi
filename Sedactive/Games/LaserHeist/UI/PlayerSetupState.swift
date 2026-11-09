@@ -41,7 +41,7 @@ nonisolated struct PlayerSetupState: Equatable, Sendable {
                 : "Calibration changed or could not be confirmed. Cancel this step, check both players, and collect standing measurements again. No round has started."
             (title, instruction, action, buttonTitle) = ("Calibration needs more information", explanation, nil, nil)
         case .restartRequired:
-            (title, instruction, action, buttonTitle) = ("Camera setup has stopped", "This session cannot continue. Leave setup, then close and reopen the app before trying the camera again.", nil, nil)
+            (title, instruction, action, buttonTitle) = ("Start a fresh setup", "The previous player binding or standing measurements are no longer reliable. A fresh setup will link both players and collect standing measurements again.", nil, nil)
         }
     }
 }
