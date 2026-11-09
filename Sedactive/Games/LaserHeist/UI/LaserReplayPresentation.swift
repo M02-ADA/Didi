@@ -5,6 +5,8 @@ import UIKit
 /// Renderer adapter only: authoritative time, evidence, verdicts and totals stay in the session/game.
 /// Jevon owns the frame loop and session advancement below; Kevin's
 /// `GameplayScenePresenter` draws the resulting state (LH-24 ownership split).
+/// The legacy-named adapter supports both modes: delta time drives only replay; live uses a
+/// synchronous coordinator signal and never creates a per-frame Task or another clock.
 @MainActor
 final class LaserReplayPresentation {
     private var subscription: EventSubscription?
@@ -15,7 +17,8 @@ final class LaserReplayPresentation {
 
     func start(on content: RealityViewCameraContent, scene: LaserScene,
                session: GameSessionCoordinator) {
-        guard subscription == nil, session.isReplay, let configuration = session.configuration else { return }
+        guard subscription == nil, let configuration = session.configuration,
+              session.isReplay || session.hasLiveRoundPlan else { return }
         self.session = session
         elapsed = 0
         #if DEBUG
@@ -26,7 +29,13 @@ final class LaserReplayPresentation {
         presenter = GameplayScenePresenter(scene: scene, configuration: configuration,
                                            encounters: session.encounters, showsDebugMarkers: markers)
         subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self, weak scene] event in
-            guard let self, let scene, session.phase == .running else { return }
+            guard let self, let scene else { return }
+            if !session.isReplay {
+                session.advanceLive()
+                self.render(scene: scene, session: session)
+                return
+            }
+            guard session.phase == .running else { return }
             self.elapsed += event.deltaTime
             guard !self.busy else { return }
             self.busy = true

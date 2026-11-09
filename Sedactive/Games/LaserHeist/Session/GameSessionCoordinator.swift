@@ -8,11 +8,11 @@
 import Foundation
 import Observation
 
-/// One CP1 consumer per round. Live input remains in setup until readiness/recovery integration exists.
+/// One CP1 consumer per round. Replay uses synthetic time; configured live rounds use host-time readiness.
 @MainActor @Observable
 final class GameSessionCoordinator {
     let configuration: LaserRoundConfiguration?
-    let encounters: [LaserEncounter]
+    private(set) var encounters: [LaserEncounter]
     let inputConfiguration: BodyInputConfiguration
     let setup: LaserSessionSetup?
     var isReplay: Bool { replayDriver != nil }
@@ -27,6 +27,10 @@ final class GameSessionCoordinator {
     private(set) var inputContext: BodyInputContext?
     private(set) var inputStreamEnded = false
     private(set) var liveReadiness: LaserLiveReadiness?
+    private(set) var recoveryNeedsPlan = false
+    var hasLiveRoundPlan: Bool { !isReplay && configuration != nil && !encounters.isEmpty && liveReadiness?.policy != nil }
+    var canStartLiveRound: Bool { hasLiveRoundPlan && phase == .awaitingSetup && liveReadiness?.phase == .ready }
+    var canPauseLiveRound: Bool { !isReplay && (phase == .running || phase == .countdown) }
     private let hostNow: @MainActor () -> Double
     private let provider: any BodyInputProviding
     private let replayDriver: LaserReplayDriver?
@@ -42,12 +46,19 @@ final class GameSessionCoordinator {
     private var game: LaserGame?
     private var committed: Set<UUID> = []
     private var advancing = false
+    private var countdownRequested = false
+    private var recoveryAttempted = false
+    private var withdrawnLiveEncounters: [LaserEncounter] = []
+    private var approvedRecovery: [LaserEncounter]?
+    private let recoveryPlanner: (@MainActor (LaserLiveRecoveryRequest) throws -> [LaserEncounter]?)?
+    private var liveTerminationTask: Task<Void, Never>?
 
     init(provider: any BodyInputProviding, inputConfiguration: BodyInputConfiguration,
          configuration: LaserRoundConfiguration? = nil, encounters: [LaserEncounter] = [],
          replayDriver: LaserReplayDriver? = nil, setupControls: (any LaserSetupControlling)? = nil,
          liveTimingPolicy: LaserLiveTimingPolicy? = nil,
-         hostNow: @escaping @MainActor () -> Double = CameraHostClock.now) {
+         hostNow: @escaping @MainActor () -> Double = CameraHostClock.now,
+         recoveryPlanner: (@MainActor (LaserLiveRecoveryRequest) throws -> [LaserEncounter]?)? = nil) {
         precondition(replayDriver == nil || replayDriver?.provider === provider,
                      "Replay driving must use the injected provider")
         self.provider = provider
@@ -56,6 +67,7 @@ final class GameSessionCoordinator {
         self.encounters = encounters
         self.replayDriver = replayDriver
         self.hostNow = hostNow
+        self.recoveryPlanner = recoveryPlanner
         liveReadiness = replayDriver == nil ? LaserLiveReadiness(policy: liveTimingPolicy) : nil
         precondition(setupControls == nil || (replayDriver == nil && setupControls?.provider === provider),
                      "Setup must control the injected live provider")
@@ -129,6 +141,7 @@ final class GameSessionCoordinator {
                     self.inputStreamEnded = true
                     self.latestSnapshot = nil
                     self.liveReadiness?.requireRestart()
+                    self.synchronizeLiveGame()
                 }
             }
         } catch {
@@ -206,7 +219,7 @@ final class GameSessionCoordinator {
         if summary == nil { summary = game?.summary }
         refresh(at: game?.gameTime ?? 0)
         latestSnapshot = nil
-        if hadLifetime { await releaseInput() }
+        if hadLifetime || cleanupTask != nil || liveTerminationTask != nil { await releaseInput() }
     }
 
     func fail(_ error: any Error) async {
@@ -216,11 +229,11 @@ final class GameSessionCoordinator {
 
     private func acceptSetupSnapshot(_ packet: BodySnapshot) {
         // This method runs after next() suspends. Read producer state again, never relabel old data.
-        readInputStatus()
-        guard phase == .awaitingSetup,
+        readInputStatus(synchronizeLive: false)
+        guard [.awaitingSetup, .countdown, .running, .paused].contains(phase),
               packet.sessionGeneration == inputConfiguration.sessionGeneration,
               inputContext?.accepts(packet) == true else { return }
-        // One bounded presentation/debug value only; no game, clock, scoring or readiness here.
+        // Keep one current snapshot; the same sole stream also supplies authoritative live evidence.
         if latestSnapshot == nil || packet.frameID > latestSnapshot!.frameID { latestSnapshot = packet }
         if let context = inputContext {
             do {
@@ -229,15 +242,16 @@ final class GameSessionCoordinator {
                     at: hostNow())
             } catch { liveReadiness?.requireRestart() }
         }
+        synchronizeLiveGame(packet: packet)
     }
 
-    private func readInputStatus() {
+    private func readInputStatus(synchronizeLive: Bool = true) {
         let context = provider.currentContext
         let status = provider.status
         if inputContext != context || inputStatus != status {
             if inputRevision < .max { inputRevision += 1 }
             latestSnapshot = nil
-            if phase == .running {
+            if isReplay, phase == .running {
                 game?.pause()
                 phase = .awaitingSetup
             }
@@ -256,12 +270,178 @@ final class GameSessionCoordinator {
         }
         catch { liveReadiness?.requireRestart() }
         if setup?.phase == .restartRequired { liveReadiness?.requireRestart() }
+        if synchronizeLive { synchronizeLiveGame(allowAdvance: false) }
     }
 
-    /// A future agreed live frame/deadline host can call this without publishing a fake snapshot.
+    /// Read status/readiness without finalizing deadlines or publishing a fake snapshot.
     func refreshLiveReadiness() {
         guard !isReplay, lifetime != nil else { return }
         readInputStatus()
+    }
+
+    /// The renderer supplies a signal; original host time and the one live GameClock decide time.
+    func advanceLive() {
+        guard !isReplay, lifetime != nil else { return }
+        readInputStatus(synchronizeLive: false)
+        synchronizeLiveGame()
+    }
+
+    func beginLiveCountdown() throws {
+        guard !isReplay, lifetime != nil, hasLiveRoundPlan else {
+            throw LaserDataError.invalidValue("missing live plan/policy")
+        }
+        readInputStatus()
+        guard liveReadiness?.phase == .ready else { throw LaserDataError.invalidValue("live input not ready") }
+        countdownRequested = true
+        recoveryAttempted = false
+        synchronizeLiveGame()
+        guard phase == .countdown else { throw LaserDataError.invalidValue("recovery plan not ready") }
+    }
+
+    func pauseLiveRound() {
+        guard canPauseLiveRound else { return }
+        do { try liveReadiness?.setManualPause(true, at: hostNow()) }
+        catch { liveReadiness?.requireRestart() }
+        synchronizeLiveGame()
+    }
+
+    func continueLiveRound() {
+        guard !isReplay, phase == .paused, lifetime != nil else { return }
+        do { try liveReadiness?.setManualPause(false, at: hostNow()) }
+        catch { liveReadiness?.requireRestart() }
+        countdownRequested = true
+        recoveryAttempted = false
+        synchronizeLiveGame()
+    }
+
+    private func synchronizeLiveGame(packet: BodySnapshot? = nil, allowAdvance: Bool = true) {
+        guard !isReplay, lifetime != nil, let readiness = liveReadiness else { return }
+        do {
+            switch readiness.phase {
+            case .restartRequired:
+                game?.exit(outcome: .technicalInterruption)
+                collectLiveState()
+                phase = .restartRequired
+                finishLiveInput()
+                return
+            case .ready where countdownRequested:
+                guard let configuration, let context = inputContext, provider.currentContext == context else { return }
+                if game != nil, !withdrawnLiveEncounters.isEmpty, approvedRecovery == nil {
+                    guard !recoveryAttempted else { return }
+                    recoveryAttempted = true
+                    let request = LaserLiveRecoveryRequest(withdrawn: withdrawnLiveEncounters,
+                        gameTime: readiness.gameTime, hostTime: hostNow(), context: context)
+                    do {
+                        guard let replacement = try recoveryPlanner?(request) else {
+                            recoveryNeedsPlan = true; phase = .paused; return
+                        }
+                        try LaserLiveRecovery.validate(replacement, request: request, configuration: configuration)
+                        approvedRecovery = replacement
+                    } catch { recoveryNeedsPlan = true; phase = .paused; return }
+                }
+                try requireLaserValue(Set(encounters.map(\.id)).count == encounters.count
+                    && Set(encounters.map(\.attemptID)).count == encounters.count
+                    && encounters.allSatisfy { $0.targets.allSatisfy {
+                        context.calibrationRevisions[$0.playerID] == $0.calibrationRevision
+                    } }, "live plan calibration/identity")
+                try liveReadiness?.beginCountdown(at: hostNow())
+                recoveryNeedsPlan = false
+                phase = .countdown
+                return
+            case .countdown:
+                phase = .countdown
+                return
+            case .running:
+                // Coalesced status callbacks may overtake a queued CP1 packet. They can pause or
+                // invalidate immediately, but only the stream/frame path finalizes evidence.
+                guard allowAdvance else { return }
+                guard let configuration, let context = inputContext,
+                      provider.currentContext == context, setup?.hasConfirmedReliablePair == true else { return }
+                if game == nil {
+                    var initial = try LaserGame(configuration: configuration, context: context, historyCapacityPerPlayer: 120)
+                    for encounter in encounters { try initial.register(encounter) }
+                    game = initial
+                    withdrawnLiveEncounters = []; approvedRecovery = nil; recoveryAttempted = false
+                } else if phase != .running {
+                    var resumed = game!
+                    resumed.resume()
+                    let replacements = approvedRecovery ?? []
+                    for encounter in replacements { try resumed.register(encounter) }
+                    for old in withdrawnLiveEncounters {
+                        for target in old.targets {
+                            resumed.remove(LaserTargetKey(encounterID: old.id, attemptID: old.attemptID,
+                                                         playerID: target.playerID))
+                        }
+                        committed.remove(old.id)
+                    }
+                    for replacement in replacements {
+                        if let index = encounters.firstIndex(where: { $0.id == replacement.id }) { encounters[index] = replacement }
+                    }
+                    game = resumed
+                    withdrawnLiveEncounters = []; approvedRecovery = nil; recoveryAttempted = false
+                }
+                phase = .running
+                // Receive before inclusive advance: equal-deadline arrivals remain eligible.
+                if let packet, let captured = liveReadiness?.capturedGameTime(for: packet) {
+                    try game?.receive(packet, capturedGameTime: captured, arrivedAt: readiness.gameTime)
+                }
+                try game?.advance(to: readiness.gameTime)
+                collectLiveState()
+                if summary != nil { phase = .finished; finishLiveInput(); return }
+                if encounters.contains(where: { encounter in
+                    encounter.targets.contains { target in
+                        if case .unavailable = game?.judgement(for: LaserTargetKey(encounterID: encounter.id,
+                            attemptID: encounter.attemptID, playerID: target.playerID)) { return true }
+                        return false
+                    }
+                }) {
+                    try liveReadiness?.invalidateMeasurements(at: hostNow())
+                    try pauseLiveGame(at: readiness.gameTime)
+                }
+            default:
+                if game != nil || phase == .countdown || phase == .paused {
+                    try pauseLiveGame(at: readiness.gameTime)
+                }
+            }
+        } catch {
+            liveReadiness?.requireRestart()
+            game?.exit(outcome: .technicalInterruption)
+            collectLiveState()
+            phase = .restartRequired
+            finishLiveInput()
+        }
+    }
+
+    private func pauseLiveGame(at time: Double) throws {
+        if phase != .paused {
+            if game?.isPaused != true {
+                withdrawnLiveEncounters = encounters.filter { encounter in
+                    !encounter.targets.allSatisfy { target in
+                        guard let judgement = game?.judgement(for: LaserTargetKey(encounterID: encounter.id,
+                            attemptID: encounter.attemptID, playerID: target.playerID)) else { return false }
+                        switch judgement { case .clear, .hit: return true; default: return false }
+                    }
+                }
+                try game?.pause(at: time)
+            }
+            collectLiveState()
+            approvedRecovery = nil; recoveryAttempted = false
+        }
+        phase = .paused
+    }
+
+    private func collectLiveState() {
+        if let more = game?.drainEvents() { events.append(contentsOf: more) }
+        if summary == nil { summary = game?.summary }
+        refresh(at: game?.gameTime ?? 0)
+    }
+
+    private func finishLiveInput() {
+        guard liveTerminationTask == nil else { return }
+        lifetime = nil
+        setup?.close()
+        liveReadiness?.requireRestart()
+        liveTerminationTask = Task { @MainActor [weak self] in await self?.releaseInput() }
     }
 
     private func releaseInput() async {
@@ -321,7 +501,7 @@ final class GameSessionCoordinator {
                 }
             }
             encounterStates.append(LaserEncounterState(encounter: encounter, judgements: verdicts,
-                                                  effectsCommitted: committed.contains(encounter.id)))
+                effectsCommitted: finalized && !verdicts.values.contains { if case .unavailable = $0 { true } else { false } }))
         }
         state = LaserGameState(sessionGeneration: inputConfiguration.sessionGeneration,
             phase: game.roundPhase, gameTime: game.gameTime, activityProgress: game.activityProgress,

@@ -19,7 +19,13 @@ struct ContentView: View {
       case .replay:
         PlayView(onExit: { flow.leaveReplay() })
       case .liveSetup:
-        PlayerSetupView(flow: flow)
+        if let session = flow.session, session.hasLiveRoundPlan {
+          ZStack {
+            PlayView(onExit: { Task { await flow.closeLiveSetup() } }, liveSession: session,
+                     onLiveRetry: { Task { await flow.retryLiveSetup() } })
+            if session.phase != .running, session.summary == nil { PlayerSetupView(flow: flow) }
+          }
+        } else { PlayerSetupView(flow: flow) }
       case .diagnostics:
         #if DEBUG
         LiveInputDiagnosticsView(model: dependencies.cameraDiagnostics)

@@ -235,7 +235,7 @@ struct LaserSessionSetupTests {
 
 /// Real B2 gate/opaque request receipts, with controlled producer-only calibration results.
 @MainActor
-private final class GateSetupControls: LaserSetupControlling {
+final class GateSetupControls: LaserSetupControlling {
     let input = ControlledSessionInput()
     var fixture: TrackingIntegrationFixture
     var provider: any BodyInputProviding { input }

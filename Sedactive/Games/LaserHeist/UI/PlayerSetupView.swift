@@ -22,8 +22,13 @@ struct PlayerSetupView: View {
                 } else if flow.isStarting {
                     ProgressView("Starting camera…").font(.title2).accessibilityIdentifier("liveSetupStarting")
                     Text("Allow camera access if prompted. You can leave setup while it starts.")
+                } else if flow.session?.phase == .countdown,
+                          let remaining = flow.session?.liveReadiness?.countdownRemaining {
+                    Text("Get ready").font(.largeTitle.bold())
+                    Text(remaining.rounded(.up), format: .number.precision(.fractionLength(0)))
+                        .font(.largeTitle.bold()).monospacedDigit().accessibilityIdentifier("liveCountdown")
                 } else if let setup = flow.session?.setup {
-                    let model = PlayerSetupState(phase: setup.phase)
+                    let model = PlayerSetupState(phase: flow.session?.phase == .restartRequired ? .restartRequired : setup.phase)
                     Text(model.title).font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
                         .accessibilityIdentifier("setupPhase")
                     Text(model.instruction).font(.title3).foregroundStyle(.secondary)
@@ -39,9 +44,25 @@ struct PlayerSetupView: View {
                             .buttonStyle(.borderedProminent).tint(.orange).foregroundStyle(.black)
                             .controlSize(.large).accessibilityIdentifier("setupPrimaryAction")
                     }
+                    if flow.session?.canStartLiveRound == true {
+                        Button("Start round") {
+                            do { try flow.session?.beginLiveCountdown() }
+                            catch { actionError = "Both players need fresh movement checks before starting." }
+                        }
+                        .buttonStyle(.borderedProminent).controlSize(.large).accessibilityIdentifier("startLiveRound")
+                    }
+                    if flow.session?.phase == .paused {
+                        Text("Round paused").font(.title2.bold())
+                        Text(flow.session?.recoveryNeedsPlan == true
+                             ? "This round cannot continue yet. You can retry camera setup or leave."
+                             : "Stand comfortably in your own space. Both players need reliable movement checks before continuing.")
+                        Button("Continue") { flow.session?.continueLiveRound() }
+                            .buttonStyle(.bordered).controlSize(.large).accessibilityIdentifier("continueLiveRound")
+                    }
                 }
                 if let actionError { Text(actionError).foregroundStyle(.orange).accessibilityIdentifier("setupActionError") }
-                if !flow.isStarting, flow.message != nil || flow.session?.setup?.phase == .restartRequired {
+                if !flow.isStarting, flow.message != nil || flow.session?.setup?.phase == .restartRequired
+                    || flow.session?.phase == .restartRequired || flow.session?.recoveryNeedsPlan == true {
                     Button("Retry camera setup") {
                         actionError = nil
                         Task { await flow.retryLiveSetup() }

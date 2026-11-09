@@ -40,6 +40,10 @@ nonisolated struct LaserLiveReadiness: Sendable {
     private var manualPause = false
     private var evidenceCutover: Double?
     var gameTime: Double { clock?.gameTime ?? 0 }
+    var countdownRemaining: Double? {
+        guard phase == .countdown, let countdownDeadline else { return nil }
+        return max(0, countdownDeadline - lastEvaluation)
+    }
 
     init(policy: LaserLiveTimingPolicy? = nil) { self.policy = policy }
 
@@ -140,6 +144,12 @@ nonisolated struct LaserLiveReadiness: Sendable {
         try validateTime(time)
         guard phase != .restartRequired else { return }
         try block(.binding, at: time)
+    }
+
+    mutating func invalidateMeasurements(at time: Double) throws {
+        try validateTime(time)
+        guard phase != .restartRequired else { return }
+        try block(.measurements, at: time)
     }
 
     func capturedGameTime(for packet: BodySnapshot) -> Double? {

@@ -110,10 +110,12 @@ nonisolated struct LaserGame: Sendable {
 
     var historyCount: Int { history.values.reduce(0) { $0 + $1.count } }
     var crossingCount: Int { crossings.count }
+    var isPaused: Bool { blocked && !exited && roundOutcome == nil }
 
     mutating func register(_ encounter: LaserEncounter) throws {
         try requireLaserValue(!blocked && !exited && roundOutcome == nil && roundPhase == .activity
-            && !effectEncounters.contains(encounter.id), "inactive/consumed encounter")
+            && !effectEncounters.contains(encounter.id) && !withdrawnAttemptIDs.contains(encounter.attemptID),
+                              "inactive/consumed encounter")
         try requireLaserValue(!crossings.contains { $0.key.encounterID == encounter.id && $0.value.result == .pending },
                               "previous attempt still pending")
         for target in encounter.targets {
@@ -191,6 +193,13 @@ nonisolated struct LaserGame: Sendable {
     }
 
     mutating func pause() { withdraw(); blocked = true }
+    /// Freeze at the session's GameClock time without finalizing pending evidence while unavailable.
+    mutating func pause(at time: Double) throws {
+        try requireLaserValue(time.isFinite && time >= gameTime, "pause timeline")
+        guard !blocked && !exited && roundOutcome == nil else { return }
+        moveTime(to: time)
+        pause()
+    }
     mutating func exit(outcome: LaserRoundOutcome = .aborted) { withdraw(); exited = true; end(outcome, at: gameTime) }
     mutating func resume() { if !exited && context.isActive { blocked = false } }
     /// Coordinator rechecks the producer context after suspension and before receive/advance.
@@ -284,12 +293,12 @@ nonisolated struct LaserGame: Sendable {
         roundOutcome = outcome
         moveTime(to: time)
         roundPhase = .ended(outcome)
-        emit(.roundEnded(outcome), at: time)
         if let vault, !vault.opened {
             coopResults.append(LaserCoopRoundResult(gateID: vault.id,
                 outcome: outcome == .vaultFailed ? .timedOut : .interrupted, gameTime: time))
         }
         withdraw()
+        emit(.roundEnded(outcome), at: time)
         summary = RoundSummary(sessionGeneration: context.sessionGeneration, outcome: outcome,
             gameDuration: gameTime, activityDuration: activityProgress, remainingTeamHealth: teamHealth,
             teamScore: teamScore, targets: PlayerID.allCases.compactMap { playerStats[$0] },
@@ -315,8 +324,15 @@ nonisolated struct LaserGame: Sendable {
     }
 
     private mutating func withdraw() {
-        for key in Array(crossings.keys) where crossings[key]?.result == .pending {
-            withdrawnAttemptIDs.insert(key.attemptID)
+        let pending = crossings.keys.filter { crossings[$0]?.result == .pending }.sorted {
+            if $0.encounterID != $1.encounterID { return $0.encounterID.uuidString < $1.encounterID.uuidString }
+            if $0.attemptID != $1.attemptID { return $0.attemptID.uuidString < $1.attemptID.uuidString }
+            return $0.playerID.rawValue < $1.playerID.rawValue
+        }
+        for key in pending {
+            if withdrawnAttemptIDs.insert(key.attemptID).inserted {
+                emit(.attemptWithdrawn(encounterID: key.encounterID, attemptID: key.attemptID), at: gameTime)
+            }
             if let window = actionWindows[key] { actionWindows[key] = (window.start, min(window.end, gameTime)) }
             crossings[key]?.result = .withdrawn
         }

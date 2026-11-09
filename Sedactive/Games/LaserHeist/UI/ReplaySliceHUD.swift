@@ -20,6 +20,9 @@ struct ReplaySliceHUD: View {
             case .failed(let message): Text("Replay stopped: \(message)")
             case .idle, .starting: Text("Preparing body replay…")
             case .awaitingSetup: Text("Waiting for session setup…")
+            case .countdown: Text("Get ready…")
+            case .paused: Text("Round paused")
+            case .restartRequired: Text("Start a fresh camera setup")
             case .running: Text("Follow DUCK / JUMP; badges show each player's result.")
             }
             if let state = session.state {

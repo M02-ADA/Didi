@@ -216,4 +216,26 @@ nonisolated struct LaserGameTests {
         #expect(game.vault?.deadline == 15)
         #expect(game.roundOutcome == nil)
     }
+
+    @Test func pauseAtDeadlineWithdrawsOnceWithoutJudgingOrReusingRetiredAttempt() throws {
+        let (scenario, initial) = try setup()
+        var game = initial
+        try game.register(scenario.encounter)
+        let time = game.timing.finalizationTime(crossing: scenario.encounter.targets[0].crossingTime)
+        try game.pause(at: time)
+        try game.pause(at: time)
+        try game.advance(to: time + 10)
+        #expect(game.gameTime == time && game.teamHealth == 5 && game.teamScore == 0)
+        let paused = game.drainEvents()
+        #expect(paused.filter { if case .attemptWithdrawn = $0.kind { true } else { false } }.count == 1)
+        #expect(!paused.contains { if case .targetJudged = $0.kind { true } else { false } })
+        game.resume()
+        for target in scenario.encounter.targets {
+            game.remove(LaserTargetKey(encounterID: scenario.encounter.id,
+                attemptID: scenario.encounter.attemptID, playerID: target.playerID))
+        }
+        #expect(throws: LaserDataError.self) { try game.register(scenario.encounter) }
+        game.exit()
+        #expect(game.drainEvents().last?.kind == .roundEnded(.aborted))
+    }
 }
