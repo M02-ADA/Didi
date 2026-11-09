@@ -20,11 +20,13 @@ struct PlayView: View {
     /// CP2 attachment seam, PENDING Edo's production composition: shows the
     /// players' live cutouts. A mascot feed takes precedence over it.
     var cutoutSource: LiveCutoutSource?
+    var onExit: (() -> Void)?
 
     @State private var generation = UUID()
 
     var body: some View {
-        ReplayRoundView(generation: generation, avatarSource: avatarSource, cutoutSource: cutoutSource, retry: { generation = UUID() })
+        ReplayRoundView(generation: generation, avatarSource: avatarSource, cutoutSource: cutoutSource,
+                        onExit: onExit, retry: { generation = UUID() })
             .id(generation)
     }
 }
@@ -34,11 +36,13 @@ private struct ReplayRoundView: View {
     let generation: UUID
     let avatarSource: (@MainActor (AvatarPoseMailbox) -> Void)?
     let cutoutSource: LiveCutoutSource?
+    let onExit: (() -> Void)?
     let retry: () -> Void
     @State private var scene = LaserScene()
     @State private var presentation = LaserReplayPresentation()
     @State private var session: GameSessionCoordinator?
     @State private var startupError: String?
+    @State private var leaving = false
     /// The per-frame host-clock tick: live cutout expiry and live avatars.
     @State private var frameRefresh: EventSubscription?
     #if DEBUG
@@ -187,12 +191,27 @@ private struct ReplayRoundView: View {
         .overlay {
             // One HUD at a time: the Sketch gameplay HUD, or (Debug, `-replayDebugHUD`)
             // Jevon's text HUD for replay diagnostics. Results replaces either.
-            if let session, session.summary == nil, !Self.showsReplayDebugHUD {
-                GameplayHUD(model: hudModel(session), actions: hudActions(session))
+            if let session, session.summary == nil, !Self.showsReplayDebugHUD, let model = hudModel(session) {
+                GameplayHUD(model: model, actions: hudActions(session))
             }
         }
         .overlay {
             if let final = session?.summary { ResultsView(summary: final, onRetry: retry) }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if let onExit {
+                Button("Back to input selection", systemImage: "chevron.backward") {
+                    leaving = true
+                    Task { @MainActor in
+                        await session?.stop()
+                        presentation.stop()
+                        onExit()
+                    }
+                }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .disabled(leaving).accessibilityIdentifier("leaveReplay")
+                .padding(.bottom, 8)
+            }
         }
         .overlay(alignment: .topLeading) {
             if let session, session.summary == nil, Self.showsReplayDebugHUD { ReplaySliceHUD(session: session) }
@@ -290,7 +309,8 @@ private struct ReplayRoundView: View {
     }
 
     /// The HUD's view of the session's authoritative state and events.
-    private func hudModel(_ session: GameSessionCoordinator) -> GameplayHUDModel {
+    private func hudModel(_ session: GameSessionCoordinator) -> GameplayHUDModel? {
+        guard let configuration = session.configuration else { return nil }
         var collected: Int?
         var fixture = false
         #if DEBUG
@@ -302,7 +322,7 @@ private struct ReplayRoundView: View {
             fixture = true
         }
         #endif
-        return GameplayHUDModel(state: session.state, events: session.events, configuration: session.configuration,
+        return GameplayHUDModel(state: session.state, events: session.events, configuration: configuration,
                                 activityDuration: session.activityDuration,
                                 diamondsCollected: collected, diamondsAreFixture: fixture)
     }

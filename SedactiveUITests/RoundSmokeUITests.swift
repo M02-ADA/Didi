@@ -21,6 +21,7 @@ final class RoundSmokeUITests: XCTestCase {
 
     func testLaunchEndRoundAndRetryBuildANewRound() {
         let app = XCUIApplication()
+        app.launchArguments = ["-replay"]
         app.launch()
         let end = app.buttons["endRound"]
         let retry = app.buttons["retryRound"]
@@ -36,5 +37,23 @@ final class RoundSmokeUITests: XCTestCase {
             retry.tap()
         }
         XCTAssertTrue(end.waitForExistence(timeout: timeout), "the round after the last Retry did not start")
+    }
+
+    func testInputSelectionCanOpenReplayAndReturnWithoutStartingCamera() {
+        let app = XCUIApplication()
+        app.launch()
+        let replay = app.buttons["chooseReplay"]
+        let camera = app.buttons["chooseLive"]
+        XCTAssertTrue(replay.waitForExistence(timeout: timeout))
+        XCTAssertTrue(camera.exists && camera.isEnabled)
+        XCTAssertFalse(app.buttons["endRound"].exists)
+        replay.tap()
+        XCTAssertTrue(app.buttons["endRound"].waitForExistence(timeout: timeout))
+        let back = app.buttons["leaveReplay"]
+        XCTAssertTrue(back.waitForExistence(timeout: timeout))
+        back.tap()
+        XCTAssertTrue(replay.waitForExistence(timeout: timeout))
+        XCTAssertTrue(camera.isEnabled)
+        XCTAssertFalse(app.buttons["endRound"].exists)
     }
 }

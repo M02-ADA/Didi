@@ -48,9 +48,10 @@ struct ReplaySliceHUD: View {
                 Text("Cyan: crown · Purple: wrists · Green: soles")
                     .font(.caption)
                 Text("Yellow: judged band edges").font(.caption)
-                if let encounter = session.encounters.last(where: { $0.targets[0].crossingTime - 4 <= (session.state?.gameTime ?? 0) }) {
+                if let configuration = session.configuration,
+                   let encounter = session.encounters.last(where: { $0.targets[0].crossingTime - 4 <= (session.state?.gameTime ?? 0) }) {
                     let target = encounter.targets[0]
-                    Text("Band \(target.beam.lowerY, specifier: "%.3f")–\(target.beam.upperY, specifier: "%.3f") · margin \(session.configuration.clearanceMargin, specifier: "%.3f")")
+                    Text("Band \(target.beam.lowerY, specifier: "%.3f")–\(target.beam.upperY, specifier: "%.3f") · margin \(configuration.clearanceMargin, specifier: "%.3f")")
                         .font(.caption.monospaced())
                 }
             }

@@ -11,12 +11,12 @@ import Observation
 /// One CP1 consumer per round. Live input remains in setup until readiness/recovery integration exists.
 @MainActor @Observable
 final class GameSessionCoordinator {
-    let configuration: LaserRoundConfiguration
+    let configuration: LaserRoundConfiguration?
     let encounters: [LaserEncounter]
     let inputConfiguration: BodyInputConfiguration
     let setup: LaserSessionSetup?
     var isReplay: Bool { replayDriver != nil }
-    var activityDuration: Double { replayDriver?.script.activityDuration ?? configuration.activityDuration }
+    var activityDuration: Double { replayDriver?.script.activityDuration ?? configuration?.activityDuration ?? 0 }
     private(set) var phase: SessionState = .idle
     private(set) var state: LaserGameState?
     private(set) var summary: RoundSummary?
@@ -42,7 +42,7 @@ final class GameSessionCoordinator {
     private var advancing = false
 
     init(provider: any BodyInputProviding, inputConfiguration: BodyInputConfiguration,
-         configuration: LaserRoundConfiguration, encounters: [LaserEncounter],
+         configuration: LaserRoundConfiguration? = nil, encounters: [LaserEncounter] = [],
          replayDriver: LaserReplayDriver? = nil, setupControls: (any LaserSetupControlling)? = nil) {
         precondition(replayDriver == nil || replayDriver?.provider === provider,
                      "Replay driving must use the injected provider")
@@ -57,7 +57,7 @@ final class GameSessionCoordinator {
     }
 
     convenience init(liveProvider: BodyInputService, inputConfiguration: BodyInputConfiguration,
-                     configuration: LaserRoundConfiguration, encounters: [LaserEncounter]) {
+                     configuration: LaserRoundConfiguration? = nil, encounters: [LaserEncounter] = []) {
         self.init(provider: liveProvider, inputConfiguration: inputConfiguration, configuration: configuration,
                   encounters: encounters, setupControls: LaserLiveSetupControls(service: liveProvider))
     }
@@ -96,7 +96,7 @@ final class GameSessionCoordinator {
             subscriptionClaimed = true
             readInputStatus()
             if isReplay {
-                guard let context = provider.currentContext, context.isActive,
+                guard let configuration, let context = provider.currentContext, context.isActive,
                       context.sessionGeneration == inputConfiguration.sessionGeneration,
                       PlayerID.allCases.allSatisfy({ context.calibrationRevisions[$0] != nil }) else {
                     throw LaserDataError.invalidValue("missing compatible replay context")

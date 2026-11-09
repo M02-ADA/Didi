@@ -67,6 +67,8 @@ final class LaserSessionSetup {
     private(set) var phase: LaserSetupPhase = .inactive
     private(set) var sampleCount = 0
     private(set) var reason = ""
+    var candidateIDForConfirmation: UUID? { phase == .reviewCandidate ? candidateTicket?.id : nil }
+    var canCancelCalibration: Bool { active && calibrationRequest != nil }
 
     init(controls: any LaserSetupControlling, generation: UUID) {
         self.controls = controls

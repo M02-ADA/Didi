@@ -8,29 +8,33 @@
 import SwiftUI
 
 struct ContentView: View {
-  #if DEBUG
-    @State private var showCameraDiagnostics =
-      ProcessInfo.processInfo.arguments.contains("--camera-diagnostics")
-      || ProcessInfo.processInfo.arguments.contains("--camera-diagnostics-run")
-    private let dependencies = AppDependencies.shared
-  #endif
+  private let dependencies = AppDependencies.shared
+  @Environment(\.scenePhase) private var scenePhase
   var body: some View {
-    // Temporary entry for LH-11 until Edo wires real routing here.
-    PlayView()
-      #if DEBUG
-        .overlay(alignment: .topTrailing) {
-          Button("Camera diagnostics") { showCameraDiagnostics = true }
-          .buttonStyle(.bordered).padding()
-        }
-        .fullScreenCover(
-          isPresented: $showCameraDiagnostics,
-          onDismiss: {
-            Task { await dependencies.cameraDiagnostics.stopAndExport() }
+    let flow = dependencies.inputFlow
+    Group {
+      switch flow.route {
+      case .selection:
+        LaserInputSelectionView(flow: flow)
+      case .replay:
+        PlayView(onExit: { flow.leaveReplay() })
+      case .liveSetup:
+        PlayerSetupView(flow: flow)
+      case .diagnostics:
+        #if DEBUG
+        LiveInputDiagnosticsView(model: dependencies.cameraDiagnostics)
+          .safeAreaInset(edge: .bottom) {
+            Button("Close camera diagnostics") { Task { await flow.closeDiagnostics() } }
+              .buttonStyle(.borderedProminent).controlSize(.large).disabled(flow.isClosing).padding()
           }
-        ) {
-          LiveInputDiagnosticsView(model: dependencies.cameraDiagnostics)
-        }
-      #endif
+        #else
+        LaserInputSelectionView(flow: flow)
+        #endif
+      }
+    }
+    .onChange(of: scenePhase) { _, phase in
+      if phase == .background { Task { await flow.handleBackground() } }
+    }
   }
 }
 
