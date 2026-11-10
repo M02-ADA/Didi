@@ -34,6 +34,8 @@ final class DiamondTimePresentation {
     var source: ((Double) -> [DiamondTimeDiamond])?
     /// Whether the diamonds shown come from the Debug fixture (labelled in the HUD).
     private(set) var isFixture = false
+    /// Diamonds shown being collected so far (for the pickup sound).
+    private(set) var collections = 0
 
     private let scene: LaserScene
     private var shown: [Int: (diamond: Diamond, collected: Bool)] = [:]
@@ -69,6 +71,7 @@ final class DiamondTimePresentation {
             if let item = shown[diamond.id] {
                 if diamond.collected, !item.collected {
                     item.diamond.collect()
+                    collections += 1
                     shown[diamond.id]?.collected = true
                 }
                 continue

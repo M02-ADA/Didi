@@ -90,6 +90,16 @@ final class VaultDoor {
         fade(root, from: 0, to: 1, duration: Self.revealDuration)
     }
 
+    /// Fully opaque at once, with any fade stopped: a door already standing in
+    /// the corridor (an approaching vault) is never faded in.
+    func showOpaque() {
+        root.stopAllAnimations()
+        root.components.set(OpacityComponent(opacity: 1))
+    }
+
+    /// The door's own opacity (1 without an opacity component).
+    var opacity: Float { root.components[OpacityComponent.self]?.opacity ?? 1 }
+
     /// Adds a presentation part (e.g. the vault countdown) that moves with the door.
     func attach(_ part: Entity) {
         root.addChild(part)

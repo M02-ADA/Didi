@@ -451,6 +451,15 @@ final class LaserScene {
         vaultDoor?.reveal()
     }
 
+    /// Shows the door fully opaque at once, e.g. standing at the corridor's far
+    /// end before its vault approaches. Never a fade.
+    func showVaultDoorOpaque() {
+        vaultDoor?.showOpaque()
+    }
+
+    /// The door's opacity, or `nil` without door artwork (tests and debugging).
+    var vaultDoorOpacity: Float? { vaultDoor?.opacity }
+
     /// A copy of the door as it stands now (place, open panels), added to the
     /// scene without its child named `childName`; the caller removes it. `nil`
     /// without door artwork or while the door is hidden.

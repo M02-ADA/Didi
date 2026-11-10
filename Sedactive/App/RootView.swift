@@ -15,8 +15,9 @@ struct ContentView: View {
     private let dependencies = AppDependencies.shared
   #endif
   var body: some View {
-    // Temporary entry for LH-11 until Edo wires real routing here.
-    PlayView()
+    // LaserHeist journey (Kevin): Home, Set Up, calibration, round and Results.
+    // PENDING: pass `calibration:` once Edo's producer and Jevon's step exist.
+    LaserHeistFlowView()
       #if DEBUG
         .overlay(alignment: .topTrailing) {
           Button("Camera diagnostics") { showCameraDiagnostics = true }

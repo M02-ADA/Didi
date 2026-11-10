@@ -58,6 +58,104 @@ struct VaultPresentationTests {
                   kind: .coopGateSucceeded(gateID: vaultID, progress: 1))
     }
 
+    // MARK: - Approach
+
+    /// With the session's time to the next vault, the locked door comes down the
+    /// corridor from the laser spawn depth, closer every frame, and is exactly at
+    /// its stop when the vault begins: no jump, no second fade-in, no handoff copy.
+    @Test func theDoorApproachesDownTheCorridorAndArrivesAtItsStop() throws {
+        let (scene, _) = scene()
+        let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
+        let speed = scene.layout.travelSpeed
+        let stop = scene.layout.vaultDoorStopZ
+        let horizon = presenter.vault.approachHorizonZ
+        #expect(horizon > scene.layout.corridorFarZ && horizon < scene.layout.laserSpawnZ, "inside the corridor's far end")
+        // Farther away than the corridor is long: the door already stands at its
+        // far end, fully opaque, with no fade running.
+        let far = Double((stop - horizon) / speed) + 4
+        presenter.apply(state: state(17 - far, .activity), events: [], snapshot: nil, upcomingVaultIn: far)
+        #expect(abs((scene.vaultDoorDepth ?? .nan) - horizon) < 1e-4)
+        #expect(scene.vaultDoorOpacity == 1)
+
+        // Then it comes closer every frame, from the far end to its stop.
+        var depths: [Float] = [try #require(scene.vaultDoorDepth)]
+        let tick = 0.25
+        for lead in stride(from: far - tick, to: 0, by: -tick) {
+            presenter.apply(state: state(17 - lead, .activity), events: [], snapshot: nil, upcomingVaultIn: lead)
+            let depth = try #require(scene.vaultDoorDepth)
+            #expect(abs(depth - max(horizon, stop - speed * Float(lead))) < 1e-4)
+            #expect(scene.vaultDoorOpacity == 1, "never faded")
+            depths.append(depth)
+        }
+        #expect(zip(depths, depths.dropFirst()).allSatisfy { $0 <= $1 }, "the door never moves away")
+        #expect(zip(depths, depths.dropFirst()).allSatisfy { $1 - $0 <= speed * Float(tick) + 1e-4 }, "no jump between frames")
+        #expect(depths.last! > depths.first!, "it approaches")
+        #expect(scene.vaultDoorState == .locked)
+        #expect(presenter.vault.approaching && presenter.vault.diagnostics.approaches == 1)
+        #expect(presenter.vault.countdownFraction == nil && !presenter.vault.indicatorsShown,
+                "no countdown or buttons before the vault begins")
+
+        presenter.apply(state: state(17, .vault, vault: vault()), events: [], snapshot: nil)
+        #expect(abs((scene.vaultDoorDepth ?? .nan) - stop) < 1e-4)
+        #expect(!presenter.vault.approaching && presenter.vault.diagnostics.handoffs == 0)
+        #expect(presenter.vault.countdownFraction == 1 && presenter.vault.indicatorsShown)
+        #expect(scene.root.children.filter { $0.name == "vaultDoor.exiting" }.isEmpty)
+    }
+
+    /// Without a schedule (production until Jevon exposes one) nothing approaches.
+    @Test func withoutTheScheduleTheDoorStillFadesInAtItsStop() throws {
+        let (scene, _) = scene()
+        let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
+        presenter.apply(state: state(16, .activity), events: [], snapshot: nil)
+        #expect(scene.vaultDoorDepth == nil && presenter.vault.diagnostics.approaches == 0)
+        presenter.apply(state: state(17, .vault, vault: vault()), events: [], snapshot: nil)
+        #expect(abs((scene.vaultDoorDepth ?? .nan) - scene.layout.vaultDoorStopZ) < 1e-4)
+    }
+
+    /// The round ending mid-approach removes the door.
+    @Test func anApproachingDoorIsRemovedWhenTheRoundEnds() throws {
+        let (scene, _) = scene()
+        let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
+        presenter.apply(state: state(16, .activity), events: [], snapshot: nil, upcomingVaultIn: 1)
+        #expect(scene.vaultDoorDepth != nil)
+        presenter.apply(state: state(16.2, .ended(.aborted)), events: [], snapshot: nil)
+        #expect(scene.vaultDoorDepth == nil && !presenter.vault.approaching)
+    }
+
+    /// The replay adapter reads the time to its vault from the replay script only.
+    @Test func theReplayReportsTheTimeToItsVault() throws {
+        let script = try LaserReplayScript.load()
+        let opens = try #require(script.vaultActions.first { $0.player == nil }?.time)
+        let lead = try #require(LaserReplayPresentation.upcomingVaultIn(state: state(opens - 2, .activity), script: script))
+        #expect(abs(lead - 2) < 1e-9)
+        #expect(LaserReplayPresentation.upcomingVaultIn(state: state(opens, .vault, vault: vault()), script: script) == nil)
+    }
+
+    // MARK: - Sound
+
+    /// Each newly accepted button clicks once, the last seconds warn once, the
+    /// door's opening sounds once from the authoritative success event.
+    @Test func vaultSoundsFollowTheVaultStateOnce() throws {
+        let (scene, _) = scene()
+        let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
+        var heard: [SoundCue] = []
+        presenter.onSound = { heard.append($0) }
+        presenter.apply(state: state(17, .vault, vault: vault()), events: [], snapshot: nil)
+        presenter.apply(state: state(18, .vault, vault: vault([.player1: [.top]])), events: [], snapshot: nil)
+        presenter.apply(state: state(18.5, .vault, vault: vault([.player1: [.top]])), events: [], snapshot: nil)
+        presenter.apply(state: state(19, .vault, vault: vault([.player1: [.top], .player2: [.top, .middle]])), events: [], snapshot: nil)
+        #expect(heard == [.vaultButton, .vaultButton], "one click per change, not per frame")
+        // Deadline 22: the last two seconds warn once.
+        for time in [20.1, 20.5, 21.0] {
+            presenter.apply(state: state(time, .vault, vault: vault([.player1: [.top], .player2: [.top, .middle]])), events: [], snapshot: nil)
+        }
+        #expect(heard.filter { $0 == .vaultWarning }.count == 1)
+        let open = vault([.player1: [.top, .middle, .bottom], .player2: [.top, .middle, .bottom]], opened: true)
+        for _ in 0..<3 { presenter.apply(state: state(21.2, .vault, vault: open), events: [succeeded(1, 21.2)], snapshot: nil) }
+        #expect(heard.filter { $0 == .vaultOpen }.count == 1)
+        #expect(heard.filter { $0 == .vaultButton }.count == 2, "no click for buttons seen with the door already open")
+    }
+
     // MARK: - Entry, countdown, pause
 
     @Test func enteringTheVaultRevealsTheLockedDoorAndCountdown() throws {

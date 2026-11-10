@@ -347,6 +347,56 @@ struct GameplayScenePresenterTests {
     }
 
     /// UNAVAILABLE is neither a pass nor a hit: a calm badge, no spark, and the gate powers down.
+    // MARK: - Sound
+
+    /// Verdict sounds follow the authoritative verdict events, once per event,
+    /// however often the same history is applied; UNAVAILABLE stays silent.
+    @Test func verdictSoundsFollowTheVerdictEventsOnce() throws {
+        let laser = try encounter(1, crossing: [.player1: 10, .player2: 10])
+        let presenter = GameplayScenePresenter(scene: LaserScene(), configuration: try configuration(), encounters: [laser])
+        var heard: [SoundCue] = []
+        presenter.onSound = { heard.append($0) }
+        let judged: [UUID: [PlayerID: Judgement]] = [laser.id: [.player1: .clear, .player2: .hit(.notAirborne)]]
+        let events = [event(1, 10.35, .targetJudged(encounterID: laser.id, playerID: .player1, judgement: .clear)),
+                      event(2, 10.35, .targetJudged(encounterID: laser.id, playerID: .player2, judgement: .hit(.notAirborne))),
+                      event(3, 10.35, .teamEffectsCommitted(encounterID: laser.id, healthDelta: -1, scoreDelta: 100))]
+        for _ in 0..<3 { presenter.apply(state: state(10.4, [laser], judged: judged), events: events, snapshot: nil) }
+        #expect(heard == [.laserClear, .laserHit], "no second HIT from the team-damage effect")
+
+        heard = []
+        let other = try encounter(2, crossing: [.player1: 20, .player2: 20])
+        let unavailable = Judgement.unavailable(.noSample)
+        presenter.apply(state: state(20.4, [other], judged: [other.id: [.player1: unavailable]]),
+                        events: events + [event(4, 20.35, .targetJudged(encounterID: other.id, playerID: .player1, judgement: unavailable))],
+                        snapshot: nil)
+        #expect(heard.isEmpty, "UNAVAILABLE is never a success or failure sound")
+    }
+
+    /// The DUCK cue sounds when the action is called (cue lead before the
+    /// crossing), once for both players, never during the warning before it.
+    @Test func theActionCueSoundsOnceWhenTheActionIsCalled() throws {
+        let laser = try encounter(1, crossing: [.player1: 10, .player2: 10])
+        let presenter = GameplayScenePresenter(scene: LaserScene(), configuration: try configuration(cueLead: 1.4), encounters: [laser])
+        var heard: [SoundCue] = []
+        presenter.onSound = { heard.append($0) }
+        for time in stride(from: 7.0, through: 8.5, by: 0.1) { presenter.apply(state: state(time, [laser]), events: [], snapshot: nil) }
+        #expect(heard.isEmpty, "the warning before the cue is silent")
+        for time in stride(from: 8.6, through: 9.9, by: 0.1) { presenter.apply(state: state(time, [laser]), events: [], snapshot: nil) }
+        #expect(heard == [.cueDuck])
+    }
+
+    /// Retry: a new generation starts its sounds afresh.
+    @Test func aNewGenerationHearsItsOwnCues() throws {
+        let laser = try encounter(1, crossing: [.player1: 10, .player2: 10])
+        let presenter = GameplayScenePresenter(scene: LaserScene(), configuration: try configuration(cueLead: 1.4), encounters: [laser])
+        var heard: [SoundCue] = []
+        presenter.onSound = { heard.append($0) }
+        presenter.apply(state: state(9, [laser]), events: [], snapshot: nil)
+        let retry = UUID()
+        presenter.apply(state: state(9, [laser], generation: retry), events: [], snapshot: nil)
+        #expect(heard == [.cueDuck, .cueDuck])
+    }
+
     @Test func unavailableShowsItsOwnBadgeWithoutASparkOrAHitGate() throws {
         let scene = LaserScene()
         let laser = try encounter(1, crossing: [.player1: 10, .player2: 10])

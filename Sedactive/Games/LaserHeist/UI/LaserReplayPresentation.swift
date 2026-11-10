@@ -25,6 +25,10 @@ final class LaserReplayPresentation {
         #endif
         presenter = GameplayScenePresenter(scene: scene, configuration: session.script.configuration,
                                            encounters: session.script.encounters, showsDebugMarkers: markers)
+        // Sound follows what the presenter shows; the round's music joins in.
+        presenter?.onSound = { AudioService.shared.play($0) }
+        AudioService.shared.preloadEffects()
+        AudioService.shared.setMusic(.mission)
         subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self, weak scene] event in
             guard let self, let scene, session.phase == .running else { return }
             self.elapsed += event.deltaTime
@@ -52,6 +56,18 @@ final class LaserReplayPresentation {
 
     private func render(scene: LaserScene, session: GameSessionCoordinator) {
         guard let state = session.state else { return }
-        presenter?.apply(state: state, events: session.events, snapshot: session.latestSnapshot)
+        presenter?.apply(state: state, events: session.events, snapshot: session.latestSnapshot,
+                         upcomingVaultIn: Self.upcomingVaultIn(state: state, script: session.script))
+    }
+
+    /// Activity seconds until the replay's vault opens, read from the replay
+    /// script (the session's own schedule; nothing is added to it). During the
+    /// activity, game time and activity progress advance together, so the time
+    /// left on one is the time left on the other. `nil` once the vault began.
+    static func upcomingVaultIn(state: LaserGameState, script: LaserReplayScript) -> Double? {
+        guard state.phase == .activity, state.vault == nil,
+              let opens = script.vaultActions.first(where: { $0.player == nil })?.time,
+              opens > state.gameTime else { return nil }
+        return opens - state.gameTime
     }
 }

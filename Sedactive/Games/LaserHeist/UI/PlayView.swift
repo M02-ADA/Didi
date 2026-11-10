@@ -20,11 +20,16 @@ struct PlayView: View {
     /// CP2 attachment seam, PENDING Edo's production composition: shows the
     /// players' live cutouts. A mascot feed takes precedence over it.
     var cutoutSource: LiveCutoutSource?
+    /// Returns the players to Home (Results › Back to Home, pause menu › Leave
+    /// Game). `nil` when there is no Home to return to: Results then offers
+    /// Play Again only, and Leave Game ends the round into Results.
+    var onExit: (() -> Void)?
 
     @State private var generation = UUID()
 
     var body: some View {
-        ReplayRoundView(generation: generation, avatarSource: avatarSource, cutoutSource: cutoutSource, retry: { generation = UUID() })
+        ReplayRoundView(generation: generation, avatarSource: avatarSource, cutoutSource: cutoutSource,
+                        retry: { generation = UUID() }, exit: onExit)
             .id(generation)
     }
 }
@@ -35,6 +40,8 @@ private struct ReplayRoundView: View {
     let avatarSource: (@MainActor (AvatarPoseMailbox) -> Void)?
     let cutoutSource: LiveCutoutSource?
     let retry: () -> Void
+    /// Leaving the round tears it down through `onDisappear`, as Retry does.
+    let exit: (() -> Void)?
     @State private var scene = LaserScene()
     @State private var presentation = LaserReplayPresentation()
     @State private var session: GameSessionCoordinator?
@@ -192,7 +199,7 @@ private struct ReplayRoundView: View {
             }
         }
         .overlay {
-            if let final = session?.summary { ResultsView(summary: final, onRetry: retry) }
+            if let final = session?.summary { ResultsView(summary: final, onRetry: retry, onHome: exit) }
         }
         .overlay(alignment: .topLeading) {
             if let session, session.summary == nil, Self.showsReplayDebugHUD { ReplaySliceHUD(session: session) }
@@ -251,6 +258,8 @@ private struct ReplayRoundView: View {
         }
         .onDisappear {
             presentation.stop()
+            // No gameplay sound outlives its scene (Retry, Home, teardown).
+            AudioService.shared.stopEffects()
             frameRefresh?.cancel()
             frameRefresh = nil
             // Release the cutout consumer and revoke any upload still on the GPU
@@ -284,9 +293,9 @@ private struct ReplayRoundView: View {
 
     /// The session's player intents for the HUD. PENDING Jevon: when the
     /// session exposes pause and resume (its `GameClock`), pass them here; until
-    /// then the HUD offers no pause.
+    /// then the HUD offers no pause. Leave Game returns Home when there is one.
     private func hudActions(_ session: GameSessionCoordinator) -> GameplayHUDActions {
-        GameplayHUDActions(pause: nil, resume: nil, leave: { Task { await session.stop() } })
+        GameplayHUDActions(pause: nil, resume: nil, leave: exit ?? { Task { await session.stop() } })
     }
 
     /// The HUD's view of the session's authoritative state and events.

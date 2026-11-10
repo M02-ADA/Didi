@@ -22,6 +22,7 @@ final class RoundSmokeUITests: XCTestCase {
     func testLaunchEndRoundAndRetryBuildANewRound() {
         let app = XCUIApplication()
         app.launch()
+        LaserHeistJourney.enterRound(app, timeout: timeout)
         let end = app.buttons["endRound"]
         let retry = app.buttons["retryRound"]
         let health = app.descendants(matching: .any)
@@ -36,5 +37,24 @@ final class RoundSmokeUITests: XCTestCase {
             retry.tap()
         }
         XCTAssertTrue(end.waitForExistence(timeout: timeout), "the round after the last Retry did not start")
+    }
+}
+
+/// Reaching a round from launch: the app opens on Home, and the way in is
+/// START MISSION, the two Set Up steps and calibration. In Debug, with no
+/// calibration producer yet, calibration is the labelled skip to the replay round.
+enum LaserHeistJourney {
+    static func enterRound(_ app: XCUIApplication, timeout: TimeInterval) {
+        let start = app.buttons["startMission"]
+        XCTAssertTrue(start.waitForExistence(timeout: timeout), "the app did not open on Home")
+        start.tap()
+        let next = app.buttons["setupNext"]
+        XCTAssertTrue(next.waitForExistence(timeout: timeout), "Set Up step 1 did not show")
+        next.tap()
+        XCTAssertTrue(next.waitForExistence(timeout: timeout), "Set Up step 2 did not show")
+        next.tap()
+        let skip = app.buttons["debugSkipCalibration"]
+        XCTAssertTrue(skip.waitForExistence(timeout: timeout), "calibration did not show")
+        skip.tap()
     }
 }
