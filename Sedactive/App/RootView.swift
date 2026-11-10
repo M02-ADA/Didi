@@ -54,6 +54,27 @@ private func liveSetupStage(_ flow: LaserInputFlow) -> some View {
   CalibrationStageView(onBack: { Task { await flow.closeLiveSetup() } }) {
     PlayerSetupView(flow: flow, isOverlay: true)
   }
+  #if DEBUG
+  // DEBUG only, for testing without an iPad: ends camera setup (nothing is
+  // calibrated or marked ready) and opens the seeded synthetic replay through
+  // the same flow. Never compiled into Release.
+  .overlay(alignment: .bottomLeading) {
+    Button("DEBUG · Skip camera & play synthetic replay") {
+      Task {
+        await flow.closeLiveSetup()
+        flow.showReplay()
+      }
+    }
+    .font(.system(size: 15, weight: .heavy, design: .monospaced))
+    .padding(.horizontal, 14).padding(.vertical, 8)
+    .background(Color(sketch: 0xFFC83A), in: Capsule())
+    .foregroundStyle(Color(sketch: 0x16123A))
+    .buttonStyle(.plain)
+    .disabled(flow.isClosing)
+    .padding([.leading, .bottom], 16)
+    .accessibilityIdentifier("debugSkipToReplay")
+  }
+  #endif
   .onAppear { AudioService.shared.setMusic(.menu) }
 }
 

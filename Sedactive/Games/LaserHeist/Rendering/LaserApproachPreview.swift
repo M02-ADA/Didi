@@ -120,6 +120,7 @@ final class LaserApproachPreview {
         verdictShown = false
         let band = Self.encounters[index].band
         scene.setLaserBand(lowerEdge: band.lowerBound, upperEdge: band.upperBound)
+        scene.setLaserDangerSide(Self.encounters[index].move == .duck ? .above : .below)
         scene.clearLaserFeedback()
     }
 

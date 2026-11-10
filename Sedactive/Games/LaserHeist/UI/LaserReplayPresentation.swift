@@ -11,7 +11,8 @@ import UIKit
 final class LaserReplayPresentation {
     private var subscription: EventSubscription?
     private var session: GameSessionCoordinator?
-    private var elapsed = 0.0
+    /// The replay's frame-update signal (TEAM_ALIGNMENT §C), one per generation.
+    private var frameClock = ReplayFrameClock()
     private var busy = false
     private var presenter: GameplayScenePresenter?
     private var liveAttachment: LaserLiveFrameAttachment?
@@ -25,9 +26,11 @@ final class LaserReplayPresentation {
             liveAttachment = attachment
         }
         self.session = session
-        elapsed = 0
+        frameClock = ReplayFrameClock()
         #if DEBUG
-        let markers = !ProcessInfo.processInfo.arguments.contains("-hideDebugOverlay")
+        // Band-edge and body evidence markers are a diagnostic, never ordinary
+        // gameplay: opt in with `-showDebugMarkers`.
+        let markers = ProcessInfo.processInfo.arguments.contains("-showDebugMarkers")
         #else
         let markers = false
         #endif
@@ -57,6 +60,12 @@ final class LaserReplayPresentation {
                         heightAboveFloor: Float(state.spawn.position.y), collected: collected)
                 }.sorted { $0.id < $1.id }
             }
+            // K06: normal diamonds from the same domain states, complete replay only
+            // (its placements are the replay plan's, not production defaults).
+            presenter?.normalDiamonds.source = { [weak session] in
+                guard let session else { return [] }
+                return Self.normalDiamonds(session.diamondStates, layout: layout)
+            }
         }
         subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self, weak scene] event in
             guard let self, let scene, self.session === session, self.subscription != nil else { return }
@@ -67,10 +76,10 @@ final class LaserReplayPresentation {
                 return
             }
             guard session.phase == .running else { return }
-            self.elapsed += event.deltaTime
+            let elapsed = self.frameClock.frame(deltaTime: event.deltaTime)
             guard !self.busy else { return }
             self.busy = true
-            let time = self.elapsed
+            let time = elapsed
             Task { @MainActor [weak self] in
                 defer { self?.busy = false }
                 do {
@@ -99,6 +108,28 @@ final class LaserReplayPresentation {
                             ? Self.upcomingVaultIn(state: state, activityDuration: session.activityDuration) : nil)
     }
 
+    /// The domain's normal (passage) diamonds in display terms: lane from the
+    /// first eligible player, sideways offset from that lane's centre, height
+    /// and passage times as planned, outcome as judged. Diamond Time's
+    /// persistent targets are left to `DiamondTimePresentation`.
+    static func normalDiamonds(_ states: [UUID: LaserDiamondState], layout: PlayerPlaneLayout) -> [NormalDiamond] {
+        states.values.compactMap { state -> NormalDiamond? in
+            guard case .passage = state.lifetime,
+                  let lane = PlayerID.allCases.first(where: { state.spawn.eligiblePlayers.contains($0) }) else { return nil }
+            let outcome: NormalDiamond.Outcome = switch state.outcome {
+            case nil: .pending
+            case .collected: .collected
+            case .missed: .missed
+            case .closed: .closed
+            }
+            return NormalDiamond(id: state.spawn.id, lane: lane,
+                                 offsetX: Float(state.spawn.position.x - layout.centerX(for: lane)),
+                                 heightAboveFloor: Float(state.spawn.position.y),
+                                 spawnedAt: state.spawn.spawnedAt, entry: state.spawn.entry, exit: state.spawn.exit,
+                                 outcome: outcome)
+        }
+    }
+
     /// Activity seconds until the next vault, for the complete replay: its
     /// vaults open at the end of each activity minute (confirmed rule: one
     /// vault after each minute, `missionTarget` vaults over `activityDuration`).
@@ -113,5 +144,29 @@ final class LaserReplayPresentation {
         guard next <= vaults else { return nil }
         let lead = Double(next) * spacing - state.activityProgress
         return lead > 0 ? lead : nil
+    }
+}
+
+
+/// The replay's source time from the RealityKit render loop: the first frame
+/// this generation renders is time zero, then each frame adds its own
+/// `deltaTime`. Nothing advances before the scene's first frame, so loading,
+/// attaching and a slow first frame never use up the round's opening seconds.
+/// Presentation-side only; game time itself stays the session's `GameClock`.
+///
+/// A RealityKit update is the earliest frame signal available here; it is a
+/// conservative readiness signal, not proof that the frame reached the screen.
+struct ReplayFrameClock: Equatable {
+    private(set) var elapsed = 0.0
+    private(set) var hasRenderedFrame = false
+
+    /// Records one rendered frame and returns the replay time to advance to.
+    mutating func frame(deltaTime: Double) -> Double {
+        guard hasRenderedFrame else {
+            hasRenderedFrame = true
+            return elapsed
+        }
+        if deltaTime.isFinite, deltaTime > 0 { elapsed += deltaTime }
+        return elapsed
     }
 }

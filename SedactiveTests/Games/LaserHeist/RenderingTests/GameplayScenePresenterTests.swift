@@ -365,6 +365,38 @@ struct GameplayScenePresenterTests {
     }
 
     /// UNAVAILABLE is neither a pass nor a hit: a calm badge, no spark, and the gate powers down.
+    // MARK: - One continuous beam (display only)
+
+    /// Both players facing one laser see one beam from wall to wall: each lane
+    /// half stays at its own player's band and joins the partner's at the
+    /// boundary, stepping between them. No band is moved and no emitter stands mid-corridor.
+    @Test func aSharedLaserJoinsIntoOneBeamAtEachPlayersOwnBand() throws {
+        let scene = LaserScene()
+        let laser = try encounter(1, crossing: [.player1: 10, .player2: 10])
+        let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [laser])
+        presenter.apply(state: state(7.5, [laser]), events: [], snapshot: nil)
+        let p1 = try #require(presenter.hazard(for: key(laser, .player1)))
+        let p2 = try #require(presenter.hazard(for: key(laser, .player2)))
+        #expect(p1.root.isEnabled && p2.root.isEnabled)
+        #expect(abs(p1.band.lowerBound - 1.60) < 1e-5 && abs(p2.band.lowerBound - 1.10) < 1e-5, "each band is the judged band")
+        #expect(p1.joinedBand == p2.band && p2.joinedBand == p1.band)
+        #expect(p1.span.upperBound == p2.span.lowerBound, "the halves meet at the lane boundary")
+        #expect(p1.emittersShown.left && !p1.emittersShown.right && !p2.emittersShown.left && p2.emittersShown.right)
+        #expect(p1.dangerSide == .above && p2.dangerSide == .above, "a DUCK's danger lies above the band")
+        // Judgement stays per player: the targets themselves are unchanged.
+        #expect(laser.targets.first { $0.playerID == .player1 }?.beam.lowerY == 1.60)
+    }
+
+    /// Lasers that don't cross together can't be one beam: each half keeps a free inner end.
+    @Test func lasersCrossingApartAreNotJoined() throws {
+        let scene = LaserScene()
+        let laser = try encounter(1, crossing: [.player1: 10, .player2: 10.5])
+        let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [laser])
+        presenter.apply(state: state(7.6, [laser]), events: [], snapshot: nil)
+        #expect(presenter.hazard(for: key(laser, .player1))?.joinedBand == nil)
+        #expect(presenter.hazard(for: key(laser, .player2))?.joinedBand == nil)
+    }
+
     // MARK: - Sound
 
     /// Verdict sounds follow the authoritative verdict events, once per event,

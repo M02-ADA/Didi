@@ -88,6 +88,8 @@ final class GameplayScenePresenter {
     let vault: VaultPresentation
     /// Diamond Time's diamonds (J05 pending: Debug fixture only).
     let diamondTime: DiamondTimePresentation
+    /// K06: the activity's normal (passage) diamonds, from the domain's states.
+    let normalDiamonds: NormalDiamondPresentation
     /// Game time of the authoritative `phaseChanged(.diamondTime)` event, if seen.
     private(set) var diamondTimeStartedAt: Double?
 
@@ -115,6 +117,7 @@ final class GameplayScenePresenter {
                                  approachLead: Self.approachLead(in: scene))
         vault = VaultPresentation(scene: scene, configuration: configuration)
         diamondTime = DiamondTimePresentation(scene: scene)
+        normalDiamonds = NormalDiamondPresentation(scene: scene)
         debug.name = "gameplay.debug"
         debug.isEnabled = showsDebugMarkers
         scene.isLaserVisible = false
@@ -177,8 +180,11 @@ final class GameplayScenePresenter {
         vault.update(state: state, travelDistance: travelDistance, upcomingVaultIn: upcomingVaultIn)
         soundVault(state)
         diamondTime.update(state: state, diamondTimeStartedAt: diamondTimeStartedAt)
-        if diamondTime.collections > diamondsHeard { onSound?(.diamondCollect) }
-        diamondsHeard = diamondTime.collections
+        normalDiamonds.update(state: state)
+        // One pickup sound per collection shown, normal or Diamond Time.
+        let collected = diamondTime.collections + normalDiamonds.collections
+        if collected > diamondsHeard { onSound?(.diamondCollect) }
+        diamondsHeard = collected
         updateHazards(state: state, at: time)
         updateCue(state: state, at: time)
         if let snapshot, snapshot.sessionGeneration == state.sessionGeneration { present(snapshot) }
@@ -192,6 +198,7 @@ final class GameplayScenePresenter {
         scene.clearLaserFeedback()
         vault.stop()
         diamondTime.clear()
+        normalDiamonds.clear()
         debug.removeFromParent()
     }
 
@@ -204,6 +211,7 @@ final class GameplayScenePresenter {
         scene.setTravelDistance(0)
         vault.reset()
         diamondTime.clear()
+        normalDiamonds.clear()
         diamondTimeStartedAt = nil
         judgedAt = [:]
         withdrawnAt = [:]
@@ -213,7 +221,7 @@ final class GameplayScenePresenter {
         cuedAttempts = []
         vaultButtonsSeen = nil
         warnedVaults = []
-        diamondsHeard = diamondTime.collections
+        diamondsHeard = diamondTime.collections + normalDiamonds.collections
     }
 
     // MARK: - Sound
@@ -357,6 +365,7 @@ final class GameplayScenePresenter {
             let hazard = slots[key]?.hazard ?? acquire(key, target)
             show(hazard, target: target, status: status, depth: depth(key, target, status, at: time), at: time)
         }
+        joinSharedBeams(kept)
         // Invariant check: every pending hazard got a gate.
         diagnostics.droppedHazards += wanted.filter { Self.isPending($0.status) && slots[$0.key] == nil }.count
         anchors = anchors.filter { keys.contains($0.key) }
@@ -395,28 +404,57 @@ final class GameplayScenePresenter {
     private func show(_ hazard: LaserHazard, target: LaserTarget, status: Status, depth: Float, at time: Double) {
         let band = displayedBand(target)
         hazard.setBand(lowerEdge: band.lowerBound, upperEdge: band.upperBound)
+        hazard.setDangerSide(target.requiredMove == .duck ? .above : .below)
         hazard.setDepth(depth)
+        let look = visual(for: target, status: status, at: time)
+        hazard.setState(look.state)
+        if let progress = look.warningProgress { hazard.setWarningProgress(progress) }
+        // A passed gate keeps travelling with the corridor until it nears the camera.
+        hazard.root.isEnabled = depth < scene.layout.cameraPosition.z - Self.cameraClearance
+    }
+
+    /// The gate look for one player's target: LH-05's inactive → warning →
+    /// active → hit/disabled, from the authoritative status and cue timing.
+    private func visual(for target: LaserTarget, status: Status, at time: Double)
+        -> (state: LaserGate.VisualState, warningProgress: Float?) {
         let cue = cueTime(for: target)
         switch status {
         case .stopped:
-            hazard.setState(.disabled)
+            return (.disabled, nil)
         case .judged(let judgement, let at):
-            if case .hit = judgement, time < at + LaserGate.longestTransition {
-                hazard.setState(.hit)
-            } else {
-                hazard.setState(.disabled)
-            }
+            if case .hit = judgement, time < at + LaserGate.longestTransition { return (.hit, nil) }
+            return (.disabled, nil)
         case .pending where time < target.warningTime:
-            hazard.setState(.inactive)
+            return (.inactive, nil)
         case .pending where time < cue:
-            hazard.setState(.warning)
             let span = cue - target.warningTime
-            hazard.setWarningProgress(span > 0 ? Float((time - target.warningTime) / span) : 1)
+            return (.warning, span > 0 ? Float((time - target.warningTime) / span) : 1)
         case .pending:
-            hazard.setState(.active)
+            return (.active, nil)
         }
-        // A passed gate keeps travelling with the corridor until it nears the camera.
-        hazard.root.isEnabled = depth < scene.layout.cameraPosition.z - Self.cameraClearance
+    }
+
+    /// One laser, one beam: when both players face the same attempt at the
+    /// same crossing, their two lane halves join at the lane boundary into one
+    /// continuous beam from wall to wall. Each half stays at its own player's
+    /// displayed band, so where the bands differ the beam steps between them in
+    /// the gap between the lanes; nobody is shown a beam above or below the one
+    /// they are judged against. Display only: targets, verdicts and badges stay
+    /// per player, and each half keeps its own player's state.
+    private func joinSharedBeams(_ kept: [(key: LaserTargetKey, target: LaserTarget, status: Status)]) {
+        var joined: Set<LaserTargetKey> = []
+        for members in Dictionary(grouping: kept, by: { $0.key.attemptID }).values where members.count == 2 {
+            let (a, b) = (members[0], members[1])
+            guard a.key.playerID != b.key.playerID, abs(a.target.crossingTime - b.target.crossingTime) < 0.02,
+                  let left = slots[a.key]?.hazard, let right = slots[b.key]?.hazard
+            else { continue }
+            left.setJoin(partnerBand: displayedBand(b.target))
+            right.setJoin(partnerBand: displayedBand(a.target))
+            joined.formUnion([a.key, b.key])
+        }
+        for (key, slot) in slots where !joined.contains(key) {
+            slot.hazard.setJoin(partnerBand: nil)
+        }
     }
 
     /// Where a still-pending gate stands relative to the players:

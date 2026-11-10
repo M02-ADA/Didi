@@ -21,8 +21,11 @@ struct CalibrationStageView<Panel: View>: View {
     @ViewBuilder var panel: () -> Panel
 
     var body: some View {
-        SketchArtboard {
+        // Camera-first: the camera image fills the screen; without one, a plain
+        // dark viewport (not the Sketch room colour) and an explicit notice.
+        SketchArtboard(opaque: false) {
             ZStack {
+                Color.black
                 // Mirrored for display only (CP2 rule): players see themselves
                 // as in a mirror, so P1 on the left stands in the left guide.
                 cameraPreview
@@ -82,7 +85,8 @@ struct CalibrationStageView<Panel: View>: View {
             .padding(.horizontal, 16 * k)
             .padding(.vertical, 8 * k)
             .background(.white.opacity(0.12), in: Capsule())
-            .frame(width: 1210 * k)
+            .padding(.trailing, Panel.self == EmptyView.self ? 0 : 24 * k)
+            .frame(width: 1210 * k, alignment: Panel.self == EmptyView.self ? .center : .trailing)
             .offset(y: 183 * k)
             .accessibilityIdentifier("cameraPreviewUnavailable")
     }

@@ -61,4 +61,38 @@ final class LaserHeistJourneyUITests: XCTestCase {
         XCTAssertTrue(start.waitForExistence(timeout: timeout), "Back to Home did not return Home")
         XCTAssertFalse(end.exists, "the round is still running behind Home")
     }
+
+    /// DEBUG: from calibration, skip the camera into the seeded five-vault
+    /// replay (no calibration is forged), then Results, Play Again and Home.
+    func testDebugSkipFromCalibrationPlaysTheFullReplay() {
+        let app = XCUIApplication()
+        app.launch()
+        let start = app.buttons["startMission"]
+        XCTAssertTrue(start.waitForExistence(timeout: timeout))
+        LaserHeistJourney.startCameraSetup(app, timeout: timeout)
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        if permission.waitForExistence(timeout: 3) {
+            let allow = permission.buttons.matching(identifier: "Allow").firstMatch
+            if allow.exists { allow.tap() } else { permission.buttons.matching(identifier: "OK").firstMatch.tap() }
+        }
+        let skip = app.buttons["debugSkipToReplay"]
+        XCTAssertTrue(skip.waitForExistence(timeout: timeout) && skip.isHittable, "calibration offers no DEBUG skip")
+        skip.tap()
+        let end = app.buttons["endRound"]
+        XCTAssertTrue(end.waitForExistence(timeout: timeout), "the skip did not start the replay")
+        let fullRound = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Vaults opened 0 of 5")).firstMatch
+        XCTAssertTrue(fullRound.waitForExistence(timeout: timeout), "the skip must play the complete five-vault replay")
+        XCTAssertFalse(app.buttons["leaveLiveSetup"].exists, "no live setup is left behind")
+        end.tap()
+        let retry = app.buttons["retryRound"]
+        XCTAssertTrue(retry.waitForExistence(timeout: timeout))
+        retry.tap()
+        XCTAssertTrue(end.waitForExistence(timeout: timeout), "Play Again did not start a fresh round")
+        end.tap()
+        let home = app.buttons["backToHome"]
+        XCTAssertTrue(home.waitForExistence(timeout: timeout))
+        home.tap()
+        XCTAssertTrue(start.waitForExistence(timeout: timeout), "Back to Home did not return Home")
+    }
 }
