@@ -21,7 +21,13 @@ import Foundation
     let diagnostics = LiveInputDiagnosticsModel(camera: camera, bodyInput: bodyInput)
     cameraDiagnostics = diagnostics
     #endif
-    inputFlow = LaserInputFlow(initialRoute: LaserInputFlow.initialRoute(arguments: ProcessInfo.processInfo.arguments),
+    #if DEBUG
+    let route: LaserInputFlow.Route = ProcessInfo.processInfo.arguments.contains("--synthetic-gameplay-preview")
+      ? .replay : LaserInputFlow.initialRoute(arguments: ProcessInfo.processInfo.arguments)
+    #else
+    let route = LaserInputFlow.initialRoute(arguments: ProcessInfo.processInfo.arguments)
+    #endif
+    inputFlow = LaserInputFlow(initialRoute: route,
       makeLiveSession: {
         // Preserve Edo's existing Vision setup layout. No round plan or collision tuning is
         // selected here; measured game/visual layout acceptance remains a separate gate.
