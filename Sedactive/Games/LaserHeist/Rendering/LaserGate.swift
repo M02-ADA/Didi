@@ -422,8 +422,13 @@ final class LaserGate {
     /// The emitter end of the beam: the wall whose emitter is shown (left when both are).
     private var originSide: Float { emittersShown.left || !emittersShown.right ? -1 : 1 }
     private var innerX: Float { originSide < 0 ? span.upperBound : span.lowerBound }
-    /// Brighter the closer the beam runs to the floor: faint under a DUCK, clear under a JUMP.
-    private var floorLightOpacity: Float { min(max(0.42 - 0.17 * (floorDrop ?? 0), 0.08), 0.3) }
+    /// Only a beam running near the floor (a JUMP) lights it; a DUCK beam high up
+    /// leaves the floor dark, so no red smudges collect around the mascots' legs.
+    private var floorLightOpacity: Float {
+        guard let floorDrop, floorDrop < Self.floorLightReach else { return 0 }
+        return 0.3 * (1 - floorDrop / Self.floorLightReach)
+    }
+    static let floorLightReach: Float = 1.0
 
     private struct SpillSizes {
         let upper: Float
@@ -540,7 +545,7 @@ final class LaserGate {
         glow.isEnabled = true
         upperSpill.isEnabled = true
         lowerSpill.isEnabled = true
-        floorLight.isEnabled = floorDrop != nil
+        floorLight.isEnabled = floorLightOpacity > 0
         curtain.isEnabled = showsCurtain && dangerSide != .both
     }
 

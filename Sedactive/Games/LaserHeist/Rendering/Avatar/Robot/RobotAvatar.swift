@@ -560,12 +560,13 @@ final class RobotAvatarLayer {
         true
         #endif
     }
-    /// D07 CANDIDATE, not approved (K04): draw each player's laser bands in that
+    /// D07 presentation mapping (K04 "B"): draw each player's laser bands in that
     /// player's normalized avatar space instead of their own game units, so a
     /// beam meets the 1.6 m mascot where it meets the player relative to their
     /// standing height. Display only: the judged bands, the judge and every
-    /// body value are unchanged. Off by default; only the DEBUG
-    /// `-normalizedLasers` launch flag turns it on, for A/B comparison.
+    /// body value are unchanged. Off here; gameplay turns it on (`PlayView`,
+    /// developer's decision 10 November 2026; team sign-off still pending), and
+    /// the DEBUG `-judgedLaserBands` flag turns it off for A/B comparison.
     var normalizesLaserBands = false
 
     /// The factor from a player's game-unit heights to their drawn laser

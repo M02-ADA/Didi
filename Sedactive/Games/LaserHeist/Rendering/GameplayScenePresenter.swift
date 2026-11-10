@@ -387,18 +387,34 @@ final class GameplayScenePresenter {
         return scene.mapping.interactionPlaneZ - (anchor - travelDistance)
     }
 
-    /// The band a target's gate is drawn at: its judged band, or with the D07
-    /// candidate (`RobotAvatarLayer.normalizesLaserBands`, DEBUG flag, off by
-    /// default) that band in the player's normalized avatar space. Display only.
+    /// The band a target's gate is drawn at. With the mascots' normalized
+    /// presentation (`RobotAvatarLayer.normalizesLaserBands`, on in gameplay)
+    /// it is the judged band in that player's normalized avatar space: the beam
+    /// meets the fixed-size mascot where it meets the player, relative to their
+    /// own height, so both halves of a shared beam line up. Otherwise it is the
+    /// judged band itself. Display only: the target, the judge and the verdict
+    /// never see this.
     func displayedBand(_ target: LaserTarget) -> ClosedRange<Float> {
         let band = Float(target.beam.lowerY)...Float(target.beam.upperY)
-        guard let scale = scene.robotAvatars?.laserBandScale(for: target.playerID, mapping: scene.mapping) else { return band }
+        guard let scale = normalizationScale(for: target.playerID) else { return band }
         return (band.lowerBound * scale)...(band.upperBound * scale)
     }
 
     /// The same display mapping for one body height (the Debug evidence markers).
     private func displayedHeight(_ y: Float, for player: PlayerID) -> Float {
-        y * (scene.robotAvatars?.laserBandScale(for: player, mapping: scene.mapping) ?? 1)
+        y * (normalizationScale(for: player) ?? 1)
+    }
+
+    /// One drawing scale for every player or for none. If any player has no
+    /// avatar scale (no compatible accepted calibration), every lane falls back
+    /// to its judged band: a shared beam drawn at two unrelated scales would
+    /// look aligned while meaning nothing. The judged fallback may step between
+    /// lanes, and that step is true.
+    private func normalizationScale(for player: PlayerID) -> Float? {
+        guard let avatars = scene.robotAvatars,
+              PlayerID.allCases.allSatisfy({ avatars.laserBandScale(for: $0, mapping: scene.mapping) != nil })
+        else { return nil }
+        return avatars.laserBandScale(for: player, mapping: scene.mapping)
     }
 
     private func show(_ hazard: LaserHazard, target: LaserTarget, status: Status, depth: Float, at time: Double) {

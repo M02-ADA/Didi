@@ -10,9 +10,8 @@ import SwiftUI
 /// presentation (`PlayView`'s HUD); it keeps no clock, score or health of its
 /// own and decides nothing.
 ///
-/// Layout measurements come from Sketch "Hi-Fi Revisi 30 OCT" (Game 1,
-/// Opening the Door, Diamond Time; 1210 × 834 pt artboards) and the
-/// `hud gameplay` hand-off assets.
+/// Layout measurements come from Sketch "Hi-Fi Revisi 6 NOV" (the game
+/// artboards' HUD stack, 1210 × 834 pt) and the `hud gameplay` hand-off assets.
 struct GameplayHUDModel: Equatable {
     enum Banner: Equatable {
         case none
@@ -41,12 +40,12 @@ struct GameplayHUDModel: Equatable {
     /// The diamond count comes from the Debug fixture (labelled on screen).
     var diamondsAreFixture: Bool
 
-    // Track geometry, measured on the Sketch progress group (fractions of the 675 pt track).
-    static let fillStart = 0.049
-    static let fillFull = 0.96
-    static let firstCheckpoint = 0.197
-    static let lastCheckpoint = 0.837
-    static let diamondPosition = 0.928
+    // Track geometry, measured on the Sketch 6 NOV progress group (fractions of the 667 pt track).
+    static let fillStart = 0.031
+    static let fillFull = 0.955
+    static let firstCheckpoint = 0.219
+    static let lastCheckpoint = 0.862
+    static let diamondPosition = 0.949
 
     /// The Sketch track always shows five checkpoints, one per vault of a full
     /// round (rules: five vaults, one after each activity minute).
@@ -162,8 +161,7 @@ struct GameplayHUD: View {
                     .frame(maxWidth: .infinity)
                     .allowsHitTesting(false)
                 topBar(k)
-                    .padding(.horizontal, 33 * k)
-                    .padding(.top, 57 * k)
+                    .padding(.top, 58 * k)
                 // The Sketch title line (y 159 pt), raised slightly so the title and
                 // its chip end above the mascots' heads (about y 255 pt).
                 banner(k)
@@ -179,53 +177,78 @@ struct GameplayHUD: View {
 
     // MARK: - Top bar
 
+    /// The Sketch HUD stack: health, progress and pause at their artboard
+    /// widths and gaps (268 · 34 · 667 · 36 · 85.5 pt), centred, so the three
+    /// read as one row of the same parts.
     private func topBar(_ k: CGFloat) -> some View {
-        HStack(alignment: .top, spacing: 55 * k) {
+        HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 10 * k) {
                 hearts(k)
                 scoreChip(k)
             }
+            .frame(width: 268 * k, alignment: .leading)
+            Spacer().frame(width: 33.9 * k)
             progress(k)
+                .frame(width: 667 * k)
+            Spacer().frame(width: 36 * k)
             // Without the session's pause (Jevon), pausing is not offered: the button
-            // keeps its Sketch place but reads as unavailable, so nobody expects the
-            // round to stop while lasers keep coming.
+            // keeps its Sketch place and shape, and its bars dim, so nobody expects
+            // the round to stop while lasers keep coming.
             Button {
                 actions.pause?()
                 menuShown = true
             } label: {
-                Image("LaserHeistHUD/pause").resizable().frame(width: 82 * k, height: 63 * k)
-                    .saturation(actions.canPause ? 1 : 0)
-                    .opacity(actions.canPause ? 1 : 0.45)
+                ZStack {
+                    HUDSurface(shape: RoundedRectangle(cornerRadius: 31 * k, style: .continuous), k: k)
+                    HStack(spacing: 7 * k) {
+                        ForEach(0..<2, id: \.self) { _ in
+                            RoundedRectangle(cornerRadius: 3 * k, style: .continuous)
+                                .fill(Self.cream)
+                                .frame(width: 9 * k, height: 30 * k)
+                        }
+                    }
+                    .opacity(actions.canPause ? 1 : 0.4)
+                }
+                .frame(width: 85.5 * k, height: 66 * k)
             }
             .buttonStyle(.plain)
             .disabled(!actions.canPause)
             .accessibilityLabel(actions.canPause ? "Pause" : "Pause unavailable")
             .accessibilityIdentifier("pauseMenu")
         }
+        .frame(maxWidth: .infinity)
     }
 
+    /// Five heart sockets in the Sketch pill: a lost heart leaves a dark socket,
+    /// so the team sees how much health is gone, not only what is left.
     private func hearts(_ k: CGFloat) -> some View {
-        let size = CGSize(width: 267 * k, height: 64 * k)
-        return Image("LaserHeistHUD/health-panel")
-            .resizable()
-            .frame(width: size.width, height: size.height)
-            .overlay(alignment: .topLeading) {
-                ForEach(0..<model.maxHealth, id: \.self) { index in
-                    if index < model.health {
-                        Image("LaserHeistHUD/heart")
-                            .resizable()
-                            .frame(width: 27 * k, height: 26 * k)
-                            // Sketch heart sockets: 41 pt apart from x 51.5, centred at y 33.
-                            .position(x: (51.5 + 41 * CGFloat(index)) * k, y: 33 * k)
-                            .transition(reduceMotion ? .opacity : .scale(scale: 0.2).combined(with: .opacity))
-                    }
+        ZStack(alignment: .topLeading) {
+            HUDSurface(shape: Capsule(), k: k)
+            ForEach(0..<model.maxHealth, id: \.self) { index in
+                // Sketch heart sockets: 41 pt apart from x 53, centred at y 33.
+                let center = CGPoint(x: (53 + 41 * CGFloat(index)) * k, y: 33 * k)
+                Image("LaserHeistHUD/heart")
+                    .resizable()
+                    .renderingMode(.template)
+                    .foregroundStyle(Self.socket)
+                    .frame(width: 29 * k, height: 27 * k)
+                    .position(center)
+                if index < model.health {
+                    Image("LaserHeistHUD/heart")
+                        .resizable()
+                        .frame(width: 29 * k, height: 27 * k)
+                        .position(center)
+                        .transition(reduceMotion ? .opacity : .scale(scale: 0.2).combined(with: .opacity))
                 }
             }
-            .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.3), value: model.health)
-            .accessibilityElement()
-            .accessibilityLabel("Team health \(model.health) of \(model.maxHealth)")
+        }
+        .frame(width: 268 * k, height: 64 * k)
+        .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.3), value: model.health)
+        .accessibilityElement()
+        .accessibilityLabel("Team health \(model.health) of \(model.maxHealth)")
     }
 
+    /// The team score in the same surface as the other HUD parts.
     private func scoreChip(_ k: CGFloat) -> some View {
         HStack(spacing: 8 * k) {
             Image(systemName: "star.fill")
@@ -234,42 +257,44 @@ struct GameplayHUD: View {
                 .contentTransition(.numericText(value: Double(model.score)))
                 .monospacedDigit()
         }
-        .font(.system(size: 24 * k, weight: .black, design: .rounded))
-        .foregroundStyle(.white)
-        .padding(.horizontal, 16 * k)
-        .frame(height: 40 * k)
-        .background(Self.navy, in: Capsule())
-        .overlay(Capsule().strokeBorder(Self.rim, lineWidth: 4 * k))
+        .font(.system(size: 22 * k, weight: .black, design: .rounded))
+        .foregroundStyle(Self.cream)
+        .padding(.horizontal, 20 * k)
+        .frame(height: 48 * k)
+        .background(HUDSurface(shape: Capsule(), k: k))
         .animation(reduceMotion ? nil : .snappy, value: model.score)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Team score \(model.score)")
     }
 
+    /// The Sketch track: the shared surface, an 8 pt lavender rail from the
+    /// fill to the diamond, the orange fill pill, five identical cream
+    /// checkpoints (the fill shows what is done) and the diamond.
     private func progress(_ k: CGFloat) -> some View {
-        let height = 63 * k
+        let height = 65 * k
         return GeometryReader { track in
             let width = track.size.width
-            let dot = 24.5 * k
+            let dot = 24 * k
             ZStack(alignment: .topLeading) {
-                Image("LaserHeistHUD/progress-track")
-                    .resizable(capInsets: EdgeInsets(top: 0, leading: 98, bottom: 0, trailing: 98), resizingMode: .stretch)
+                HUDSurface(shape: Capsule(), k: k)
                 let start = GameplayHUDModel.fillStart * width
+                let rail = GameplayHUDModel.diamondPosition * width
+                Capsule()
+                    .fill(LinearGradient(colors: [Self.railTop, Self.railBottom], startPoint: .top, endPoint: .bottom))
+                    .frame(width: rail - start, height: 8 * k)
+                    .offset(x: start, y: height / 2 - 4 * k)
                 let end = max(model.fillEnd * width, start + 32 * k)
                 Capsule()
                     .fill(LinearGradient(colors: [Self.fillTop, Self.fillBottom], startPoint: .top, endPoint: .bottom))
                     .shadow(color: .black.opacity(0.25), radius: 4 * k, y: 4 * k)
                     .frame(width: end - start, height: 32 * k)
-                    .offset(x: start, y: 15 * k)
+                    .offset(x: start, y: height / 2 - 16 * k)
                 let markers = GameplayHUDModel.checkpointPositions(count: GameplayHUDModel.markerCount)
-                ForEach(Array(zip(markers, model.markerStates).enumerated()), id: \.offset) { _, marker in
-                    // Sketch draws every marker alike and lets the fill show what
-                    // is done; the next one is slightly larger, later ones dimmer.
+                ForEach(Array(markers.enumerated()), id: \.offset) { _, x in
                     Image("LaserHeistHUD/checkpoint")
                         .resizable()
                         .frame(width: dot, height: dot * 130 / 123)
-                        .scaleEffect(marker.1 == .current ? 1.15 : 1)
-                        .opacity(marker.1 == .upcoming ? 0.7 : 1)
-                        .position(x: marker.0 * width, y: height / 2)
+                        .position(x: x * width, y: height / 2)
                 }
                 Image("LaserHeistHUD/progress-diamond")
                     .resizable()
@@ -278,7 +303,6 @@ struct GameplayHUD: View {
                     .position(x: GameplayHUDModel.diamondPosition * width, y: height / 2)
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: model.fillEnd)
-            .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: model.markerStates)
             .animation(reduceMotion ? nil : .spring(duration: 0.4, bounce: 0.4), value: model.diamondReached)
         }
         .frame(height: height)
@@ -344,11 +368,10 @@ struct GameplayHUD: View {
             }
         }
         .font(.system(size: 24 * k, weight: .black, design: .rounded))
-        .foregroundStyle(.white)
-        .padding(.horizontal, 16 * k)
-        .frame(height: 40 * k)
-        .background(Self.navy, in: Capsule())
-        .overlay(Capsule().strokeBorder(Self.rim, lineWidth: 4 * k))
+        .foregroundStyle(Self.cream)
+        .padding(.horizontal, 22 * k)
+        .frame(height: 50 * k)
+        .background(HUDSurface(shape: Capsule(), k: k))
         .animation(reduceMotion ? nil : .snappy, value: model.diamondSecondsLeft)
     }
 
@@ -417,6 +440,11 @@ struct GameplayHUD: View {
     static let ink = Color(red: 0x16 / 255, green: 0x12 / 255, blue: 0x3A / 255)
     static let fillTop = Color(red: 0xEA / 255, green: 0xA8 / 255, blue: 0x52 / 255)
     static let fillBottom = Color(red: 0xE9 / 255, green: 0x6D / 255, blue: 0x2F / 255)
+    /// Sketch 6 NOV HUD: checkpoint/pause cream, the rail, and an empty heart socket.
+    static let cream = Color(sketch: 0xFEF7C0)
+    static let railTop = Color(sketch: 0x60568C)
+    static let railBottom = Color(sketch: 0x534C80)
+    static let socket = Color(sketch: 0x14122C)
 }
 
 /// The player intents the HUD may emit, supplied by the host from Jevon's
@@ -449,5 +477,33 @@ private struct SketchTitle: ViewModifier {
             .multilineTextAlignment(.center)
             .shadow(color: .black.opacity(0.91), radius: 0, x: 3 * k, y: 5 * k)
             .shadow(color: .black.opacity(0.25), radius: 4 * k, x: 0, y: 4 * k)
+    }
+}
+
+
+/// The one Sketch HUD surface (6 NOV), shared by the health pill, score chip,
+/// progress track and pause button: an 8 pt lavender ring (lighter at the top)
+/// around a navy well (lighter at the top), a thin dark inner edge, and a soft
+/// lift off the corridor. Measured from the Sketch export, 1 pt per pixel.
+struct HUDSurface<S: InsettableShape>: View {
+    let shape: S
+    let k: CGFloat
+
+    static var ringTop: Color { Color(sketch: 0x6A638C) }
+    static var ringBottom: Color { Color(sketch: 0x514B7D) }
+    static var wellTop: Color { Color(sketch: 0x26234F) }
+    static var wellBottom: Color { Color(sketch: 0x1A1A3B) }
+    static var wellEdge: Color { Color(sketch: 0x17152F) }
+
+    var body: some View {
+        shape
+            .fill(LinearGradient(colors: [Self.ringTop, Self.ringBottom], startPoint: .top, endPoint: .bottom))
+            .overlay(shape.inset(by: 8 * k)
+                .fill(LinearGradient(colors: [Self.wellTop, Self.wellBottom], startPoint: .top, endPoint: .bottom)))
+            .overlay(shape.inset(by: 8 * k).strokeBorder(Self.wellEdge, lineWidth: 1.5 * k))
+            // One shadow for the finished surface: without the group, SwiftUI shadows
+            // each layer and the well darkens its own ring.
+            .compositingGroup()
+            .shadow(color: .black.opacity(0.3), radius: 6 * k, y: 3 * k)
     }
 }

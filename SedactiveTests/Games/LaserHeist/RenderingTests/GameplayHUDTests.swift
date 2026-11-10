@@ -49,9 +49,10 @@ struct GameplayHUDTests {
 
     @Test func fiveCheckpointsSitAtTheSketchSpacing() {
         let dots = GameplayHUDModel.checkpointPositions(count: 5)
-        let sketch = [0.197, 0.357, 0.517, 0.677, 0.837]
+        // Measured on the Sketch 6 NOV progress group (dot centres over the 667 pt track).
+        let sketch = [0.219, 0.380, 0.540, 0.700, 0.862]
         #expect(zip(dots, sketch).allSatisfy { abs($0 - $1) < 0.002 })
-        #expect(GameplayHUDModel.checkpointPositions(count: 1) == [0.517])
+        #expect(abs(GameplayHUDModel.checkpointPositions(count: 1)[0] - 0.5405) < 1e-9)
         #expect(GameplayHUDModel.checkpointPositions(count: 0).isEmpty)
     }
 
