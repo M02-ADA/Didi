@@ -13,6 +13,9 @@ import SwiftUI
 /// tap away on Home.
 struct LaserHeistIntroView: View {
     let flow: LaserInputFlow
+    /// DEBUG: opens the real-camera game scene preview (Edo's PR #31 route,
+    /// owned by `ContentView`); `nil` hides the entry.
+    var onInGameCamera: (() -> Void)? = nil
     @State private var screen: Screen = .home
 
     enum Screen: Equatable {
@@ -79,6 +82,10 @@ struct LaserHeistIntroView: View {
                 #if DEBUG
                 Button("Camera diagnostics") { flow.showDiagnostics() }
                     .accessibilityIdentifier("cameraDiagnostics")
+                if let onInGameCamera {
+                    Button("Real camera · game scene preview", action: onInGameCamera)
+                        .accessibilityIdentifier("chooseInGameCamera")
+                }
                 #endif
             }
             .buttonStyle(.plain)
