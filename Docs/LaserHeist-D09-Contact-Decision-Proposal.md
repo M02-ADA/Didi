@@ -1,10 +1,16 @@
 # D09 — wrist interaction decisions for vaults and diamonds
 
-10 November 2026 · Jevon consumer handoff · **PROPOSED / OPEN — no owner sign-off recorded here**
+10 November 2026 · Jevon consumer handoff · **PROPOSED / OPEN — not a frozen contract**
+
+## Edo follow-up and this revision
+
+Jevon supplied Edo's D09 reply on 10 November 2026. Edo explicitly confirms that D09/LH-24 is **not approved/frozen**, proposes independently valid wrist evidence through the single CP1 consumer, and requests agreement on contact semantics **before** J04/J05 integration. He asks Jevon to specify zones, one-time activation, simultaneous contacts and the CP1 representation.
+
+The concrete v1 proposal below answers those questions. It is Jevon's review proposal, not Edo's acceptance of these details. No Swift producer type, runtime threshold, product choice or new contact path is introduced by this revision.
 
 ## Finding and scope
 
-No approved D09 decision or complete validated wrist-contact surface was found in the inspected sources. This is a scoped finding, not a claim about private conversations outside those sources.
+The earlier repository review found no approved D09 decision or complete validated wrist-contact surface in the inspected sources. Edo's later reply confirms the open status in his records too. The source search remains a scoped finding, not a claim about other private conversations.
 
 Inspected: the current checkout; all locally available `origin/*` branches after fetch; architecture/workplan decision records; repository issue/PR searches; relevant PR discussions; and available related Sedactive chats.
 
@@ -59,13 +65,105 @@ Edo/Jevon agree capture eligibility, arrival cutoff, deduplication and boundary 
 
 No candidate above is implemented or treated as collaborator approval by this document.
 
+## Jevon's concrete D09 v1 proposal for agreement
+
+Every rule in this section is **PROPOSED** unless already identified above as a retained product rule. The numeric parameters must be supplied explicitly after review; there are no production defaults here.
+
+### A. Evidence representation and ownership
+
+Prefer one **optional, producer-owned wrist-contact evidence attachment on the existing CP1 snapshot**, published atomically with that snapshot. This is a conceptual representation for Edo to review, not a requested Swift API name. Do not alter the meaning of the existing scalar wrist Y fields or join CP1 with an independently read latest E07 pose.
+
+| Part | Proposed meaning |
+|---|---|
+| Attachment source envelope | Original source generation, epoch, geometry revision, frame ID, capture timestamp, control revision and binding/calibration context. Inherited snapshot fields must match exactly; additional source fields must be checkable against a producer-approved current context. |
+| Per-player evidence | Explicit confirmed player ID and accepted calibration revision; left and right wrists remain separate. No reassignment based on height or proximity. |
+| Each wrist | Measured/calibrated `(x, y)` in the shared unmirrored, floor-relative player plane; independent confidence and validity. Valid coordinates must be finite; unavailable evidence carries no usable position. |
+| Absent attachment / unsupported recording | Contact capability UNAVAILABLE; existing laser snapshots and older replay files retain their prior meaning. A fixture must explicitly supply synthetic contact evidence to exercise contact decisions. |
+| Confidence | Edo defines confidence semantics and the validated acceptance threshold. Jevon consumes explicit validity and checks current provenance/freshness; he does not invent a confidence threshold or upgrade weak evidence. |
+| Consumer checks | Reject mismatched source, binding, control or accepted calibration context. Epoch/control acceptance must use Edo's reviewed atomic context semantics; current CP1 does not yet expose the complete proposed surface. |
+
+Edo chooses the smallest backward-compatible schema after checking live and Codable/replay compatibility. If a snapshot attachment cannot be safely represented, review an equivalent atomic single-stream envelope before coding; do not add a second subscriber. No image, Vision object, rig joint or physical-depth claim crosses into the game domain.
+
+### B. Interaction zones and contact meaning
+
+1. Use **projected wrist-point entry into a disk on the player plane**, not a claim of physical 3D contact. For wrist `w`, center `c(t)` and explicit radius `r > 0`, inside means squared distance `|w - c(t)|² <= r²`; outside means `> r²`. Exact boundary counts as inside. No dwell, swept-path interpolation or invented wrist-volume radius in v1.
+2. Jevon's domain owns target ID, eligible player set, disk/trajectory and active game-time interval. Kevin draws that same zone/trajectory through the reviewed mapping. The domain evaluates the position at **original capture game time**, never the renderer's current position.
+3. Vault buttons are stationary disks during that vault, owned by the respective player; either anatomical wrist may activate them. Diamond eligibility is an explicit player set in the spawn description, constrained to each eligible player's validated comfortable reach. Collector/lane allocation still requires review; do not default every diamond to both players.
+4. Edo/Jevon/Kevin must agree how valid reach is established. Theo reviews target size and player comprehension. Radius, placement, separation, path, speed and reach bounds remain explicit unresolved parameters; no existing standing-height calibration is assumed to prove comfortable lateral reach.
+5. Reject configurations whose simultaneously eligible zones overlap or touch for the same player (`distance <= r1 + r2`) rather than inventing a nearest-target tie-break. Revalidate moving zones through their interaction intervals. Invalid/missing reach or ambiguous geometry blocks that plan; it does not become a missed pickup or player failure.
+6. This candidate can miss fast movement between samples and can be sensitive to edge jitter. Evaluate those limitations with measured input before acceptance; do not add smoothing, hysteresis, dwell or larger targets silently to make tests pass.
+
+### C. Fresh entry and exactly-once activation
+
+Maintain a bounded contact state per active target, eligible player and wrist: **needs outside → armed → consumed**. Only retained product progress/terminal target state survives a pause; a pending entry does not.
+
+- On target activation or resume, start at needs outside. Require a fresh, valid outside observation at/after target activation and strictly after the applicable resume/source cutover, followed by a strictly newer valid inside observation in the same accepted source/binding/calibration context. A first inside sample or a held wrist alone cannot activate it.
+- Missing/weak/stale evidence or a continuity break clears that wrist's pending arm. An inside sample after invalid input needs another fresh outside → inside sequence. A gap beyond the explicitly reviewed contact freshness limit also breaks continuity.
+- No extrapolated crossing between captures. A zone moving over a stationary wrist can satisfy entry only if the same target previously observed that wrist validly outside after activation. Review this behavior with Theo/Kevin; a newly spawned target under a held wrist does not collect itself.
+- Vault deduplication key is `(vault ID, player ID, button ID)`; a committed button remains committed regardless of which wrist touched it. Diamond terminal key is its unique spawn ID, shared across hands and players. Replacements always get new IDs.
+- A duplicate frame has no new effect and cannot arm/disarm a target. Conflicting data under the same source frame identity is rejected. Strictly older/out-of-order captures do not rewind contact state or create awards in this proposed v1; this differs from the laser's bounded-history selection and needs Edo's explicit agreement.
+- Pause clears transient arms and freezes the existing GameClock/deadlines. Rebind, changed calibration, epoch/control cutover, Stop and Retry revoke in-flight evidence. Existing coordinator restart/termination gates retain authority; contact logic does not add a shortcut to resume an old context.
+
+### D. Capture, arrival and deadline ordering
+
+| Situation | Proposed v1 result |
+|---|---|
+| Ordinary eligible entry | Both observations belong to the active target/context and current clock segment. Capture is in the target's active interval; arrival is while that interval and session are still active and within an explicitly reviewed maximum contact age. |
+| Capture before activation / passage entry | Does not arm or collect. A new target cannot reuse a previous target's evidence. |
+| Exact target activation | May establish outside only; an award needs a later inside capture. No banked entry. |
+| Vault deadline `d` | Retain existing timeout-wins behavior: capture and arrival must be **strictly before** `d`. At `d`, timeout closes first. No laser delivery allowance is copied. |
+| Diamond passage `[entry, exit)` | Capture before entry or at/after exit cannot collect. Arrival at/after exit also cannot collect under this proposal, even if captured earlier. No award after the diamond has passed. |
+| Diamond Time deadline | Capture and arrival must both precede phase end. At the deadline close collection/spawn/replacement first, then finalize once. |
+| Pause / inactive app / current readiness loss | No contact commits. Old observations cannot queue an award for resume. This does not weaken the existing full live-readiness gates. |
+| Buffered/out-of-order input | Ignore duplicates/older contact captures; evaluate fresh eligible captures once in delivered order. A dropped frame never proves an unobserved entry. |
+
+This deliberately conservative admission policy gives no extra post-deadline grace. Edo must review measured delivery latency and feasibility before it is frozen. If grace/reordering is needed, specify the pending state, cutoff and displayed feedback in a revised proposal; do not change current timeout semantics implicitly. Parameter values remain open.
+
+### E. Simultaneous hands, players and transitions
+
+- Evaluate all eligible wrists in **one immutable capture** against the targets active at the start of that evaluation. Deduplicate the resulting contact set before applying effects. Both wrists on one button activate it once; two wrists on two distinct valid buttons may activate both.
+- P1/P2 can complete their final vault buttons in the same capture. Apply the entire batch, then open the vault/advance progress once if both sides are complete before timeout. Non-simultaneous completion still works.
+- Both players/hands on one diamond produce one terminal collection and one team reward. Attribution, if later required, may use a documented deterministic order (capture time, P1/P2, left/right) for diagnostics only; it cannot multiply rewards or change team eligibility. No personal diamond metric is introduced here.
+- Collecting different diamonds in one capture can produce multiple awards, one per spawn ID. Commit terminal states before reserving replacement slots; active team count never exceeds four, including approaching diamonds.
+- Apply phase transitions and spawn replacements **after** the batch. New phase/target IDs require new observations; the same capture cannot open the final vault and collect its newly spawned bonus diamonds. Replacement positions differ from the consumed target and other active diamonds.
+- Normal diamonds finish passage before vault entry. Invalid/unfinished plans hold the transition for review rather than silently carrying a diamond into a vault. Whether unresolved evidence requires a revised plan is not grounds to manufacture a miss or award.
+
+### F. Proposed synthetic acceptance table (not executable contact tests yet)
+
+Fixtures will include explicit target IDs, geometry/config version, source envelope, capture/arrival game times, validity and expected event/score counts. Coordinates below are relational (`outside`, `inside`, `boundary`), not approved real-world dimensions.
+
+| ID | Input sequence | Expected v1 result |
+|---|---|---|
+| C01 | Fresh outside → inside, same eligible wrist/context, before deadline | One activation/collection. |
+| C02 | Fresh outside → exact disk boundary | One entry; boundary is inside. |
+| C03 | First sample inside; further inside/held samples | No award; outside then inside is required. |
+| C04 | Invalid wrist while other wrist has a valid entry | Invalid wrist contributes nothing; other wrist can qualify only if the session is otherwise running/ready. |
+| C05 | Outside → missing/weak/stale → inside | No entry; pending arm cleared. |
+| C06 | Duplicate entry; conflicting duplicate; older entry after newer data | No second effect; conflict rejected; older capture cannot rewind contact state. |
+| C07 | Pre-activation outside/inside, or entry outside eligible player set | No arm or award for that target. |
+| C08 | Outside → inside captured before deadline but arriving at/after deadline | Timeout/pass/phase closure wins; no late award. |
+| C09 | Entry capture exactly at vault deadline, passage exit or phase end | No award; applicable terminal action once. |
+| C10 | Same frame: both wrists on one button/diamond | Exactly one effect for that target. |
+| C11 | Same frame: two distinct buttons; both players finish | Both eligible buttons commit; vault opens/progress advances once. |
+| C12 | Same frame: both players collect one diamond | One team reward, one terminal ID, one replacement request if phase active. |
+| C13 | Same frame: multiple diamonds collected with four active | Each unique collection once; replacement reservations preserve cap and distinct positions. |
+| C14 | Pause/rebind/calibration/epoch/control change between outside and inside | Old pending arm revoked; follow existing restart gates and require fresh entry. |
+| C15 | Stop/Retry and late old-generation evidence | No mutation in the new session; empty/new contact state. |
+| C16 | Final vault opens; replacement/bonus target spawns under held wrist | No reuse of opening/collection capture; new target requires fresh outside → inside. |
+| C17 | Missing optional attachment / older replay format | Existing laser behavior unchanged; contact capability unavailable. |
+| C18 | Overlapping zones, invalid radius/reach or incompatible coordinate provenance | Reject plan/evidence; no guessed target, reward or player penalty. |
+| C19 | Freshness gap exceeds reviewed limit, then inside | No entry until a new valid outside → inside sequence. |
+| C20 | Approaching diamond outside interaction passage, then permanent pass | No early or post-pass award; miss never damages health. |
+
+These expectations become executable J04/J05 tests only after affected owners accept the semantics and Edo defines the producer/replay fixture surface. Synthetic fixtures will not imply live E08 validation.
+
 ## Sign-off ledger
 
 | Decision | Producer / required review | Status |
 |---|---|---|
-| Evidence, source/context and delivery | Edo; Jevon, with Kevin for visible mapping | OPEN |
-| Capture/arrival/phase/deadline semantics | Edo + Jevon; Kevin/Theo for cues | OPEN |
-| Reach and interaction zones | Edo/Jevon/Kevin; Theo usability | OPEN |
+| Evidence, source/context and delivery | Edo; Jevon, with Kevin for visible mapping | Edo direction received; concrete optional attachment proposal awaiting review |
+| Capture/arrival/phase/deadline semantics | Edo + Jevon; Kevin/Theo for cues | Conservative v1 proposal above; OPEN |
+| Reach and interaction zones | Edo/Jevon/Kevin; Theo usability | Disk/entry proposal above; parameters, feasible reach and acceptance OPEN |
 | Diamond points/population/refill | Jevon; Edo feasibility, Kevin/Theo presentation | OPEN |
 
 Record the actual choice, interface/fixture version, named approvers and verification implications here or link the team's authoritative decision. Do not close D09 from a planning table or an unrelated PR approval.
