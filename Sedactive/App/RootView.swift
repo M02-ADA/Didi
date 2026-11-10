@@ -10,12 +10,18 @@ import SwiftUI
 struct ContentView: View {
   private let dependencies = AppDependencies.shared
   @Environment(\.scenePhase) private var scenePhase
+  #if DEBUG
+  @State private var showingGameCamera = InGameCameraPreviewView.requested(ProcessInfo.processInfo.arguments)
+  #endif
   var body: some View {
     let flow = dependencies.inputFlow
     Group {
       #if DEBUG
       if LiveAvatarSmokeModel.requested(ProcessInfo.processInfo.arguments) {
         LiveAvatarSmokeView(flow:flow,service:dependencies.bodyInput,bridge:dependencies.visionPoseBridge)
+      } else if showingGameCamera {
+        InGameCameraPreviewView(flow: flow, service: dependencies.bodyInput,
+          bridge: dependencies.visionPoseBridge, onExit: { showingGameCamera = false })
       } else { routedContent(flow:flow) }
       #else
       routedContent(flow:flow)
@@ -29,6 +35,13 @@ struct ContentView: View {
       switch flow.route {
       case .selection:
         LaserInputSelectionView(flow: flow)
+          #if DEBUG
+          .safeAreaInset(edge: .bottom) {
+            Button("Real camera · game scene preview") { showingGameCamera = true }
+              .buttonStyle(.borderedProminent).disabled(!flow.canStartLive)
+              .accessibilityIdentifier("chooseInGameCamera").padding()
+          }
+          #endif
       case .replay:
         replayView(flow: flow)
       case .liveSetup:
