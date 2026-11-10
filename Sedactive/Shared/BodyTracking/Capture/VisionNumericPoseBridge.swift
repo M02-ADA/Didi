@@ -36,7 +36,8 @@ nonisolated struct VisionNumericPoseChannel: Sendable {
   private var resetAll = false
   private var pending: VisionNumericPoseOutput?
   private var lastFrame: UInt64 = 0
-  private var lastCapture: Double?
+  private var lastCapture: Double? // ordering watermark, retained across invalidation
+  private var freshFrom: Double? // capture-clock anchor for the current active presentation epoch
   private var exhausted = false
   private mutating func advance() {
     if revision == .max { exhausted = true } else { revision += 1 }
@@ -46,7 +47,7 @@ nonisolated struct VisionNumericPoseChannel: Sendable {
   }
   /// Session teardown retires the lease, not only its current pose. Reattach for Retry.
   mutating func endSession() {
-    invalidate(); attachment = nil; context = nil; lastFrame = 0; lastCapture = nil
+    invalidate(); attachment = nil; context = nil; lastFrame = 0; lastCapture = nil; freshFrom = nil
   }
   mutating func attach() throws -> VisionPoseAttachment {
     guard !exhausted, revision < .max else { throw LiveVisionError.revisionExhausted }
@@ -66,7 +67,9 @@ nonisolated struct VisionNumericPoseChannel: Sendable {
     if context != c || active != authorized {
       invalidate()
       if context != c { lastFrame = 0; lastCapture = nil }
-      context = c; active = authorized
+      // A fresh admitted epoch must survive render ticks during inference. No old pose is
+      // reused: invalidate already cleared pending and retained the sticky reset/watermark.
+      context = c; active = authorized; freshFrom = source.capturedAt
     }
     return !exhausted ? revision : nil
   }
@@ -97,12 +100,12 @@ nonisolated struct VisionNumericPoseChannel: Sendable {
     pending = .init(presentationRevision: revision, tracking: receipt, pose: pose.frame,
       acceptedCalibrations: accepted, cutovers: body.cutovers,
       layout: accepted.isEmpty ? nil : body.configuration?.playerPlaneLayout)
-    lastFrame = original.frameID; lastCapture = original.capturedAt
+    lastFrame = original.frameID; lastCapture = original.capturedAt; freshFrom = original.capturedAt
   }
   mutating func drain(_ lease: VisionPoseAttachment, time: Double, freshness: Double,
     controlRevision: UInt64, body: LiveBodyInputState) -> VisionNumericPoseDrain? {
     guard attachment == lease else { return nil }
-    if active, let lastCapture, !time.isFinite || time < lastCapture || time - lastCapture >= freshness {
+    if active, let freshFrom, !time.isFinite || time < freshFrom || time - freshFrom >= freshness {
       invalidate() // no fake frame, watermark preserved
     }
     let status = VisionNumericPoseStatus(revision: revision, active: active && !exhausted,
