@@ -8,13 +8,32 @@ import Testing
 /// so nothing here says anything about real tracking quality.
 @MainActor
 struct LiveAvatarPresenterTests {
-    private func attached() async throws -> (LaserScene, AvatarPoseMailbox, SyntheticAvatarSource) {
+    /// Stands in for a producer's render-tick pump.
+    private final class ScriptedPump: AvatarPosePump {
+        private(set) var ticks = 0
+        private(set) var stops = 0
+        var step: () throws -> Bool = { true }
+        func tick() throws -> Bool {
+            ticks += 1
+            return try step()
+        }
+        func stop() { stops += 1 }
+    }
+
+    private struct FeedFailed: Error {}
+
+    private func attached(pump: ScriptedPump? = nil) async throws -> (LaserScene, AvatarPoseMailbox, SyntheticAvatarSource) {
         let input = try LaserReplayScript.load().input
         let source = SyntheticAvatarSource(configuration: input.configuration, cameraGeometryRevision: input.cameraGeometryRevision)
         let scene = LaserScene()
         let mailbox = AvatarPoseMailbox(maxAge: LiveAvatarPresenter.maximumPoseAge)
-        scene.attachLiveAvatars(mailbox: mailbox, templates: try await RobotAvatarLayer.sharedTemplates())
+        scene.attachLiveAvatars(mailbox: mailbox, templates: try await RobotAvatarLayer.sharedTemplates(), pump: pump)
         return (scene, mailbox, source)
+    }
+
+    private func sequence(_ scenario: RobotDemoScenario) throws -> RobotDemoSequence {
+        let input = try LaserReplayScript.load().input
+        return RobotDemoSequence(configuration: input.configuration, cameraGeometryRevision: input.cameraGeometryRevision, only: scenario)
     }
 
     /// Feeds `count` frames of a demo scenario, ticking like the render loop. Returns the last frame's time.
@@ -153,6 +172,145 @@ struct LiveAvatarPresenterTests {
         #expect(surface(scene, .player1)?.isEnabled == true)
         p1.showPlaceholder()
         #expect(surface(scene, .player1)?.isEnabled == true)
+    }
+
+    // MARK: - The render-tick pump
+
+    /// The pump runs before the drain, so its packet is on the mascots in
+    /// that same render tick, and it runs exactly once per tick.
+    @Test func aPacketPumpedThisTickIsShownThisTick() async throws {
+        let pump = ScriptedPump()
+        let (scene, mailbox, source) = try await attached(pump: pump)
+        let frame = try sequence(.idle).frame(1)
+        pump.step = {
+            mailbox.publish(source.status)
+            mailbox.offer(source.output(frame.snapshot, joints: frame.joints))
+            return true
+        }
+        scene.refreshLiveAvatars(now: frame.snapshot.capturedAt + 0.005)
+        #expect(pump.ticks == 1)
+        #expect(try #require(scene.robotAvatars).robots.values.allSatisfy { $0.retargeter.isAvailable })
+    }
+
+    /// Most render ticks have no new camera result: that is not the end of the feed.
+    @Test func ticksWithNothingNewKeepTheFeedAlive() async throws {
+        let pump = ScriptedPump()
+        let (scene, mailbox, source) = try await attached(pump: pump)
+        for n in 0..<60 { scene.refreshLiveAvatars(now: 100 + Double(n) / 60) }
+        #expect(pump.ticks == 60 && pump.stops == 0 && !mailbox.isRevoked)
+        #expect(scene.liveAvatars?.feedEnded == false)
+        let frame = try sequence(.idle).frame(1)
+        mailbox.publish(source.status)
+        mailbox.offer(source.output(frame.snapshot, joints: frame.joints))
+        scene.refreshLiveAvatars(now: frame.snapshot.capturedAt + 0.005)
+        #expect(try #require(scene.robotAvatars).robots.values.allSatisfy { $0.retargeter.isAvailable })
+    }
+
+    /// A retired lease or a broken packet ends the feed. No pose is left held:
+    /// the same mascots go neutral and dim at once, and the pump is not run again.
+    @Test(arguments: [false, true])
+    func aFeedThatEndsForgetsTheHeldPoseAtOnce(throwing: Bool) async throws {
+        let pump = ScriptedPump()
+        let (scene, mailbox, source) = try await attached(pump: pump)
+        mailbox.publish(source.status)
+        let last = try play(.p2DuckStand, frames: 40, into: scene, mailbox: mailbox, source: source)
+        let avatars = try #require(scene.robotAvatars)
+        #expect((avatars.robots[.player2]?.retargeter.targets.pelvisDrop ?? 0) > 0.03)
+
+        let ticks = pump.ticks
+        pump.step = {
+            if throwing { throw FeedFailed() }
+            return false
+        }
+        scene.refreshLiveAvatars(now: last + 0.01)
+        for robot in avatars.robots.values {
+            #expect(!robot.retargeter.isAvailable && robot.retargeter.targets.pelvisDrop == 0)
+            #expect(robot.container.components[OpacityComponent.self]?.opacity == RobotAvatarLayer.unavailableOpacity)
+        }
+        #expect(scene.liveAvatars?.feedEnded == true && mailbox.isRevoked && pump.stops == 1)
+        try oneMascotEach(scene)
+
+        for n in 2...30 { scene.refreshLiveAvatars(now: last + Double(n) / 60) }
+        #expect(pump.ticks == ticks + 1 && pump.stops == 1)
+        #expect(avatars.robots.values.allSatisfy { !$0.retargeter.isAvailable })
+        #expect(PlayerID.allCases.allSatisfy { surface(scene, $0)?.isEnabled == false })
+    }
+
+    /// Retry: detaching stops the old pump once and for all; the new scene's
+    /// attachment runs only its own.
+    @Test func detachStopsThePumpAndRetryRunsOnlyTheNewOne() async throws {
+        let old = ScriptedPump()
+        let (oldScene, oldMailbox, _) = try await attached(pump: old)
+        oldScene.refreshLiveAvatars(now: 1)
+        oldScene.detachLiveAvatars()
+        oldScene.detachLiveAvatars()
+        oldScene.refreshLiveAvatars(now: 2)
+        #expect(old.ticks == 1 && old.stops == 1 && oldMailbox.isRevoked)
+
+        let new = ScriptedPump()
+        let (newScene, newMailbox, _) = try await attached(pump: new)
+        newScene.refreshLiveAvatars(now: 3)
+        #expect(new.ticks == 1 && new.stops == 0 && !newMailbox.isRevoked && old.ticks == 1)
+        try oneMascotEach(newScene)
+    }
+
+    /// A second attachment on the same scene stops the first attachment's pump.
+    @Test func reattachingStopsThePreviousPump() async throws {
+        let first = ScriptedPump()
+        let (scene, _, _) = try await attached(pump: first)
+        let second = ScriptedPump()
+        scene.attachLiveAvatars(mailbox: AvatarPoseMailbox(maxAge: LiveAvatarPresenter.maximumPoseAge),
+                                templates: try await RobotAvatarLayer.sharedTemplates(), pump: second)
+        scene.refreshLiveAvatars(now: 1)
+        #expect(first.stops == 1 && first.ticks == 0 && second.ticks == 1)
+        try oneMascotEach(scene)
+    }
+
+    /// The producer already merged an interruption, so the resumed status looks
+    /// unchanged from here. The reset must still arrive, once.
+    @Test func aCoalescedResetArrivesOnceWithItsNewStatus() throws {
+        let input = try LaserReplayScript.load().input
+        var source = SyntheticAvatarSource(configuration: input.configuration, cameraGeometryRevision: input.cameraGeometryRevision)
+        let mailbox = AvatarPoseMailbox(maxAge: LiveAvatarPresenter.maximumPoseAge)
+        mailbox.publish(source.status)
+        _ = mailbox.drain(now: 1)
+
+        source.statusRevision = 2
+        mailbox.publish(source.status)
+        #expect(!mailbox.drain(now: 1).reset.all)
+
+        source.statusRevision = 3
+        mailbox.publish(source.status, forceResetAll: true)
+        #expect(mailbox.drain(now: 1).reset.all)
+
+        // The same status again, as an inactive source repeats on every tick.
+        mailbox.publish(source.status, forceResetAll: true)
+        #expect(!mailbox.drain(now: 1).reset.all)
+        #expect(mailbox.diagnostics.statusesIgnored == 1)
+    }
+
+    /// Vision packets carry no visual values, so even a calibrated pose has
+    /// no evidence of a jump: the mascot never leaves the floor.
+    @Test func packetsWithoutVisualValuesNeverClaimAJump() async throws {
+        let (scene, mailbox, source) = try await attached()
+        mailbox.publish(source.status)
+        let frames = try sequence(.bothJump)
+        for index in UInt64(1)...120 {
+            let frame = try frames.frame(index)
+            let output = source.output(frame.snapshot, joints: frame.joints)
+            mailbox.offer(AvatarSourceOutput(
+                source: output.source, contextRevision: output.contextRevision, player1: output.player1, player2: output.player2,
+                candidates: output.candidates, calibration: output.calibration.mapValues {
+                    AvatarCalibrationInput(revision: $0.revision, mapping: $0.mapping, standingCrownImageY: $0.standingCrownImageY,
+                                           standingHipImageY: $0.standingHipImageY, standingLeftAnkleImageY: $0.standingLeftAnkleImageY,
+                                           standingRightAnkleImageY: $0.standingRightAnkleImageY, visual: nil)
+                }))
+            scene.refreshLiveAvatars(now: frame.snapshot.capturedAt + 0.005)
+            for robot in try #require(scene.robotAvatars).robots.values {
+                #expect(robot.retargeter.lift == 0 && robot.container.position.y == 0)
+            }
+        }
+        #expect(try #require(scene.robotAvatars).robots.values.allSatisfy { $0.retargeter.reference != nil })
     }
 
     /// Edo's tracker values map one to one onto the avatar seam.

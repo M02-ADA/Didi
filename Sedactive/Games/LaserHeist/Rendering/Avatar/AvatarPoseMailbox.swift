@@ -76,7 +76,11 @@ nonisolated final class AvatarPoseMailbox: Sendable {
     var isRevoked: Bool { storage.withLock { $0.revoked } }
 
     /// Producer side: installs a newer lifecycle status. O(1).
-    func publish(_ status: AvatarSourceStatus) {
+    /// `forceResetAll` carries a reset the producer already coalesced, such as
+    /// an interruption whose resumed status looks unchanged from here. It is
+    /// recorded only with a newer status, so repeating one status can't reset
+    /// the avatars on every tick.
+    func publish(_ status: AvatarSourceStatus, forceResetAll: Bool = false) {
         storage.withLock { s in
             guard !s.revoked else { return }
             if let installed = s.status, status.revision <= installed.revision {
@@ -88,6 +92,7 @@ nonisolated final class AvatarPoseMailbox: Sendable {
             s.diagnostics.statusesInstalled += 1
             s.pending = nil
             s.current = nil
+            s.reset.all = s.reset.all || forceResetAll
             guard let previous else { return }
             if !status.isActive || !previous.isActive || status.context != previous.context
                 || status.controlRevision != previous.controlRevision {

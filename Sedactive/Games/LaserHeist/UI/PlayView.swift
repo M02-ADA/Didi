@@ -12,11 +12,11 @@ import RealityKit
 /// not the device camera; live input arrives through Edo's pipeline instead.
 struct PlayView: View {
     /// K05 attachment seam, PENDING E07/J03: given a fresh pose mailbox for
-    /// each scene (Retry included), the authoritative producer publishes into
-    /// it. With a source the mascots follow it in every configuration; without
-    /// one, Release keeps its temporary pictograms. Never a synthetic source
-    /// outside Debug.
-    var avatarSource: (@MainActor (AvatarPoseMailbox) -> Void)?
+    /// each scene (Retry included), returns the producer's pump, which the
+    /// render tick runs before it refreshes the avatars. With a source the
+    /// mascots follow it in every configuration; without one, Release keeps
+    /// its temporary pictograms. Never a synthetic source outside Debug.
+    var avatarSource: (@MainActor (AvatarPoseMailbox) throws -> any AvatarPosePump)?
     /// CP2 attachment seam, PENDING Edo's production composition: shows the
     /// players' live cutouts. A mascot feed takes precedence over it.
     var cutoutSource: LiveCutoutSource?
@@ -32,7 +32,7 @@ struct PlayView: View {
 /// Identity replacement disposes the old scene, driver, provider, clock and coordinator on Retry.
 private struct ReplayRoundView: View {
     let generation: UUID
-    let avatarSource: (@MainActor (AvatarPoseMailbox) -> Void)?
+    let avatarSource: (@MainActor (AvatarPoseMailbox) throws -> any AvatarPosePump)?
     let cutoutSource: LiveCutoutSource?
     let retry: () -> Void
     @State private var scene = LaserScene()
@@ -79,8 +79,8 @@ private struct ReplayRoundView: View {
                     let templates = try await RobotAvatarLayer.sharedTemplates()
                     guard !Task.isCancelled else { return }
                     let mailbox = AvatarPoseMailbox(maxAge: LiveAvatarPresenter.maximumPoseAge)
-                    scene.attachLiveAvatars(mailbox: mailbox, templates: templates)
-                    avatarSource(mailbox)
+                    let pump = try avatarSource(mailbox)
+                    scene.attachLiveAvatars(mailbox: mailbox, templates: templates, pump: pump)
                 } catch {
                     startupError = String(describing: error)
                     return
