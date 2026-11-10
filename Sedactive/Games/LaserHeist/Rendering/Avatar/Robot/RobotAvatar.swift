@@ -61,6 +61,23 @@ struct RobotRetargeter {
     var maximumSway: Float = 0.3
     var maximumLean: Float = 0.35
     var maximumHeadRoll: Float = 0.4
+    /// Largest head turn shown (about 35°), and the soft zone that keeps a
+    /// face looking straight at the camera from twitching.
+    var maximumHeadYaw: Float = 0.6
+    var headYawDeadband: Float = 0.06
+    /// How far the nose sits in front of the ear axis, in half ear spans (an
+    /// average human head): turns the nose's sideways offset into an angle.
+    static let noseDepthPerHalfEarSpan = 1.3
+    /// The ears must span at least this share of the shoulders to trust a turn
+    /// (an ear-to-ear line that collapses means the head evidence is unreliable).
+    /// About 0.4 facing the camera; 0.12 is a turn of roughly 70°, where one ear is all but hidden.
+    static let minimumEarToShoulderSpan = 0.12
+    /// Largest shrug shown (about 14°) and its noise soft zone.
+    var maximumShoulderShrug: Float = 0.25
+    var shoulderShrugDeadband: Float = 0.03
+    /// The shoulders must span at least this share of the torso to trust their
+    /// line: a body turned side-on to the camera stacks them.
+    static let minimumShoulderToTorsoSpan = 0.25
     /// Crouch below this share of standing leg length is camera noise; a soft
     /// zone, so leaving it never steps the pelvis.
     var crouchDeadband: Float = 0.03
@@ -110,6 +127,10 @@ struct RobotRetargeter {
     private var stanceRest: [RobotPoseTargets.Side: Float] = [:]
     private var stanceSamples: [RobotPoseTargets.Side: Int] = [:]
     private var armWeights: [RobotPoseTargets.Side: Float] = [:]
+    /// When the head turn last had evidence; without it the turn eases back to straight.
+    private var headTurnSeen: Double?
+    /// When the shoulder line last had evidence; without it the shrug eases out.
+    private var shrugSeen: Double?
     private var liftSeen: Double?
     private var lastPresent: Double?
     /// Fast derivative tracking so takeoff is followed within about a frame,
@@ -274,6 +295,27 @@ struct RobotRetargeter {
             let roll = Float(atan2(re.y - le.y, -(re.x - le.x)))
             measured.headRoll = min(maximumHeadRoll, max(-maximumHeadRoll, roll + measured.lean))
         }
+        // SHRUG: the shoulder line's tilt beyond the trunk lean. A level shoulder
+        // line is level for every body and stays level when the body turns, so it
+        // needs no reference. A rigid lean tilts the line by −lean; only the rest
+        // shows, on the raised side's collarbone (`RobotPoseSolver`).
+        if let shrug = shoulderShrug(p) {
+            measured.shoulderShrug = shrug
+            shrugSeen = time
+        } else if time - (shrugSeen ?? time) > Self.lossHold || shrugSeen == nil {
+            measured.shoulderShrug *= Float(exp(-dt / Self.armFade))
+        }
+        // HEAD TURN: the nose between the ears. Facing the camera it sits midway
+        // for every face, whatever the camera height or distance, so the offset
+        // needs no standing reference: scale-free, both modes. Mirrored once,
+        // like every model-space X. Without trustworthy evidence the turn eases
+        // back to straight rather than holding an old look.
+        if let turn = headTurn(p) {
+            measured.headYaw = turn
+            headTurnSeen = time
+        } else if time - (headTurnSeen ?? time) > Self.lossHold || headTurnSeen == nil {
+            measured.headYaw *= Float(exp(-dt / Self.armFade))
+        }
 
         guard let reference else { return }
         let standing = Float(reference.standingHeight)
@@ -337,6 +379,34 @@ struct RobotRetargeter {
         }
     }
 
+    /// The shrug from one frame's filtered joints, or `nil` without both
+    /// shoulders and hips, or when the shoulders are too close together to trust.
+    private func shoulderShrug(_ p: [PresentationJoint: SIMD2<Double>]) -> Float? {
+        guard let ls = p[.leftShoulder], let rs = p[.rightShoulder], let lh = p[.leftHip], let rh = p[.rightHip] else { return nil }
+        let torso = simd_distance((ls + rs) / 2, (lh + rh) / 2)
+        guard torso > 1e-4, simd_distance(ls, rs) >= Self.minimumShoulderToTorsoSpan * torso else { return nil }
+        // Model space (x mirrored once): from the robot's left shoulder to its right.
+        let roll = Float(atan2(rs.y - ls.y, ls.x - rs.x))
+        let excess = roll + measured.lean
+        let shown = Self.softZone(abs(excess), shoulderShrugDeadband)
+        return min(maximumShoulderShrug, shown) * (excess < 0 ? -1 : 1)
+    }
+
+    /// The head turn from one frame's filtered joints, or `nil` when the nose
+    /// or either ear is missing or the ear span is implausibly small.
+    private func headTurn(_ p: [PresentationJoint: SIMD2<Double>]) -> Float? {
+        guard let nose = p[.nose], let le = p[.leftEar], let re = p[.rightEar] else { return nil }
+        let halfSpan = simd_distance(le, re) / 2
+        guard halfSpan > 1e-4 else { return nil }
+        if let ls = p[.leftShoulder], let rs = p[.rightShoulder],
+           halfSpan * 2 < Self.minimumEarToShoulderSpan * simd_distance(ls, rs) { return nil }
+        // Model space is mirrored once (−x): a nose toward the image's left is a turn to the robot's right.
+        let offset = -(nose.x - (le.x + re.x) / 2) / halfSpan
+        let angle = Float(atan(offset / Self.noseDepthPerHalfEarSpan))
+        let shown = Self.softZone(abs(angle), headYawDeadband)
+        return min(maximumHeadYaw, shown) * (angle < 0 ? -1 : 1)
+    }
+
     #if DEBUG
     /// DEBUG-only synthetic bridge: the demo's and the historical replay
     /// fixture's CP1-shaped samples, converted to one observation. Production
@@ -381,6 +451,8 @@ struct RobotRetargeter {
         t.pelvisDrop *= w
         t.lean *= w
         t.headRoll *= w
+        t.headYaw *= w
+        t.shoulderShrug *= w
         for side in RobotPoseTargets.Side.allCases {
             t.footLift[side] = (measured.footLift[side] ?? 0) * w
             t.armWeight[side] = (measured.upperArm[side] == nil ? 0 : armWeights[side, default: 0]) * w

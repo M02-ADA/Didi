@@ -74,6 +74,17 @@ nonisolated struct RobotPoseTargets: Equatable, Sendable {
     var lean: Float = 0
     /// Head roll, counter-clockwise on screen, relative to the chest.
     var headRoll: Float = 0
+    /// Head turn about the vertical axis toward the robot's right (+X, screen
+    /// right from behind), radians: the player turning their head to their right.
+    var headYaw: Float = 0
+    /// Shoulder-line tilt beyond the trunk lean (a shrug), counter-clockwise on
+    /// screen, radians: positive raises the robot's right shoulder, negative its
+    /// left. Only the raised side's collarbone moves; trunk, neck and head don't.
+    var shoulderShrug: Float = 0
+    /// A one-sided shrug lifts one collarbone, which spans about half the
+    /// shoulders: its elevation is about twice the shoulder-line tilt.
+    static let collarboneLiftPerShrug: Float = 2
+    static let maximumCollarboneLift: Float = 0.5
     /// Model-space directions for the upper arm and forearm; `nil` keeps the bind pose.
     var upperArm: [Side: SIMD3<Float>] = [:]
     var forearm: [Side: SIMD3<Float>] = [:]
@@ -104,6 +115,8 @@ nonisolated struct RobotPoseTargets: Equatable, Sendable {
         out.pelvisDrop = mix(pelvisDrop, target.pelvisDrop)
         out.lean = mix(lean, target.lean)
         out.headRoll = mix(headRoll, target.headRoll)
+        out.headYaw = mix(headYaw, target.headYaw)
+        out.shoulderShrug = mix(shoulderShrug, target.shoulderShrug)
         for side in Side.allCases {
             out.upperArm[side] = dir(upperArm[side], target.upperArm[side])
             out.forearm[side] = dir(forearm[side], target.forearm[side])
@@ -252,8 +265,24 @@ nonisolated struct RobotPoseSolver: Sendable {
                 if let c = childOf[i] { aim(i, toward: c, [sin(tilt), cos(tilt), 0]) }
             case "Head":
                 let world = -t.lean + t.headRoll  // absolute roll on screen
-                // The head is a leaf: set its model-space roll directly over the bind orientation.
-                local[i].rotation = parentWorld(i).inverse * (simd_quatf(angle: world, axis: [0, 0, 1]) * bindWorld.rotation[i])
+                // The head is a leaf: set its model-space turn, then roll, directly over the
+                // bind orientation. The robot faces −Z, so turning toward +X is −Y rotation.
+                let turn = simd_quatf(angle: -t.headYaw, axis: [0, 1, 0])
+                local[i].rotation = parentWorld(i).inverse * (simd_quatf(angle: world, axis: [0, 0, 1]) * turn * bindWorld.rotation[i])
+            case "Shoulder_L", "Shoulder_R":
+                // SHRUG: only the raised side's collarbone lifts (in the chest's own
+                // plane, about its root); the arm is aimed afterwards, so its
+                // measured direction is kept and only its root rises.
+                let raised: RobotPoseTargets.Side = t.shoulderShrug > 0 ? .right : .left
+                guard side(n) == raised, let c = childOf[i] else { break }
+                let lift = min(RobotPoseTargets.maximumCollarboneLift,
+                               abs(t.shoulderShrug) * RobotPoseTargets.collarboneLiftPerShrug)
+                guard lift > 1e-4 else { break }
+                let p = parentWorld(i)
+                let current = simd_normalize((p * s.bind[i].rotation).act(local[c].translation))
+                // Counter-clockwise on screen raises the +X (right) collarbone; clockwise the left.
+                let up = simd_quatf(angle: raised == .right ? lift : -lift, axis: [0, 0, 1])
+                aim(i, toward: c, up.act(current))
             case "UpperArm_L", "UpperArm_R":
                 if let d = t.upperArm[side(n)], let c = childOf[i] {
                     aim(i, toward: c, d)
