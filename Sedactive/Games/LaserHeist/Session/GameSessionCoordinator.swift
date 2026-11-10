@@ -21,6 +21,10 @@ final class GameSessionCoordinator {
     let inputConfiguration: BodyInputConfiguration
     let setup: LaserSessionSetup?
     var isReplay: Bool { replayDriver != nil }
+    var isCompleteReplay: Bool { replayDriver?.script.fullRound != nil }
+    /// Read-only domain state for the separately reviewed K06 rendering handoff.
+    var diamondStates: [UUID: LaserDiamondState] { game?.diamonds ?? [:] }
+    var diamondsCollected: Int { game?.diamondsCollected ?? 0 }
     var activityDuration: Double { replayDriver?.script.activityDuration ?? configuration?.activityDuration ?? 0 }
     private(set) var phase: SessionState = .idle
     private(set) var state: LaserGameState?
@@ -130,7 +134,9 @@ final class GameSessionCoordinator {
                 }
                 var engine = try LaserGame(configuration: configuration, context: context,
                                           historyCapacityPerPlayer: 120)
-                for encounter in encounters { try engine.register(encounter) }
+                if replayDriver?.script.fullRound == nil {
+                    for encounter in encounters { try engine.register(encounter) }
+                }
                 iterator = stream.makeAsyncIterator()
                 clock = try GameClock(sourceTime: 0)
                 game = engine
@@ -177,7 +183,15 @@ final class GameSessionCoordinator {
         let revision = inputRevision
         let time = min(sourceTime, replayDriver.script.duration)
         try requireLaserValue(time.isFinite && time >= clock.gameTime, "replay frame time")
-        while let deliveryTime = replayDriver.nextDeliveryTime(through: time) {
+        while game.roundOutcome == nil {
+            let delivery = replayDriver.nextDeliveryTime(through: time)
+            let action = replayDriver.nextActionTime(through: time)
+            guard delivery != nil || action != nil else { break }
+            if let action, delivery == nil || action < delivery! {
+                try replayDriver.applyNextAction(clock: &clock, game: &game)
+                continue
+            }
+            guard let deliveryTime = delivery else { break }
             // Snapshot-only, compatible scripted source; drain each packet before advancing again.
             try replayDriver.deliverNext()
             guard let packet = await iterator.next(isolation: MainActor.shared) else { throw LaserDataError.invalidValue("replay ended early") }
@@ -199,7 +213,6 @@ final class GameSessionCoordinator {
             latestSnapshot = packet
             if game.roundOutcome != nil { break }
         }
-        try replayDriver.applyActions(through: time, clock: &clock, game: &game)
         try clock.advance(to: time)
         try replayDriver.recordCoverage(through: time, game: &game)
         try game.advance(to: clock.gameTime)

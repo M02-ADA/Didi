@@ -5,11 +5,21 @@ nonisolated struct LaserReplayScript: Sendable {
     let input: ReplayFixture
     let encounters: [LaserEncounter]
     let configuration: LaserRoundConfiguration
-    var duration: Double { 17 + configuration.vaultDuration + configuration.diamondTimeDuration + 1 }
-    var activityDuration: Double { 17 + configuration.diamondTimeDuration }
+    let fullRound: LaserFullReplayPlan?
+    var duration: Double { fullRound?.duration ?? (17 + configuration.vaultDuration + configuration.diamondTimeDuration + 1) }
+    var activityDuration: Double { fullRound == nil ? 17 + configuration.diamondTimeDuration : 310 }
+
+    init(input: ReplayFixture, encounters: [LaserEncounter], configuration: LaserRoundConfiguration,
+         fullRound: LaserFullReplayPlan? = nil) {
+        self.input = input; self.encounters = encounters; self.configuration = configuration; self.fullRound = fullRound
+    }
+
+    static func complete(seed: UInt64 = 1, bundle: Bundle = .main) throws -> Self {
+        try LaserFullReplayPlan.make(base: load(bundle: bundle).input, seed: seed)
+    }
     let vaultID = UUID(uuidString: "12000000-0000-4000-8000-000000000100")!
     /// Script-declared synthetic tracking coverage, not inferred physical movement between frames.
-    let trackedCoverage = 0.1...17.0
+    var trackedCoverage: ClosedRange<Double> { 0.1...(fullRound?.bonusStart ?? 17) }
     /// Synthetic verified wrist-contact results; this is not a wrist-to-target detector.
     var vaultActions: [(time: Double, player: PlayerID?, button: LaserVaultButton?)] {
         [(17, nil, nil), (17.4, .player1, .bottom), (18, .player1, .top),
@@ -60,6 +70,6 @@ nonisolated struct LaserReplayScript: Sendable {
         }
         let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(input))
         let data = try JSONSerialization.data(withJSONObject: replaceGeneration(object), options: [.sortedKeys])
-        return Self(input: try ReplayFixture.decode(data), encounters: encounters, configuration: configuration)
+        return Self(input: try ReplayFixture.decode(data), encounters: encounters, configuration: configuration, fullRound: fullRound)
     }
 }
