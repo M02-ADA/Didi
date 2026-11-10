@@ -106,6 +106,29 @@ nonisolated struct LaserGameTests {
         #expect(game.drainEvents().filter { if case .coopGateSucceeded = $0.kind { true } else { false } }.count == 1)
     }
 
+    @Test(arguments: [false, true])
+    func anotherEncounterCannotReuseAnAttemptEvenAfterResultPruning(_ prune: Bool) throws {
+        let (scenario, initial) = try setup()
+        var game = initial
+        try game.register(scenario.encounter)
+        if prune {
+            try game.receive(packet(scenario, verdicts: [.clear, .clear]), capturedGameTime: 10, arrivedAt: 10.05)
+            try game.advance(to: 10.35)
+            for player in PlayerID.allCases {
+                game.remove(LaserTargetKey(encounterID: scenario.encounter.id,
+                    attemptID: scenario.encounter.attemptID, playerID: player))
+            }
+        }
+        let count = game.crossingCount
+        let stats = game.playerStats
+        let other = try LaserEncounter(id: UUID(), attemptID: scenario.encounter.attemptID,
+                                       targets: scenario.encounter.targets)
+        #expect(game.hasUsedAttempt(other.attemptID))
+        #expect(throws: LaserDataError.self) { try game.register(other) }
+        #expect(game.crossingCount == count && game.playerStats == stats)
+        #expect(game.teamScore == (prune ? 200 : 0))
+    }
+
     @Test func fiveVaultsLeadToTenSecondBonusThenExactlyOneRoundEnd() throws {
         let (scenario, initial) = try setup()
         var game = initial
@@ -215,5 +238,27 @@ nonisolated struct LaserGameTests {
         #expect(game.activityProgress == 10)
         #expect(game.vault?.deadline == 15)
         #expect(game.roundOutcome == nil)
+    }
+
+    @Test func pauseAtDeadlineWithdrawsOnceWithoutJudgingOrReusingRetiredAttempt() throws {
+        let (scenario, initial) = try setup()
+        var game = initial
+        try game.register(scenario.encounter)
+        let time = game.timing.finalizationTime(crossing: scenario.encounter.targets[0].crossingTime)
+        try game.pause(at: time)
+        try game.pause(at: time)
+        try game.advance(to: time + 10)
+        #expect(game.gameTime == time && game.teamHealth == 5 && game.teamScore == 0)
+        let paused = game.drainEvents()
+        #expect(paused.filter { if case .attemptWithdrawn = $0.kind { true } else { false } }.count == 1)
+        #expect(!paused.contains { if case .targetJudged = $0.kind { true } else { false } })
+        game.resume()
+        for target in scenario.encounter.targets {
+            game.remove(LaserTargetKey(encounterID: scenario.encounter.id,
+                attemptID: scenario.encounter.attemptID, playerID: target.playerID))
+        }
+        #expect(throws: LaserDataError.self) { try game.register(scenario.encounter) }
+        game.exit()
+        #expect(game.drainEvents().last?.kind == .roundEnded(.aborted))
     }
 }

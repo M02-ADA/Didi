@@ -20,12 +20,18 @@ struct PlayView: View {
     /// CP2 attachment seam, PENDING Edo's production composition: shows the
     /// players' live cutouts. A mascot feed takes precedence over it.
     var cutoutSource: LiveCutoutSource?
+    var onExit: (() -> Void)?
+    var liveSession: GameSessionCoordinator?
+    var onLiveRetry: (() -> Void)?
 
     @State private var generation = UUID()
 
     var body: some View {
-        ReplayRoundView(generation: generation, avatarSource: avatarSource, cutoutSource: cutoutSource, retry: { generation = UUID() })
-            .id(generation)
+        let roundGeneration = liveSession?.inputConfiguration.sessionGeneration ?? generation
+        ReplayRoundView(generation: roundGeneration, avatarSource: avatarSource, cutoutSource: cutoutSource,
+                        onExit: onExit, suppliedSession: liveSession,
+                        retry: { if let onLiveRetry { onLiveRetry() } else { generation = UUID() } })
+            .id(roundGeneration)
     }
 }
 
@@ -34,11 +40,14 @@ private struct ReplayRoundView: View {
     let generation: UUID
     let avatarSource: (@MainActor (AvatarPoseMailbox) throws -> any AvatarPosePump)?
     let cutoutSource: LiveCutoutSource?
+    let onExit: (() -> Void)?
+    let suppliedSession: GameSessionCoordinator?
     let retry: () -> Void
     @State private var scene = LaserScene()
     @State private var presentation = LaserReplayPresentation()
     @State private var session: GameSessionCoordinator?
     @State private var startupError: String?
+    @State private var leaving = false
     /// The per-frame host-clock tick: live cutout expiry and live avatars.
     @State private var frameRefresh: EventSubscription?
     #if DEBUG
@@ -92,6 +101,14 @@ private struct ReplayRoundView: View {
                 } catch {
                     print("PlayView: live cutouts unavailable, keeping the pictograms: \(error)")
                 }
+            }
+            // A live session is already started by App/flow. This view never constructs its source,
+            // claims CP1, or installs replay fixtures/synthetic avatars in the live path.
+            if let suppliedSession {
+                guard !Task.isCancelled, suppliedSession.hasLiveRoundPlan else { return }
+                session = suppliedSession
+                presentation.start(on: content, scene: scene, session: suppliedSession)
+                return
             }
             // Optional world-construction guides. Replay body markers live in the presentation adapter.
             #if DEBUG
@@ -165,7 +182,12 @@ private struct ReplayRoundView: View {
             #endif
             do {
                 guard !Task.isCancelled else { return }
-                let script = try LaserReplayScript.load().freshRound(generation: generation)
+                var useSlice = ProcessInfo.processInfo.arguments.contains("-replaySlice")
+                #if DEBUG
+                useSlice = useSlice || DiamondTimeFixture.isRequested
+                #endif
+                let base = try useSlice ? LaserReplayScript.load() : LaserReplayScript.complete()
+                let script = try base.freshRound(generation: generation)
                 #if DEBUG
                 // The Lemon (P1) and Tangerine (P2) mascots stand in place of the pictograms in the
                 // replay round, driven by its body snapshots through the gameplay presenter (the
@@ -175,7 +197,7 @@ private struct ReplayRoundView: View {
                                                    layout: script.input.configuration.playerPlaneLayout) != nil else { return }
                 }
                 #endif
-                let replay = GameSessionCoordinator(script: script)
+                let replay = try LaserReplayDriver.makeSession(script: script)
                 session = replay
                 try await replay.start()
                 guard !Task.isCancelled else { await replay.stop(); return }
@@ -187,12 +209,27 @@ private struct ReplayRoundView: View {
         .overlay {
             // One HUD at a time: the Sketch gameplay HUD, or (Debug, `-replayDebugHUD`)
             // Jevon's text HUD for replay diagnostics. Results replaces either.
-            if let session, session.summary == nil, !Self.showsReplayDebugHUD {
-                GameplayHUD(model: hudModel(session), actions: hudActions(session))
+            if let session, session.summary == nil, !Self.showsReplayDebugHUD, let model = hudModel(session) {
+                GameplayHUD(model: model, actions: hudActions(session))
             }
         }
         .overlay {
             if let final = session?.summary { ResultsView(summary: final, onRetry: retry) }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if let onExit {
+                Button("Back to input selection", systemImage: "chevron.backward") {
+                    leaving = true
+                    Task { @MainActor in
+                        await session?.stop()
+                        presentation.stop()
+                        onExit()
+                    }
+                }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .disabled(leaving).accessibilityIdentifier("leaveReplay")
+                .padding(.bottom, 8)
+            }
         }
         .overlay(alignment: .topLeading) {
             if let session, session.summary == nil, Self.showsReplayDebugHUD { ReplaySliceHUD(session: session) }
@@ -282,16 +319,17 @@ private struct ReplayRoundView: View {
     private static let showsReplayDebugHUD = false
     #endif
 
-    /// The session's player intents for the HUD. PENDING Jevon: when the
-    /// session exposes pause and resume (its `GameClock`), pass them here; until
-    /// then the HUD offers no pause.
+    /// Live pause/continue intents go to the session. Replay retains its fixture-driven controls.
     private func hudActions(_ session: GameSessionCoordinator) -> GameplayHUDActions {
-        GameplayHUDActions(pause: nil, resume: nil, leave: { Task { await session.stop() } })
+        GameplayHUDActions(pause: session.isReplay ? nil : { session.pauseLiveRound() },
+                           resume: session.isReplay ? nil : { session.continueLiveRound() },
+                           leave: { Task { await session.stop() } })
     }
 
     /// The HUD's view of the session's authoritative state and events.
-    private func hudModel(_ session: GameSessionCoordinator) -> GameplayHUDModel {
-        var collected: Int?
+    private func hudModel(_ session: GameSessionCoordinator) -> GameplayHUDModel? {
+        guard let configuration = session.configuration else { return nil }
+        var collected: Int? = session.isCompleteReplay ? session.diamondsCollected : nil
         var fixture = false
         #if DEBUG
         // `-diamondFixture`: the labelled synthetic Diamond Time (J05 pending), counted
@@ -302,8 +340,8 @@ private struct ReplayRoundView: View {
             fixture = true
         }
         #endif
-        return GameplayHUDModel(state: session.state, events: session.events, configuration: session.script.configuration,
-                                activityDuration: session.script.activityDuration,
+        return GameplayHUDModel(state: session.state, events: session.events, configuration: configuration,
+                                activityDuration: session.activityDuration,
                                 diamondsCollected: collected, diamondsAreFixture: fixture)
     }
 

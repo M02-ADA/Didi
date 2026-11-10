@@ -8,11 +8,28 @@
 import SwiftUI
 
 struct CalibrationView: View {
+    let setup: LaserSessionSetup
     var body: some View {
-        Text(/*@START_MENU_TOKEN@*/"Hello, World!"/*@END_MENU_TOKEN@*/)
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Standing calibration", systemImage: "figure.stand")
+                .font(.headline)
+            if setup.phase == .calibrating {
+                ProgressView(value: Double(setup.sampleCount), total: Double(StandingCollectionPolicyV1.sampleCount))
+                    .accessibilityLabel("Standing calibration progress")
+                Text("Keep your standing positions while measurements are collected.")
+                    .foregroundStyle(.secondary)
+            } else if setup.phase == .awaitingGameplayReadiness {
+                Label("Standing calibration accepted", systemImage: "checkmark.circle")
+            } else {
+                Text("Measurements must be validated before play.").foregroundStyle(.secondary)
+            }
+            if setup.canCancelCalibration {
+                Button("Cancel calibration") { setup.cancelCalibration() }
+                    .buttonStyle(.bordered).controlSize(.large)
+                    .accessibilityIdentifier("cancelCalibration")
+            }
+        }
+        .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.06), in: .rect(cornerRadius: 16))
     }
-}
-
-#Preview {
-    CalibrationView()
 }

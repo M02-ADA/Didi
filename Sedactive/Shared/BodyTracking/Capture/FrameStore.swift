@@ -362,14 +362,18 @@ actor CameraCopySink: CameraFrameSink {
   private var motion: MotionEngine?
   private let makeDetector: @Sendable () -> any CameraPoseDetecting
   private var detector: (any CameraPoseDetecting)?
+  private var segmenter: (any PersonMaskDetecting)?
+  private let makeSegmenter: (@Sendable () -> any PersonMaskDetecting)?
   init(metrics: CameraCaptureMetrics? = nil, poses: CameraPoseResults? = nil,
     tracking: CameraTrackingGate? = nil,
-    makeDetector: @escaping @Sendable () -> any CameraPoseDetecting = { PoseEstimator() }) {
+    makeDetector: @escaping @Sendable () -> any CameraPoseDetecting = { PoseEstimator() },
+    makeSegmenter: (@Sendable () -> any PersonMaskDetecting)? = nil) {
     self.metrics = metrics
     self.poses = poses
     self.tracking = tracking
     if let tracking { motion = try? MotionEngine(policy: tracking.policy) }
     self.makeDetector = makeDetector
+    self.makeSegmenter = makeSegmenter
   }
   private var workspace: CameraReconstructionWorkspace?
   func consume(_ frame: CameraSourceFrame) throws {
@@ -395,7 +399,37 @@ actor CameraCopySink: CameraFrameSink {
         let result = try CameraPoseAdapter.convert(observations, source: frame.metadata)
         if poses.finish(result, ticket: ticket, startedAt: started, completedAt: completed,
           cancelled: Task.isCancelled) {
-          track(result, frame: frame)
+          let receipt = track(result, frame: frame)
+          tracking?.publishBody(result, admission: frame.trackingAdmission, receipt: receipt)
+          if let receipt, !Task.isCancelled {
+            tracking?.publishPresentation(result, admission: frame.trackingAdmission, receipt: receipt)
+          }
+          var measurementMask: PersonMaskObservation?
+          if let tracking, let receipt,
+            tracking.beginMask(pose: result, admission: frame.trackingAdmission, receipt: receipt) {
+            if segmenter == nil {
+              let metrics = self.metrics
+              segmenter = makeSegmenter?() ?? PersonSegmenter(onOwnedBytes: { metrics?.maskOutputBytes($0) })
+            }
+            let maskStart = CameraHostClock.now()
+            let mask: PersonMaskObservation
+            do {
+              mask = try segmenter!.detect(in: buffer, pose: result, association: receipt)
+            } catch {
+              // Optional segmentation must not enter the outer primary B1/B2 error path.
+              mask = .init(source: result.source,
+                quality: error is PersonMaskError ? .unsupportedOutput : .requestFailed,
+                regions: [:], outputBytes: 0, serviceSeconds: CameraHostClock.now() - maskStart)
+            }
+            measurementMask = mask
+            if !Task.isCancelled {
+              tracking.finishMask(mask, pose: result, admission: frame.trackingAdmission, receipt: receipt)
+            }
+          }
+          if !Task.isCancelled {
+            tracking?.publishMeasurements(result, admission: frame.trackingAdmission,
+              receipt: receipt, mask: measurementMask)
+          }
         }
       }
     } catch {
@@ -413,8 +447,8 @@ actor CameraCopySink: CameraFrameSink {
       return snapshot
     }
   }
-  private func track(_ result: CameraPoseResult, frame: CameraSourceFrame) {
-    guard let tracking, motion != nil, frame.trackingAdmission.requestID != nil else { return }
+  private func track(_ result: CameraPoseResult, frame: CameraSourceFrame) -> PlayerTrackingSnapshot? {
+    guard let tracking, motion != nil, frame.trackingAdmission.requestID != nil else { return nil }
     updateTracking()
     do {
       let staged = try motion!.staged(result, admission: frame.trackingAdmission)
@@ -424,9 +458,11 @@ actor CameraCopySink: CameraFrameSink {
           && $0.value.confidence >= tracking.policy.minimumJointConfidence }.map(\.key))
       }
       let mutual = observed.count == 2 ? observed[0].intersection(observed[1]).count : nil
-      tracking.finish(staged, admission: frame.trackingAdmission, source: frame.metadata,
+      let accepted = tracking.finish(staged, admission: frame.trackingAdmission, source: frame.metadata,
         mutualCoreCount: mutual, cancelled: Task.isCancelled) { motion = staged }
+      return accepted ? staged.tracker.snapshot : nil
     } catch { tracking.rejected(error) } // Tracking refusal never becomes a fabricated pose/camera failure.
+    return nil
   }
   private func trackFailure(_ frame: CameraSourceFrame) {
     guard let tracking, motion != nil, frame.trackingAdmission.requestID != nil else { return }
@@ -442,6 +478,7 @@ actor CameraCopySink: CameraFrameSink {
     updateTracking()
     workspace = nil
     detector = nil
+    segmenter = nil
     metrics?.workspace(bytes: 0)
   }
 }

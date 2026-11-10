@@ -195,7 +195,7 @@ struct AvatarIntegrationTests {
 
     private func playRound(withAvatars: Bool) async throws -> (RoundRecord, LaserScene, GameplayScenePresenter) {
         let script = try LaserReplayScript.load().freshRound(generation: UUID())
-        let session = GameSessionCoordinator(script: script)
+        let session = try LaserReplayDriver.makeSession(script: script)
         try await session.start()
         let scene = sceneWithDoor()
         if withAvatars {

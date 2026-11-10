@@ -44,6 +44,7 @@ nonisolated struct CameraCaptureStatistics: Sendable {
   let delivered: UInt64, admitted: UInt64, processed: UInt64, processingRejects: UInt64
   let sourceFPS: Double?, processingFPS: Double?, sourceSpanSeconds: Double?
   let workspaceBytes: Int, peakWorkspaceBytes: Int
+  let maskBytes: Int, peakMaskBytes: Int
   let ownedPixelBytes: Int, peakOwnedPixelBytes: Int
   let callback, copy, wait, processing, endToEnd: CameraLatencySummary
 }
@@ -56,14 +57,18 @@ nonisolated final class CameraCaptureMetrics: Sendable {
     var firstCapture: Double?, lastCapture: Double?, firstCompletion: Double?,
       lastCompletion: Double?
     var workspaceBytes = 0, peakWorkspaceBytes = 0
+    var maskBytes = 0, peakMaskBytes = 0
     var sourceBytes = 0, peakOwnedPixelBytes = 0
     #if DEBUG
       var previewBytes = 0
     #endif
     var ownedBytes: Int {
-      var count = sourceBytes + workspaceBytes
+      let (base, overflow) = sourceBytes.addingReportingOverflow(workspaceBytes)
+      let (total, maskOverflow) = base.addingReportingOverflow(maskBytes)
+      var count = overflow || maskOverflow ? Int.max : total
       #if DEBUG
-        count += previewBytes
+        let (combined, previewOverflow) = count.addingReportingOverflow(previewBytes)
+        count = previewOverflow ? Int.max : combined
       #endif
       return count
     }
@@ -75,12 +80,14 @@ nonisolated final class CameraCaptureMetrics: Sendable {
     state.withLock {
       // Old workspace must have quiesced before pipeline restart; never hide live resource usage.
       let retained = $0.workspaceBytes
+      let mask = $0.maskBytes
       let raw = $0.sourceBytes
       #if DEBUG
         let preview = $0.previewBytes
       #endif
       $0 = State(context: context)
       $0.workspaceBytes = retained
+      $0.maskBytes = mask; $0.peakMaskBytes = mask
       $0.sourceBytes = raw
       $0.peakWorkspaceBytes = retained
       #if DEBUG
@@ -137,6 +144,14 @@ nonisolated final class CameraCaptureMetrics: Sendable {
       $0.peakOwnedPixelBytes = max($0.peakOwnedPixelBytes, $0.ownedBytes)
     }
   }
+  /// App-visible native mask backing only; Vision's opaque model/scratch is not measurable here.
+  func maskOutputBytes(_ bytes: Int) {
+    state.withLock {
+      $0.maskBytes = max(0, bytes)
+      $0.peakMaskBytes = max($0.peakMaskBytes, $0.maskBytes)
+      $0.peakOwnedPixelBytes = max($0.peakOwnedPixelBytes, $0.ownedBytes)
+    }
+  }
   #if DEBUG
     func previewBytes(_ bytes: Int) {
       state.withLock {
@@ -160,6 +175,7 @@ nonisolated final class CameraCaptureMetrics: Sendable {
       sourceSpanSeconds: value.firstCapture.flatMap { first in value.lastCapture.map { $0 - first }
       },
       workspaceBytes: value.workspaceBytes, peakWorkspaceBytes: value.peakWorkspaceBytes,
+      maskBytes: value.maskBytes, peakMaskBytes: value.peakMaskBytes,
       ownedPixelBytes: value.ownedBytes,
       peakOwnedPixelBytes: value.peakOwnedPixelBytes,
       callback: value.callback.summary, copy: value.copy.summary, wait: value.wait.summary,

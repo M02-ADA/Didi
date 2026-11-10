@@ -152,7 +152,7 @@ struct LiveAvatarPresenterTests {
         let (scene, mailbox, source) = try await attached()
         mailbox.publish(source.status)
         let script = try LaserReplayScript.load().freshRound(generation: UUID())
-        let session = GameSessionCoordinator(script: script)
+        let session = try LaserReplayDriver.makeSession(script: script)
         try await session.start()
         try await session.advance(to: 5)
         let presenter = GameplayScenePresenter(scene: scene, configuration: script.configuration, encounters: script.encounters)
