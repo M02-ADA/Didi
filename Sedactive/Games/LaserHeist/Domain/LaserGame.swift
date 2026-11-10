@@ -82,6 +82,13 @@ nonisolated struct LaserGame: Sendable {
     private var actionWindows: [LaserTargetKey: (start: Double, end: Double)] = [:]
     private var trackedCoverage: [PlayerID: [ClosedRange<Double>]] = [:]
     private var withdrawnAttemptIDs: Set<UUID> = []
+    private var diamondPoints: Int?
+    private var diamondField = LaserDiamondField()
+    private var bonusDiamondsStarted = false
+
+    var diamonds: [UUID: LaserDiamondState] { diamondField.states }
+    var activeDiamonds: [LaserDiamondSpawn] { diamondField.active }
+    var diamondsCollected: Int { diamondField.collectedCount }
 
     /// Nil margin preserves evidence-only LH-09 usage. Supply round configuration to enable verdicts.
     init(timing: LaserEvidenceTiming, context: BodyInputContext, historyCapacityPerPlayer: Int,
@@ -103,6 +110,7 @@ nonisolated struct LaserGame: Sendable {
         vaultDuration = configuration.vaultDuration
         bonusDuration = configuration.diamondTimeDuration
         primaryPlayerID = configuration.primaryPlayerID
+        diamondPoints = configuration.diamondPoints
         for player in PlayerID.allCases {
             cueLeads[player] = configuration.scheduling?.players[player]?.cueLead ?? configuration.actionCueLead
         }
@@ -177,6 +185,8 @@ nonisolated struct LaserGame: Sendable {
         try finalize(at: time, inclusive: true)
         guard roundOutcome == nil else { return }
         prune()
+        let phaseEnd = min(bonusDeadline ?? time, vault.flatMap { $0.opened ? nil : $0.deadline } ?? time)
+        diamondField.advance(to: min(time, phaseEnd))
         if let vault, !vault.opened, time >= vault.deadline {
             emit(.coopGateFailed(gateID: vault.id), at: vault.deadline)
             consumedVaults.insert(vault.id)
@@ -256,6 +266,7 @@ nonisolated struct LaserGame: Sendable {
         try advance(to: time)
         try requireLaserValue(!blocked && !exited && roundOutcome == nil && roundPhase == .activity
             && !consumedVaults.contains(id) && (vault == nil || vault?.opened == true), "vault lifecycle")
+        try requireLaserValue(activeDiamonds.isEmpty, "normal diamonds must finish before vault")
         withdraw()
         vault = LaserVaultState(id: id, deadline: time + vaultDuration, buttons: [.player1: [], .player2: []])
         roundPhase = .vault
@@ -313,6 +324,54 @@ nonisolated struct LaserGame: Sendable {
         return activated
     }
 
+    /// Explicit synthetic/domain plans now; live placement/reach and E08 admission are pending.
+    mutating func spawnNormalDiamonds(_ spawns: [LaserDiamondSpawn], beforeVaultAt boundary: Double) throws {
+        try requireLaserValue(!blocked && !exited && roundOutcome == nil && roundPhase == .activity
+                              && diamondPoints != nil, "normal diamond lifecycle/configuration")
+        try diamondField.spawn(spawns, at: gameTime, before: boundary)
+    }
+
+    mutating func startDiamondTimeDiamonds(_ spawns: [LaserDiamondSpawn]) throws {
+        try requireLaserValue(!blocked && !exited && roundOutcome == nil && roundPhase == .diamondTime
+            && !bonusDiamondsStarted && diamondPoints != nil
+            && spawns.count == LaserRoundConfiguration.initialBonusDiamondCount
+            && bonusDeadline == gameTime + bonusDuration, "initial bonus diamond plan")
+        guard let bonusDeadline else { throw LaserDataError.invalidValue("missing bonus deadline") }
+        try diamondField.spawn(spawns, at: gameTime, before: bonusDeadline, maximumActive: 4)
+        bonusDiamondsStarted = true
+    }
+
+    /// Contact tracker output after producer/context admission, not raw wrist input.
+    /// Replacements are paired with accepted collections in stable target-ID order.
+    @discardableResult
+    mutating func collectDiamonds(_ contacts: [LaserContactActivation], generation: UUID,
+                                  calibrationRevisions: [PlayerID: UInt64], capturedAt: Double,
+                                  arrivedAt: Double, replacements: [LaserDiamondSpawn] = []) throws
+        -> [LaserContactActivation] {
+        guard !blocked && !exited && roundOutcome == nil && context.isActive,
+              generation == context.sessionGeneration, let diamondPoints else { return [] }
+        try requireLaserValue(capturedAt.isFinite && arrivedAt.isFinite && capturedAt >= 0
+                              && capturedAt <= arrivedAt && arrivedAt >= gameTime, "diamond contact timeline")
+        // Roll back plan errors, including score and phase state, as one domain operation.
+        var next = self
+        try next.advance(to: arrivedAt)
+        guard next.roundOutcome == nil, next.roundPhase != .vault else { self = next; return [] }
+        let eligible = contacts.filter {
+            if let revision = calibrationRevisions[$0.hand.playerID], revision > 0 {
+                return revision == context.calibrationRevisions[$0.hand.playerID]
+            }
+            return false
+        }
+        let accepted = try next.diamondField.collect(eligible, capturedAt: capturedAt, arrivedAt: arrivedAt,
+            replacements: replacements, bonusDeadline: next.roundPhase == .diamondTime ? next.bonusDeadline : nil)
+        let (points, multipliedOverflow) = diamondPoints.multipliedReportingOverflow(by: accepted.count)
+        let (score, scoreOverflow) = next.teamScore.addingReportingOverflow(points)
+        try requireLaserValue(!multipliedOverflow && !scoreOverflow, "diamond score overflow")
+        next.teamScore = score
+        self = next
+        return accepted
+    }
+
     private mutating func end(_ outcome: LaserRoundOutcome, at time: Double) {
         guard roundOutcome == nil else { return }
         roundOutcome = outcome
@@ -323,11 +382,13 @@ nonisolated struct LaserGame: Sendable {
                 outcome: outcome == .vaultFailed ? .timedOut : .interrupted, gameTime: time))
         }
         withdraw()
+        diamondField.advance(to: time)
+        diamondField.close()
         emit(.roundEnded(outcome), at: time)
         summary = RoundSummary(sessionGeneration: context.sessionGeneration, outcome: outcome,
             gameDuration: gameTime, activityDuration: activityProgress, remainingTeamHealth: teamHealth,
             teamScore: teamScore, targets: PlayerID.allCases.compactMap { playerStats[$0] },
-            diamondsCollected: 0, vaultsOpened: missionProgress, withdrawnAttempts: withdrawnAttemptIDs.count,
+            diamondsCollected: diamondsCollected, vaultsOpened: missionProgress, withdrawnAttempts: withdrawnAttemptIDs.count,
             playerResults: PlayerID.allCases.map { player in
                 LaserPlayerRoundResult(playerID: player, successfulHighAvoidances: avoidanceCounts[player]?[.duck] ?? 0,
                     successfulLowAvoidances: avoidanceCounts[player]?[.jump] ?? 0,

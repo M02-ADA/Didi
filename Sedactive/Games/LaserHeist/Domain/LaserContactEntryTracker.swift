@@ -73,10 +73,25 @@ nonisolated struct LaserContactEntryTracker: Sendable {
 
     /// New targets cannot consume an already processed frame. IDs are round-unique.
     mutating func replaceTargets(_ targets: [LaserContactTarget]) throws {
+        try validateNewTargets(targets)
+        opportunities.removeAll()
+        try addTargets(targets)
+    }
+
+    /// Replacements join surviving opportunities without erasing their entry history.
+    mutating func addTargets(_ targets: [LaserContactTarget]) throws {
+        try validateNewTargets(targets)
+        for target in targets { opportunities[target.id] = Opportunity(target: target) }
+        usedTargets.formUnion(targets.map(\.id))
+    }
+
+    mutating func removeTargets(_ ids: Set<UUID>) {
+        for id in ids { opportunities.removeValue(forKey: id) }
+    }
+
+    private func validateNewTargets(_ targets: [LaserContactTarget]) throws {
         try requireLaserValue(Set(targets.map(\.id)).count == targets.count
                               && targets.allSatisfy { !usedTargets.contains($0.id) }, "contact target identity")
-        opportunities = Dictionary(uniqueKeysWithValues: targets.map { ($0.id, Opportunity(target: $0)) })
-        usedTargets.formUnion(targets.map(\.id))
     }
 
     /// Pause/source loss/rebind/calibration/Stop/Retry revoke transient entry.

@@ -25,9 +25,12 @@ nonisolated struct LaserEvidenceTiming: Equatable, Sendable {
 
 nonisolated struct LaserRoundConfiguration: Equatable, Sendable {
     static let defaultDiamondTimeDuration = 10.0
+    /// Task-owner decisions, 10 November 2026. Placement/reach still need review.
+    static let approvedDiamondPoints = 25
+    static let initialBonusDiamondCount = 4
     let evidenceTiming: LaserEvidenceTiming
     let clearanceMargin: Double
-    /// Nil until the owner approves the diamond reward; never silently substitute a value.
+    /// Nil leaves diamond interaction unconfigured; never silently enable a spawn plan.
     let diamondPoints: Int?
     let scheduling: LaserSchedulingConfiguration?
     let initialTeamHealth = 5
