@@ -1,6 +1,19 @@
 # D07 — synthetic clearance evidence and review protocol
 
-10 November 2026 · Jevon review input · **PROPOSED — no production fairness acceptance or owner sign-off**
+10 November 2026 · Jevon review input · **Human judgment authority CONFIRMED; visual development direction recorded; production acceptance OPEN**
+
+## Follow-up confirmations supplied by Jevon
+
+Source: Kevin's D07 reply and Edo's subsequent D07 Tech Lead reply, forwarded by Jevon on 10 November 2026. These are scoped confirmations, not approval of every candidate in this report.
+
+| Subject | Recorded direction | Meaning for this branch |
+|---|---|---|
+| Human judgment authority | **CONFIRMED by Edo; Kevin agrees.** High requires crown and both wrists; low requires both soles and valid airborne evidence. Retain the existing checker, margins and timing; invalid evidence stays UNAVAILABLE. | Continue Jevon-owned regression fixtures. Avatar geometry, IK and visual scale never decide HIT/CLEAR. |
+| First visual investigation | Kevin recommended height-preserving fitting first. Edo's subsequent Tech Lead direction prioritizes fixed 1.6 m mascots with explicitly reviewed presentation mapping; compare height-preserving fitting if the fixed-size approach cannot resolve mismatches. | Follow the later Tech Lead development priority. Kevin still needs to acknowledge the investigation order; neither mapping is production-approved. |
+| Ownership | Kevin: rig, reach, retargeting and visual mapping. Edo: measurement validity, accepted calibration and source-correlated E07 evidence. Jevon: checker, timing and fairness fixtures. Theo: comprehension. | No renderer or producer changes are authorized by Jevon's test additions. Edo/Kevin coordinate D06 packet changes with no second CP1 gameplay reader. |
+| Capability and acceptance | Crown, independent soles and airborne remain experimental/unavailable. Keep the 33-case baseline, expand targeted cases, and derive tolerances from actual iPad measurements. | Synthetic integration may continue. No fake accepted measurements, invented tolerances or live fairness acceptance. |
+
+The recorded raised-wrist HIT/visual-CLEAR mismatches remain unresolved. Passing the baseline or the added authority tests cannot close D07.
 
 ## Evidence collected
 
@@ -41,11 +54,11 @@ Human margins use the authoritative band. Shown margins use the band actually dr
 
 The existing smoothing fixture reports human clearance at **0.633 s** and shown clearance at **0.650 s**, a **17 ms** difference, with synthetic 30 Hz input, 60 Hz render steps and the test's 30 ms smoothing setting. This is one deterministic logical-time sequence, not a device latency distribution or display-to-photon measurement.
 
-## Jevon recommendation for affected-owner review
+## Jevon follow-up within the confirmed direction
 
 Retain human crown/both-wrist and sole/valid-airborne authority and the current equality/margin rules. Do not close D07 by dropping required wrists, inferring airborne from visual feet, changing evidence windows or silently moving judged geometry.
 
-Before activating live avatar gameplay, resolve or explicitly review the recorded mismatch classes with Edo/Kevin/Theo. Compare a height-preserving visual fit alongside the fixed-size candidate. Address the raised-arm silhouette/feedback problem explicitly; a HIT badge alone is not evidence that players understand a visually clear arm. Finish the same-source calibrated motion/airborne handoff without an extra gameplay subscriber.
+Before activating live avatar gameplay, resolve or explicitly review the recorded mismatch classes with Edo/Kevin/Theo. Investigate the fixed-size candidate first under Edo's later direction; retain height-preserving fitting as the comparison if mismatches persist. Address the raised-arm silhouette/feedback problem explicitly; a HIT badge alone is not evidence that players understand a visually clear arm. Finish the same-source calibrated motion/airborne handoff without an extra gameplay subscriber.
 
 This recommendation changes no runtime settings. The drawn-band normalization remains a candidate; no production tolerance, smoothing allowance, Vision FPS requirement or rig policy is selected here.
 
@@ -65,7 +78,8 @@ Use bounded numeric diagnostics; do not retain identifiable camera recordings wi
 
 | Owner | Decision still needed | Status |
 |---|---|---|
-| Edo + Kevin + Jevon | Initial human-to-avatar mapping/fairness policy and the residual/temporal acceptance process | OPEN |
+| Kevin, following Edo's Tech Lead direction | Acknowledge fixed-size-first investigation order; compare height-preserving fitting if needed | Development direction recorded; Kevin acknowledgment pending |
+| Edo + Kevin + Jevon | Production human-to-avatar mapping/fairness policy and the residual/temporal acceptance process | OPEN |
 | Kevin + Theo, with Jevon | Size/arm silhouette and readable HIT/UNAVAILABLE feedback | OPEN |
 | Edo + Kevin, with Jevon | Exact-source calibrated movement/airborne capability and invalidation handoff | OPEN |
 
