@@ -89,6 +89,15 @@ nonisolated struct LaserContactEntryTracker: Sendable {
         for id in ids { opportunities.removeValue(forKey: id) }
     }
 
+    /// J07 may discard terminal reservations ONLY because LaserDiamondField already rejects
+    /// reused/out-of-order spawn IDs with its bounded high-water mark. Generic callers retain
+    /// the original removeTargets behavior. This keeps live history proportional to active targets.
+    mutating func retireDomainTargets(_ ids: Set<UUID>) {
+        removeTargets(ids)
+        usedTargets.subtract(ids)
+    }
+    var retainedTargetIdentityCount: Int { usedTargets.count }
+
     private func validateNewTargets(_ targets: [LaserContactTarget]) throws {
         try requireLaserValue(Set(targets.map(\.id)).count == targets.count
                               && targets.allSatisfy { !usedTargets.contains($0.id) }, "contact target identity")

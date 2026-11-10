@@ -77,7 +77,7 @@ nonisolated struct BodyInputConfiguration: Equatable, Sendable, Codable {
     }
 }
 
-nonisolated struct BodyInputCutover: Equatable, Sendable {
+nonisolated struct BodyInputCutover: Equatable, Sendable, Codable {
     let frameID: UInt64
     let capturedAt: Double
 }
@@ -90,6 +90,15 @@ nonisolated struct BodyInputContext: Equatable, Sendable {
     let cutovers: [PlayerID: BodyInputCutover]
     /// Source/context activity only, never permission to begin countdown/gameplay.
     let isActive: Bool
+    let wristContact: WristContactContextV1?
+
+    init(sessionGeneration: UUID, cameraGeometryRevision: UInt64,
+         calibrationRevisions: [PlayerID: UInt64], cutovers: [PlayerID: BodyInputCutover],
+         isActive: Bool, wristContact: WristContactContextV1? = nil) {
+        self.sessionGeneration = sessionGeneration; self.cameraGeometryRevision = cameraGeometryRevision
+        self.calibrationRevisions = calibrationRevisions; self.cutovers = cutovers
+        self.isActive = isActive; self.wristContact = wristContact
+    }
 
     func accepts(_ snapshot: BodySnapshot, playerID: PlayerID) -> Bool {
         guard isActive, snapshot.sessionGeneration == sessionGeneration,
