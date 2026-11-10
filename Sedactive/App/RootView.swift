@@ -10,18 +10,45 @@ import SwiftUI
 struct ContentView: View {
   private let dependencies = AppDependencies.shared
   @Environment(\.scenePhase) private var scenePhase
+  #if DEBUG
+  @State private var showingGameCamera = InGameCameraPreviewView.requested(ProcessInfo.processInfo.arguments)
+  #endif
   var body: some View {
     let flow = dependencies.inputFlow
     Group {
+      #if DEBUG
+      if LiveAvatarSmokeModel.requested(ProcessInfo.processInfo.arguments) {
+        LiveAvatarSmokeView(flow:flow,service:dependencies.bodyInput,bridge:dependencies.visionPoseBridge)
+      } else if showingGameCamera {
+        InGameCameraPreviewView(flow: flow, service: dependencies.bodyInput,
+          bridge: dependencies.visionPoseBridge, onExit: { showingGameCamera = false })
+      } else { routedContent(flow:flow) }
+      #else
+      routedContent(flow:flow)
+      #endif
+    }
+    .onChange(of: scenePhase) { _, phase in
+      if phase == .background { Task { await flow.handleBackground() } }
+    }
+  }
+  @ViewBuilder private func routedContent(flow: LaserInputFlow) -> some View {
       switch flow.route {
       case .selection:
         LaserInputSelectionView(flow: flow)
+          #if DEBUG
+          .safeAreaInset(edge: .bottom) {
+            Button("Real camera · game scene preview") { showingGameCamera = true }
+              .buttonStyle(.borderedProminent).disabled(!flow.canStartLive)
+              .accessibilityIdentifier("chooseInGameCamera").padding()
+          }
+          #endif
       case .replay:
-        PlayView(onExit: { flow.leaveReplay() })
+        replayView(flow: flow)
       case .liveSetup:
         if let session = flow.session, session.hasLiveRoundPlan {
           ZStack {
-            PlayView(onExit: { Task { await flow.closeLiveSetup() } }, liveSession: session,
+            PlayView(avatarSource: { try VisionK03MailboxPump(bridge: dependencies.visionPoseBridge, mailbox: $0) },
+                     onExit: { Task { await flow.closeLiveSetup() } }, liveSession: session,
                      onLiveRetry: { Task { await flow.retryLiveSetup() } })
             if session.phase != .running, session.summary == nil { PlayerSetupView(flow: flow) }
           }
@@ -37,11 +64,23 @@ struct ContentView: View {
         LaserInputSelectionView(flow: flow)
         #endif
       }
-    }
-    .onChange(of: scenePhase) { _, phase in
-      if phase == .background { Task { await flow.handleBackground() } }
-    }
   }
+  @ViewBuilder private func replayView(flow: LaserInputFlow) -> some View {
+    #if DEBUG
+    if ProcessInfo.processInfo.arguments.contains("--synthetic-gameplay-preview") {
+      PlayView(avatarSource: { try SyntheticGameplayAvatarPump(mailbox: $0) },
+        onExit: { flow.leaveReplay() })
+        .overlay(alignment: .bottomLeading) {
+          Text("SEEDED SYNTHETIC / REPLAY · no camera or live calibration")
+            .font(.caption2.monospaced()).padding(6).background(.black.opacity(0.7))
+            .foregroundStyle(.white).allowsHitTesting(false)
+        }
+    } else { PlayView(onExit: { flow.leaveReplay() }) }
+    #else
+    PlayView(onExit: { flow.leaveReplay() })
+    #endif
+  }
+
 }
 
 #Preview {
