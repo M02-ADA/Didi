@@ -42,27 +42,29 @@ nonisolated struct LaserFullReplayPlan: Sendable {
         }, approachLead: 0.5, passageDuration: 1)
         var steps: [Step] = [], encounters: [LaserEncounter] = [], records: [ReplayRecord] = []
         var frame: UInt64 = 0, diamondCount = 0
-        func packet(_ encounter: LaserEncounter, capturedAt: Double) throws -> BodySnapshot {
+        func packet(_ encounter: LaserEncounter, capturedAt: Double, standing: Bool = false) throws -> BodySnapshot {
             frame += 1
             var samples: [PlayerID: PlayerBodySample] = [:]
             for target in encounter.targets {
                 let calibration = base.configuration.calibrations[target.playerID]!
                 let height = calibration.mapping.gameY(imageY: calibration.standingCrownImageY,
                                                        layout: base.configuration.playerPlaneLayout)
-                let sole = target.requiredMove == .jump ? target.beam.upperY + config.clearanceMargin + height * 0.001 : 0
+                let sole = !standing && target.requiredMove == .jump ? target.beam.upperY + config.clearanceMargin + height * 0.001 : 0
                 func scalar(_ value: Double) throws -> EstimatedScalar { try EstimatedScalar(value: value, validity: .valid) }
-                let crown = target.requiredMove == .duck ? target.beam.lowerY - config.clearanceMargin - height * 0.01 : height + sole
-                let wrist = target.requiredMove == .duck ? target.beam.lowerY - config.clearanceMargin - height * 0.02 : height * 0.6 + sole
+                let crown = !standing && target.requiredMove == .duck ? target.beam.lowerY - config.clearanceMargin - height * 0.01 : height + sole
+                let wrist = !standing && target.requiredMove == .duck ? target.beam.lowerY - config.clearanceMargin - height * 0.02 : height * 0.6 + sole
                 samples[target.playerID] = try PlayerBodySample(playerID: target.playerID,
                     calibrationRevision: target.calibrationRevision, trackingStatus: .reliable,
                     geometry: BodyGeometry(crownY: scalar(crown), leftWristY: scalar(wrist), rightWristY: scalar(wrist),
                         leftSoleY: scalar(sole), rightSoleY: scalar(sole),
                         centerX: scalar(base.configuration.playerPlaneLayout.centerX(for: target.playerID))),
-                    jumpState: JumpState(phase: target.requiredMove == .jump ? .airborne : .grounded, validity: .valid))
+                    jumpState: JumpState(phase: !standing && target.requiredMove == .jump ? .airborne : .grounded, validity: .valid))
             }
             return BodySnapshot(sessionGeneration: base.configuration.sessionGeneration, frameID: frame,
                 capturedAt: capturedAt, cameraGeometryRevision: base.cameraGeometryRevision, players: samples)
         }
+        records.append(ReplayRecord(deliveredAt: 0.02,
+            snapshot: try packet(wave.encounters[0], capturedAt: 0.01, standing: true)))
         for minute in 0..<5 {
             let offset = Double(minute) * 1.2
             let start = Double(minute * 60) + offset, boundary = start + 60
@@ -77,6 +79,9 @@ nonisolated struct LaserFullReplayPlan: Sendable {
                 steps.append(Step(time: targets[0].warningTime, action: .register(encounter.id)))
                 records.append(ReplayRecord(deliveredAt: targets[0].crossingTime + 0.05,
                     snapshot: try packet(encounter, capturedAt: targets[0].crossingTime)))
+                // Return to neutral outside the judgment window; never hold a synthetic jump for the next five seconds.
+                records.append(ReplayRecord(deliveredAt: targets[0].crossingTime + 0.65,
+                    snapshot: try packet(encounter, capturedAt: targets[0].crossingTime + 0.6, standing: true)))
             }
             let diamonds = try planner.normalMinute(minute, from: start, until: boundary)
             diamondCount += diamonds.count

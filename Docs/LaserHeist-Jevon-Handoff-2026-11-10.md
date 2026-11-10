@@ -23,11 +23,11 @@ The agreed behavior is now implemented/tested in Jevon's domain area:
 3. Deterministic same-frame batches: representative tie order **P1 left → P1 right → P2 left → P2 right**, stable target-ID order; no personal-score implication. Vault applies all buttons before one completion transition; diamond terminal states precede replacements.
 4. Normal passage/miss and persistent Diamond Time targets, collection replacements and summary accounting. Product choices confirmed by Jevon: **25 team points, four initial bonus diamonds, persistent bonus targets until collection or phase end; permanent misses for normal diamonds**. The cap limits concurrent active diamonds, not total collections.
 
-The combined domain replay fixture completes 50 laser targets/player, 30 normal diamonds, five contact-driven vaults and eight bonus collections with **10,950 points / 38 diamonds / full health**. Its one ReplayBodyInput consumer and GameClock are real; contact membership is explicitly synthetic test input, not E08 or a proposed wire format. Default interactive replay presentation has not been extended to render these diamond plans.
+The combined domain replay fixture completes 50 laser targets/player, 30 normal diamonds, five contact-driven vaults and eight bonus collections with **10,950 points / 38 diamonds / full health**. Its one ReplayBodyInput consumer and GameClock are real; contact membership is explicitly synthetic test input, not E08 or a proposed wire format. The default app Replay now executes a seeded full plan through GameSessionCoordinator. Diamond Time uses the existing source hook with real domain states/counts; normal diamond trajectory visuals still need K06 integration. The earlier fixed-count fixture remains a separate regression, not the default script.
 
 For J07, Edo still needs to provide the exact producer-owned attachment and atomic source/epoch/control/binding/calibration acceptance rules, including absent-attachment/old-replay behavior. The domain tracker intentionally consumes classified membership only. The session adapter must validate actual E08 provenance, use original capture conversion/current arrival time, invalidate entry on all lifecycle cutovers, stage tracker/game mutations together and process each source frame once before any replacements. No latest-pose join or second CP1 subscriber is permitted.
 
-For Kevin/Theo/Edo joint review, production zone radius/placement/separation, comfortable reach, coordinate mapping, approach/interaction trajectory and the read-only rendering/event handoff remain open. The fixed numeric circles and placement schedules used in tests are not production defaults. No GameEvent schema or renderer code changed.
+For Kevin/Theo/Edo joint review, production zone radius/placement/separation, comfortable reach, coordinate mapping, approach/interaction trajectory and the read-only rendering/event handoff remain open. The fixed numeric circles and placement schedules used in tests are not production defaults. No GameEvent schema or Kevin-owned Rendering file changed. The existing Diamond Time source hook is wired by Jevon’s frame adapter for complete replay only; Kevin reviews adoption and normal-diamond presentation.
 
 ## J03 — latest session/readiness status
 
@@ -41,7 +41,7 @@ For Kevin/Theo/Edo joint review, production zone radius/placement/separation, co
 
 **Default app behavior remains setup-only for live:** its factory supplies no reviewed round plan, live timing policy or recovery plan. Real crown/sole/airborne acceptance, physical calibration and measured fairness remain gates. The conditional live loop passing with controlled inputs does not establish production camera gameplay.
 
-Verification: the latest full regression passed **653 Swift Testing definitions in 70 suites**, **three UI smoke cases**, and Debug/Release Simulator builds. Targeted D09 runs passed 43 definitions in six suites and eight combined/legacy replay definitions in two suites. Logs and limitations are recorded in [the consumer checkpoint record](LaserHeist-Replay-Slice.md). Existing framework/concurrency/Simulator graphics warnings remain. No physical-device validation is claimed.
+Verification: the latest full regression passed **663 Swift Testing definitions in 72 suites** and **three UI smoke cases**, including verification of five vaults on the default app Replay route. Release build results are in the checkpoint record. Targeted D09 runs passed 43 definitions in six suites and eight combined/legacy replay definitions in two suites. Logs and limitations are recorded in [the consumer checkpoint record](LaserHeist-Replay-Slice.md). Existing framework/concurrency/Simulator graphics warnings remain. No physical-device validation is claimed.
 
 ## Implementation boundary for the next handoff
 
@@ -50,6 +50,14 @@ Verification: the latest full regression passed **653 Swift Testing definitions 
 | Edo | Define the exact CP1 producer/replay surface and acceptance mechanism; agree coordinate mapping; continue genuine anatomy/calibration and E08 validation. Approved D09 behavior need not be reapproved. |
 | Kevin | Acknowledge D07 investigation priority; address rig mismatches; review zones/trajectories and the diamond presentation/state/event handoff. |
 | Theo | Review entry behavior, comfortable target reach/size and visual HIT/UNAVAILABLE comprehension. |
-| Jevon | Plug in Edo's frozen E08 surface when available, then complete J07 and the interactive full replay/live flow with reviewed placement/presentation. Preserve current controlled-input gates. |
+| Jevon | Plug in Edo's frozen E08 surface for J07/live full flow, and coordinate normal-diamond visual adoption with Kevin. The complete replay plan already runs through the production coordinator and default app route. Preserve controlled-input and physical acceptance gates. |
 
 No message was sent, no branch was pushed and no PR was created for this handoff.
+
+## J05/J06 latest implementation handoff
+
+`LaserDiamondPlanner` accepts a seed plus an explicit placement catalog/normal approach and passage timing. Normal per-minute team counts follow the confirmed ranges; bonus targets/replacements are immediate and persistent until phase end. Placement/reach/mapping parameters in the replay are synthetic. Production catalogs still need joint approval.
+
+Domain diamond IDs must increase monotonically within a round; the planner generates them. The field stores active targets plus 64 retired diagnostics and one high-water mark, retaining actual cumulative counts after pruning. A stress fixture collects 800 bonus diamonds while keeping four active and at most 68 field records. Generic contact reservations and future live event/presentation retention remain J07/K06 integration concerns.
+
+`LaserReplayScript.complete(seed:)`, `LaserFullReplayPlan` and the existing driver merge CP1 packet deliveries and synthetic game actions chronologically, including across large frame jumps. Encounters register at warning time, avoiding future-minute withdrawal at vault entry. The app defaults to the full script; `-replaySlice` retains the original small demo and `-diamondFixture` retains the DEBUG visual fixture. No camera activation or producer-schema extension is involved.

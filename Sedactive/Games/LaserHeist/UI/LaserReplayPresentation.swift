@@ -33,6 +33,27 @@ final class LaserReplayPresentation {
         #endif
         presenter = GameplayScenePresenter(scene: scene, configuration: configuration,
                                            encounters: session.encounters, showsDebugMarkers: markers)
+        if session.isCompleteReplay {
+            // Existing K06 source hook. Domain decides presence/collection; this adapter only maps display values.
+            let layout = session.inputConfiguration.playerPlaneLayout
+            presenter?.diamondTime.source = { [weak session] _ in
+                guard let session else { return [] }
+                return session.diamondStates.values.compactMap { state in
+                    guard case .diamondTime = state.lifetime,
+                          let lane = PlayerID.allCases.first(where: { state.spawn.eligiblePlayers.contains($0) }),
+                          let id = Int(state.spawn.id.uuidString.suffix(12), radix: 16) else { return nil }
+                    let collected: Bool
+                    switch state.outcome {
+                    case .collected: collected = true
+                    case nil: collected = false
+                    default: return nil
+                    }
+                    return DiamondTimeDiamond(id: id, lane: lane,
+                        offsetX: Float(state.spawn.position.x - layout.centerX(for: lane)),
+                        heightAboveFloor: Float(state.spawn.position.y), collected: collected)
+                }.sorted { $0.id < $1.id }
+            }
+        }
         subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self, weak scene] event in
             guard let self, let scene, self.session === session, self.subscription != nil else { return }
             if !session.isReplay {

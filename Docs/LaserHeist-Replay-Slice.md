@@ -2,7 +2,7 @@
 
 Implemented 3 November 2026 by Jevon. The user explicitly authorized PlayView integration in Kevin's area; renderer artwork/scene and Edo's Shared input implementation are unchanged. Kevin/Edo review is still required for production handoff.
 
-Latest 10 November checkpoint: D09 v1 behavior and diamond product choices are approved, synthetic contact/diamond domain paths and a combined full-round fixture are implemented, and the final regression below passed. The shipped replay presentation described first remains the smaller slice; no E08/live or diamond rendering activation is implied.
+Latest 10 November checkpoint: default Replay now runs the complete seeded plan through the production coordinator, with five vaults and domain-backed Diamond Time presentation/counts. The smaller slice described first is retained for regressions and `-replaySlice`. Normal diamond trajectory presentation remains K06 work; E08/live activation and production geometry/fairness acceptance are unchanged. See the latest J05/J06 checkpoints below.
 
 ## What runs
 
@@ -172,3 +172,11 @@ The diamond field retains active targets plus at most 64 terminal diagnostics. O
 Replay now merges packet delivery and domain actions chronologically, receiving packets before equal-time actions. Full-round encounters register at their warning time, so vault entry cannot withdraw future minutes. Entry tracker, game and replacement planner commit as one staged action. Synthetic contact membership stays exclusively in the replay driver, with one hand assigned to at most one bonus target in a batch; CP1 stays unchanged. The coordinator exposes read-only diamond state/count for K06.
 
 Focused tests compare fine steps against one large advance, including selected source frames, ordered events, score/summary and diamond states; they also cover abort/fresh-generation Retry and four persistent targets at second 315. The replay's game time is 316 seconds, activity progression 310. Position/timing catalogs are explicitly synthetic, not production reach/mapping approval. The renderer/diamond event adoption remains Kevin's review boundary.
+
+### Default app Replay and verification — 10 November 2026
+
+PlayView's normal Replay route now uses the complete plan (seed 1), preserving the short slice with `-replaySlice` and the existing DEBUG `-diamondFixture` preview. The same retained session/Retry route supplies fresh generations. Neutral synthetic poses follow judged captures outside their evidence window, so a demo jump is not held until the next obstacle.
+
+The existing `DiamondTimePresentation.source` hook receives read-only bonus states via Jevon's `LaserReplayPresentation` adapter: stable IDs, lane-relative display positions and committed collected status. The HUD uses the actual domain total. Kevin's Rendering files, GameEvent schema, CP1 and live App composition are untouched. Normal diamond approach/passage visuals still require Kevin's K06 adapter; automatic normal pickups in this explicitly synthetic replay are domain commands, not detected player contact.
+
+**663 Swift Testing definitions in 72 suites and three XCUITest smoke cases passed** (`/private/tmp/sedactive-j06-final-regression.log`). The UI case explicitly verifies five vault checkpoints on the normal Replay route, then returns to selection; repeated End/Results/Retry and unavailable-camera Retry still pass. Twenty focused coordinator/slice/lifecycle definitions also passed (`/private/tmp/sedactive-j06-coordinator.log`). This is Simulator software/UI verification, not physical motion, fairness, comfort or E08 acceptance.

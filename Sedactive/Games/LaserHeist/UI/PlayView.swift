@@ -182,7 +182,12 @@ private struct ReplayRoundView: View {
             #endif
             do {
                 guard !Task.isCancelled else { return }
-                let script = try LaserReplayScript.load().freshRound(generation: generation)
+                var useSlice = ProcessInfo.processInfo.arguments.contains("-replaySlice")
+                #if DEBUG
+                useSlice = useSlice || DiamondTimeFixture.isRequested
+                #endif
+                let base = try useSlice ? LaserReplayScript.load() : LaserReplayScript.complete()
+                let script = try base.freshRound(generation: generation)
                 #if DEBUG
                 // The Lemon (P1) and Tangerine (P2) mascots stand in place of the pictograms in the
                 // replay round, driven by its body snapshots through the gameplay presenter (the
@@ -324,7 +329,7 @@ private struct ReplayRoundView: View {
     /// The HUD's view of the session's authoritative state and events.
     private func hudModel(_ session: GameSessionCoordinator) -> GameplayHUDModel? {
         guard let configuration = session.configuration else { return nil }
-        var collected: Int?
+        var collected: Int? = session.isCompleteReplay ? session.diamondsCollected : nil
         var fixture = false
         #if DEBUG
         // `-diamondFixture`: the labelled synthetic Diamond Time (J05 pending), counted

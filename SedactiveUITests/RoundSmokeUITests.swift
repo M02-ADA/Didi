@@ -49,6 +49,9 @@ final class RoundSmokeUITests: XCTestCase {
         XCTAssertFalse(app.buttons["endRound"].exists)
         replay.tap()
         XCTAssertTrue(app.buttons["endRound"].waitForExistence(timeout: timeout))
+        let fullRoundProgress = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Vaults opened 0 of 5")).firstMatch
+        XCTAssertTrue(fullRoundProgress.waitForExistence(timeout: timeout), "Replay must use the full five-vault plan")
         let back = app.buttons["leaveReplay"]
         XCTAssertTrue(back.waitForExistence(timeout: timeout))
         back.tap()
