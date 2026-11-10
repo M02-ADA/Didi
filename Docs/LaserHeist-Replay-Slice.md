@@ -116,3 +116,11 @@ Edo's forwarded Tech Lead reply confirms existing human-measurement judgment aut
 Four new domain test definitions exercise 64 parameterized unequal-height/player/hand/foot cases and selected-frame authority. **45 test definitions in five focused suites passed** on the iPad Simulator, including the unchanged 33-case-per-mode rendered baseline and live pause/recovery regressions. This targeted run does not replace the earlier full 617-test / three-UI-case checkpoint or imply a new full run. Existing framework/concurrency warnings remain.
 
 Publication follows the team's branch/PR policy. Checkpoint commits and passing software tests do not imply physical acceptance or issue-board closure. Project/signing settings are unchanged by these consumer checkpoints; tool-generated cosmetic whitespace is excluded.
+
+### D09 v1 / J04 synthetic contact checkpoint — 10 November 2026
+
+Edo's subsequent approval permits J04/J05 synthetic fixtures while exact CP1 fields and coordinate mapping remain pending. Jevon's `LaserContactEntryTracker` consumes domain membership rather than a substitute producer measurement contract. Simultaneous entrants use P1 left/right then P2 left/right as the representative; each target commits once, with stable target ordering. Old/out-of-order captures, invalid/missing wrists, stale continuity, deadline equality, held poses and revoked lifetimes cannot create an entry.
+
+`LaserGame.touchVaultBatch` now applies all admitted same-frame button commands before evaluating one vault transition. The old single verified-contact API delegates to it, preserving replay behavior. Test-only circles exercise exact boundary entry, independent hands/players, simultaneous completion, pause retaining committed progress with fresh outside baselines, duplicate commands and deadline closure. These are synthetic circles, not reviewed production reach/mapping dimensions.
+
+**42 test definitions in four focused suites passed** on the iPad Simulator: contact entry, synthetic vault, existing domain and live-loop tests (`/private/tmp/sedactive-d09-vault.log`). No shared producer API, renderer, live admission adapter or physical behavior changed. J04's synthetic rule path is covered; J07/E08 remains pending, so this does not close live vault delivery.

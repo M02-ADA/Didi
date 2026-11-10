@@ -267,13 +267,33 @@ nonisolated struct LaserGame: Sendable {
     mutating func touchVault(id: UUID, playerID: PlayerID, button: LaserVaultButton,
                              validity: EvidenceValidity, generation: UUID, calibrationRevision: UInt64,
                              at time: Double) throws -> Bool {
-        guard !blocked && !exited && roundOutcome == nil, validity == .valid,
-              generation == context.sessionGeneration, context.calibrationRevisions[playerID] == calibrationRevision,
-              context.isActive, vault?.id == id, vault?.opened == false else { return false }
+        guard validity == .valid else { return false }
+        return try touchVaultBatch(id: id,
+            contacts: [LaserVaultContact(playerID: playerID, button: button, calibrationRevision: calibrationRevision)],
+            generation: generation, at: time) > 0
+    }
+
+    /// Apply one admitted same-frame batch, then transition once. Input/entry and
+    /// capture/arrival eligibility are checked before these verified commands.
+    @discardableResult
+    mutating func touchVaultBatch(id: UUID, contacts: [LaserVaultContact], generation: UUID,
+                                  at time: Double) throws -> Int {
+        guard !blocked && !exited && roundOutcome == nil, generation == context.sessionGeneration,
+              context.isActive, vault?.id == id, vault?.opened == false else { return 0 }
+        let eligible = Set(contacts.filter { context.calibrationRevisions[$0.playerID] == $0.calibrationRevision })
+        guard !eligible.isEmpty else { return 0 }
         try advance(to: time) // At the exact deadline, timeout wins.
-        guard roundOutcome == nil, var current = vault else { return false }
-        guard current.buttons[playerID, default: []].insert(button).inserted else { return false }
+        guard roundOutcome == nil, var current = vault else { return 0 }
+        var activated = 0
+        for player in PlayerID.allCases {
+            for button in LaserVaultButton.allCases where eligible.contains(where: {
+                $0.playerID == player && $0.button == button
+            }) {
+                if current.buttons[player, default: []].insert(button).inserted { activated += 1 }
+            }
+        }
         vault = current
+        guard activated > 0 else { return 0 }
         let verdicts = Dictionary(uniqueKeysWithValues: PlayerID.allCases.map {
             ($0, current.buttons[$0]?.count == 3 ? Judgement.clear : .pending(.awaitingFinalization))
         })
@@ -290,7 +310,7 @@ nonisolated struct LaserGame: Sendable {
             } else { roundPhase = .activity }
             emit(.phaseChanged(roundPhase), at: time)
         }
-        return true
+        return activated
     }
 
     private mutating func end(_ outcome: LaserRoundOutcome, at time: Double) {
