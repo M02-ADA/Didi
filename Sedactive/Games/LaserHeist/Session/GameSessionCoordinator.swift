@@ -21,6 +21,9 @@ final class GameSessionCoordinator {
     let inputConfiguration: BodyInputConfiguration
     let setup: LaserSessionSetup?
     var isReplay: Bool { replayDriver != nil }
+    #if DEBUG
+    var isDebugWristPreview: Bool { replayDriver?.isWristDiamondPreview == true }
+    #endif
     var isCompleteReplay: Bool { replayDriver?.script.fullRound != nil }
     /// Read-only domain state for the separately reviewed K06 rendering handoff.
     var diamondStates: [UUID: LaserDiamondState] { game?.diamonds ?? [:] }
@@ -65,11 +68,14 @@ final class GameSessionCoordinator {
     private let recoveryPlanner: (@MainActor (LaserLiveRecoveryRequest) throws -> [LaserEncounter]?)?
     private var liveTerminationTask: Task<Void, Never>?
     private var liveFrameAttachment: LaserLiveFrameAttachment?
+    private let wristDiamondConfiguration: LaserWristDiamondConfiguration?
+    private var wristDiamonds: LaserWristDiamondConsumer?
 
     init(provider: any BodyInputProviding, inputConfiguration: BodyInputConfiguration,
          configuration: LaserRoundConfiguration? = nil, encounters: [LaserEncounter] = [],
          replayDriver: LaserReplayDriver? = nil, setupControls: (any LaserSetupControlling)? = nil,
          liveTimingPolicy: LaserLiveTimingPolicy? = nil,
+         wristDiamondConfiguration: LaserWristDiamondConfiguration? = nil,
          hostNow: @escaping @MainActor () -> Double = CameraHostClock.now,
          recoveryPlanner: (@MainActor (LaserLiveRecoveryRequest) throws -> [LaserEncounter]?)? = nil) {
         precondition(replayDriver == nil || replayDriver?.provider === provider,
@@ -81,6 +87,16 @@ final class GameSessionCoordinator {
         self.replayDriver = replayDriver
         self.hostNow = hostNow
         self.recoveryPlanner = recoveryPlanner
+        #if DEBUG
+        precondition(wristDiamondConfiguration == nil || replayDriver == nil || replayDriver?.isWristDiamondPreview == true,
+                     "Only the explicit DEBUG E08 fixture may replace scripted diamond contacts")
+        #else
+        precondition(wristDiamondConfiguration == nil || replayDriver == nil,
+                     "Legacy replay membership and J07 must not both drive diamonds")
+        #endif
+        precondition(wristDiamondConfiguration.map { $0.layout == inputConfiguration.playerPlaneLayout } ?? true,
+                     "Diamond zones must use the accepted CP1 player plane")
+        self.wristDiamondConfiguration = wristDiamondConfiguration
         liveReadiness = replayDriver == nil ? LaserLiveReadiness(policy: liveTimingPolicy) : nil
         precondition(setupControls == nil || (replayDriver == nil && setupControls?.provider === provider),
                      "Setup must control the injected live provider")
@@ -140,6 +156,10 @@ final class GameSessionCoordinator {
                 iterator = stream.makeAsyncIterator()
                 clock = try GameClock(sourceTime: 0)
                 game = engine
+                if let plan = wristDiamondConfiguration {
+                    wristDiamonds = try LaserWristDiamondConsumer(configuration:plan,context:context,
+                        lifetime:token,afterCapturedAt:0)
+                }
                 phase = .running
                 refresh(at: 0)
             } else {
@@ -181,6 +201,7 @@ final class GameSessionCoordinator {
         defer { advancing = false }
         guard var clock, var game, var iterator, let token = lifetime else { return }
         let revision = inputRevision
+        var stagedWrist = wristDiamonds
         let time = min(sourceTime, replayDriver.script.duration)
         try requireLaserValue(time.isFinite && time >= clock.gameTime, "replay frame time")
         while game.roundOutcome == nil {
@@ -189,6 +210,9 @@ final class GameSessionCoordinator {
             guard delivery != nil || action != nil else { break }
             if let action, delivery == nil || action < delivery! {
                 try replayDriver.applyNextAction(clock: &clock, game: &game)
+                if let context = provider.currentContext {
+                    try stagedWrist?.refresh(game:game,context:context,atHostTime:action)
+                }
                 continue
             }
             guard let deliveryTime = delivery else { break }
@@ -210,13 +234,22 @@ final class GameSessionCoordinator {
                 throw LaserDataError.invalidValue("unmapped replay capture")
             }
             try game.receive(packet, capturedGameTime: captured, arrivedAt: clock.gameTime)
+            if let context = provider.currentContext {
+                try stagedWrist?.receive(packet,context:context,atHostTime:deliveryTime,
+                    capturedGameTime:captured,arrivedGameTime:clock.gameTime,game:&game)
+            }
             latestSnapshot = packet
             if game.roundOutcome != nil { break }
         }
         try clock.advance(to: time)
         try replayDriver.recordCoverage(through: time, game: &game)
         try game.advance(to: clock.gameTime)
+        if let context = provider.currentContext {
+            try stagedWrist?.refresh(game:game,context:context,atHostTime:time)
+        }
+        guard lifetime == token, inputRevision == revision, provider.currentContext == inputContext else { return }
         events.append(contentsOf: game.drainEvents())
+        self.wristDiamonds = stagedWrist
         self.clock = clock
         self.game = game
         self.iterator = iterator
@@ -232,6 +265,7 @@ final class GameSessionCoordinator {
 
     func stop(reason: LaserRoundOutcome = .aborted) async {
         let hadLifetime = lifetime != nil
+        wristDiamonds = nil
         lifetime = nil
         phase = .finished
         liveFrameAttachment = nil
@@ -273,6 +307,7 @@ final class GameSessionCoordinator {
         let context = provider.currentContext
         let status = provider.status
         if inputContext != context || inputStatus != status {
+            wristDiamonds?.invalidate(atHostTime: replayDriver?.provider.now ?? hostNow())
             if inputRevision < .max { inputRevision += 1 }
             latestSnapshot = nil
             if isReplay, phase == .running {
@@ -369,6 +404,33 @@ final class GameSessionCoordinator {
         collectLiveState()
     }
 
+    /// Existing round-plan owner supplies domain spawns; never infer a live reach/radius.
+    func spawnLiveDiamonds(_ spawns: [LaserDiamondSpawn], beforeVaultAt boundary: Double) throws {
+        advanceLive()
+        guard !isReplay, phase == .running, wristDiamondConfiguration != nil,
+              var stagedGame = game, let context = inputContext, provider.currentContext == context else {
+            throw LaserDataError.invalidValue("missing running diamond plan/context")
+        }
+        var stagedWrist = wristDiamonds
+        try stagedGame.spawnNormalDiamonds(spawns, beforeVaultAt: boundary)
+        try stagedWrist?.refresh(game: stagedGame, context: context, atHostTime: hostNow())
+        guard provider.currentContext == context else { return }
+        game = stagedGame; wristDiamonds = stagedWrist; collectLiveState()
+    }
+
+    func startLiveDiamondTimeDiamonds(_ spawns: [LaserDiamondSpawn]) throws {
+        advanceLive()
+        guard !isReplay, phase == .running, wristDiamondConfiguration != nil,
+              var stagedGame = game, let context = inputContext, provider.currentContext == context else {
+            throw LaserDataError.invalidValue("missing running bonus diamond plan/context")
+        }
+        var stagedWrist = wristDiamonds
+        try stagedGame.startDiamondTimeDiamonds(spawns)
+        try stagedWrist?.refresh(game: stagedGame, context: context, atHostTime: hostNow())
+        guard provider.currentContext == context else { return }
+        game = stagedGame; wristDiamonds = stagedWrist; collectLiveState()
+    }
+
     func continueLiveRound() {
         guard !isReplay, phase == .paused, lifetime != nil else { return }
         do { try liveReadiness?.setManualPause(false, at: hostNow()) }
@@ -447,12 +509,24 @@ final class GameSessionCoordinator {
                     game = resumed
                     withdrawnLiveEncounters = []; approvedRecovery = nil; recoveryAttempted = false
                 }
+                if phase != .running, let plan = wristDiamondConfiguration, let token = lifetime {
+                    wristDiamonds = try LaserWristDiamondConsumer(configuration: plan, context: context,
+                        lifetime: token, afterCapturedAt: hostNow())
+                }
                 phase = .running
                 // Receive before inclusive advance: equal-deadline arrivals remain eligible.
+                var stagedGame = game!, stagedWrist = wristDiamonds
+                let revision = inputRevision
                 if let packet, let captured = liveReadiness?.capturedGameTime(for: packet) {
-                    try game?.receive(packet, capturedGameTime: captured, arrivedAt: readiness.gameTime)
+                    try stagedGame.receive(packet, capturedGameTime: captured, arrivedAt: readiness.gameTime)
+                    try stagedWrist?.receive(packet, context: context, atHostTime: hostNow(),
+                        capturedGameTime: captured, arrivedGameTime: readiness.gameTime, game: &stagedGame)
                 }
-                try game?.advance(to: readiness.gameTime)
+                try stagedGame.advance(to: readiness.gameTime)
+                try stagedWrist?.refresh(game: stagedGame, context: context, atHostTime: hostNow())
+                // No suspension/callback between this producer recheck and staged assignment.
+                guard lifetime != nil, inputRevision == revision, provider.currentContext == context else { return }
+                game = stagedGame; wristDiamonds = stagedWrist
                 collectLiveState()
                 if summary != nil { phase = .finished; finishLiveInput(); return }
                 if encounters.contains(where: { encounter in
@@ -481,6 +555,7 @@ final class GameSessionCoordinator {
 
     private func pauseLiveGame(at time: Double) throws {
         if phase != .paused {
+            wristDiamonds?.invalidate(atHostTime: hostNow())
             if game?.isPaused != true {
                 withdrawnLiveEncounters = encounters.filter { encounter in
                     !encounter.targets.allSatisfy { target in
@@ -505,6 +580,7 @@ final class GameSessionCoordinator {
 
     private func finishLiveInput() {
         guard liveTerminationTask == nil else { return }
+        wristDiamonds = nil
         lifetime = nil
         liveFrameAttachment = nil
         liveFrameHostReady = false

@@ -16,6 +16,9 @@ final class LaserReplayPresentation {
     private var busy = false
     private var presenter: GameplayScenePresenter?
     private var liveAttachment: LaserLiveFrameAttachment?
+    #if DEBUG
+    var debugDiamondReadout: DebugDiamondVisualReadout?
+    #endif
 
     func start(on content: RealityViewCameraContent, scene: LaserScene,
                session: GameSessionCoordinator) {
@@ -76,6 +79,12 @@ final class LaserReplayPresentation {
                 return
             }
             guard session.phase == .running else { return }
+            #if DEBUG
+            if session.isDebugWristPreview {
+                self.render(scene:scene,session:session) // user advances original fixture time; no extra clock
+                return
+            }
+            #endif
             let elapsed = self.frameClock.frame(deltaTime: event.deltaTime)
             guard !self.busy else { return }
             self.busy = true
@@ -99,6 +108,9 @@ final class LaserReplayPresentation {
         presenter?.stop()
         presenter = nil
         session = nil
+        #if DEBUG
+        debugDiamondReadout?.clear()
+        #endif
     }
 
     private func render(scene: LaserScene, session: GameSessionCoordinator) {
@@ -106,6 +118,14 @@ final class LaserReplayPresentation {
         presenter?.apply(state: state, events: session.events, snapshot: session.latestSnapshot,
                          upcomingVaultIn: session.isCompleteReplay
                             ? Self.upcomingVaultIn(state: state, activityDuration: session.activityDuration) : nil)
+        #if DEBUG
+        if let presenter {
+            debugDiamondReadout?.record(normal:presenter.normalDiamonds.shownIDs,
+                bonus:presenter.diamondTime.floatingIDs,
+                collections:presenter.normalDiamonds.collections + presenter.diamondTime.collections,
+                generation:state.sessionGeneration)
+        }
+        #endif
     }
 
     /// The domain's normal (passage) diamonds in display terms: lane from the

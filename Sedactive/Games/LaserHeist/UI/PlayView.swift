@@ -51,6 +51,7 @@ private struct ReplayRoundView: View {
     /// The per-frame host-clock tick: live cutout expiry and live avatars.
     @State private var frameRefresh: EventSubscription?
     #if DEBUG
+    @State private var diamondReadout = DebugDiamondVisualReadout()
     @State private var preview = LaserApproachPreview()
     @State private var environmentPreview = EnvironmentPreview()
     @State private var cutoutFeed: SyntheticCutoutFeed?
@@ -182,6 +183,19 @@ private struct ReplayRoundView: View {
             #endif
             do {
                 guard !Task.isCancelled else { return }
+                #if DEBUG
+                if DebugWristDiamondControls.requested(ProcessInfo.processInfo.arguments) {
+                    let fixture = try DebugWristDiamondFixture.make(generation:generation)
+                    let replay = try fixture.makeSession()
+                    session = replay
+                    try await replay.start()
+                    guard !Task.isCancelled else { await replay.stop();return }
+                    try await replay.advance(to:0.25) // active target, no outside/inside wrist delivered yet
+                    presentation.debugDiamondReadout = diamondReadout
+                    presentation.start(on:content,scene:scene,session:replay)
+                    return
+                }
+                #endif
                 var useSlice = ProcessInfo.processInfo.arguments.contains("-replaySlice")
                 #if DEBUG
                 useSlice = useSlice || DiamondTimeFixture.isRequested
@@ -263,6 +277,13 @@ private struct ReplayRoundView: View {
                         .background(.black.opacity(0.6), in: .rect(cornerRadius: 6))
                         .padding()
                 }
+            }
+            #endif
+        }
+        .overlay(alignment: .bottom) {
+            #if DEBUG
+            if let session, session.isDebugWristPreview, session.summary == nil {
+                DebugWristDiamondControls(session:session,readout:diamondReadout).padding(.bottom,100)
             }
             #endif
         }
