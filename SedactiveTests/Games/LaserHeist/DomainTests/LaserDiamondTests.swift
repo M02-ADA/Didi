@@ -231,6 +231,6 @@ nonisolated struct LaserDiamondTests {
         #expect(throws: LaserDataError.self) {
             try unconfigured.spawnNormalDiamonds([Self.spawn(1)], beforeVaultAt: 5)
         }
-        #expect(throws: LaserDataError.self) { try Self.spawn(1, entry: 0) }
+        #expect(throws: LaserDataError.self) { try Self.spawn(1, entry: -0.1) }
     }
 }

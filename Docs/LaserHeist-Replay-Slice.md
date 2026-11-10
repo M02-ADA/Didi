@@ -156,3 +156,11 @@ The task owner clarified that uncollected bonus diamonds stay for the full ten-a
 Verification after correction: **656 Swift Testing definitions in 70 suites passed** (`/private/tmp/sedactive-diamond-persistence-regression.log`). New cases keep all four uncollected targets through second eight, collect initial/replacement targets after their normal passage exits, and admit a fresh outside→inside contact late in the phase. The combined round still yields 10,950 points / 38 collections, with four remaining bonus targets retained until phase closure rather than missed. Earlier three UI smoke cases were not rerun for this domain-only correction; no physical-device check is claimed.
 
 The Release Simulator build also passed (`/private/tmp/sedactive-diamond-persistence-release.log`). This correction updates the task-owner decision record and Edo/Kevin handoff without changing the pending CP1 producer schema or enabling live gameplay.
+
+### J05 seeded planning and bounded diamond history — 10 November 2026
+
+`LaserDiamondPlanner` uses a stable seed and injected placement catalog/timing. It schedules the confirmed normal per-minute team ranges, allocates monotonically increasing round IDs, and generates immediate persistent bonus targets/replacements at distinct positions. Production reach/mapping/trajectory parameters remain unselected; replay uses explicitly synthetic values.
+
+The diamond field retains active targets plus at most 64 terminal diagnostics. One identity high-water mark rejects reused/older IDs after pruning; a scalar collection count preserves the actual total. Callers must allocate monotonically ordered UUIDs (the planner does so); discarded diagnostic records cannot recreate awards. The normal active bound is 40 (the maximum confirmed normal team total), bonus four. This bounds the field without a cumulative bonus quota. Generic contact entry reservations and session event presentation remain separate integration responsibilities.
+
+22 focused test definitions in four suites passed (`/private/tmp/sedactive-j05-planner.log`), including 800 bonus collections while keeping four active and at most 68 field records, retired-ID rejection, seed reproducibility and planner rollback. Existing domain and combined round fixtures still pass.

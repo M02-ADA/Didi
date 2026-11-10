@@ -26,7 +26,7 @@ nonisolated struct LaserDiamondSpawn: Equatable, Sendable {
     init(id: UUID, position: LaserDiamondPosition, eligiblePlayers: Set<PlayerID>,
          spawnedAt: Double, entry: Double, exit: Double) throws {
         try requireLaserValue(!eligiblePlayers.isEmpty && [spawnedAt, entry, exit].allSatisfy { $0.isFinite }
-                              && spawnedAt >= 0 && spawnedAt < entry && entry < exit, "diamond passage")
+                              && spawnedAt >= 0 && spawnedAt <= entry && entry < exit, "diamond passage")
         self.id = id
         self.position = position
         self.eligiblePlayers = eligiblePlayers
@@ -63,12 +63,12 @@ nonisolated struct LaserDiamondState: Equatable, Sendable {
 /// Owned only by LaserGame. No score, independent clock, random placement or input reader.
 nonisolated struct LaserDiamondField: Sendable {
     private(set) var states: [UUID: LaserDiamondState] = [:]
+    private(set) var collectedCount = 0
+    private var identityHighWater: String?
+    static let retainedTerminalLimit = 64
 
     var active: [LaserDiamondSpawn] {
         states.values.filter { $0.outcome == nil }.map(\.spawn).sorted { $0.id.uuidString < $1.id.uuidString }
-    }
-    var collectedCount: Int {
-        states.values.filter { if case .collected = $0.outcome { true } else { false } }.count
     }
 
     mutating func spawn(_ spawns: [LaserDiamondSpawn], at time: Double, before boundary: Double,
@@ -77,13 +77,13 @@ nonisolated struct LaserDiamondField: Sendable {
             && Set(spawns.map(\.id)).count == spawns.count
             && spawns.allSatisfy { spawn in
                 states[spawn.id] == nil && spawn.spawnedAt == time
-                    && (bonusDeadline.map { $0 == boundary && spawn.entry < $0 } ?? (spawn.exit <= boundary))
+                    && (identityHighWater.map { spawn.id.uuidString > $0 } ?? true)
+                    && (bonusDeadline.map { $0 == boundary && spawn.entry < $0 }
+                        ?? (spawn.spawnedAt < spawn.entry && spawn.exit <= boundary))
             },
                               "diamond spawn plan")
         let combined = active + spawns
-        if let maximumActive {
-            try requireLaserValue(combined.count <= maximumActive, "active diamond cap")
-        }
+        try requireLaserValue(combined.count <= (maximumActive ?? 40), "active diamond cap")
         for (index, spawn) in combined.enumerated() {
             try requireLaserValue(!combined.prefix(index).contains { $0.position == spawn.position },
                                   "distinct diamond positions")
@@ -92,6 +92,8 @@ nonisolated struct LaserDiamondField: Sendable {
             states[spawn.id] = LaserDiamondState(spawn: spawn,
                 lifetime: bonusDeadline.map { .diamondTime(deadline: $0) } ?? .passage)
         }
+        if let newest = spawns.map({ $0.id.uuidString }).max() { identityHighWater = newest }
+        pruneTerminalStates()
     }
 
     mutating func advance(to time: Double) {
@@ -100,10 +102,18 @@ nonisolated struct LaserDiamondField: Sendable {
                 states[id]?.outcome = .missed(at: state.spawn.exit)
             }
         }
+        pruneTerminalStates()
     }
 
     mutating func close() {
         for id in states.keys where states[id]?.outcome == nil { states[id]?.outcome = .closed }
+        pruneTerminalStates()
+    }
+
+    private mutating func pruneTerminalStates() {
+        let terminal = states.values.filter { $0.outcome != nil }.map { $0.spawn.id }
+            .sorted { $0.uuidString > $1.uuidString }
+        for id in terminal.dropFirst(Self.retainedTerminalLimit) { states.removeValue(forKey: id) }
     }
 
     /// Verified entry commands only. Exact capture/arrival eligibility is checked again.
@@ -137,10 +147,14 @@ nonisolated struct LaserDiamondField: Sendable {
         for contact in accepted {
             next.states[contact.targetID]?.outcome = .collected(hand: contact.hand, at: arrivedAt)
         }
+        let (count, overflow) = next.collectedCount.addingReportingOverflow(accepted.count)
+        try requireLaserValue(!overflow, "diamond count overflow")
+        next.collectedCount = count
         if let bonusDeadline, !replacements.isEmpty {
             try next.spawn(replacements, at: arrivedAt, before: bonusDeadline, maximumActive: 4,
                            bonusDeadline: bonusDeadline)
         }
+        next.pruneTerminalStates()
         self = next
         return accepted
     }
