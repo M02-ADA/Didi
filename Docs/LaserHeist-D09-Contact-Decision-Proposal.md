@@ -1,6 +1,26 @@
 # D09 — wrist interaction decisions for vaults and diamonds
 
-10 November 2026 · Jevon consumer handoff · **PROPOSED / OPEN — not a frozen contract**
+10 November 2026 · Jevon consumer handoff · **D09 v1 architecture/behavior APPROVED by Edo; exact CP1 fields and coordinate mapping remain OPEN**
+
+## Subsequent D09 v1 approval
+
+Jevon forwarded Edo's Tech Lead architecture decision after reviewing this proposal. Edo approves the optional atomic single-stream wrist-evidence direction; independent left/right validity; fresh outside→inside circular-zone entry with no dwell/interpolation; capture and arrival strictly before deadline with timeout winning equality; deterministic deduplicated batches followed by transitions/replacements; ignoring out-of-order captures; and clearing pending entry on pause, source loss, calibration/rebind, Stop and Retry.
+
+Edo explicitly authorizes **J04/J05 synthetic fixtures now**, while he checks CP1 compatibility and implements E08. This supersedes the earlier requirement below to wait for a fully frozen producer fixture surface before doing synthetic domain work. The tracker consumes domain zone membership, not an invented CP1 attachment; J07 still waits for Edo's actual schema and agreed coordinate mapping.
+
+Edo delegates the tie policy to Jevon's fixtures: target output order is UUID lexical order, and simultaneous entrants on one target choose **P1 left → P1 right → P2 left → P2 right** as a representative. This never adds personal points or multiplies team rewards. Radii, placement, comfortable reach, mapping and numeric freshness remain unapproved production parameters.
+
+**Confirmed by task owner, 10 November 2026:** Jevon approves **25 team points per diamond, four initial Diamond Time diamonds, and no automatic refill for missed slots**. Collection-triggered replacement remains required. These product choices do not approve measurement/reach/mapping or source compatibility.
+
+The earlier proposal/search record follows for provenance. Its OPEN/PROPOSED labels are superseded only for the specifically approved items above; they do not negate this later decision.
+
+### First implementation checkpoint
+
+`LaserContactEntryTracker` implements the approved domain entry/batch rules. Its input is per-target membership (`outside`, `inside`, `unavailable`) already classified from an eligible capture; it carries **no producer measurement schema**. A revocable domain lifetime rejects old work but does not replace producer source/binding/calibration checks. J07 must perform those checks using Edo's eventual exact interface before classifying zones.
+
+The tracker keeps one frame high-water mark, one newest capture time and bounded active-target hand state. It ignores older frames/captures, checks conflicting duplicates of the retained latest frame, rejects invalid timelines, requires explicitly configured freshness, and keeps round-wide used target IDs. Domain time/cutovers are GameClock values; no camera timestamps are retimed here. Removed targets release transient state, while used IDs remain reserved for the round.
+
+Eleven focused test definitions passed on the iPad Simulator (`/private/tmp/sedactive-d09-entry.log`), covering independent wrists, held poses, invalidation, staleness, deadlines, duplicates/order, deterministic same-frame ties and new-target isolation. This is synthetic rule verification, not E08, physical reach or CP1 compatibility validation.
 
 ## Edo follow-up and this revision
 
@@ -161,10 +181,10 @@ These expectations become executable J04/J05 tests only after affected owners ac
 
 | Decision | Producer / required review | Status |
 |---|---|---|
-| Evidence, source/context and delivery | Edo; Jevon, with Kevin for visible mapping | Edo direction received; concrete optional attachment proposal awaiting review |
-| Capture/arrival/phase/deadline semantics | Edo + Jevon; Kevin/Theo for cues | Conservative v1 proposal above; OPEN |
-| Reach and interaction zones | Edo/Jevon/Kevin; Theo usability | Disk/entry proposal above; parameters, feasible reach and acceptance OPEN |
-| Diamond points/population/refill | Jevon; Edo feasibility, Kevin/Theo presentation | OPEN |
+| Evidence, source/context and delivery | Edo; Jevon, with Kevin for visible mapping | Architecture direction APPROVED; exact CP1 schema/compatibility still pending Edo |
+| Capture/arrival/phase/deadline semantics | Edo + Jevon; Kevin/Theo for cues | D09 v1 behavior APPROVED; actual clock/mapping adapter and device measurements pending |
+| Reach and interaction zones | Edo/Jevon/Kevin; Theo usability | Circular fresh-entry behavior APPROVED; parameters, coordinate mapping and feasible reach OPEN |
+| Diamond points/population/refill | Jevon; Edo feasibility, Kevin/Theo presentation | Task-owner CONFIRMED: 25 points, initial four, no missed-slot refill; physical/presentation review pending |
 
 Record the actual choice, interface/fixture version, named approvers and verification implications here or link the team's authoritative decision. Do not close D09 from a planning table or an unrelated PR approval.
 
