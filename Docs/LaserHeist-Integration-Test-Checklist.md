@@ -30,7 +30,7 @@ Automated: `RoundLifecycleTests`, `LiveAvatarPresenterTests`, `LiveCutoutTests`,
 
 1. **Git (developer):** merge `origin/feat/vision-live-pipeline`. It merges cleanly with this branch.
 2. **Edo (App-owned files):** apply [E07-K03-Live-Binding.patch](E07-K03-Live-Binding.patch). It adds `VisionK03PacketFactory`, `VisionK03MailboxPump` and `VisionK03IntegrationTests`. The pump differs from Edo's draft in two ways: it conforms to `AvatarPosePump`, and a refused packet no longer ends the feed.
-3. **Edo (`VisionNumericPoseChannel`):** fix the stall in section 2a, then remove `withKnownIssue` from `aCameraStallDoesNotEndDeliveryForTheRestOfTheSession`.
+3. **Edo (`VisionNumericPoseChannel`):** the stall in section 2a is fixed in `b984e22`. Merge that commit or later.
 4. **Edo + Jevon (start order):** see section 2b.
 5. **Edo (`RootView`), only once a live session exists:**
    ```swift
@@ -38,13 +38,15 @@ Automated: `RoundLifecycleTests`, `LiveAvatarPresenterTests`, `LiveCutoutTests`,
    ```
    Don't add this for replay rounds: the mascots would stay dimmed for the whole round.
 
-### 2a. Delivery stops after a camera stall (Edo)
+### 2a. Delivery stops after a camera stall (Edo): fixed in `b984e22`
 
-**Problem.** `drain` invalidates the channel when `time - lastCapture >= freshness`, and only a publication refreshes `lastCapture`. After a stall that long, each new frame reactivates the channel at admission. The render tick then drains during that frame's Vision inference, sees the old `lastCapture`, and invalidates again, so the frame's publication is refused. This repeats until the capture context changes.
+**Verified** on a synthetic-fixture merge of `aecedf6` and `b984e22`. With no expected-failure wrapper, `aCameraStallDoesNotEndDeliveryForTheRestOfTheSession` passes through the real pump and presenter, and `afterAStallOnlyNewFramesReachTheMailboxWithTheirOwnIdentity` checks frame IDs, capture times, revisions and P1/P2 slots at the mailbox. Against the pre-fix `f163a36` producer, both fail.
+
+**Problem (before the fix).** `drain` invalidates the channel when `time - lastCapture >= freshness`, and only a publication refreshes `lastCapture`. After a stall that long, each new frame reactivates the channel at admission. The render tick then drains during that frame's Vision inference, sees the old `lastCapture`, and invalidates again, so the frame's publication is refused. This repeats until the capture context changes.
 
 **Evidence.** `aCameraStallDoesNotEndDeliveryForTheRestOfTheSession` reproduces it with the real gate and tracker. How often real stalls reach the 0.5 s limit hasn't been measured.
 
-**Candidate fix, checked in a scratch merge with all of Edo's bridge and adapter tests.** Keep `lastCapture` as the ordering watermark and time freshness from a separate value:
+**Fix, as merged in `b984e22`.** `lastCapture` stays the ordering watermark, and freshness is timed from a separate value:
 
 ```diff
    private var lastCapture: Double?
@@ -105,7 +107,7 @@ Automated: `RoundLifecycleTests`, `LiveAvatarPresenterTests`, `LiveCutoutTests`,
 | From | To | Item |
 |---|---|---|
 | Edo + Kevin | Team | D06 field freeze against D02/D03, including jump evidence and `visual` body values |
-| Edo | Kevin | E07 producer wired through `RootView`, after the steps and stall fix in section 2 |
+| Edo | Kevin | E07 producer wired through `RootView`, after the steps in section 2 |
 | Edo + Jevon | Kevin | Body session started before each scene attaches, including Retry (section 2b) |
 | Edo | Kevin | Production `PlayerCutoutProviding` and accepted layout, if cutouts ship |
 | Jevon | Kevin | Live session with pause, resume and D03.6 behaviour |
