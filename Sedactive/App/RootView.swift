@@ -13,6 +13,19 @@ struct ContentView: View {
   var body: some View {
     let flow = dependencies.inputFlow
     Group {
+      #if DEBUG
+      if LiveAvatarSmokeModel.requested(ProcessInfo.processInfo.arguments) {
+        LiveAvatarSmokeView(flow:flow,service:dependencies.bodyInput,bridge:dependencies.visionPoseBridge)
+      } else { routedContent(flow:flow) }
+      #else
+      routedContent(flow:flow)
+      #endif
+    }
+    .onChange(of: scenePhase) { _, phase in
+      if phase == .background { Task { await flow.handleBackground() } }
+    }
+  }
+  @ViewBuilder private func routedContent(flow: LaserInputFlow) -> some View {
       switch flow.route {
       case .selection:
         LaserInputSelectionView(flow: flow)
@@ -38,10 +51,6 @@ struct ContentView: View {
         LaserInputSelectionView(flow: flow)
         #endif
       }
-    }
-    .onChange(of: scenePhase) { _, phase in
-      if phase == .background { Task { await flow.handleBackground() } }
-    }
   }
   @ViewBuilder private func replayView(flow: LaserInputFlow) -> some View {
     #if DEBUG
