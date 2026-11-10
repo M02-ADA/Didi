@@ -34,14 +34,13 @@ struct ContentView: View {
   @ViewBuilder private func routedContent(flow: LaserInputFlow) -> some View {
       switch flow.route {
       case .selection:
-        LaserInputSelectionView(flow: flow)
-          #if DEBUG
-          .safeAreaInset(edge: .bottom) {
-            Button("Real camera · game scene preview") { showingGameCamera = true }
-              .buttonStyle(.borderedProminent).disabled(!flow.canStartLive)
-              .accessibilityIdentifier("chooseInGameCamera").padding()
-          }
-          #endif
+        // Sketch Home and Set Up (Kevin): presentation over the same flow. In
+        // DEBUG, Home also offers PR #31's real-camera game scene preview.
+        #if DEBUG
+        LaserHeistIntroView(flow: flow, onInGameCamera: { showingGameCamera = true })
+        #else
+        LaserHeistIntroView(flow: flow)
+        #endif
       case .replay:
         replayView(flow: flow)
       case .liveSetup:
@@ -50,9 +49,12 @@ struct ContentView: View {
             PlayView(avatarSource: { try VisionK03MailboxPump(bridge: dependencies.visionPoseBridge, mailbox: $0) },
                      onExit: { Task { await flow.closeLiveSetup() } }, liveSession: session,
                      onLiveRetry: { Task { await flow.retryLiveSetup() } })
-            if session.phase != .running, session.summary == nil { PlayerSetupView(flow: flow) }
+            // The countdown shows only the session's own remaining time (no second clock).
+            if session.phase == .countdown, let remaining = session.liveReadiness?.countdownRemaining {
+              RoundCountdownOverlay(value: Int(remaining.rounded(.up)))
+            } else if session.phase != .running, session.summary == nil { liveSetupStage(flow) }
           }
-        } else { PlayerSetupView(flow: flow) }
+        } else { liveSetupStage(flow) }
       case .diagnostics:
         #if DEBUG
         LiveInputDiagnosticsView(model: dependencies.cameraDiagnostics)
@@ -81,6 +83,36 @@ struct ContentView: View {
     #endif
   }
 
+}
+
+/// Jevon's setup controls on the Sketch "stand here" stage (Kevin's presentation).
+@MainActor
+private func liveSetupStage(_ flow: LaserInputFlow) -> some View {
+  CalibrationStageView(onBack: { Task { await flow.closeLiveSetup() } }) {
+    PlayerSetupView(flow: flow, isOverlay: true)
+  }
+  #if DEBUG
+  // DEBUG only, for testing without an iPad: ends camera setup (nothing is
+  // calibrated or marked ready) and opens the seeded synthetic replay through
+  // the same flow. Never compiled into Release.
+  .overlay(alignment: .bottomLeading) {
+    Button("DEBUG · Skip camera & play synthetic replay") {
+      Task {
+        await flow.closeLiveSetup()
+        flow.showReplay()
+      }
+    }
+    .font(.system(size: 15, weight: .heavy, design: .monospaced))
+    .padding(.horizontal, 14).padding(.vertical, 8)
+    .background(Color(sketch: 0xFFC83A), in: Capsule())
+    .foregroundStyle(Color(sketch: 0x16123A))
+    .buttonStyle(.plain)
+    .disabled(flow.isClosing)
+    .padding([.leading, .bottom], 16)
+    .accessibilityIdentifier("debugSkipToReplay")
+  }
+  #endif
+  .onAppear { AudioService.shared.setMusic(.menu) }
 }
 
 #Preview {

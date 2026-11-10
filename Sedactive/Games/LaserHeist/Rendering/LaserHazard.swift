@@ -11,8 +11,9 @@ import UIKit
 ///
 /// The scene's shared laser spans the whole corridor (previews). Gameplay uses
 /// lane-local hazards, one per judged target, so each player sees the band
-/// their own target is judged against. Rendering only: it never decides a
-/// band, a time or a verdict (TEAM_ALIGNMENT §B, §C).
+/// their own target is judged against. Two halves of one encounter join into
+/// one continuous beam (`setJoin`), each still at its own band. Rendering
+/// only: it never decides a band, a time or a verdict (TEAM_ALIGNMENT §B, §C).
 @MainActor
 final class LaserHazard {
     let root = Entity()
@@ -23,6 +24,14 @@ final class LaserHazard {
     /// Judged band, in game units above the floor.
     private(set) var band: ClosedRange<Float>
     private(set) var emittersShown: (left: Bool, right: Bool) = (true, true)
+    /// Which side of the band its light may spread to (a DUCK's is above, a JUMP's below).
+    private(set) var dangerSide: LaserGate.DangerSide = .both
+    /// The partner half's band this half joins at its inner end, if any.
+    private(set) var joinedBand: ClosedRange<Float>?
+    /// The corridor floor's world height, for the beam's light on the floor.
+    var floorWorldY: Float? {
+        didSet { applyGeometry() }
+    }
     var mapping: GameWorldMapping {
         didSet { applyGeometry() }
     }
@@ -55,6 +64,7 @@ final class LaserHazard {
         fallbackEmitters = []
         self.gate = gate
         root.addChild(gate.root)
+        gate.setDangerSide(dangerSide)
         if let state { gate.setState(state) } else { gate.setState(.active) }
         applyGeometry()
         return gate
@@ -71,6 +81,21 @@ final class LaserHazard {
         applyGeometry()
     }
 
+    func setDangerSide(_ side: LaserGate.DangerSide) {
+        guard side != dangerSide else { return }
+        dangerSide = side
+        gate?.setDangerSide(side)
+    }
+
+    /// Joins this half's inner end to the partner half's band, so the two read
+    /// as one beam: straight when the bands match, otherwise stepping between
+    /// them in the gap between the lanes. `nil` leaves the inner end free.
+    func setJoin(partnerBand: ClosedRange<Float>?) {
+        guard partnerBand != joinedBand else { return }
+        joinedBand = partnerBand
+        applyGeometry()
+    }
+
     func setBand(lowerEdge: Float, upperEdge: Float) {
         band = lowerEdge...max(upperEdge, lowerEdge)
         setDepth(root.position.z)
@@ -79,6 +104,7 @@ final class LaserHazard {
 
     func setDepth(_ worldZ: Float) {
         root.position = mapping.laserPosition(heightAboveFloor: (band.lowerBound + band.upperBound) / 2, worldZ: worldZ)
+        gate?.setFloorDrop(floorWorldY.map { root.position.y - $0 })
     }
 
     func setState(_ newState: LaserGate.VisualState) {
@@ -96,6 +122,10 @@ final class LaserHazard {
             gate.setSpan(leftX: span.lowerBound, rightX: span.upperBound)
             gate.setBandHeight(bandHeight)
             gate.setEmittersVisible(left: emittersShown.left, right: emittersShown.right)
+            // Meet halfway between the two bands' centres.
+            let center = (band.lowerBound + band.upperBound) / 2
+            gate.setJoin(offset: joinedBand.map { (($0.lowerBound + $0.upperBound) / 2 - center) / 2 * mapping.metersPerGameUnit })
+            gate.setFloorDrop(floorWorldY.map { root.position.y - $0 })
             return
         }
         for part in fallbackBeam {

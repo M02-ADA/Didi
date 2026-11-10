@@ -111,3 +111,52 @@ struct LaserGateLifecycleTests {
         #expect(try entity("laserFeedback.cue").components[OpacityComponent.self]?.opacity == 0)
     }
 }
+
+/// The art's fairness rule: a miss is judged at one band edge (a DUCK clears
+/// below the lower edge, a JUMP above the upper one), so light, tracers and
+/// the curtain spread only to the danger side. On the safe side, nothing
+/// reaches past the edge by more than the clearance-sized fringe.
+@MainActor
+struct LaserGateDecorationTests {
+    private static func gate() throws -> LaserGate {
+        let root = Entity(), gate = Entity(), beam = Entity()
+        gate.name = "Gate"; beam.name = "Beam"
+        root.addChild(gate); gate.addChild(beam)
+        let core = ModelEntity(mesh: .generatePlane(width: 3.06, height: 0.022))
+        core.name = "Core"; beam.addChild(core)
+        for name in ["Glow", "Warning"] { let part = Entity(); part.name = name; beam.addChild(part) }
+        for side in ["EmitterLeft", "EmitterRight"] {
+            let mount = Entity(); mount.name = side; gate.addChild(mount)
+            for name in ["Active", "Disabled", "WarningRing", "HitSpark"] { let part = Entity(); part.name = name; mount.addChild(part) }
+        }
+        return try #require(LaserGate(artwork: root))
+    }
+
+    @Test("DUCK and JUMP light never spills past the safe edge", arguments: [LaserGate.DangerSide.above, .below])
+    func safeEdgeStaysCrisp(side: LaserGate.DangerSide) throws {
+        let gate = try Self.gate()
+        gate.setSpan(leftX: -3.08, rightX: 0)
+        gate.setDangerSide(side)
+        for band: Float in [0.01, 0.016, 0.05] {
+            gate.setBandHeight(band)
+            for state in LaserGate.VisualState.allCases {
+                gate.setState(state)
+                let reach = gate.decorationReach
+                let safe = side == .above ? reach.below : reach.above
+                let danger = side == .above ? reach.above : reach.below
+                #expect(safe <= LaserGate.safeFringe + 1e-5, "\(side) \(state) band \(band): \(reach)")
+                if state == .active { #expect(danger > 0.1, "the curtain marks the danger side") }
+            }
+        }
+    }
+
+    @Test("A JUMP's curtain stops above the corridor floor")
+    func jumpCurtainStaysAboveTheFloor() throws {
+        let gate = try Self.gate()
+        gate.setDangerSide(.below)
+        gate.setBandHeight(0.016)
+        gate.setFloorDrop(0.1)
+        gate.setState(.active)
+        #expect(gate.decorationReach.below <= 0.1 - 0.008)
+    }
+}

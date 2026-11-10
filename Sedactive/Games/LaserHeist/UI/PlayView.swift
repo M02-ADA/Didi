@@ -214,18 +214,12 @@ private struct ReplayRoundView: View {
             }
         }
         .overlay {
-            if let final = session?.summary { ResultsView(summary: final, onRetry: retry) }
+            if let final = session?.summary { ResultsView(summary: final, onRetry: retry, onHome: homeAction) }
         }
         .safeAreaInset(edge: .bottom) {
-            if let onExit {
-                Button("Back to input selection", systemImage: "chevron.backward") {
-                    leaving = true
-                    Task { @MainActor in
-                        await session?.stop()
-                        presentation.stop()
-                        onExit()
-                    }
-                }
+            // Results carry their own Back to Home (the same `leave`).
+            if onExit != nil, session?.summary == nil {
+                Button("Back to input selection", systemImage: "chevron.backward") { leave() }
                 .buttonStyle(.borderedProminent).controlSize(.large)
                 .disabled(leaving).accessibilityIdentifier("leaveReplay")
                 .padding(.bottom, 8)
@@ -288,6 +282,8 @@ private struct ReplayRoundView: View {
         }
         .onDisappear {
             presentation.stop()
+            // No gameplay sound outlives its scene (Retry, Home, teardown).
+            AudioService.shared.stopEffects()
             frameRefresh?.cancel()
             frameRefresh = nil
             // Release the cutout consumer and revoke any upload still on the GPU
@@ -318,6 +314,25 @@ private struct ReplayRoundView: View {
     #else
     private static let showsReplayDebugHUD = false
     #endif
+
+    /// Results › Back to Home, when this round has somewhere to return to.
+    private var homeAction: (() -> Void)? {
+        guard onExit != nil else { return nil }
+        return { leave() }
+    }
+
+    /// Leaves the round: the session stops first, then the flow moves on
+    /// (Jevon's input-selection exit, also Results › Back to Home). Once only.
+    private func leave() {
+        guard let onExit, !leaving else { return }
+        leaving = true
+        AudioService.shared.play(.uiTap)
+        Task { @MainActor in
+            await session?.stop()
+            presentation.stop()
+            onExit()
+        }
+    }
 
     /// Live pause/continue intents go to the session. Replay retains its fixture-driven controls.
     private func hudActions(_ session: GameSessionCoordinator) -> GameplayHUDActions {

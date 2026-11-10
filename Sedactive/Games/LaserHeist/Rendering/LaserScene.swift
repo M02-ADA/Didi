@@ -133,11 +133,13 @@ final class LaserScene {
     init(layout: LaserWorldLayout, mapping: GameWorldMapping) {
         self.layout = layout
         self.mapping = mapping
-        let mountX = layout.corridorWidth / 2 - 0.04
+        // Laser mounts sit just off the walls, matching the authored `LaserMount_*` anchors.
+        let mountX = layout.corridorWidth / 2 - LaserGate.wallInset
         laserSpan = -mountX...mountX
         let band = (layout.laserHeightAboveFloor - layout.laserCoreThickness / 2)...(layout.laserHeightAboveFloor + layout.laserCoreThickness / 2)
         laser = LaserHazard(name: "laser", span: laserSpan, band: band, mapping: mapping,
                             fallbackThickness: layout.laserCoreThickness)
+        laser.floorWorldY = layout.corridorFloorY
         root.name = "laserWorld"
         root.addChild(makeCamera())
         addPlayers()
@@ -268,7 +270,9 @@ final class LaserScene {
     // MARK: - Gameplay presentation
 
     /// A new, hidden laser covering one player's lane: from their wall mount
-    /// to the boundary between the lanes, with only the outer emitter shown.
+    /// to the boundary between the lanes, with only their wall's emitter. Two
+    /// halves of one encounter meet at the boundary as one beam (see
+    /// `LaserHazard.setJoin`), so no emitter or post stands mid-corridor.
     /// Built from the gate artwork when it is installed. The caller (the
     /// gameplay presenter) pools and reuses these.
     func makeLaneHazard(for player: PlayerID) -> LaserHazard {
@@ -278,6 +282,7 @@ final class LaserScene {
             hazard.install(artwork: laserArtwork.clone(recursive: true))
         }
         hazard.setEmitters(left: player == .player1, right: player == .player2)
+        hazard.floorWorldY = layout.corridorFloorY
         hazard.root.isEnabled = false
         laneHazards.append((player, hazard))
         root.addChild(hazard.root)
@@ -452,6 +457,15 @@ final class LaserScene {
         vaultDoor?.reveal()
     }
 
+    /// Shows the door fully opaque at once, e.g. standing at the corridor's far
+    /// end before its vault approaches. Never a fade.
+    func showVaultDoorOpaque() {
+        vaultDoor?.showOpaque()
+    }
+
+    /// The door's opacity, or `nil` without door artwork (tests and debugging).
+    var vaultDoorOpacity: Float? { vaultDoor?.opacity }
+
     /// A copy of the door as it stands now (place, open panels), added to the
     /// scene without its child named `childName`; the caller removes it. `nil`
     /// without door artwork or while the door is hidden.
@@ -503,6 +517,11 @@ final class LaserScene {
     }
 
     /// Presents a state decided elsewhere; the code-built fallback has no states.
+    /// Which side of the shared (preview) laser's band its light may spread to.
+    func setLaserDangerSide(_ side: LaserGate.DangerSide) {
+        laser.setDangerSide(side)
+    }
+
     func setLaserVisualState(_ state: LaserGate.VisualState) {
         laser.setState(state)
     }

@@ -12,10 +12,16 @@ import UIKit
 /// state and events; it decides nothing and keeps no clock.
 ///
 /// State to visual:
-/// - A new `vault.id` while the phase is `.vault`: the door fades in, locked,
-///   at the authored `VaultDoorStop`, standing still in the corridor (travel
-///   is stopped). There is no approach: the next vault's start time is not in
-///   game state. A vault that begins and resolves between two updates (a long
+/// - Approach: when the session says how much activity time is left before
+///   the next vault (`upcomingVaultIn`; the replay script knows, production
+///   is PENDING Jevon), the locked door already stands at the corridor's far
+///   end, fully opaque, then comes closer at travel speed, reaching its stop
+///   as travel stops for the vault. No fade. No countdown or buttons show
+///   before the vault begins.
+/// - A new `vault.id` while the phase is `.vault`: an approaching door is
+///   already at the authored `VaultDoorStop`; otherwise the door fades in
+///   there, locked, standing still in the corridor (travel is stopped). A
+///   vault that begins and resolves between two updates (a long
 ///   frame) is shown from its own `coopGateSucceeded`/`coopGateFailed` event.
 /// - If the previous vault's opened door is still in view when the next one
 ///   begins, that door is handed to a one-off exiting copy that fades out
@@ -52,6 +58,8 @@ import UIKit
 final class VaultPresentation {
     struct Diagnostics: Equatable {
         var reveals = 0
+        /// Doors that came down the corridor before their vault began.
+        var approaches = 0
         var opens = 0
         var activations = 0
         var timeouts = 0
@@ -120,6 +128,8 @@ final class VaultPresentation {
     /// The countdown look last applied: (urgent, failed).
     private var style: (urgent: Bool, failed: Bool)?
     private var hidden = true
+    /// The next vault's locked door is coming down the corridor (no vault yet).
+    private(set) var approaching = false
     /// Whether a state of this generation was applied before (a vault first
     /// seen already resolved is only shown if it resolved since then).
     private var hasApplied = false
@@ -217,9 +227,14 @@ final class VaultPresentation {
 
     // MARK: - Applying game state
 
-    func update(state: LaserGameState, travelDistance: Float) {
+    /// - Parameter upcomingVaultIn: activity seconds until the next vault
+    ///   begins, from the session's schedule, or `nil` when it isn't known
+    ///   (production until Jevon exposes it). With it, the locked door comes
+    ///   down the corridor like a laser gate; without it, it fades in at its stop.
+    func update(state: LaserGameState, travelDistance: Float, upcomingVaultIn: Double? = nil) {
         defer { hasApplied = true }
         if let fade = exiting?.fade, fade.isComplete { removeExiting() }
+        if approach(state: state, upcomingVaultIn: upcomingVaultIn) { return }
         guard let vault = state.vault else { return hideAll() }
         let ended: LaserRoundOutcome? = if case .ended(let outcome) = state.phase { outcome } else { nil }
         if vault.id != vaultID {
@@ -262,8 +277,46 @@ final class VaultPresentation {
         hasApplied = false
     }
 
+    /// Where a door waits until its vault is near: just inside the corridor's
+    /// far end, so it reads as part of the corridor, not as something placed
+    /// in front of the players.
+    var approachHorizonZ: Float { scene.layout.corridorFarZ + 2 }
+
+    /// How far ahead of its stop the door stands at the horizon.
+    var approachDistance: Float { max(0, scene.layout.vaultDoorStopZ - approachHorizonZ) }
+
+    /// Shows the next vault's locked door in the corridor while the team still
+    /// travels: standing at the far end until the vault is within the
+    /// corridor's length, then coming closer at travel speed × activity time
+    /// left, the same rule as laser gates. Travel stops when the vault begins,
+    /// so the door is then exactly at its stop and nothing jumps. Fully opaque
+    /// from its first frame; distance alone makes it small. Presentation only:
+    /// the countdown and buttons appear when the vault actually begins.
+    /// Returns whether the door is approaching (and the rest of `update` is skipped).
+    private func approach(state: LaserGameState, upcomingVaultIn lead: Double?) -> Bool {
+        guard state.phase == .activity, let lead, lead > 0 else { return false }
+        let distance = min(scene.layout.travelSpeed * Float(lead), approachDistance)
+        // The previous vault's opened door must have passed out of view first:
+        // there is one door.
+        if let vault = state.vault, !(vault.id == vaultID && openedID == vaultID && (approaching || scene.vaultDoorDepth == nil)) {
+            return false
+        }
+        if !approaching {
+            hideAll()
+            hidden = false
+            approaching = true
+            scene.resetVaultDoor()
+            scene.showVaultDoorOpaque()
+            diagnostics.approaches += 1
+        }
+        scene.setVaultDoorDepth(scene.layout.vaultDoorStopZ - distance)
+        return true
+    }
+
     private func begin(_ vault: LaserVaultState, travelDistance: Float) {
-        if !hidden, scene.vaultDoorDepth != nil { handOffPreviousDoor() }
+        let arrived = approaching
+        approaching = false
+        if !arrived, !hidden, scene.vaultDoorDepth != nil { handOffPreviousDoor() }
         vaultID = vault.id
         openedID = nil
         failedID = nil
@@ -273,7 +326,8 @@ final class VaultPresentation {
         anchor = travelDistance + (scene.mapping.interactionPlaneZ - scene.layout.vaultDoorStopZ)
         scene.resetVaultDoor()
         scene.setVaultDoorDepth(scene.layout.vaultDoorStopZ)
-        scene.revealVaultDoor()
+        // An approaching door is already in view: it arrives, it doesn't fade in again.
+        if !arrived { scene.revealVaultDoor() }
         if attachedToDoor == nil {
             // Countdown and indicators ride on the door; without door artwork
             // they stand where the door would be.
@@ -423,6 +477,7 @@ final class VaultPresentation {
 
     private func hideAll() {
         hidden = true
+        approaching = false
         removeExiting()
         scene.setVaultDoorDepth(nil)
         scene.resetVaultDoor()

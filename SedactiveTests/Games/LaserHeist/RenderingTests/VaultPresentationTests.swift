@@ -58,6 +58,86 @@ struct VaultPresentationTests {
                   kind: .coopGateSucceeded(gateID: vaultID, progress: 1))
     }
 
+    // MARK: - Approach
+
+    /// With the session's time to the next vault, the locked door comes down the
+    /// corridor from the laser spawn depth, closer every frame, and is exactly at
+    /// its stop when the vault begins: no jump, no second fade-in, no handoff copy.
+    @Test func theDoorApproachesDownTheCorridorAndArrivesAtItsStop() throws {
+        let (scene, _) = scene()
+        let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
+        let speed = scene.layout.travelSpeed
+        let stop = scene.layout.vaultDoorStopZ
+        let horizon = presenter.vault.approachHorizonZ
+        #expect(horizon > scene.layout.corridorFarZ && horizon < scene.layout.laserSpawnZ, "inside the corridor's far end")
+        // Farther away than the corridor is long: the door already stands at its
+        // far end, fully opaque, with no fade running.
+        let far = Double((stop - horizon) / speed) + 4
+        presenter.apply(state: state(17 - far, .activity), events: [], snapshot: nil, upcomingVaultIn: far)
+        #expect(abs((scene.vaultDoorDepth ?? .nan) - horizon) < 1e-4)
+        #expect(scene.vaultDoorOpacity == 1)
+
+        // Then it comes closer every frame, from the far end to its stop.
+        var depths: [Float] = [try #require(scene.vaultDoorDepth)]
+        let tick = 0.25
+        for lead in stride(from: far - tick, to: 0, by: -tick) {
+            presenter.apply(state: state(17 - lead, .activity), events: [], snapshot: nil, upcomingVaultIn: lead)
+            let depth = try #require(scene.vaultDoorDepth)
+            #expect(abs(depth - max(horizon, stop - speed * Float(lead))) < 1e-4)
+            #expect(scene.vaultDoorOpacity == 1, "never faded")
+            depths.append(depth)
+        }
+        #expect(zip(depths, depths.dropFirst()).allSatisfy { $0 <= $1 }, "the door never moves away")
+        #expect(zip(depths, depths.dropFirst()).allSatisfy { $1 - $0 <= speed * Float(tick) + 1e-4 }, "no jump between frames")
+        #expect(depths.last! > depths.first!, "it approaches")
+        #expect(scene.vaultDoorState == .locked)
+        #expect(presenter.vault.approaching && presenter.vault.diagnostics.approaches == 1)
+        #expect(presenter.vault.countdownFraction == nil && !presenter.vault.indicatorsShown,
+                "no countdown or buttons before the vault begins")
+
+        presenter.apply(state: state(17, .vault, vault: vault()), events: [], snapshot: nil)
+        #expect(abs((scene.vaultDoorDepth ?? .nan) - stop) < 1e-4)
+        #expect(!presenter.vault.approaching && presenter.vault.diagnostics.handoffs == 0)
+        #expect(presenter.vault.countdownFraction == 1 && presenter.vault.indicatorsShown)
+        #expect(scene.root.children.filter { $0.name == "vaultDoor.exiting" }.isEmpty)
+    }
+
+    /// Without a schedule (production until Jevon exposes one) nothing approaches.
+    @Test func withoutTheScheduleTheDoorStillFadesInAtItsStop() throws {
+        let (scene, _) = scene()
+        let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
+        presenter.apply(state: state(16, .activity), events: [], snapshot: nil)
+        #expect(scene.vaultDoorDepth == nil && presenter.vault.diagnostics.approaches == 0)
+        presenter.apply(state: state(17, .vault, vault: vault()), events: [], snapshot: nil)
+        #expect(abs((scene.vaultDoorDepth ?? .nan) - scene.layout.vaultDoorStopZ) < 1e-4)
+    }
+
+    /// The round ending mid-approach removes the door.
+    @Test func anApproachingDoorIsRemovedWhenTheRoundEnds() throws {
+        let (scene, _) = scene()
+        let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
+        presenter.apply(state: state(16, .activity), events: [], snapshot: nil, upcomingVaultIn: 1)
+        #expect(scene.vaultDoorDepth != nil)
+        presenter.apply(state: state(16.2, .ended(.aborted)), events: [], snapshot: nil)
+        #expect(scene.vaultDoorDepth == nil && !presenter.vault.approaching)
+    }
+
+    /// The complete replay's vaults open at the end of each activity minute: the
+    /// time to the next one comes from authoritative progress only.
+    @Test func theCompleteReplayReportsTheTimeToItsNextVault() {
+        func at(_ activity: Double, opened: Int, _ phase: LaserRoundPhase = .activity) -> LaserGameState {
+            LaserGameState(sessionGeneration: generation, phase: phase, gameTime: activity + Double(opened) * 1.2,
+                           activityProgress: activity, teamHealth: 5, teamScore: 0, encounters: [],
+                           missionProgress: opened, missionTarget: 5, vault: nil)
+        }
+        #expect(LaserReplayPresentation.upcomingVaultIn(state: at(50, opened: 0), activityDuration: 300) == 10)
+        #expect(LaserReplayPresentation.upcomingVaultIn(state: at(60, opened: 1), activityDuration: 300) == 60,
+                "right after a vault the next one is a minute away")
+        #expect(LaserReplayPresentation.upcomingVaultIn(state: at(290, opened: 4), activityDuration: 300) == 10)
+        #expect(LaserReplayPresentation.upcomingVaultIn(state: at(300, opened: 5), activityDuration: 300) == nil, "no sixth vault")
+        #expect(LaserReplayPresentation.upcomingVaultIn(state: at(60, opened: 0, .vault), activityDuration: 300) == nil)
+    }
+
     // MARK: - Entry, countdown, pause
 
     @Test func enteringTheVaultRevealsTheLockedDoorAndCountdown() throws {

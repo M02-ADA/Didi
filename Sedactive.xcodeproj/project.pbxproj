@@ -29,8 +29,8 @@
 
 /* Begin PBXFileReference section */
 		FA2300000000000000000002 /* SedactiveTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SedactiveTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		FB2300000000000000000002 /* SedactiveUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SedactiveUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FAFDB8FE3084B8E100EC2199 /* Sedactive.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Sedactive.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FB2300000000000000000002 /* SedactiveUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SedactiveUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */

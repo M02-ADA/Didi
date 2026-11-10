@@ -55,6 +55,28 @@ struct GameplayHUDTests {
         #expect(GameplayHUDModel.checkpointPositions(count: 0).isEmpty)
     }
 
+    /// Five markers always, each completed only once the authoritative fill has passed it.
+    @Test func fiveMarkersFollowTheAuthoritativeFill() throws {
+        let start = GameplayHUDModel(state: state(0, .activity), events: [], configuration: try configuration(), activityDuration: 300)
+        #expect(start.markerStates == [.current, .upcoming, .upcoming, .upcoming, .upcoming])
+        // Two vaults opened, the third being attempted: its marker is current, not done.
+        let third = GameplayHUDModel(state: state(180, .vault, activity: 180, opened: 2, vault: vault()), events: [],
+                                     configuration: try configuration(), activityDuration: 300)
+        #expect(third.markerStates == [.completed, .completed, .current, .upcoming, .upcoming])
+        let done = GameplayHUDModel(state: state(300, .diamondTime, activity: 300, opened: 5), events: [],
+                                    configuration: try configuration(), activityDuration: 300)
+        #expect(done.markerStates == Array(repeating: .completed, count: 5))
+    }
+
+    /// The one-vault replay slice still shows five markers; its vault lands on the middle one.
+    @Test func aOneVaultRoundStillShowsFiveMarkers() throws {
+        let waiting = GameplayHUDModel(state: state(20, .vault, activity: 20, opened: 0, target: 1, vault: vault()), events: [],
+                                       configuration: try configuration(vaults: 1), activityDuration: 40)
+        #expect(waiting.markerStates.count == 5)
+        #expect(abs(waiting.fillEnd - GameplayHUDModel.checkpointPositions(count: 5)[2]) < 1e-9)
+        #expect(waiting.markerStates == [.completed, .completed, .current, .upcoming, .upcoming])
+    }
+
     @Test func theFillNeverPassesAVaultNotYetOpened() throws {
         let dots = GameplayHUDModel.checkpointPositions(count: 5)
         // Most of the activity has passed, but no vault has opened yet.

@@ -9,13 +9,32 @@ import SwiftUI
 
 struct PlayerSetupView: View {
     let flow: LaserInputFlow
+    /// Over the Sketch "stand here" stage (Kevin): the same controls in a card,
+    /// without the lane boxes the stage's guides replace.
+    var isOverlay = false
     @State private var actionError: String?
 
     var body: some View {
+        if isOverlay {
+            // Compact, in the stage's title band, so the standing guides stay clear.
+            controls
+                .dynamicTypeSize(.xSmall)
+                .frame(maxWidth: 820, maxHeight: 206)
+                .background(.regularMaterial, in: .rect(cornerRadius: 20))
+                .preferredColorScheme(.dark)
+        } else {
+            controls
+                .background(Color(red: 0.035, green: 0.055, blue: 0.11)).preferredColorScheme(.dark)
+        }
+    }
+
+    private var controls: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                Label("CAMERA SETUP", systemImage: "person.2.fill")
-                    .font(.headline).foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: isOverlay ? 8 : 24) {
+                if !isOverlay {
+                    Label("CAMERA SETUP", systemImage: "person.2.fill")
+                        .font(.headline).foregroundStyle(.orange)
+                }
                 if let message = flow.message {
                     Text("Camera setup unavailable").font(.largeTitle.bold())
                     Text(message).font(.title3).accessibilityIdentifier("liveSetupError")
@@ -32,9 +51,11 @@ struct PlayerSetupView: View {
                     Text(model.title).font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
                         .accessibilityIdentifier("setupPhase")
                     Text(model.instruction).font(.title3).foregroundStyle(.secondary)
-                    HStack(spacing: 16) {
-                        lane("P1", side: "Left game lane")
-                        lane("P2", side: "Right game lane")
+                    if !isOverlay {
+                        HStack(spacing: 16) {
+                            lane("P1", side: "Left game lane")
+                            lane("P2", side: "Right game lane")
+                        }
                     }
                     if setup.canCancelCalibration || setup.phase == .awaitingGameplayReadiness {
                         CalibrationView(setup: setup)
@@ -80,9 +101,8 @@ struct PlayerSetupView: View {
                 .buttonStyle(.bordered).controlSize(.large)
                 .disabled(flow.isClosing).accessibilityIdentifier("leaveLiveSetup")
             }
-            .frame(maxWidth: 680, alignment: .leading).padding(32).frame(maxWidth: .infinity)
+            .frame(maxWidth: isOverlay ? 800 : 680, alignment: .leading).padding(isOverlay ? 14 : 32).frame(maxWidth: .infinity)
         }
-        .background(Color(red: 0.035, green: 0.055, blue: 0.11)).preferredColorScheme(.dark)
     }
 
     private func lane(_ name: String, side: String) -> some View {

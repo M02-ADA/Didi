@@ -23,6 +23,7 @@ final class RoundSmokeUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--synthetic-gameplay-preview"]
         app.launch()
+        LaserHeistJourney.enterRound(app, timeout: timeout)
         let end = app.buttons["endRound"]
         let retry = app.buttons["retryRound"]
         let health = app.descendants(matching: .any)
@@ -43,7 +44,7 @@ final class RoundSmokeUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
         let replay = app.buttons["chooseReplay"]
-        let camera = app.buttons["chooseLive"]
+        let camera = app.buttons["startMission"]   // Sketch Home: camera setup follows the two Set Up steps
         XCTAssertTrue(replay.waitForExistence(timeout: timeout))
         XCTAssertTrue(camera.exists && camera.isEnabled)
         XCTAssertFalse(app.buttons["endRound"].exists)
@@ -64,9 +65,9 @@ final class RoundSmokeUITests: XCTestCase {
         #if targetEnvironment(simulator)
         let app = XCUIApplication()
         app.launch()
-        let camera = app.buttons["chooseLive"]
+        let camera = app.buttons["startMission"]
         XCTAssertTrue(camera.waitForExistence(timeout: timeout))
-        camera.tap()
+        LaserHeistJourney.startCameraSetup(app, timeout: timeout)
         // Real Simulator permission UI, if this app has not requested camera access before.
         let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
         if permission.waitForExistence(timeout: 3) {
@@ -85,5 +86,27 @@ final class RoundSmokeUITests: XCTestCase {
         #else
         throw XCTSkip("This checks the Simulator's unavailable-camera path, not physical tracking")
         #endif
+    }
+}
+
+/// Reaching the round and camera setup from the Sketch Home.
+enum LaserHeistJourney {
+    /// Opens the replay demo from Home, or finds it already open (`-replay`).
+    static func enterRound(_ app: XCUIApplication, timeout: TimeInterval) {
+        let replay = app.buttons["chooseReplay"]
+        let end = app.buttons["endRound"]
+        let either = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in replay.exists || end.exists }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [either], timeout: timeout), .completed, "the app opened on neither Home nor a round")
+        if replay.exists { replay.tap() }
+    }
+
+    /// Home › START MISSION › both "Put your iPad on the Floor" steps › camera setup.
+    static func startCameraSetup(_ app: XCUIApplication, timeout: TimeInterval) {
+        app.buttons["startMission"].tap()
+        let next = app.buttons["setupNext"]
+        XCTAssertTrue(next.waitForExistence(timeout: timeout), "Set Up step 1 did not show")
+        next.tap()
+        XCTAssertTrue(next.waitForExistence(timeout: timeout), "Set Up step 2 did not show")
+        next.tap()
     }
 }

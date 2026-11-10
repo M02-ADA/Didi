@@ -48,6 +48,31 @@ struct GameplayHUDModel: Equatable {
     static let lastCheckpoint = 0.837
     static let diamondPosition = 0.928
 
+    /// The Sketch track always shows five checkpoints, one per vault of a full
+    /// round (rules: five vaults, one after each activity minute).
+    static let markerCount = 5
+
+    enum MarkerState: Equatable {
+        /// The fill has passed it.
+        case completed
+        /// The next checkpoint ahead of the fill (or the vault being attempted).
+        case current
+        case upcoming
+    }
+
+    /// The five track markers, read from the authoritative progress fill. With
+    /// five vaults each marker is a vault; a round with another vault count
+    /// (the one-vault replay slice) shows the same five as stages of its progress.
+    var markerStates: [MarkerState] {
+        var foundCurrent = false
+        return Self.checkpointPositions(count: Self.markerCount).map { x in
+            if diamondReached || x < fillEnd - 0.005 { return .completed }
+            if foundCurrent { return .upcoming }
+            foundCurrent = true
+            return .current
+        }
+    }
+
     /// Checkpoint centres along the track: Sketch spacing for five vaults,
     /// spread evenly over the same span for any other count.
     static func checkpointPositions(count: Int) -> [Double] {
@@ -235,12 +260,16 @@ struct GameplayHUD: View {
                     .shadow(color: .black.opacity(0.25), radius: 4 * k, y: 4 * k)
                     .frame(width: end - start, height: 32 * k)
                     .offset(x: start, y: 15 * k)
-                ForEach(Array(GameplayHUDModel.checkpointPositions(count: model.checkpoints).enumerated()), id: \.offset) { index, x in
+                let markers = GameplayHUDModel.checkpointPositions(count: GameplayHUDModel.markerCount)
+                ForEach(Array(zip(markers, model.markerStates).enumerated()), id: \.offset) { _, marker in
+                    // Sketch draws every marker alike and lets the fill show what
+                    // is done; the next one is slightly larger, later ones dimmer.
                     Image("LaserHeistHUD/checkpoint")
                         .resizable()
                         .frame(width: dot, height: dot * 130 / 123)
-                        .position(x: x * width, y: height / 2)
-                        .opacity(index < model.vaultsOpened || x <= model.fillEnd ? 1 : 0.85)
+                        .scaleEffect(marker.1 == .current ? 1.15 : 1)
+                        .opacity(marker.1 == .upcoming ? 0.7 : 1)
+                        .position(x: marker.0 * width, y: height / 2)
                 }
                 Image("LaserHeistHUD/progress-diamond")
                     .resizable()
@@ -249,6 +278,7 @@ struct GameplayHUD: View {
                     .position(x: GameplayHUDModel.diamondPosition * width, y: height / 2)
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: model.fillEnd)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: model.markerStates)
             .animation(reduceMotion ? nil : .spring(duration: 0.4, bounce: 0.4), value: model.diamondReached)
         }
         .frame(height: height)
@@ -335,7 +365,7 @@ struct GameplayHUD: View {
         ZStack {
             Color.black.opacity(0.66).ignoresSafeArea()
                 .accessibilityHidden(true)
-            VStack(spacing: 38 * k) {
+            VStack(spacing: 34 * k) {
                 if !actions.canPause {
                     Text("PREVIEW · the round keeps running (session pause pending)")
                         .font(.system(size: 16 * k, weight: .heavy, design: .monospaced))
@@ -344,13 +374,19 @@ struct GameplayHUD: View {
                         .background(Self.sun, in: Capsule())
                         .foregroundStyle(Self.ink)
                 }
-                menuButton("Resume", fill: Self.sun, k: k) {
+                menuButton("Resume", text: Color(sketch: 0x321605), k: k,
+                           style: LayeredPillButtonStyle(top: Color(sketch: 0xEAA551), bottom: Color(sketch: 0xE97434),
+                                                         rim: Color(sketch: 0xFFC73A), base: Color(sketch: 0xD75C41),
+                                                         rimHeight: 3 * k, baseHeight: 2 * k)) {
                     actions.resume?()
                     menuShown = false
                 }
                 .accessibilityIdentifier("resume")
                 if let leave = actions.leave {
-                    menuButton("Leave Game", fill: Color(white: 0.933), k: k) {
+                    menuButton("Leave Game", text: Color(sketch: 0xBEAB8D), k: k,
+                               style: LayeredPillButtonStyle(top: Color(sketch: 0x3E3A5E), bottom: Color(sketch: 0x4E4A7A),
+                                                             rim: Color(sketch: 0x3E3A5E), base: Color(sketch: 0x302D4F),
+                                                             rimHeight: 3 * k, baseHeight: 2 * k)) {
                         menuShown = false
                         leave()
                     }
@@ -361,16 +397,16 @@ struct GameplayHUD: View {
         .transition(.opacity)
     }
 
-    private func menuButton(_ title: String, fill: Color, k: CGFloat, action: @escaping () -> Void) -> some View {
+    /// Sketch "Hi-Fi Revisi 6 NOV" pause menu button ("Home Copy 29"): 620 × 86 pt.
+    private func menuButton(_ title: String, text: Color, k: CGFloat, style: LayeredPillButtonStyle,
+                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 44.8 * k, weight: .bold, design: .rounded))
-                .foregroundStyle(Self.ink)
-                .frame(width: 564 * k, height: 92 * k)
-                .background(fill, in: Capsule())
-                .background(Self.buttonShadow, in: Capsule().offset(y: 12 * k))
+                .foregroundStyle(text)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(style)
+        .frame(width: 620 * k, height: 86 * k)
     }
 
     // MARK: - Palette (Sketch)
@@ -379,7 +415,6 @@ struct GameplayHUD: View {
     static let rim = Color(red: 0x5B / 255, green: 0x51 / 255, blue: 0x90 / 255)
     static let sun = Color(red: 0xFF / 255, green: 0xC8 / 255, blue: 0x3A / 255)
     static let ink = Color(red: 0x16 / 255, green: 0x12 / 255, blue: 0x3A / 255)
-    static let buttonShadow = Color(red: 0xB9 / 255, green: 0x84 / 255, blue: 0x00 / 255)
     static let fillTop = Color(red: 0xEA / 255, green: 0xA8 / 255, blue: 0x52 / 255)
     static let fillBottom = Color(red: 0xE9 / 255, green: 0x6D / 255, blue: 0x2F / 255)
 }
