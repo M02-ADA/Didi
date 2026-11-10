@@ -10,7 +10,7 @@ struct D09CompleteRoundTests {
         case base(FullRoundReplayScenario.Action)
         case normalSpawn(Int, boundary: Double), normalOutside(Int), normalInside(Int)
         case vaultOutside(PlayerID, LaserVaultButton)
-        case bonusOutside, bonusInside(Int), bonusMissCheck
+        case bonusOutside, bonusInside(Int), bonusPersistenceCheck
     }
     private struct Step { let sourceTime: Double; let order: Int; let action: Action }
     private struct VaultKey: Hashable { let player: PlayerID; let button: LaserVaultButton }
@@ -55,7 +55,7 @@ struct D09CompleteRoundTests {
         add(bonusStart + 1.1, .bonusInside(0))
         add(bonusStart + 2.1, .bonusOutside)
         add(bonusStart + 2.2, .bonusInside(1))
-        add(bonusStart + 7, .bonusMissCheck)
+        add(bonusStart + 7, .bonusPersistenceCheck)
         steps.sort { $0.sourceTime == $1.sourceTime ? $0.order < $1.order : $0.sourceTime < $1.sourceTime }
 
         let source = try ReplayBodyInput(fixture: scenario.fixture)
@@ -78,7 +78,7 @@ struct D09CompleteRoundTests {
         }
         func diamondTarget(_ spawn: LaserDiamondSpawn) throws -> LaserContactTarget {
             try LaserContactTarget(id: spawn.id, eligiblePlayers: spawn.eligiblePlayers,
-                                   activation: spawn.entry, deadline: spawn.exit)
+                activation: spawn.entry, deadline: #require(game.diamonds[spawn.id]?.interactionDeadline))
         }
         do {
             for step in steps {
@@ -160,9 +160,9 @@ struct D09CompleteRoundTests {
                             #expect(accepted.count == 4 && game.activeDiamonds.count == 4)
                             tracker.removeTargets(Set(accepted.map(\.targetID)))
                             try tracker.addTargets(replacements.map(diamondTarget))
-                        case .bonusMissCheck:
-                            #expect(game.activeDiamonds.isEmpty)
-                            #expect(game.diamonds.count == 42) // 30 normal + 4 initial + 8 replacements; no miss refill.
+                        case .bonusPersistenceCheck:
+                            #expect(game.activeDiamonds.count == 4)
+                            #expect(game.diamonds.count == 42) // Only collections created replacements.
                         case .base(.tick): break
                         default: Issue.record("Unexpected action in the controlled D09 round")
                         }

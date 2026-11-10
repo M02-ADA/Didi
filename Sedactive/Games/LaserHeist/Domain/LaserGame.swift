@@ -337,7 +337,8 @@ nonisolated struct LaserGame: Sendable {
             && spawns.count == LaserRoundConfiguration.initialBonusDiamondCount
             && bonusDeadline == gameTime + bonusDuration, "initial bonus diamond plan")
         guard let bonusDeadline else { throw LaserDataError.invalidValue("missing bonus deadline") }
-        try diamondField.spawn(spawns, at: gameTime, before: bonusDeadline, maximumActive: 4)
+        try diamondField.spawn(spawns, at: gameTime, before: bonusDeadline, maximumActive: 4,
+                               bonusDeadline: bonusDeadline)
         bonusDiamondsStarted = true
     }
 

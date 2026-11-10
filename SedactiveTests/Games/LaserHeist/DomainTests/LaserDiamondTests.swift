@@ -98,9 +98,9 @@ nonisolated struct LaserDiamondTests {
         #expect(game.teamScore == 50 && game.diamondsCollected == 2)
         #expect(game.activeDiamonds.count == 4 && game.diamonds.count == 6)
         #expect(try collect(&game, generation: generation, ids: [5], capture: time).isEmpty)
-        // Misses free their slots without automatic replacement.
+        // Bonus targets persist beyond the passage exit used by normal diamonds.
         try game.advance(to: 4.1)
-        #expect(game.activeDiamonds.count == 2)
+        #expect(game.activeDiamonds.count == 4)
         #expect(game.diamonds.count == 6)
     }
 
@@ -146,6 +146,37 @@ nonisolated struct LaserDiamondTests {
                             arrival: deadline).isEmpty)
         #expect(game.summary?.outcome == .completed)
         #expect(game.summary?.diamondsCollected == 0 && game.teamScore == 0)
+    }
+
+    @Test func uncollectedBonusDiamondsStayAvailableUntilTheWholePhaseEnds() throws {
+        var (game, generation) = try Self.bonus()
+        let start = game.gameTime, deadline = start + 10
+        try game.advance(to: start + 8)
+        #expect(game.activeDiamonds.count == 4)
+        #expect(game.diamonds.values.allSatisfy { $0.outcome == nil && $0.interactionDeadline == deadline })
+        let time = start + 8.1
+        // This is well past the normal passage exit of start+4.
+        #expect(try collect(&game, generation: generation, ids: [1], capture: time,
+                            replacements: [Self.spawn(5, at: time)]).count == 1)
+        #expect(game.activeDiamonds.count == 4 && game.teamScore == 25)
+        #expect(game.diamonds[Self.id(5)]?.interactionDeadline == deadline)
+        try game.advance(to: deadline)
+        #expect(game.activeDiamonds.isEmpty)
+        #expect(game.diamonds.values.filter { $0.outcome == .closed }.count == 4)
+        #expect(game.diamonds.values.allSatisfy {
+            if case .missed = $0.outcome { false } else { true }
+        })
+    }
+
+    @Test func replacementStaysCollectibleAfterItsOwnPassageExit() throws {
+        var (game, generation) = try Self.bonus()
+        let start = game.gameTime, firstTime = start + 1.2
+        let replacement = try Self.spawn(5, at: firstTime, entry: firstTime + 0.1, exit: firstTime + 0.2)
+        _ = try collect(&game, generation: generation, ids: [1], capture: firstTime, replacements: [replacement])
+        let later = start + 8
+        #expect(try collect(&game, generation: generation, ids: [5], capture: later,
+                            replacements: [Self.spawn(6, at: later)]).count == 1)
+        #expect(game.teamScore == 50 && game.activeDiamonds.count == 4)
     }
 
     @Test func capLimitsConcurrentDiamondsWithoutLimitingTotalCollections() throws {

@@ -1,5 +1,7 @@
 # Jevon handoff — D07, D09 and J03
 
+
+**Latest task-owner clarification, 10 November 2026:** Diamond Time has four persistent targets for ten active seconds. Uncollected targets do not pass/miss/disappear; collection alone spawns a replacement, with at most four active. Only normal diamonds are permanently missed after passage. This supersedes earlier bonus passage/missed-slot assumptions below. Bonus contact admission uses the phase deadline, not the spawn's normal passage exit.
 10 November 2026 · Updated after Edo's D09 v1 approval and Jevon's product decisions · **Not sent; exact CP1 fields/coordinate freeze and live acceptance remain pending**
 
 ## D07 — confirmed authority, open visual acceptance
@@ -19,7 +21,7 @@ The agreed behavior is now implemented/tested in Jevon's domain area:
 1. Fresh outside → inside domain entry; no dwell/interpolation, first-inside award or held-pose pickup on a new/resumed target. Missing/invalid membership clears pending history. Independent valid wrists can qualify independently, subject to existing session readiness.
 2. Capture and arrival must both precede the interaction deadline; equality closes first. No laser delivery allowance or retroactive out-of-order award.
 3. Deterministic same-frame batches: representative tie order **P1 left → P1 right → P2 left → P2 right**, stable target-ID order; no personal-score implication. Vault applies all buttons before one completion transition; diamond terminal states precede replacements.
-4. Actual diamond passage, miss, replacement and summary accounting. Product choices confirmed by Jevon: **25 team points, four initial bonus diamonds, no automatic missed-slot refill**. The cap limits concurrent active diamonds, not total collections.
+4. Normal passage/miss and persistent Diamond Time targets, collection replacements and summary accounting. Product choices confirmed by Jevon: **25 team points, four initial bonus diamonds, persistent bonus targets until collection or phase end; permanent misses for normal diamonds**. The cap limits concurrent active diamonds, not total collections.
 
 The combined domain replay fixture completes 50 laser targets/player, 30 normal diamonds, five contact-driven vaults and eight bonus collections with **10,950 points / 38 diamonds / full health**. Its one ReplayBodyInput consumer and GameClock are real; contact membership is explicitly synthetic test input, not E08 or a proposed wire format. Default interactive replay presentation has not been extended to render these diamond plans.
 

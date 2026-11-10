@@ -20,6 +20,7 @@ nonisolated struct LaserDiamondSpawn: Equatable, Sendable {
     let eligiblePlayers: Set<PlayerID>
     let spawnedAt: Double
     let entry: Double
+    /// Normal passage exit. Bonus eligibility uses the state's phase deadline.
     let exit: Double
 
     init(id: UUID, position: LaserDiamondPosition, eligiblePlayers: Set<PlayerID>,
@@ -41,9 +42,22 @@ nonisolated enum LaserDiamondOutcome: Equatable, Sendable {
     case closed
 }
 
+nonisolated enum LaserDiamondLifetime: Equatable, Sendable {
+    case passage
+    case diamondTime(deadline: Double)
+}
+
 nonisolated struct LaserDiamondState: Equatable, Sendable {
     let spawn: LaserDiamondSpawn
+    let lifetime: LaserDiamondLifetime
     var outcome: LaserDiamondOutcome?
+
+    var interactionDeadline: Double {
+        switch lifetime {
+        case .passage: spawn.exit
+        case .diamondTime(let deadline): deadline
+        }
+    }
 }
 
 /// Owned only by LaserGame. No score, independent clock, random placement or input reader.
@@ -58,10 +72,13 @@ nonisolated struct LaserDiamondField: Sendable {
     }
 
     mutating func spawn(_ spawns: [LaserDiamondSpawn], at time: Double, before boundary: Double,
-                        maximumActive: Int? = nil) throws {
+                        maximumActive: Int? = nil, bonusDeadline: Double? = nil) throws {
         try requireLaserValue(time.isFinite && boundary.isFinite && boundary > time
             && Set(spawns.map(\.id)).count == spawns.count
-            && spawns.allSatisfy { states[$0.id] == nil && $0.spawnedAt == time && $0.exit <= boundary },
+            && spawns.allSatisfy { spawn in
+                states[spawn.id] == nil && spawn.spawnedAt == time
+                    && (bonusDeadline.map { $0 == boundary && spawn.entry < $0 } ?? (spawn.exit <= boundary))
+            },
                               "diamond spawn plan")
         let combined = active + spawns
         if let maximumActive {
@@ -71,12 +88,15 @@ nonisolated struct LaserDiamondField: Sendable {
             try requireLaserValue(!combined.prefix(index).contains { $0.position == spawn.position },
                                   "distinct diamond positions")
         }
-        for spawn in spawns { states[spawn.id] = LaserDiamondState(spawn: spawn) }
+        for spawn in spawns {
+            states[spawn.id] = LaserDiamondState(spawn: spawn,
+                lifetime: bonusDeadline.map { .diamondTime(deadline: $0) } ?? .passage)
+        }
     }
 
     mutating func advance(to time: Double) {
         for id in states.keys {
-            if let state = states[id], state.outcome == nil, time >= state.spawn.exit {
+            if let state = states[id], state.outcome == nil, state.lifetime == .passage, time >= state.spawn.exit {
                 states[id]?.outcome = .missed(at: state.spawn.exit)
             }
         }
@@ -94,7 +114,9 @@ nonisolated struct LaserDiamondField: Sendable {
         var next = self
         next.advance(to: arrivedAt)
         var accepted: [LaserContactActivation] = []
-        for spawn in next.active where capturedAt >= spawn.entry && capturedAt < spawn.exit && arrivedAt < spawn.exit {
+        for spawn in next.active {
+            guard let deadline = next.states[spawn.id]?.interactionDeadline,
+                  capturedAt >= spawn.entry, capturedAt < deadline, arrivedAt < deadline else { continue }
             if let hand = LaserContactHand.ordered.first(where: { hand in
                 spawn.eligiblePlayers.contains(hand.playerID)
                     && contacts.contains { $0.targetID == spawn.id && $0.hand == hand }
@@ -116,7 +138,8 @@ nonisolated struct LaserDiamondField: Sendable {
             next.states[contact.targetID]?.outcome = .collected(hand: contact.hand, at: arrivedAt)
         }
         if let bonusDeadline, !replacements.isEmpty {
-            try next.spawn(replacements, at: arrivedAt, before: bonusDeadline, maximumActive: 4)
+            try next.spawn(replacements, at: arrivedAt, before: bonusDeadline, maximumActive: 4,
+                           bonusDeadline: bonusDeadline)
         }
         self = next
         return accepted

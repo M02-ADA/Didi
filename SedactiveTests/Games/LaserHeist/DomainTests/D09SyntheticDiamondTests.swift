@@ -14,20 +14,40 @@ nonisolated struct D09SyntheticDiamondTests {
         })
     }
 
-    private func targets(_ spawns: [LaserDiamondSpawn]) throws -> [LaserContactTarget] {
+    private func targets(_ spawns: [LaserDiamondSpawn], game: LaserGame) throws -> [LaserContactTarget] {
         try spawns.map { try LaserContactTarget(id: $0.id, eligiblePlayers: $0.eligiblePlayers,
-                                                activation: $0.entry, deadline: $0.exit) }
+            activation: $0.entry, deadline: #require(game.diamonds[$0.id]?.interactionDeadline)) }
     }
 
     private func positions(_ point: LaserDiamondPosition) -> [LaserContactHand: LaserDiamondPosition] {
         Dictionary(uniqueKeysWithValues: LaserContactHand.ordered.map { ($0, point) })
     }
 
+    @Test func freshContactCanCollectAPersistentBonusTargetLateInThePhase() throws {
+        var (game, generation) = try LaserDiamondTests.bonus()
+        let lifetime = UUID(), start = game.gameTime
+        var tracker = try LaserContactEntryTracker(lifetime: lifetime, maximumContactAge: 0.5)
+        try tracker.replaceTargets(targets(game.activeDiamonds, game: game))
+        try game.advance(to: start + 8)
+        #expect(game.activeDiamonds.count == 4)
+        _ = try tracker.evaluate(lifetime: lifetime, frameID: 1, capturedAt: start + 8,
+            arrivedAt: start + 8, locations: membership(game.activeDiamonds,
+                points: positions(LaserDiamondPosition(x: 0, y: 0))))
+        let first = try #require(game.diamonds[LaserDiamondTests.id(1)]?.spawn)
+        let time = start + 8.1
+        let batch = try tracker.evaluate(lifetime: lifetime, frameID: 2, capturedAt: time,
+            arrivedAt: time, locations: membership(game.activeDiamonds, points: positions(first.position)))
+        #expect(try game.collectDiamonds(batch, generation: generation,
+            calibrationRevisions: [.player1: 1, .player2: 1], capturedAt: time, arrivedAt: time,
+            replacements: [LaserDiamondTests.spawn(5, at: time)]).count == 1)
+        #expect(game.teamScore == 25 && game.activeDiamonds.count == 4)
+    }
+
     @Test func sameFrameTeamPickupReplacesOnceAndNewTargetNeedsItsOwnFreshEntry() throws {
         var (game, generation) = try LaserDiamondTests.bonus()
         let lifetime = UUID(), start = game.gameTime
         var tracker = try LaserContactEntryTracker(lifetime: lifetime, maximumContactAge: 0.5)
-        try tracker.replaceTargets(targets(game.activeDiamonds))
+        try tracker.replaceTargets(targets(game.activeDiamonds, game: game))
         let outside = try positions(LaserDiamondPosition(x: 0, y: 0))
         let first = try #require(game.diamonds[LaserDiamondTests.id(1)]?.spawn)
         _ = try tracker.evaluate(lifetime: lifetime, frameID: 1, capturedAt: start + 1,
@@ -42,7 +62,7 @@ nonisolated struct D09SyntheticDiamondTests {
             replacements: [replacement])
         #expect(accepted.count == 1 && game.teamScore == 25 && game.activeDiamonds.count == 4)
         tracker.removeTargets([first.id])
-        try tracker.addTargets(targets([replacement]))
+        try tracker.addTargets(targets([replacement], game: game))
         // A target cannot start its entry history during approach or from a held first-inside pose.
         let held = positions(replacement.position)
         for (frame, capture) in [(UInt64(3), time + 0.1), (4, replacement.entry), (5, replacement.entry + 0.1)] {
@@ -85,7 +105,7 @@ nonisolated struct D09SyntheticDiamondTests {
         var (game, generation) = try LaserDiamondTests.bonus()
         let lifetime = UUID(), start = game.gameTime
         var tracker = try LaserContactEntryTracker(lifetime: lifetime, maximumContactAge: 0.5)
-        try tracker.replaceTargets(targets(game.activeDiamonds))
+        try tracker.replaceTargets(targets(game.activeDiamonds, game: game))
         _ = try tracker.evaluate(lifetime: lifetime, frameID: 1, capturedAt: start + 1, arrivedAt: start + 1,
             locations: membership(game.activeDiamonds, points: positions(LaserDiamondPosition(x: 0, y: 0))))
         let spawn = try #require(game.diamonds[LaserDiamondTests.id(1)]?.spawn), time = start + 1.1

@@ -1,5 +1,7 @@
 # D09 — wrist interaction decisions for vaults and diamonds
 
+
+**Latest task-owner clarification, 10 November 2026:** Diamond Time has four persistent targets for ten active seconds. Uncollected targets do not pass/miss/disappear; collection alone spawns a replacement, with at most four active. Only normal diamonds are permanently missed after passage. This supersedes earlier bonus passage/missed-slot assumptions below. Bonus contact admission uses the phase deadline, not the spawn's normal passage exit.
 10 November 2026 · Jevon consumer handoff · **D09 v1 architecture/behavior APPROVED by Edo; exact CP1 fields and coordinate mapping remain OPEN**
 
 ## Subsequent D09 v1 approval
@@ -10,7 +12,7 @@ Edo explicitly authorizes **J04/J05 synthetic fixtures now**, while he checks CP
 
 Edo delegates the tie policy to Jevon's fixtures: target output order is UUID lexical order, and simultaneous entrants on one target choose **P1 left → P1 right → P2 left → P2 right** as a representative. This never adds personal points or multiplies team rewards. Radii, placement, comfortable reach, mapping and numeric freshness remain unapproved production parameters.
 
-**Confirmed by task owner, 10 November 2026:** Jevon approves **25 team points per diamond, four initial Diamond Time diamonds, and no automatic refill for missed slots**. Collection-triggered replacement remains required. These product choices do not approve measurement/reach/mapping or source compatibility.
+**Confirmed by task owner, 10 November 2026:** Jevon approves **25 team points per diamond, four initial Diamond Time diamonds, and persistent uncollected bonus targets until collection or phase end**. Collection-triggered replacement remains required. These product choices do not approve measurement/reach/mapping or source compatibility.
 
 The earlier proposal/search record follows for provenance. Its OPEN/PROPOSED labels are superseded only for the specifically approved items above; they do not negate this later decision.
 
@@ -46,7 +48,7 @@ Inspected: the current checkout; all locally available `origin/*` branches after
 ## Retained product rules
 
 - Vault: three buttons per player, either wrist, free order; both sides complete before the existing five-second opportunity ends. Repeated activation does not add progress. Pause retains committed buttons and remaining game time.
-- Diamond: wrist interaction during the declared passage through the interaction area; no fixed arbitrary lifetime and no reclaim after passage. All awards go to one team score.
+- Normal diamond: wrist interaction during passage; permanently missed afterward. Diamond Time targets persist until collection or phase end. All awards go to one team score.
 - Finale: ten active seconds, at most four team diamonds at distinct positions, a valid collection creates a replacement elsewhere, and no total collection quota.
 - Human input remains authoritative. Avatar joints, IK and RealityKit contacts cannot establish a pickup or button activation. Missing/invalid evidence cannot become an award or player damage.
 - One game clock and one authoritative session consumer. Existing accepted calibration/context and source cutovers remain producer-owned.
@@ -80,7 +82,7 @@ Edo/Jevon agree capture eligibility, arrival cutoff, deduplication and boundary 
 |---|---|---|
 | Points per accepted diamond | Team reward, exactly once per diamond | **25 points — task-owner confirmed, 10 Nov.** App interaction stays unconfigured until a reviewed plan is supplied. |
 | Initial Diamond Time population | At most four active team diamonds, distinct positions | **Start with four — task-owner confirmed, 10 Nov.** |
-| Missed-slot behavior | Collection-triggered replacement is confirmed | **No automatic refill on miss — task-owner confirmed, 10 Nov.** |
+| Lifetime | Collection-triggered replacement is confirmed | **Bonus targets persist until collected/phase end; normal diamonds miss permanently after passage.** |
 | Normal diamond placement/passage | Confirmed total-team per-minute ranges; finish before vault entry | Seed/positions, separation, speed/passage windows and simultaneous/boundary rules need explicit selection. |
 
 Normal placement/speed and physical reach remain open. The three explicit product choices above are implemented in synthetic/domain tests; they are not physical acceptance or approval of a producer interface.
@@ -132,7 +134,7 @@ Maintain a bounded contact state per active target, eligible player and wrist: *
 | Capture before activation / passage entry | Does not arm or collect. A new target cannot reuse a previous target's evidence. |
 | Exact target activation | May establish outside only; an award needs a later inside capture. No banked entry. |
 | Vault deadline `d` | Retain existing timeout-wins behavior: capture and arrival must be **strictly before** `d`. At `d`, timeout closes first. No laser delivery allowance is copied. |
-| Diamond passage `[entry, exit)` | Capture before entry or at/after exit cannot collect. Arrival at/after exit also cannot collect under this proposal, even if captured earlier. No award after the diamond has passed. |
+| Normal diamond passage `[entry, exit)` | Capture before entry or at/after exit cannot collect. Arrival at/after exit also cannot collect under this proposal, even if captured earlier. No award after the diamond has passed. |
 | Diamond Time deadline | Capture and arrival must both precede phase end. At the deadline close collection/spawn/replacement first, then finalize once. |
 | Pause / inactive app / current readiness loss | No contact commits. Old observations cannot queue an award for resume. This does not weaken the existing full live-readiness gates. |
 | Buffered/out-of-order input | Ignore duplicates/older contact captures; evaluate fresh eligible captures once in delivered order. A dropped frame never proves an unobserved entry. |
@@ -173,7 +175,7 @@ Fixtures will include explicit target IDs, geometry/config version, source envel
 | C17 | Missing optional attachment / older replay format | Existing laser behavior unchanged; contact capability unavailable. |
 | C18 | Overlapping zones, invalid radius/reach or incompatible coordinate provenance | Reject plan/evidence; no guessed target, reward or player penalty. |
 | C19 | Freshness gap exceeds reviewed limit, then inside | No entry until a new valid outside → inside sequence. |
-| C20 | Approaching diamond outside interaction passage, then permanent pass | No early or post-pass award; miss never damages health. |
+| C20 | Normal approaching diamond outside interaction passage, then permanent pass | No early or post-pass award; miss never damages health. |
 
 Edo's later approval explicitly permits J04/J05 synthetic domain fixtures using admitted membership now. These do not define Edo's wire/replay schema or imply live E08 validation; source-specific compatibility fixtures still wait for his exact surface.
 
@@ -184,7 +186,7 @@ Edo's later approval explicitly permits J04/J05 synthetic domain fixtures using 
 | Evidence, source/context and delivery | Edo; Jevon, with Kevin for visible mapping | Architecture direction APPROVED; exact CP1 schema/compatibility still pending Edo |
 | Capture/arrival/phase/deadline semantics | Edo + Jevon; Kevin/Theo for cues | D09 v1 behavior APPROVED; actual clock/mapping adapter and device measurements pending |
 | Reach and interaction zones | Edo/Jevon/Kevin; Theo usability | Circular fresh-entry behavior APPROVED; parameters, coordinate mapping and feasible reach OPEN |
-| Diamond points/population/refill | Jevon; Edo feasibility, Kevin/Theo presentation | Task-owner CONFIRMED: 25 points, initial four, no missed-slot refill; physical/presentation review pending |
+| Diamond points/population/refill | Jevon; Edo feasibility, Kevin/Theo presentation | Task-owner CONFIRMED: 25 points, initial four, persistent bonus targets; normal misses are permanent; physical/presentation review pending |
 
 Record the actual choice, interface/fixture version, named approvers and verification implications here or link the team's authoritative decision. Do not close D09 from a planning table or an unrelated PR approval.
 
