@@ -1,6 +1,6 @@
 # Jevon handoff — D07, D09 and J03
 
-10 November 2026 · Review request prepared for Edo/Kevin · **Not sent; no new contract approval implied**
+10 November 2026 · Updated after Edo's D09 v1 approval and Jevon's product decisions · **Not sent; exact CP1 fields/coordinate freeze and live acceptance remain pending**
 
 ## D07 — confirmed authority, open visual acceptance
 
@@ -10,21 +10,22 @@ Jevon's additional tests cover either player in unequal-height pairs, either rai
 
 Kevin still owns rig/reach/mapping corrections and rendered comparisons. Edo/Kevin own source-correlated E07 references and any D06 changes. Theo reviews comprehension. D07 remains open for measured iPad acceptance; crown, independent soles and airborne are still experimental/unavailable for authoritative live input.
 
-## D09 — concrete proposal ready for review
+## D09 — behavior approved, producer schema and mapping pending
 
-Edo's proposed ownership/provenance/single-consumer direction fits the existing separation. [The revised D09 proposal](LaserHeist-D09-Contact-Decision-Proposal.md#jevons-concrete-d09-v1-proposal-for-agreement) supplies a candidate contact design and 20 expected fixture cases. None is a frozen contract or implemented E08 path.
+Edo approved the architecture/behavior direction and explicitly authorized J04/J05 synthetic fixtures. [The D09 decision record](LaserHeist-D09-Contact-Decision-Proposal.md#subsequent-d09-v1-approval) preserves the exact scope and the original proposal. Exact field-level freeze still awaits Edo's CP1 compatibility check and the agreed coordinate mapping; no shared producer schema was invented on this branch.
 
-Please review these specific choices:
+The agreed behavior is now implemented/tested in Jevon's domain area:
 
-1. **Edo:** an optional atomically attached CP1 contact surface, with independent calibrated wrist XY/confidence/validity plus original source/binding/calibration context. Choose the producer-owned schema and current-context acceptance mechanism, including old replay compatibility. No latest-pose join or second gameplay subscriber.
-2. **Edo + Jevon, Kevin/Theo for presentation:** projected point entry into a disk; fresh outside → inside after activation/resume; no dwell/interpolation or held-pose auto-award. Confirm feasibility and whether entry-only behavior misses intended player actions.
-3. **Edo + Jevon:** proposed strict pre-deadline capture **and arrival**, no laser delivery allowance, and no retroactive out-of-order contact processing. Review the latency implications before adopting it.
-4. **Kevin + Edo + Jevon, Theo for usability:** same canonical zones/trajectories, reviewed comfortable reach, radii/separation and passage timings. No production numeric values are selected yet.
-5. **All affected owners:** same-frame contacts apply as a deduplicated batch; one button/spawn commits once, vault opens once, replacements/phase changes happen afterward and cannot consume that same capture.
+1. Fresh outside → inside domain entry; no dwell/interpolation, first-inside award or held-pose pickup on a new/resumed target. Missing/invalid membership clears pending history. Independent valid wrists can qualify independently, subject to existing session readiness.
+2. Capture and arrival must both precede the interaction deadline; equality closes first. No laser delivery allowance or retroactive out-of-order award.
+3. Deterministic same-frame batches: representative tie order **P1 left → P1 right → P2 left → P2 right**, stable target-ID order; no personal-score implication. Vault applies all buttons before one completion transition; diamond terminal states precede replacements.
+4. Actual diamond passage, miss, replacement and summary accounting. Product choices confirmed by Jevon: **25 team points, four initial bonus diamonds, no automatic missed-slot refill**. The cap limits concurrent active diamonds, not total collections.
 
-Jevon still needs to decide diamond points, initial finale population and missed-slot refill. The existing 25-point candidate is not selected. Ten active seconds, at most four active team diamonds and collection-triggered replacements remain the retained product rules.
+The combined domain replay fixture completes 50 laser targets/player, 30 normal diamonds, five contact-driven vaults and eight bonus collections with **10,950 points / 38 diamonds / full health**. Its one ReplayBodyInput consumer and GameClock are real; contact membership is explicitly synthetic test input, not E08 or a proposed wire format. Default interactive replay presentation has not been extended to render these diamond plans.
 
-After the relevant semantics and fixture surface are agreed, Jevon can implement J04/J05 synthetic contacts and diamond behavior, then J06 full replay flow and J07 live E08 integration. No need to claim the live producer is validated to run agreed synthetic fixtures; do not start those contact implementations against an invented shared schema.
+For J07, Edo still needs to provide the exact producer-owned attachment and atomic source/epoch/control/binding/calibration acceptance rules, including absent-attachment/old-replay behavior. The domain tracker intentionally consumes classified membership only. The session adapter must validate actual E08 provenance, use original capture conversion/current arrival time, invalidate entry on all lifecycle cutovers, stage tracker/game mutations together and process each source frame once before any replacements. No latest-pose join or second CP1 subscriber is permitted.
+
+For Kevin/Theo/Edo joint review, production zone radius/placement/separation, comfortable reach, coordinate mapping, approach/interaction trajectory and the read-only rendering/event handoff remain open. The fixed numeric circles and placement schedules used in tests are not production defaults. No GameEvent schema or renderer code changed.
 
 ## J03 — latest session/readiness status
 
@@ -38,15 +39,15 @@ After the relevant semantics and fixture surface are agreed, Jevon can implement
 
 **Default app behavior remains setup-only for live:** its factory supplies no reviewed round plan, live timing policy or recovery plan. Real crown/sole/airborne acceptance, physical calibration and measured fairness remain gates. The conditional live loop passing with controlled inputs does not establish production camera gameplay.
 
-Verification: the earlier full checkpoint passed **617 Swift Testing definitions in 64 suites**, three UI smoke cases and Debug/Release Simulator builds. The later D07 focused run passed **45 definitions in five suites** and includes four new definitions; the full suite was not rerun for this test/document-only follow-up. Existing framework/concurrency warnings remain. No physical-device validation is claimed. See [the consumer checkpoint record](LaserHeist-Replay-Slice.md).
+Verification: the latest full regression passed **653 Swift Testing definitions in 70 suites**, **three UI smoke cases**, and Debug/Release Simulator builds. Targeted D09 runs passed 43 definitions in six suites and eight combined/legacy replay definitions in two suites. Logs and limitations are recorded in [the consumer checkpoint record](LaserHeist-Replay-Slice.md). Existing framework/concurrency/Simulator graphics warnings remain. No physical-device validation is claimed.
 
 ## Implementation boundary for the next handoff
 
 | Owner | Next input needed |
 |---|---|
-| Edo | Accept/revise the D09 evidence, current-context and timing proposal; define the producer/replay surface; continue genuine anatomy/calibration and E08 validation. |
-| Kevin | Acknowledge D07 investigation priority; address rig mismatches and review the shared contact-zone presentation. |
+| Edo | Define the exact CP1 producer/replay surface and acceptance mechanism; agree coordinate mapping; continue genuine anatomy/calibration and E08 validation. Approved D09 behavior need not be reapproved. |
+| Kevin | Acknowledge D07 investigation priority; address rig mismatches; review zones/trajectories and the diamond presentation/state/event handoff. |
 | Theo | Review entry behavior, comfortable target reach/size and visual HIT/UNAVAILABLE comprehension. |
-| Jevon | Record product choices and affected-owner agreement; then implement the agreed domain/session fixtures and complete game flow in separate tested commits. |
+| Jevon | Plug in Edo's frozen E08 surface when available, then complete J07 and the interactive full replay/live flow with reviewed placement/presentation. Preserve current controlled-input gates. |
 
 No message was sent, no branch was pushed and no PR was created for this handoff.

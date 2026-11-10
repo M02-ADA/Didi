@@ -74,20 +74,20 @@ Edo/Jevon agree capture eligibility, arrival cutoff, deduplication and boundary 
 - Agree diamond passage boundaries and phase-end ordering. Ten active seconds and no late post-phase awards remain the product intent.
 - Cancel/revoke in-flight contacts across pause, source/context changes and Retry; a held/old pose cannot create a new award automatically.
 
-### 3. Jevon product choices, still open
+### 3. Jevon product choices — resolved after the original proposal
 
 | Decision | Existing rule | Candidate for review — not selected |
 |---|---|---|
-| Points per accepted diamond | Team reward, exactly once per diamond | `25` is the existing candidate; keep configuration unset until a value is chosen. |
-| Initial Diamond Time population | At most four active team diamonds, distinct positions | Start with four, or approve a smaller/scheduled initial population. |
-| Missed-slot behavior | Collection-triggered replacement is confirmed | No automatic missed-slot refill, or an explicit separately specified refill schedule. Neither is assumed. |
+| Points per accepted diamond | Team reward, exactly once per diamond | **25 points — task-owner confirmed, 10 Nov.** App interaction stays unconfigured until a reviewed plan is supplied. |
+| Initial Diamond Time population | At most four active team diamonds, distinct positions | **Start with four — task-owner confirmed, 10 Nov.** |
+| Missed-slot behavior | Collection-triggered replacement is confirmed | **No automatic refill on miss — task-owner confirmed, 10 Nov.** |
 | Normal diamond placement/passage | Confirmed total-team per-minute ranges; finish before vault entry | Seed/positions, separation, speed/passage windows and simultaneous/boundary rules need explicit selection. |
 
-No candidate above is implemented or treated as collaborator approval by this document.
+Normal placement/speed and physical reach remain open. The three explicit product choices above are implemented in synthetic/domain tests; they are not physical acceptance or approval of a producer interface.
 
 ## Jevon's concrete D09 v1 proposal for agreement
 
-Every rule in this section is **PROPOSED** unless already identified above as a retained product rule. The numeric parameters must be supplied explicitly after review; there are no production defaults here.
+This preserves the original proposal. The later approval at the top supersedes its PROPOSED label only for the listed architecture/behavior items. Extra placement/separation, reach, coordinate and numeric parameter details still require review; there are no production geometry/freshness defaults here.
 
 ### A. Evidence representation and ownership
 
@@ -175,7 +175,7 @@ Fixtures will include explicit target IDs, geometry/config version, source envel
 | C19 | Freshness gap exceeds reviewed limit, then inside | No entry until a new valid outside → inside sequence. |
 | C20 | Approaching diamond outside interaction passage, then permanent pass | No early or post-pass award; miss never damages health. |
 
-These expectations become executable J04/J05 tests only after affected owners accept the semantics and Edo defines the producer/replay fixture surface. Synthetic fixtures will not imply live E08 validation.
+Edo's later approval explicitly permits J04/J05 synthetic domain fixtures using admitted membership now. These do not define Edo's wire/replay schema or imply live E08 validation; source-specific compatibility fixtures still wait for his exact surface.
 
 ## Sign-off ledger
 
@@ -190,8 +190,8 @@ Record the actual choice, interface/fixture version, named approvers and verific
 
 ## Implementation boundary
 
-Already authorized consumer work can continue against existing contracts: laser/session/clock logic, safe Stop/Retry, and the existing vault phase/deadline lifecycle. The phase bridge adds no detected wrist contacts. These foundations do not close J04/J05/J07.
+The approved domain entry rules, vault batch commands, diamond passage/replacement/score accounting and combined round fixtures are now implemented. The live phase bridge still adds no detected wrist contacts: E08 admission, source-field freeze, coordinate/reach/trajectory review and presentation remain prerequisites to actual gameplay integration.
 
-Once the relevant decisions are agreed: complete contact-driven vault and diamond domain fixtures (J04/J05), full replay phase integration (J06), then validated E08 evidence to J07 and actual final outcomes/counts/Retry (J08). Consumer implementation remains in scope; the missing prerequisite is affected-owner agreement on evidence, timing and product choices.
+Next: consume Edo's frozen producer interface via the existing stream, complete J07 and the interactive full replay/live presentation with the reviewed plan, then validate complete-game outcomes/Retry on hardware. J04/J05 synthetic rule coverage and actual summary counts are verified; do not equate this with full-package or production acceptance.
 
-No production contact, points, spawn/miss policy, physical readiness or complete-game delivery is claimed. Do not weaken the current collision/readiness rules to bypass these dependencies.
+No production live contact, placement/reach approval, physical readiness or complete-game UI delivery is claimed. The confirmed points/refill rules and synthetic domain accounting are implemented; do not weaken current collision/readiness gates to bypass the remaining integration dependencies.
