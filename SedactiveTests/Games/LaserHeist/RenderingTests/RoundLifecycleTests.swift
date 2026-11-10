@@ -23,7 +23,7 @@ struct RoundLifecycleTests {
                                        layout: script.input.configuration.playerPlaneLayout,
                                        templates: try await RobotAvatarLayer.sharedTemplates())
         scene.robotAvatars = avatars
-        let session = GameSessionCoordinator(script: script)
+        let session = try LaserReplayDriver.makeSession(script: script)
         try await session.start()
         let presenter = GameplayScenePresenter(scene: scene, configuration: script.configuration, encounters: script.encounters)
         let rootEntities = scene.root.children.count

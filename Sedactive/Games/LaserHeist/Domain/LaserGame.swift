@@ -82,6 +82,13 @@ nonisolated struct LaserGame: Sendable {
     private var actionWindows: [LaserTargetKey: (start: Double, end: Double)] = [:]
     private var trackedCoverage: [PlayerID: [ClosedRange<Double>]] = [:]
     private var withdrawnAttemptIDs: Set<UUID> = []
+    private var diamondPoints: Int?
+    private var diamondField = LaserDiamondField()
+    private var bonusDiamondsStarted = false
+
+    var diamonds: [UUID: LaserDiamondState] { diamondField.states }
+    var activeDiamonds: [LaserDiamondSpawn] { diamondField.active }
+    var diamondsCollected: Int { diamondField.collectedCount }
 
     /// Nil margin preserves evidence-only LH-09 usage. Supply round configuration to enable verdicts.
     init(timing: LaserEvidenceTiming, context: BodyInputContext, historyCapacityPerPlayer: Int,
@@ -103,6 +110,7 @@ nonisolated struct LaserGame: Sendable {
         vaultDuration = configuration.vaultDuration
         bonusDuration = configuration.diamondTimeDuration
         primaryPlayerID = configuration.primaryPlayerID
+        diamondPoints = configuration.diamondPoints
         for player in PlayerID.allCases {
             cueLeads[player] = configuration.scheduling?.players[player]?.cueLead ?? configuration.actionCueLead
         }
@@ -110,10 +118,17 @@ nonisolated struct LaserGame: Sendable {
 
     var historyCount: Int { history.values.reduce(0) { $0 + $1.count } }
     var crossingCount: Int { crossings.count }
+    var isPaused: Bool { blocked && !exited && roundOutcome == nil }
+    func hasUsedAttempt(_ id: UUID) -> Bool {
+        withdrawnAttemptIDs.contains(id) || crossings.keys.contains { $0.attemptID == id }
+            || processedTargets.contains { $0.attemptID == id }
+    }
 
     mutating func register(_ encounter: LaserEncounter) throws {
         try requireLaserValue(!blocked && !exited && roundOutcome == nil && roundPhase == .activity
-            && !effectEncounters.contains(encounter.id), "inactive/consumed encounter")
+            && !effectEncounters.contains(encounter.id) && !withdrawnAttemptIDs.contains(encounter.attemptID),
+                              "inactive/consumed encounter")
+        try requireLaserValue(!hasUsedAttempt(encounter.attemptID), "attempt identity already used in round")
         try requireLaserValue(!crossings.contains { $0.key.encounterID == encounter.id && $0.value.result == .pending },
                               "previous attempt still pending")
         for target in encounter.targets {
@@ -170,6 +185,8 @@ nonisolated struct LaserGame: Sendable {
         try finalize(at: time, inclusive: true)
         guard roundOutcome == nil else { return }
         prune()
+        let phaseEnd = min(bonusDeadline ?? time, vault.flatMap { $0.opened ? nil : $0.deadline } ?? time)
+        diamondField.advance(to: min(time, phaseEnd))
         if let vault, !vault.opened, time >= vault.deadline {
             emit(.coopGateFailed(gateID: vault.id), at: vault.deadline)
             consumedVaults.insert(vault.id)
@@ -191,6 +208,13 @@ nonisolated struct LaserGame: Sendable {
     }
 
     mutating func pause() { withdraw(); blocked = true }
+    /// Freeze at the session's GameClock time without finalizing pending evidence while unavailable.
+    mutating func pause(at time: Double) throws {
+        try requireLaserValue(time.isFinite && time >= gameTime, "pause timeline")
+        guard !blocked && !exited && roundOutcome == nil else { return }
+        moveTime(to: time)
+        pause()
+    }
     mutating func exit(outcome: LaserRoundOutcome = .aborted) { withdraw(); exited = true; end(outcome, at: gameTime) }
     mutating func resume() { if !exited && context.isActive { blocked = false } }
     /// Coordinator rechecks the producer context after suspension and before receive/advance.
@@ -242,6 +266,7 @@ nonisolated struct LaserGame: Sendable {
         try advance(to: time)
         try requireLaserValue(!blocked && !exited && roundOutcome == nil && roundPhase == .activity
             && !consumedVaults.contains(id) && (vault == nil || vault?.opened == true), "vault lifecycle")
+        try requireLaserValue(activeDiamonds.isEmpty, "normal diamonds must finish before vault")
         withdraw()
         vault = LaserVaultState(id: id, deadline: time + vaultDuration, buttons: [.player1: [], .player2: []])
         roundPhase = .vault
@@ -253,13 +278,33 @@ nonisolated struct LaserGame: Sendable {
     mutating func touchVault(id: UUID, playerID: PlayerID, button: LaserVaultButton,
                              validity: EvidenceValidity, generation: UUID, calibrationRevision: UInt64,
                              at time: Double) throws -> Bool {
-        guard !blocked && !exited && roundOutcome == nil, validity == .valid,
-              generation == context.sessionGeneration, context.calibrationRevisions[playerID] == calibrationRevision,
-              context.isActive, vault?.id == id, vault?.opened == false else { return false }
+        guard validity == .valid else { return false }
+        return try touchVaultBatch(id: id,
+            contacts: [LaserVaultContact(playerID: playerID, button: button, calibrationRevision: calibrationRevision)],
+            generation: generation, at: time) > 0
+    }
+
+    /// Apply one admitted same-frame batch, then transition once. Input/entry and
+    /// capture/arrival eligibility are checked before these verified commands.
+    @discardableResult
+    mutating func touchVaultBatch(id: UUID, contacts: [LaserVaultContact], generation: UUID,
+                                  at time: Double) throws -> Int {
+        guard !blocked && !exited && roundOutcome == nil, generation == context.sessionGeneration,
+              context.isActive, vault?.id == id, vault?.opened == false else { return 0 }
+        let eligible = Set(contacts.filter { context.calibrationRevisions[$0.playerID] == $0.calibrationRevision })
+        guard !eligible.isEmpty else { return 0 }
         try advance(to: time) // At the exact deadline, timeout wins.
-        guard roundOutcome == nil, var current = vault else { return false }
-        guard current.buttons[playerID, default: []].insert(button).inserted else { return false }
+        guard roundOutcome == nil, var current = vault else { return 0 }
+        var activated = 0
+        for player in PlayerID.allCases {
+            for button in LaserVaultButton.allCases where eligible.contains(where: {
+                $0.playerID == player && $0.button == button
+            }) {
+                if current.buttons[player, default: []].insert(button).inserted { activated += 1 }
+            }
+        }
         vault = current
+        guard activated > 0 else { return 0 }
         let verdicts = Dictionary(uniqueKeysWithValues: PlayerID.allCases.map {
             ($0, current.buttons[$0]?.count == 3 ? Judgement.clear : .pending(.awaitingFinalization))
         })
@@ -276,7 +321,56 @@ nonisolated struct LaserGame: Sendable {
             } else { roundPhase = .activity }
             emit(.phaseChanged(roundPhase), at: time)
         }
-        return true
+        return activated
+    }
+
+    /// Explicit synthetic/domain plans now; live placement/reach and E08 admission are pending.
+    mutating func spawnNormalDiamonds(_ spawns: [LaserDiamondSpawn], beforeVaultAt boundary: Double) throws {
+        try requireLaserValue(!blocked && !exited && roundOutcome == nil && roundPhase == .activity
+                              && diamondPoints != nil, "normal diamond lifecycle/configuration")
+        try diamondField.spawn(spawns, at: gameTime, before: boundary)
+    }
+
+    mutating func startDiamondTimeDiamonds(_ spawns: [LaserDiamondSpawn]) throws {
+        try requireLaserValue(!blocked && !exited && roundOutcome == nil && roundPhase == .diamondTime
+            && !bonusDiamondsStarted && diamondPoints != nil
+            && spawns.count == LaserRoundConfiguration.initialBonusDiamondCount
+            && bonusDeadline == gameTime + bonusDuration, "initial bonus diamond plan")
+        guard let bonusDeadline else { throw LaserDataError.invalidValue("missing bonus deadline") }
+        try diamondField.spawn(spawns, at: gameTime, before: bonusDeadline, maximumActive: 4,
+                               bonusDeadline: bonusDeadline)
+        bonusDiamondsStarted = true
+    }
+
+    /// Contact tracker output after producer/context admission, not raw wrist input.
+    /// Replacements are paired with accepted collections in stable target-ID order.
+    @discardableResult
+    mutating func collectDiamonds(_ contacts: [LaserContactActivation], generation: UUID,
+                                  calibrationRevisions: [PlayerID: UInt64], capturedAt: Double,
+                                  arrivedAt: Double, replacements: [LaserDiamondSpawn] = []) throws
+        -> [LaserContactActivation] {
+        guard !blocked && !exited && roundOutcome == nil && context.isActive,
+              generation == context.sessionGeneration, let diamondPoints else { return [] }
+        try requireLaserValue(capturedAt.isFinite && arrivedAt.isFinite && capturedAt >= 0
+                              && capturedAt <= arrivedAt && arrivedAt >= gameTime, "diamond contact timeline")
+        // Roll back plan errors, including score and phase state, as one domain operation.
+        var next = self
+        try next.advance(to: arrivedAt)
+        guard next.roundOutcome == nil, next.roundPhase != .vault else { self = next; return [] }
+        let eligible = contacts.filter {
+            if let revision = calibrationRevisions[$0.hand.playerID], revision > 0 {
+                return revision == context.calibrationRevisions[$0.hand.playerID]
+            }
+            return false
+        }
+        let accepted = try next.diamondField.collect(eligible, capturedAt: capturedAt, arrivedAt: arrivedAt,
+            replacements: replacements, bonusDeadline: next.roundPhase == .diamondTime ? next.bonusDeadline : nil)
+        let (points, multipliedOverflow) = diamondPoints.multipliedReportingOverflow(by: accepted.count)
+        let (score, scoreOverflow) = next.teamScore.addingReportingOverflow(points)
+        try requireLaserValue(!multipliedOverflow && !scoreOverflow, "diamond score overflow")
+        next.teamScore = score
+        self = next
+        return accepted
     }
 
     private mutating func end(_ outcome: LaserRoundOutcome, at time: Double) {
@@ -284,16 +378,18 @@ nonisolated struct LaserGame: Sendable {
         roundOutcome = outcome
         moveTime(to: time)
         roundPhase = .ended(outcome)
-        emit(.roundEnded(outcome), at: time)
         if let vault, !vault.opened {
             coopResults.append(LaserCoopRoundResult(gateID: vault.id,
                 outcome: outcome == .vaultFailed ? .timedOut : .interrupted, gameTime: time))
         }
         withdraw()
+        diamondField.advance(to: time)
+        diamondField.close()
+        emit(.roundEnded(outcome), at: time)
         summary = RoundSummary(sessionGeneration: context.sessionGeneration, outcome: outcome,
             gameDuration: gameTime, activityDuration: activityProgress, remainingTeamHealth: teamHealth,
             teamScore: teamScore, targets: PlayerID.allCases.compactMap { playerStats[$0] },
-            diamondsCollected: 0, vaultsOpened: missionProgress, withdrawnAttempts: withdrawnAttemptIDs.count,
+            diamondsCollected: diamondsCollected, vaultsOpened: missionProgress, withdrawnAttempts: withdrawnAttemptIDs.count,
             playerResults: PlayerID.allCases.map { player in
                 LaserPlayerRoundResult(playerID: player, successfulHighAvoidances: avoidanceCounts[player]?[.duck] ?? 0,
                     successfulLowAvoidances: avoidanceCounts[player]?[.jump] ?? 0,
@@ -315,8 +411,15 @@ nonisolated struct LaserGame: Sendable {
     }
 
     private mutating func withdraw() {
-        for key in Array(crossings.keys) where crossings[key]?.result == .pending {
-            withdrawnAttemptIDs.insert(key.attemptID)
+        let pending = crossings.keys.filter { crossings[$0]?.result == .pending }.sorted {
+            if $0.encounterID != $1.encounterID { return $0.encounterID.uuidString < $1.encounterID.uuidString }
+            if $0.attemptID != $1.attemptID { return $0.attemptID.uuidString < $1.attemptID.uuidString }
+            return $0.playerID.rawValue < $1.playerID.rawValue
+        }
+        for key in pending {
+            if withdrawnAttemptIDs.insert(key.attemptID).inserted {
+                emit(.attemptWithdrawn(encounterID: key.encounterID, attemptID: key.attemptID), at: gameTime)
+            }
             if let window = actionWindows[key] { actionWindows[key] = (window.start, min(window.end, gameTime)) }
             crossings[key]?.result = .withdrawn
         }

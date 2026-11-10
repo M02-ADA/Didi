@@ -278,6 +278,24 @@ struct GameplayScenePresenterTests {
         #expect(presenter.diagnostics.badges == 2)
     }
 
+    @Test func delayedOldAttemptFeedbackCannotBadgeAFreshRecoveryAttempt() throws {
+        let scene = LaserScene()
+        let old = try encounter(1, crossing: [.player1: 10, .player2: 10])
+        let proposed = try encounter(1, crossing: [.player1: 23, .player2: 23])
+        let retry = try LaserEncounter(id: old.id, attemptID: UUID(), targets: proposed.targets)
+        let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [old])
+        var events = [event(1, 10.35, .targetJudged(encounterID: old.id, playerID: .player1,
+                                                 judgement: .unavailable(.noSample))),
+                      event(2, 11, .attemptWithdrawn(encounterID: old.id, attemptID: old.attemptID))]
+        presenter.apply(state: state(20.5, [retry]), events: events, snapshot: nil)
+        #expect(presenter.diagnostics.badges == 0)
+        #expect(presenter.hazard(for: key(retry, .player1))?.state == .warning)
+        events.append(event(3, 23.35, .targetJudged(encounterID: retry.id, playerID: .player1, judgement: .clear)))
+        presenter.apply(state: state(23.4, [retry], judged: [retry.id: [.player1: .clear]]),
+                        events: events, snapshot: nil)
+        #expect(presenter.diagnostics.badges == 1)
+    }
+
     @Test func withdrawnAttemptStopsBeingAHazardImmediately() throws {
         let scene = LaserScene()
         let laser = try encounter(1, crossing: [.player1: 10, .player2: 10])
@@ -441,7 +459,7 @@ struct GameplayScenePresenterTests {
 
     @Test func endingTheRoundMidLaserStopsHazardsAndCue() async throws {
         let script = try LaserReplayScript.load().freshRound(generation: UUID())
-        let session = GameSessionCoordinator(script: script)
+        let session = try LaserReplayDriver.makeSession(script: script)
         try await session.start()
         let scene = LaserScene()
         let presenter = GameplayScenePresenter(scene: scene, configuration: script.configuration, encounters: script.encounters)
@@ -466,7 +484,7 @@ struct GameplayScenePresenterTests {
 
     @Test func replayRoundShowsEachVerdictOnceAndNoCueOutsideActivity() async throws {
         let script = try LaserReplayScript.load().freshRound(generation: UUID())
-        let session = GameSessionCoordinator(script: script)
+        let session = try LaserReplayDriver.makeSession(script: script)
         try await session.start()
         let scene = LaserScene()
         let presenter = GameplayScenePresenter(scene: scene, configuration: script.configuration, encounters: script.encounters)

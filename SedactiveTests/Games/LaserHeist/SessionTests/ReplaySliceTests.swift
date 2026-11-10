@@ -17,7 +17,7 @@ import Testing
         var previousSummary: RoundSummary?
         var previousEvents: [GameEvent]?
         for _ in 0..<2 {
-            let session = GameSessionCoordinator(script: input)
+            let session = try LaserReplayDriver.makeSession(script: input)
             try await session.start()
             for tick in 0...Int(input.duration * 60 + 1) { try await session.advance(to: Double(tick) / 60) }
             #expect(session.phase == .finished)
@@ -44,7 +44,7 @@ import Testing
     }
 
     @Test func largeFrameUsesEveryDeliveryAndDoesNotDuplicateEffects() async throws {
-        let session = GameSessionCoordinator(script: try script())
+        let session = try LaserReplayDriver.makeSession(script: try script())
         try await session.start()
         try await session.advance(to: 100)
         let summary = session.summary
@@ -55,7 +55,7 @@ import Testing
     }
 
     @Test func stopPreventsFurtherVerdicts() async throws {
-        let session = GameSessionCoordinator(script: try script())
+        let session = try LaserReplayDriver.makeSession(script: try script())
         try await session.start()
         try await session.advance(to: 1)
         await session.stop()
@@ -65,7 +65,7 @@ import Testing
     }
 
     @Test func replayExposesCooperationAndFreezesProgressUntilBothSidesFinish() async throws {
-        let session = GameSessionCoordinator(script: try script())
+        let session = try LaserReplayDriver.makeSession(script: try script())
         try await session.start()
         try await session.advance(to: 17)
         #expect(session.state?.phase == .vault)
@@ -93,7 +93,7 @@ import Testing
 
     @Test func earlyExitProducesOneSummaryAndRetryStartsFreshGeneration() async throws {
         let original = try script()
-        let first = GameSessionCoordinator(script: original)
+        let first = try LaserReplayDriver.makeSession(script: original)
         try await first.start()
         try await first.advance(to: 3.5)
         await first.stop()
@@ -110,7 +110,7 @@ import Testing
         #expect(next.input.configuration.sessionGeneration != original.input.configuration.sessionGeneration)
         #expect(next.input.configuration.calibrations.values.allSatisfy { $0.sessionGeneration == generation })
         #expect(next.input.records.allSatisfy { $0.snapshot?.sessionGeneration == generation })
-        let retry = GameSessionCoordinator(script: next)
+        let retry = try LaserReplayDriver.makeSession(script: next)
         try await retry.start()
         #expect(retry.summary == nil && retry.results.isEmpty && retry.events.isEmpty)
         #expect(retry.state?.gameTime == 0 && retry.state?.teamScore == 0 && retry.state?.teamHealth == 5)
@@ -123,7 +123,7 @@ import Testing
     }
 
     @Test func technicalFailureAlsoProducesExactlyOneFrozenSummary() async throws {
-        let session = GameSessionCoordinator(script: try script())
+        let session = try LaserReplayDriver.makeSession(script: try script())
         try await session.start()
         try await session.advance(to: 3.5)
         await session.fail(LaserDataError.invalidValue("synthetic interruption"))

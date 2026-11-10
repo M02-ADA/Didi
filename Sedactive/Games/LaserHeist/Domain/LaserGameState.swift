@@ -35,6 +35,13 @@ nonisolated struct LaserGameState: Equatable, Sendable {
 
 nonisolated enum LaserVaultButton: String, CaseIterable, Hashable, Sendable { case top, middle, bottom }
 
+/// A verified domain command, not raw wrist evidence or a CP1 contract.
+nonisolated struct LaserVaultContact: Hashable, Sendable {
+    let playerID: PlayerID
+    let button: LaserVaultButton
+    let calibrationRevision: UInt64
+}
+
 nonisolated struct LaserVaultState: Equatable, Sendable {
     let id: UUID
     let deadline: Double

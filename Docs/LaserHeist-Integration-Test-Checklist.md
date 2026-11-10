@@ -26,7 +26,48 @@ Automated: `RoundLifecycleTests`, `LiveAvatarPresenterTests`, `LiveCutoutTests`,
 
 ## 2. Requires Edo's E07 feed
 
-Connect by passing `avatarSource` to `PlayView` from `RootView`; the closure receives a fresh `AvatarPoseMailbox` per scene.
+**Status: Proposed.** The Kevin-owned consumer is in place: `PlayView.avatarSource` returns an `AvatarPosePump`, which the render tick runs before it refreshes the avatars. These steps connect Edo's producer and need the named owners' agreement. Nothing here is a D06 field freeze.
+
+1. **Git (developer):** merge `origin/feat/vision-live-pipeline`. It merges cleanly with this branch.
+2. **Edo (App-owned files):** apply [E07-K03-Live-Binding.patch](E07-K03-Live-Binding.patch). It adds `VisionK03PacketFactory`, `VisionK03MailboxPump` and `VisionK03IntegrationTests`. The pump differs from Edo's draft in two ways: it conforms to `AvatarPosePump`, and a refused packet no longer ends the feed.
+3. **Edo (`VisionNumericPoseChannel`):** the stall in section 2a is fixed in `b984e22`. Merge that commit or later.
+4. **Edo + Jevon (start order):** see section 2b.
+5. **Edo (`RootView`), only once a live session exists:**
+   ```swift
+   PlayView(avatarSource: { try VisionK03MailboxPump(bridge: AppDependencies.shared.visionPoseBridge, mailbox: $0) })
+   ```
+   Don't add this for replay rounds: the mascots would stay dimmed for the whole round.
+
+### 2a. Delivery stops after a camera stall (Edo): fixed in `b984e22`
+
+**Verified** on a synthetic-fixture merge of `aecedf6` and `b984e22`. With no expected-failure wrapper, `aCameraStallDoesNotEndDeliveryForTheRestOfTheSession` passes through the real pump and presenter, and `afterAStallOnlyNewFramesReachTheMailboxWithTheirOwnIdentity` checks frame IDs, capture times, revisions and P1/P2 slots at the mailbox. Against the pre-fix `f163a36` producer, both fail.
+
+**Problem (before the fix).** `drain` invalidates the channel when `time - lastCapture >= freshness`, and only a publication refreshes `lastCapture`. After a stall that long, each new frame reactivates the channel at admission. The render tick then drains during that frame's Vision inference, sees the old `lastCapture`, and invalidates again, so the frame's publication is refused. This repeats until the capture context changes.
+
+**Evidence.** `aCameraStallDoesNotEndDeliveryForTheRestOfTheSession` reproduces it with the real gate and tracker. How often real stalls reach the 0.5 s limit hasn't been measured.
+
+**Fix, as merged in `b984e22`.** `lastCapture` stays the ordering watermark, and freshness is timed from a separate value:
+
+```diff
+   private var lastCapture: Double?
++  private var freshFrom: Double?
+ // endSession
+-    invalidate(); attachment = nil; context = nil; lastFrame = 0; lastCapture = nil
++    invalidate(); attachment = nil; context = nil; lastFrame = 0; lastCapture = nil; freshFrom = nil
+ // admit
+-      context = c; active = authorized
++      context = c; active = authorized; freshFrom = source.capturedAt
+ // publish
+-    lastFrame = original.frameID; lastCapture = original.capturedAt
++    lastFrame = original.frameID; lastCapture = original.capturedAt; freshFrom = original.capturedAt
+ // drain
+-    if active, let lastCapture, !time.isFinite || time < lastCapture || time - lastCapture >= freshness {
++    if active, let freshFrom, !time.isFinite || time < freshFrom || time - freshFrom >= freshness {
+```
+
+### 2b. Attach only after the body session has started (Edo + Jevon)
+
+`reserveBodySession` and `stopBodySession` retire the pose lease, and `PlayView` attaches while it builds each scene. So the session must already have started when the scene is built, on first launch and on Retry: stop the old session, release it, start the new one, then rebuild the scene. A lease retired after attachment ends that scene's feed, and its mascots stay dimmed and neutral until a new scene attaches.
 
 | Check | Expected | Failure signal |
 |---|---|---|
@@ -34,6 +75,8 @@ Connect by passing `avatarSource` to `PlayView` from `RootView`; the closure rec
 | Mirroring | Player's right arm raises the mascot's right arm | Opposite arm moves |
 | Calibrated pose | Duck follows the player's own proportions for short and tall players | Same crouch regardless of player; `directionOnly` after calibration |
 | Stop and rebind | Status change resets to neutral at once, without a new frame | Old pose held after stop |
+| Feed ends | Mascots go neutral and dim at once and stay that player's only body | Last pose held at full opacity; pictogram beside a mascot |
+| Camera stall | Mascots recover without a rebind once frames return | Mascots stay dimmed while the camera is running (section 2a) |
 | Stale frames | Late frames rejected; mascot relaxes after 0.25 s | Mailbox `rejected` empty while frames arrive late |
 | Jump | Needs airborne evidence added to D06 first | Mascots never lift off |
 | Cutouts | Pass `cutoutSource` with Edo's provider, no `avatarSource` | Pictograms stay while frames are arriving |
@@ -64,7 +107,8 @@ Connect by passing `avatarSource` to `PlayView` from `RootView`; the closure rec
 | From | To | Item |
 |---|---|---|
 | Edo + Kevin | Team | D06 field freeze against D02/D03, including jump evidence and `visual` body values |
-| Edo | Kevin | E07 producer publishing status and frames, wired through `RootView` |
+| Edo | Kevin | E07 producer wired through `RootView`, after the steps in section 2 |
+| Edo + Jevon | Kevin | Body session started before each scene attaches, including Retry (section 2b) |
 | Edo | Kevin | Production `PlayerCutoutProviding` and accepted layout, if cutouts ship |
 | Jevon | Kevin | Live session with pause, resume and D03.6 behaviour |
 | Jevon | Kevin | Round readiness before the game clock starts (section 6) |

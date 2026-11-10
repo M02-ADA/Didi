@@ -7,77 +7,128 @@
 
 import SwiftUI
 
-/// Game Set Up (Sketch "Hi-Fi Revisi 6 NOV" › Game Set Up): "Put your iPad on
-/// the Floor", in the two artboards' order: the iPad held in both hands
-/// ("Home Copy 15"), then the mascot standing it on the floor ("Home Copy 23").
-/// Back returns one step; the check button goes on.
 struct PlayerSetupView: View {
-    enum Step: Int, CaseIterable {
-        case holdIPad, standIPadOnFloor
-    }
-
-    let step: Step
-    let onBack: () -> Void
-    let onNext: () -> Void
+    let flow: LaserInputFlow
+    /// Over the Sketch "stand here" stage (Kevin): the same controls in a card,
+    /// without the lane boxes the stage's guides replace.
+    var isOverlay = false
+    @State private var actionError: String?
 
     var body: some View {
-        SketchArtboard {
-            SunburstBackground()
-        } content: { k in
-            switch step {
-            case .holdIPad:
-                Image("LaserHeistUI/setup-hands")
-                    .resizable()
-                    .sketchFrame(x: 83, y: 263, width: 1075, height: 655, k: k)
-                    .accessibilityLabel("Two hands holding an iPad")
-            case .standIPadOnFloor:
-                Image("LaserHeistUI/setup-mascot")
-                    .resizable()
-                    .sketchFrame(x: 419, y: 224, width: 371, height: 474, k: k)
-                    .accessibilityLabel("The mascot standing an iPad up on the floor")
+        if isOverlay {
+            // Compact, in the stage's title band, so the standing guides stay clear.
+            controls
+                .dynamicTypeSize(.xSmall)
+                .frame(maxWidth: 820, maxHeight: 206)
+                .background(.regularMaterial, in: .rect(cornerRadius: 20))
+                .preferredColorScheme(.dark)
+        } else {
+            controls
+                .background(Color(red: 0.035, green: 0.055, blue: 0.11)).preferredColorScheme(.dark)
+        }
+    }
+
+    private var controls: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: isOverlay ? 8 : 24) {
+                if !isOverlay {
+                    Label("CAMERA SETUP", systemImage: "person.2.fill")
+                        .font(.headline).foregroundStyle(.orange)
+                }
+                if let message = flow.message {
+                    Text("Camera setup unavailable").font(.largeTitle.bold())
+                    Text(message).font(.title3).accessibilityIdentifier("liveSetupError")
+                } else if flow.isStarting {
+                    ProgressView("Starting camera…").font(.title2).accessibilityIdentifier("liveSetupStarting")
+                    Text("Allow camera access if prompted. You can leave setup while it starts.")
+                } else if flow.session?.phase == .countdown,
+                          let remaining = flow.session?.liveReadiness?.countdownRemaining {
+                    Text("Get ready").font(.largeTitle.bold())
+                    Text(remaining.rounded(.up), format: .number.precision(.fractionLength(0)))
+                        .font(.largeTitle.bold()).monospacedDigit().accessibilityIdentifier("liveCountdown")
+                } else if let setup = flow.session?.setup {
+                    let model = PlayerSetupState(phase: flow.session?.phase == .restartRequired ? .restartRequired : setup.phase)
+                    Text(model.title).font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
+                        .accessibilityIdentifier("setupPhase")
+                    Text(model.instruction).font(.title3).foregroundStyle(.secondary)
+                    if !isOverlay {
+                        HStack(spacing: 16) {
+                            lane("P1", side: "Left game lane")
+                            lane("P2", side: "Right game lane")
+                        }
+                    }
+                    if setup.canCancelCalibration || setup.phase == .awaitingGameplayReadiness {
+                        CalibrationView(setup: setup)
+                    }
+                    if let action = model.action, let title = model.buttonTitle {
+                        Button(title) { perform(action, setup: setup) }
+                            .buttonStyle(.borderedProminent).tint(.orange).foregroundStyle(.black)
+                            .controlSize(.large).accessibilityIdentifier("setupPrimaryAction")
+                    }
+                    if flow.session?.canStartLiveRound == true {
+                        Button("Start round") {
+                            do { try flow.session?.beginLiveCountdown() }
+                            catch { actionError = "Both players need fresh movement checks before starting." }
+                        }
+                        .buttonStyle(.borderedProminent).controlSize(.large).accessibilityIdentifier("startLiveRound")
+                    }
+                    if flow.session?.hasLiveRoundPlan == true,
+                       flow.session?.liveReadiness?.phase == .ready, flow.session?.liveFrameHostReady == false {
+                        ProgressView("Preparing the corridor…").accessibilityIdentifier("liveScenePreparing")
+                    }
+                    if flow.session?.phase == .paused {
+                        Text("Round paused").font(.title2.bold())
+                        Text(flow.session?.recoveryNeedsPlan == true
+                             ? "This round cannot continue yet. You can retry camera setup or leave."
+                             : "Stand comfortably in your own space. Both players need reliable movement checks before continuing.")
+                        Button("Continue") { flow.session?.continueLiveRound() }
+                            .buttonStyle(.bordered).controlSize(.large).accessibilityIdentifier("continueLiveRound")
+                    }
+                }
+                if let actionError { Text(actionError).foregroundStyle(.orange).accessibilityIdentifier("setupActionError") }
+                if !flow.isStarting, flow.message != nil || flow.session?.setup?.phase == .restartRequired
+                    || flow.session?.phase == .restartRequired || flow.session?.recoveryNeedsPlan == true {
+                    Button("Retry camera setup") {
+                        actionError = nil
+                        Task { await flow.retryLiveSetup() }
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.large)
+                    .disabled(flow.isClosing).accessibilityIdentifier("retryLiveSetup")
+                }
+                Button(flow.isClosing ? "Stopping camera…" : "Leave camera setup", role: .cancel) {
+                    Task { await flow.closeLiveSetup() }
+                }
+                .buttonStyle(.bordered).controlSize(.large)
+                .disabled(flow.isClosing).accessibilityIdentifier("leaveLiveSetup")
             }
-
-            Text("Put your iPad on the Floor")
-                .font(.system(size: 58.3 * k, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-                .frame(width: 1210 * k, height: 69 * k)
-                .offset(y: 103 * k)
-                .accessibilityAddTraits(.isHeader)
-
-            SketchBackButton(k: k, action: onBack)
-                .offset(x: 51 * k, y: 63 * k)
-
-            SetupNextButton(k: k, action: onNext)
-                .sketchFrame(x: 1005, y: 663, width: 143, height: 110, k: k)
+            .frame(maxWidth: isOverlay ? 800 : 680, alignment: .leading).padding(isOverlay ? 14 : 32).frame(maxWidth: .infinity)
         }
     }
-}
 
-/// The orange check button (Sketch "Group 3"): Next on the Set Up screens.
-struct SetupNextButton: View {
-    let k: CGFloat
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "checkmark")
-                .font(.system(size: 50.9 * k, weight: .heavy))
-                .foregroundStyle(LaserHeistDesign.iconCream)
+    private func lane(_ name: String, side: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: "figure.stand").font(.title).accessibilityHidden(true)
+            Text(name).font(.title2.bold())
+            Text(side).foregroundStyle(.secondary)
         }
-        .buttonStyle(LayeredPillButtonStyle(top: LaserHeistDesign.orangeTop, bottom: LaserHeistDesign.orangeBottom,
-                                            rim: LaserHeistDesign.orangeRim, base: LaserHeistDesign.orangeBase,
-                                            rimHeight: 4 * k, baseHeight: 2 * k))
-        .accessibilityLabel("Next")
-        .accessibilityIdentifier("setupNext")
+        .frame(maxWidth: .infinity, alignment: .leading).padding(20)
+        .background(.white.opacity(0.06), in: .rect(cornerRadius: 16))
+        .accessibilityElement(children: .combine)
     }
-}
 
-#Preview("Hold the iPad", traits: .landscapeLeft) {
-    PlayerSetupView(step: .holdIPad, onBack: {}, onNext: {})
-}
-
-#Preview("Stand it on the floor", traits: .landscapeLeft) {
-    PlayerSetupView(step: .standIPadOnFloor, onBack: {}, onNext: {})
+    private func perform(_ action: PlayerSetupState.Action, setup: LaserSessionSetup) {
+        actionError = nil
+        do {
+            switch action {
+            case .bind: try setup.beginBinding()
+            case .confirmPlayers: try setup.confirmPlayers()
+            case .calibrate: try setup.requestCalibration(id: UUID())
+            case .confirmCandidate:
+                guard let id = setup.candidateIDForConfirmation else { return }
+                try setup.confirmCandidate(id: id)
+            }
+        } catch {
+            actionError = "The setup conditions changed. Check that both players are in view and follow the current instruction."
+        }
+    }
 }

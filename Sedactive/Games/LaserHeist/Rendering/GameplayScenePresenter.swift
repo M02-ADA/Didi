@@ -244,6 +244,9 @@ final class GameplayScenePresenter {
             switch event.kind {
             case .targetJudged(let encounterID, let player, let judgement):
                 guard let (key, target) = Self.target(encounterID, player, in: state) else { break }
+                // A full-warning recovery moves this logical encounter to a new attempt. Events
+                // from its old attempt predate the new crossing and must not badge the new hazard.
+                guard event.gameTime >= target.crossingTime else { break }
                 judgedAt[key] = judgedAt[key] ?? event.gameTime
                 let outcome: LaserFeedback.Outcome? = switch judgement {
                 case .clear: .clear

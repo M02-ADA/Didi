@@ -8,31 +8,53 @@
 import SwiftUI
 
 struct ContentView: View {
-  #if DEBUG
-    @State private var showCameraDiagnostics =
-      ProcessInfo.processInfo.arguments.contains("--camera-diagnostics")
-      || ProcessInfo.processInfo.arguments.contains("--camera-diagnostics-run")
-    private let dependencies = AppDependencies.shared
-  #endif
+  private let dependencies = AppDependencies.shared
+  @Environment(\.scenePhase) private var scenePhase
   var body: some View {
-    // LaserHeist journey (Kevin): Home, Set Up, calibration, round and Results.
-    // PENDING: pass `calibration:` once Edo's producer and Jevon's step exist.
-    LaserHeistFlowView()
-      #if DEBUG
-        .overlay(alignment: .topTrailing) {
-          Button("Camera diagnostics") { showCameraDiagnostics = true }
-          .buttonStyle(.bordered).padding()
-        }
-        .fullScreenCover(
-          isPresented: $showCameraDiagnostics,
-          onDismiss: {
-            Task { await dependencies.cameraDiagnostics.stopAndExport() }
+    let flow = dependencies.inputFlow
+    Group {
+      switch flow.route {
+      case .selection:
+        // Sketch Home and Set Up (Kevin): presentation over the same flow.
+        LaserHeistIntroView(flow: flow)
+      case .replay:
+        PlayView(onExit: { flow.leaveReplay() })
+      case .liveSetup:
+        if let session = flow.session, session.hasLiveRoundPlan {
+          ZStack {
+            PlayView(onExit: { Task { await flow.closeLiveSetup() } }, liveSession: session,
+                     onLiveRetry: { Task { await flow.retryLiveSetup() } })
+            // The countdown shows only the session's own remaining time (no second clock).
+            if session.phase == .countdown, let remaining = session.liveReadiness?.countdownRemaining {
+              RoundCountdownOverlay(value: Int(remaining.rounded(.up)))
+            } else if session.phase != .running, session.summary == nil { liveSetupStage(flow) }
           }
-        ) {
-          LiveInputDiagnosticsView(model: dependencies.cameraDiagnostics)
-        }
-      #endif
+        } else { liveSetupStage(flow) }
+      case .diagnostics:
+        #if DEBUG
+        LiveInputDiagnosticsView(model: dependencies.cameraDiagnostics)
+          .safeAreaInset(edge: .bottom) {
+            Button("Close camera diagnostics") { Task { await flow.closeDiagnostics() } }
+              .buttonStyle(.borderedProminent).controlSize(.large).disabled(flow.isClosing).padding()
+          }
+        #else
+        LaserInputSelectionView(flow: flow)
+        #endif
+      }
+    }
+    .onChange(of: scenePhase) { _, phase in
+      if phase == .background { Task { await flow.handleBackground() } }
+    }
   }
+}
+
+/// Jevon's setup controls on the Sketch "stand here" stage (Kevin's presentation).
+@MainActor
+private func liveSetupStage(_ flow: LaserInputFlow) -> some View {
+  CalibrationStageView(onBack: { Task { await flow.closeLiveSetup() } }) {
+    PlayerSetupView(flow: flow, isOverlay: true)
+  }
+  .onAppear { AudioService.shared.setMusic(.menu) }
 }
 
 #Preview {

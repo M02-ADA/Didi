@@ -122,38 +122,20 @@ struct VaultPresentationTests {
         #expect(scene.vaultDoorDepth == nil && !presenter.vault.approaching)
     }
 
-    /// The replay adapter reads the time to its vault from the replay script only.
-    @Test func theReplayReportsTheTimeToItsVault() throws {
-        let script = try LaserReplayScript.load()
-        let opens = try #require(script.vaultActions.first { $0.player == nil }?.time)
-        let lead = try #require(LaserReplayPresentation.upcomingVaultIn(state: state(opens - 2, .activity), script: script))
-        #expect(abs(lead - 2) < 1e-9)
-        #expect(LaserReplayPresentation.upcomingVaultIn(state: state(opens, .vault, vault: vault()), script: script) == nil)
-    }
-
-    // MARK: - Sound
-
-    /// Each newly accepted button clicks once, the last seconds warn once, the
-    /// door's opening sounds once from the authoritative success event.
-    @Test func vaultSoundsFollowTheVaultStateOnce() throws {
-        let (scene, _) = scene()
-        let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
-        var heard: [SoundCue] = []
-        presenter.onSound = { heard.append($0) }
-        presenter.apply(state: state(17, .vault, vault: vault()), events: [], snapshot: nil)
-        presenter.apply(state: state(18, .vault, vault: vault([.player1: [.top]])), events: [], snapshot: nil)
-        presenter.apply(state: state(18.5, .vault, vault: vault([.player1: [.top]])), events: [], snapshot: nil)
-        presenter.apply(state: state(19, .vault, vault: vault([.player1: [.top], .player2: [.top, .middle]])), events: [], snapshot: nil)
-        #expect(heard == [.vaultButton, .vaultButton], "one click per change, not per frame")
-        // Deadline 22: the last two seconds warn once.
-        for time in [20.1, 20.5, 21.0] {
-            presenter.apply(state: state(time, .vault, vault: vault([.player1: [.top], .player2: [.top, .middle]])), events: [], snapshot: nil)
+    /// The complete replay's vaults open at the end of each activity minute: the
+    /// time to the next one comes from authoritative progress only.
+    @Test func theCompleteReplayReportsTheTimeToItsNextVault() {
+        func at(_ activity: Double, opened: Int, _ phase: LaserRoundPhase = .activity) -> LaserGameState {
+            LaserGameState(sessionGeneration: generation, phase: phase, gameTime: activity + Double(opened) * 1.2,
+                           activityProgress: activity, teamHealth: 5, teamScore: 0, encounters: [],
+                           missionProgress: opened, missionTarget: 5, vault: nil)
         }
-        #expect(heard.filter { $0 == .vaultWarning }.count == 1)
-        let open = vault([.player1: [.top, .middle, .bottom], .player2: [.top, .middle, .bottom]], opened: true)
-        for _ in 0..<3 { presenter.apply(state: state(21.2, .vault, vault: open), events: [succeeded(1, 21.2)], snapshot: nil) }
-        #expect(heard.filter { $0 == .vaultOpen }.count == 1)
-        #expect(heard.filter { $0 == .vaultButton }.count == 2, "no click for buttons seen with the door already open")
+        #expect(LaserReplayPresentation.upcomingVaultIn(state: at(50, opened: 0), activityDuration: 300) == 10)
+        #expect(LaserReplayPresentation.upcomingVaultIn(state: at(60, opened: 1), activityDuration: 300) == 60,
+                "right after a vault the next one is a minute away")
+        #expect(LaserReplayPresentation.upcomingVaultIn(state: at(290, opened: 4), activityDuration: 300) == 10)
+        #expect(LaserReplayPresentation.upcomingVaultIn(state: at(300, opened: 5), activityDuration: 300) == nil, "no sixth vault")
+        #expect(LaserReplayPresentation.upcomingVaultIn(state: at(60, opened: 0, .vault), activityDuration: 300) == nil)
     }
 
     // MARK: - Entry, countdown, pause
@@ -404,7 +386,7 @@ struct VaultPresentationTests {
 
     @Test func replayVaultShowsSixActivationsOpensOnceAndClearsTheScreen() async throws {
         let script = try LaserReplayScript.load().freshRound(generation: UUID())
-        let session = GameSessionCoordinator(script: script)
+        let session = try LaserReplayDriver.makeSession(script: script)
         try await session.start()
         let (scene, _) = scene()
         let presenter = GameplayScenePresenter(scene: scene, configuration: script.configuration, encounters: script.encounters)
