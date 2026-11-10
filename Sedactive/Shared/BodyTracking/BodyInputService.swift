@@ -20,6 +20,7 @@ nonisolated struct LiveBodyInputState: Sendable {
   var calibration = CalibrationSession()
   var measurements = LiveMeasurementFlow()
   var latest: BodySnapshot?
+  var wrists: PreparedWristFrame?
   var lastAdmission: CameraFrameMetadata?
   var lastPublication: UInt64 = 0
   var delivery: BodyInputDelivery = .closed
@@ -34,7 +35,7 @@ nonisolated struct LiveBodyInputState: Sendable {
 
   mutating func invalidate(at time: Double) {
     measurements.invalidate()
-    latest = nil; calibration.invalidate("Source/control invalidated")
+    latest = nil; wrists = nil; calibration.invalidate("Source/control invalidated")
     if let configuration {
       self.configuration = configuration.replacingCalibrations([:])
       for id in PlayerID.allCases {
@@ -53,14 +54,15 @@ nonisolated struct LiveBodyInputState: Sendable {
     configuration = config; self.source = source; delivery = .prepared; stopped = false; startedAt = time
     wake?.yield(())
   }
-  func context(active: Bool) -> BodyInputContext? {
+  func context(active: Bool, wristContact: WristContactContextV1? = nil) -> BodyInputContext? {
     guard let configuration, let source else { return nil }
     return .init(sessionGeneration: configuration.sessionGeneration,
       cameraGeometryRevision: source.geometryRevision,
       calibrationRevisions: configuration.calibrations.mapValues(\.revision), cutovers: cutovers,
-      isActive: active && !stopped && terminalFailure == nil)
+      isActive: active && !stopped && terminalFailure == nil, wristContact: wristContact)
   }
-  mutating func publish(_ pose: CameraPoseResult, association: PlayerTrackingSnapshot?) {
+  mutating func publish(_ pose: CameraPoseResult, association: PlayerTrackingSnapshot?,
+    admission: CameraTrackingAdmission, acknowledgment: CameraBindingAcknowledgment?) {
     guard !stopped, let config = configuration, source == pose.source.context,
       pose.source.frameID > lastPublication else { return }
     var players: [PlayerID: PlayerBodySample] = [:]
@@ -75,10 +77,15 @@ nonisolated struct LiveBodyInputState: Sendable {
       players[id] = BodyMeasurementExtractor.sample(id: id, candidate: candidate, slot: slot,
         calibration: usable ? calibration : nil, layout: config.playerPlaneLayout)
     }
-    let snapshot = BodySnapshot(sessionGeneration: config.sessionGeneration,
+    let base = BodySnapshot(sessionGeneration: config.sessionGeneration,
       frameID: pose.source.frameID, capturedAt: pose.source.capturedAt,
       cameraGeometryRevision: pose.source.context.geometryRevision, players: players)
-    guard (try? snapshot.validate()) != nil else { diagnostics.rejected(); return }
+    wrists = WristEvidencePreparation.prepare(pose, association: association, admission: admission,
+      acknowledgment: acknowledgment, body: self)
+    let snapshot = BodySnapshot(sessionGeneration:base.sessionGeneration,frameID:base.frameID,
+      capturedAt:base.capturedAt,cameraGeometryRevision:base.cameraGeometryRevision,
+      players:base.players,wristContact:wrists?.attachment(matching:base))
+    guard (try? snapshot.validate()) != nil else { wrists = nil; diagnostics.rejected(); return }
     latest = snapshot; lastPublication = snapshot.frameID; lastProgressAt = pose.source.capturedAt
     if let continuation {
       switch continuation.yield(snapshot) {
@@ -131,7 +138,7 @@ nonisolated struct LiveBodyInputState: Sendable {
       capturedAt: max(time, lastAdmission?.capturedAt ?? candidate.lastCapturedAt))
     self.configuration = configuration.replacingCalibrations(values)
     for id in PlayerID.allCases { revisionHighWater[id] = values[id]!.revision; cutovers[id] = boundary }
-    acceptedRevision += 1; latest = nil; calibration.consumed(); wake?.yield(())
+    acceptedRevision += 1; latest = nil; wrists = nil; calibration.consumed(); wake?.yield(())
     return context(active: true)!
   }
 }
@@ -145,6 +152,7 @@ nonisolated struct LiveBodyInputRead: Sendable {
   let calibration: StandingCalibrationProgress
   let acceptedRevision: UInt64
   let progress: BodyInputProgress
+  var wrists: PreparedWristFrame? = nil // internal atomic preparation; not a second gameplay stream
   let measurements: LiveMeasurementSnapshot?
 }
 
