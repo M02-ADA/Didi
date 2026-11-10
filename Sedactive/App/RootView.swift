@@ -11,6 +11,7 @@ struct ContentView: View {
   private let dependencies = AppDependencies.shared
   @Environment(\.scenePhase) private var scenePhase
   #if DEBUG
+  @State private var showingLiveWrist = InGameCameraPreviewView.wristRequested(ProcessInfo.processInfo.arguments)
   @State private var showingGameCamera = InGameCameraPreviewView.requested(ProcessInfo.processInfo.arguments)
   #endif
   var body: some View {
@@ -19,9 +20,11 @@ struct ContentView: View {
       #if DEBUG
       if LiveAvatarSmokeModel.requested(ProcessInfo.processInfo.arguments) {
         LiveAvatarSmokeView(flow:flow,service:dependencies.bodyInput,bridge:dependencies.visionPoseBridge)
-      } else if showingGameCamera {
+      } else if showingGameCamera || showingLiveWrist {
         InGameCameraPreviewView(flow: flow, service: dependencies.bodyInput,
-          bridge: dependencies.visionPoseBridge, onExit: { showingGameCamera = false })
+          bridge: dependencies.visionPoseBridge, offersWristSetup:showingLiveWrist,
+          onContinueToGame:{ showingLiveWrist = false;showingGameCamera = false },
+          onExit: { showingGameCamera = false;showingLiveWrist = false })
       } else { routedContent(flow:flow) }
       #else
       routedContent(flow:flow)

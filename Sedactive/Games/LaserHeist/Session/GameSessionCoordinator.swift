@@ -16,7 +16,7 @@ nonisolated struct LaserLiveFrameAttachment: Equatable, Sendable {
 /// One CP1 consumer per round. Replay uses synthetic time; configured live rounds use host-time readiness.
 @MainActor @Observable
 final class GameSessionCoordinator {
-    let configuration: LaserRoundConfiguration?
+    private(set) var configuration: LaserRoundConfiguration?
     private(set) var encounters: [LaserEncounter]
     let inputConfiguration: BodyInputConfiguration
     let setup: LaserSessionSetup?
@@ -45,6 +45,19 @@ final class GameSessionCoordinator {
     var canStartLiveRound: Bool {
         hasLiveRoundPlan && liveFrameHostReady && phase == .awaitingSetup && liveReadiness?.phase == .ready
     }
+    var hasWristDiamondPlan: Bool { wristDiamondConfiguration != nil }
+    var liveWristBlockers: [LaserLiveWristBlocker] {
+        var result: [LaserLiveWristBlocker] = []
+        let context = provider.currentContext
+        if context?.isActive != true || provider.status != .running { result.append(.source) }
+        if setup?.hasConfirmedReliablePair != true || context?.wristContact == nil { result.append(.binding) }
+        if !PlayerID.allCases.allSatisfy({ context?.calibrationRevisions[$0] != nil }) { result.append(.calibration) }
+        if !hasWristDiamondPlan { result.append(.geometry) }
+        if !hasLiveRoundPlan { result.append(.roundPlan) }
+        if liveReadiness?.phase != .ready && liveReadiness?.phase != .running { result.append(.measurements) }
+        if phase == .paused || phase == .restartRequired || phase == .finished { result.append(.paused) }
+        return result
+    }
     var canPauseLiveRound: Bool { !isReplay && (phase == .running || phase == .countdown) }
     private let hostNow: @MainActor () -> Double
     private let provider: any BodyInputProviding
@@ -68,7 +81,8 @@ final class GameSessionCoordinator {
     private let recoveryPlanner: (@MainActor (LaserLiveRecoveryRequest) throws -> [LaserEncounter]?)?
     private var liveTerminationTask: Task<Void, Never>?
     private var liveFrameAttachment: LaserLiveFrameAttachment?
-    private let wristDiamondConfiguration: LaserWristDiamondConfiguration?
+    private var wristDiamondConfiguration: LaserWristDiamondConfiguration?
+    private var installedLiveWristContext: BodyInputContext?
     private var wristDiamonds: LaserWristDiamondConsumer?
 
     init(provider: any BodyInputProviding, inputConfiguration: BodyInputConfiguration,
@@ -318,6 +332,9 @@ final class GameSessionCoordinator {
         inputContext = context
         inputStatus = status
         setup?.refresh()
+        if let installedLiveWristContext, installedLiveWristContext != context {
+            liveReadiness?.requireRestart() // even a pre-countdown cutover needs a new setup/plan
+        }
         guard liveReadiness != nil else { return } // Replay never reads a host-time source.
         do {
             let time = hostNow()
@@ -339,6 +356,25 @@ final class GameSessionCoordinator {
     }
 
     /// The renderer supplies a signal; original host time and the one live GameClock decide time.
+    /// Install once in the existing setup session AFTER real E05 acceptance. No new provider,
+    /// source generation, stream or GameClock. The owner supplies all reviewed plan/zone inputs.
+    func installLiveWristRound(_ plan: LaserLiveWristRoundPlan) throws {
+        readInputStatus(synchronizeLive:false)
+        guard !isReplay, lifetime != nil, phase == .awaitingSetup, game == nil, clock == nil,
+              configuration == nil, !inputStreamEnded, liveFrameAttachment == nil,
+              setup?.hasConfirmedReliablePair == true, setup?.canCancelCalibration == false,
+              provider.status == .running, let context = provider.currentContext,
+              context == plan.expectedContext, context.sessionGeneration == inputConfiguration.sessionGeneration,
+              plan.diamonds.layout == inputConfiguration.playerPlaneLayout else {
+            throw LaserDataError.invalidValue("live wrist plan requires current accepted setup")
+        }
+        // All candidate/context validation precedes assignment. No acceptance is created here.
+        configuration = plan.configuration; encounters = plan.encounters
+        wristDiamondConfiguration = plan.diamonds; installedLiveWristContext = context
+        liveReadiness = LaserLiveReadiness(policy:plan.timing)
+        readInputStatus() // new fresh settling/scene attachment/countdown remain mandatory
+    }
+
     func advanceLive() {
         guard !isReplay, lifetime != nil else { return }
         readInputStatus(synchronizeLive: false)

@@ -43,7 +43,7 @@ final class LaserReplayPresentation {
         presenter?.onSound = { AudioService.shared.play($0) }
         AudioService.shared.preloadEffects()
         AudioService.shared.setMusic(.mission)
-        if session.isCompleteReplay {
+        if session.isCompleteReplay || session.hasWristDiamondPlan {
             // Existing K06 source hook. Domain decides presence/collection; this adapter only maps display values.
             let layout = session.inputConfiguration.playerPlaneLayout
             presenter?.diamondTime.source = { [weak session] _ in
@@ -63,8 +63,8 @@ final class LaserReplayPresentation {
                         heightAboveFloor: Float(state.spawn.position.y), collected: collected)
                 }.sorted { $0.id < $1.id }
             }
-            // K06: normal diamonds from the same domain states, complete replay only
-            // (its placements are the replay plan's, not production defaults).
+            // Same K06 domain-state mapping for replay OR explicitly configured live geometry.
+            // This does not select any production radius/placement or infer a collection.
             presenter?.normalDiamonds.source = { [weak session] in
                 guard let session else { return [] }
                 return Self.normalDiamonds(session.diamondStates, layout: layout)

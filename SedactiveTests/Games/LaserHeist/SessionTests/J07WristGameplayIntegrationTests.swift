@@ -66,12 +66,17 @@ import Testing
 
 /// Only synthetic accepted measurements. Setup still exercises the real B2 gate and J03
 /// binding/confirmation/countdown/attachment path, with the EXISTING controlled CP1 provider.
-@MainActor private final class J07SessionRig {
+@MainActor final class J07SessionRig {
     let controls: GateSetupControls
     let session: GameSessionCoordinator
     var fixture: WristGameplayFixture
     private var frame: UInt64 = 3
-    init(controls existing:GateSetupControls? = nil, configured:Bool = true) throws {
+    private let deferredPlan: Bool
+    private let roundConfiguration: LaserRoundConfiguration
+    private let plannedEncounters: [LaserEncounter]
+    private var host: LaserLiveFrameAttachment?
+    init(controls existing:GateSetupControls? = nil, configured:Bool = true, deferredPlan:Bool = false) throws {
+        self.deferredPlan = deferredPlan
         let controls = try existing ?? GateSetupControls();self.controls = controls
         fixture = try WristGameplayFixture(generation:controls.fixture.context.generation)
         let configuration = try LaserRoundConfiguration(evidenceTiming:.init(windowBefore:0.125,
@@ -80,10 +85,11 @@ import Testing
             try LaserTarget(playerID:$0,calibrationRevision:1,requiredMove:.duck,
                 beam:.init(lowerY:1,upperY:1.125),warningTime:0.125,crossingTime:10)
         })
+        roundConfiguration = configuration; plannedEncounters = [encounter]
         session = try GameSessionCoordinator(provider:controls.input,inputConfiguration:fixture.input,
-            configuration:configuration,encounters:[encounter],setupControls:controls,
-            liveTimingPolicy:.init(settlingDuration:0.125,maximumEvidenceAge:0.5,countdownDuration:0.25),
-            wristDiamondConfiguration:configured ? fixture.plan() : nil,
+            configuration:deferredPlan ? nil : configuration,encounters:deferredPlan ? [] : [encounter],setupControls:controls,
+            liveTimingPolicy:deferredPlan ? nil : .init(settlingDuration:0.125,maximumEvidenceAge:0.5,countdownDuration:0.25),
+            wristDiamondConfiguration:configured && !deferredPlan ? fixture.plan() : nil,
             hostNow:{ controls.fixture.clock.time },recoveryPlanner:{ request in
                 try request.withdrawn.map { old in
                     try LaserEncounter(id:old.id,attemptID:UUID(),targets:old.targets.map {
@@ -94,9 +100,11 @@ import Testing
                 }
             })
     }
-    func start() async throws {
+    func start(installDeferredPlan:Bool = true) async throws {
         try await session.start()
-        let host = try session.attachLiveFrameHost();session.advanceLive(frameHost:host)
+        if session.hasLiveRoundPlan {
+            let h = try session.attachLiveFrameHost();host = h;session.advanceLive(frameHost:h)
+        }
         let setup = try #require(session.setup)
         try setup.beginBinding();try controls.bindPair();try setup.confirmPlayers()
         try setup.requestCalibration(id:UUID());controls.showCandidate(validated:true)
@@ -104,6 +112,21 @@ import Testing
         let acknowledgment = try #require(controls.tracking.acknowledgment)
         fixture = try WristGameplayFixture(generation:controls.fixture.context.generation, binding:acknowledgment)
         controls.input.replaceContext(fixture.context)
+        if deferredPlan {
+            if !installDeferredPlan { return }
+            try session.installLiveWristRound(makePlan())
+        }
+        try await finishStart()
+    }
+    func makePlan(context:BodyInputContext? = nil) throws -> LaserLiveWristRoundPlan {
+        try .init(expectedContext:context ?? fixture.context,configuration:roundConfiguration,
+            encounters:plannedEncounters,timing:.init(settlingDuration:0.125,maximumEvidenceAge:0.5,countdownDuration:0.25),
+            diamonds:fixture.plan())
+    }
+    func finishStart() async throws {
+        if host == nil {
+            let h = try session.attachLiveFrameHost();host = h;session.advanceLive(frameHost:h)
+        }
         try await send(0.25);try await send(0.375)
         #expect(session.canStartLiveRound)
         try session.beginLiveCountdown()

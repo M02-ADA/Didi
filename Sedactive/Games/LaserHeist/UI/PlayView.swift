@@ -365,7 +365,7 @@ private struct ReplayRoundView: View {
     /// The HUD's view of the session's authoritative state and events.
     private func hudModel(_ session: GameSessionCoordinator) -> GameplayHUDModel? {
         guard let configuration = session.configuration else { return nil }
-        var collected: Int? = session.isCompleteReplay ? session.diamondsCollected : nil
+        var collected: Int? = session.isCompleteReplay || session.hasWristDiamondPlan ? session.diamondsCollected : nil
         var fixture = false
         #if DEBUG
         // `-diamondFixture`: the labelled synthetic Diamond Time (J05 pending), counted
