@@ -368,12 +368,13 @@ final class LaserScene {
 
     /// Stands both mascots on their lanes, driven only by `mailbox`. They stay
     /// dimmed and neutral until the producer delivers a tracked pose. The
-    /// mailbox serves this one attachment: a new scene needs a new one.
-    func attachLiveAvatars(mailbox: AvatarPoseMailbox, templates: [PlayerID: Entity]) {
+    /// mailbox serves this one attachment: a new scene needs a new one. A
+    /// `pump`, if given, runs on the render tick before the mailbox is drained.
+    func attachLiveAvatars(mailbox: AvatarPoseMailbox, templates: [PlayerID: Entity], pump: (any AvatarPosePump)? = nil) {
         detachLiveAvatars()
         let avatars = RobotAvatarLayer(scene: self, players: Set(PlayerID.allCases), templates: templates)
         robotAvatars = avatars
-        liveAvatars = LiveAvatarPresenter(avatars: avatars, mailbox: mailbox)
+        liveAvatars = LiveAvatarPresenter(avatars: avatars, mailbox: mailbox, pump: pump)
     }
 
     /// One render tick for the live avatars. Call once per rendered frame with
