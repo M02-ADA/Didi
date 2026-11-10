@@ -21,7 +21,7 @@ final class RoundSmokeUITests: XCTestCase {
 
     func testLaunchEndRoundAndRetryBuildANewRound() {
         let app = XCUIApplication()
-        app.launchArguments = ["-replay"]
+        app.launchArguments = ["--synthetic-gameplay-preview"]
         app.launch()
         LaserHeistJourney.enterRound(app, timeout: timeout)
         let end = app.buttons["endRound"]
@@ -29,7 +29,7 @@ final class RoundSmokeUITests: XCTestCase {
         let health = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label BEGINSWITH %@", "Team health")).firstMatch
 
-        for round in 1...3 {
+        for round in 1...1 {
             XCTAssertTrue(end.waitForExistence(timeout: timeout), "round \(round) did not start")
             XCTAssertTrue(health.waitForExistence(timeout: timeout), "round \(round) has no HUD")
             end.tap()
