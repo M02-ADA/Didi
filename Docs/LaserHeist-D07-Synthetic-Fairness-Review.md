@@ -15,6 +15,19 @@ Source: Kevin's D07 reply and Edo's subsequent D07 Tech Lead reply, forwarded by
 
 The recorded raised-wrist HIT/visual-CLEAR mismatches remain unresolved. Passing the baseline or the added authority tests cannot close D07.
 
+## Follow-up authority regression
+
+[D07FairnessAuthorityTests](../SedactiveTests/Games/LaserHeist/DomainTests/D07FairnessAuthorityTests.swift) adds four test definitions / 64 parameterized cases in Jevon's domain-test area. It uses production scheduling, evidence selection and round effects with explicit synthetic calibrations. Four ordered pairs of standing spans (1.0/1.6, 1.6/1.0, 1.3/1.75 and 1.75/1.3 game units) exercise either player as the affected slot:
+
+- Either raised wrist produces HIT for its own player while the other clears against their own calibrated band.
+- Either grounded sole prevents clearance even when the fixture supplies a valid airborne flag.
+- Clear soles with grounded phase produce HIT; missing/stale airborne evidence produces UNAVAILABLE. The existing technical-attempt rule suppresses team reward/damage when one player is unavailable.
+- A later clear pose cannot overwrite the raised-wrist evidence selected at crossing; the test records the selected source frame and game capture time. It does not mount a renderer or claim what a display showed.
+
+Verification: **45 test definitions in five suites passed** on the iPad Pro 13-inch (M5), iOS 27.0 Simulator, Xcode 27.2, with parallel testing disabled. The run includes the new suite, `LaserCollisionJudgeTests`, `CollisionTimingTests`, the unchanged `AvatarFairnessTests` baseline and `LiveGameLoopTests`. Existing boundary, validity, pause/recovery, calibration-change and stale-input cases remain in those suites rather than being duplicated here. Log: `/private/tmp/sedactive-d07-confirmed-authority.log`.
+
+Only test code changed; the checker, timing, rendering and producer remain unchanged. This is targeted software regression, not a new complete-suite or physical-device result.
+
 ## Evidence collected
 
 The existing [AvatarFairnessTests](../SedactiveTests/Games/LaserHeist/RenderingTests/AvatarFairnessTests.swift) were rerun read-only at checkout `95bd90c` on Xcode 27.2 (27B52), iPad Pro 13-inch (M5) Simulator, iOS 27.0. Eight test definitions passed. Their 102 reported synthetic comparisons are retained in [the numeric CSV](Validation/D07-Synthetic-Clearance-2026-11-10.csv).
