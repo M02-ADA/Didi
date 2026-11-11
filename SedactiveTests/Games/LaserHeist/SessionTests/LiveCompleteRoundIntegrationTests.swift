@@ -59,6 +59,23 @@ import Testing
         await session.stop()
     }
 
+    /// P0 (iPad, 11 November 2026): the setup stage, with the camera preview, stays mounted and is
+    /// only hidden over the countdown and the round, so the preview never detaches from the running
+    /// capture session (which stalled frames and aborted every countdown).
+    @Test func theSetupStageHidesForTheCountdownAndRoundWithoutUnmounting() async throws {
+        let (rig, _) = try await Self.readyRig()
+        let session = rig.session
+        #expect(ContentView.showsSetupStage(nil) && ContentView.showsSetupStage(session), "setup in front before the countdown")
+        let host = try session.attachLiveFrameHost(); session.advanceLive(frameHost: host)
+        var time = 0.25
+        while !session.canStartLiveRound, time < 3 { try await rig.send(time); time += 0.125 }
+        try session.beginLiveCountdown()
+        #expect(session.phase == .countdown && !ContentView.showsSetupStage(session))
+        while session.phase != .running, time < 8 { try await rig.send(time); time += 0.125 }
+        #expect(session.phase == .running && !ContentView.showsSetupStage(session))
+        await session.stop()
+    }
+
     /// The App path: no manual install. Once both calibrations are accepted for the current
     /// context, the session builds and installs the complete round itself, exactly once.
     @Test func acceptedSetupInstallsTheCompleteRoundByItself() async throws {

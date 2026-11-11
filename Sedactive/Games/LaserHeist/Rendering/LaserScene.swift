@@ -416,11 +416,11 @@ final class LaserScene {
     ///   Solo Test) is hidden entirely, never shown as an untracked mascot.
     func attachLiveAvatars(mailbox: AvatarPoseMailbox, templates: [PlayerID: Entity], pump: (any AvatarPosePump)? = nil,
                            players tracked: Set<PlayerID> = Set(PlayerID.allCases),
-                           jumpEvidence: ((PlayerID, Double) -> (lowerSoleY: Double?, airborne: Bool)?)? = nil) {
+                           liveEvidence: ((PlayerID, Double) -> LiveAvatarEvidence?)? = nil) {
         detachLiveAvatars()
         for (id, lane) in players { lane.isEnabled = tracked.contains(id) }
         let avatars = RobotAvatarLayer(scene: self, players: tracked, templates: templates)
-        avatars.jumpEvidence = jumpEvidence
+        avatars.liveEvidence = liveEvidence
         robotAvatars = avatars
         liveAvatars = LiveAvatarPresenter(avatars: avatars, mailbox: mailbox, pump: pump)
     }

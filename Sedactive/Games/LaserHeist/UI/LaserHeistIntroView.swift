@@ -55,7 +55,8 @@ struct LaserHeistIntroView: View {
         guard step == .standIPadOnFloor else { return show(.setup(.standIPadOnFloor)) }
         guard flow.canStartLive else { return }
         AudioService.shared.play(.uiTap)
-        Task { await flow.startLiveSetup() }
+        // In the mode chosen on Home (TEMPORARY selector; always co-op in Release).
+        Task { await flow.startSelectedSetup() }
     }
 
     /// The flow's other choices and its messages (e.g. a camera that could not
@@ -70,6 +71,22 @@ struct LaserHeistIntroView: View {
                     .frame(maxWidth: 640)
                     .accessibilityIdentifier("inputFlowMessage")
             }
+            #if DEBUG
+            // TEMPORARY player-mode selector for testing (remove with `LaserInputFlow`'s selector
+            // section). Chosen here before starting; the setup and round keep it.
+            if flow.canSelectPlayerMode || flow.selectsSoloPractice {
+                Picker("Players", selection: Binding(get: { flow.selectsSoloPractice },
+                                                     set: { flow.selectPlayerMode(soloPractice: $0) })) {
+                    Text("2 Players · Co-op").tag(false)
+                    Text("1 Player · Solo Practice").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 420)
+                .disabled(!flow.canSelectPlayerMode)
+                .accessibilityIdentifier("playerModeSelector")
+                .accessibilityHint("Temporary testing option. Start begins camera setup in this mode.")
+            }
+            #endif
             HStack(spacing: 24) {
                 Button {
                     AudioService.shared.play(.uiTap)
@@ -80,15 +97,6 @@ struct LaserHeistIntroView: View {
                 .accessibilityIdentifier("chooseReplay")
                 .accessibilityHint("A sample round with no camera.")
                 #if DEBUG
-                // One real player, P1 (Lemon), for device testing. Co-op stays the game.
-                Button {
-                    AudioService.shared.play(.uiTap)
-                    Task { await flow.startLiveSetup(solo: true) }
-                } label: {
-                    Label("Solo Test (1 Player)", systemImage: "person.fill")
-                }
-                .disabled(!flow.canStartSolo)
-                .accessibilityIdentifier("chooseSoloTest")
                 Button("Camera diagnostics") { flow.showDiagnostics() }
                     .accessibilityIdentifier("cameraDiagnostics")
                 if let onInGameCamera {

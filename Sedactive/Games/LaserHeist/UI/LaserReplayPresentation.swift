@@ -20,6 +20,16 @@ final class LaserReplayPresentation {
     var debugDiamondReadout: DebugDiamondVisualReadout?
     #endif
 
+    /// DEBUG `-liveButtonLayout`: the synthetic replay shows the live vault-button layout and
+    /// reach cursors (Simulator layout check without a camera). Never in Release.
+    static var previewsLiveButtons: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-liveButtonLayout")
+        #else
+        false
+        #endif
+    }
+
     func start(on content: RealityViewCameraContent, scene: LaserScene,
                session: GameSessionCoordinator) {
         guard subscription == nil, let configuration = session.configuration,
@@ -41,6 +51,28 @@ final class LaserReplayPresentation {
                                            encounters: session.plannedEncounters, showsDebugMarkers: markers)
         // A DEBUG Solo Test vault shows P1's buttons only (its roster); co-op shows both.
         presenter?.vault.visiblePlayers = Set(session.inputConfiguration.roster)
+        if !session.isReplay || Self.previewsLiveButtons {
+            // Live: each button drawn ON its wrist contact zone with the mascot's mirror and scale;
+            // the wrists' reach cursors use the same mapping (cursor on button = wrist in zone).
+            let layout = session.inputConfiguration.playerPlaneLayout
+            let calibrations = session.inputConfiguration.calibrations
+            presenter?.vault.liveButtons = { [weak session, weak scene] player, button in
+                guard let session, let scene else { return nil }
+                let zone: (x: Double, y: Double, radius: Double, standing: Double)
+                if let live = session.liveVaultZones?.first(where: { $0.playerID == player && $0.button == button }) {
+                    zone = (live.position.x, live.position.y, live.radius,
+                            LaserLiveRoundGeometryV1.standingHeight(fromVaultRadius: live.radius))
+                } else if session.isReplay, let c = calibrations[player], let share = LaserLiveRoundGeometryV1.vaultShares[button] {
+                    // DEBUG layout preview over the synthetic replay: the live geometry from its calibrations.
+                    let h = LaserLiveRoundGeometryV1.standingHeight(c, layout: layout)
+                    zone = (layout.centerX(for: player) + LaserLiveRoundGeometryV1.outward(player) * share.out * h,
+                            share.y * h, LaserLiveRoundGeometryV1.vaultRadiusShare * h, h)
+                } else { return nil }
+                let shown = scene.mapping.mascotPoint(x: zone.x, y: zone.y, player: player,
+                    laneCenter: layout.centerX(for: player), standingHeight: zone.standing)
+                return (shown.center, Float(zone.radius) * shown.scale)
+            }
+        }
         // Sound follows what the presenter shows; the round's music joins in.
         presenter?.onSound = { AudioService.shared.play($0) }
         AudioService.shared.preloadEffects()
@@ -122,6 +154,9 @@ final class LaserReplayPresentation {
                          upcomingVaultIn: session.isCompleteReplay
                             ? Self.upcomingVaultIn(state: state, activityDuration: session.activityDuration)
                             : session.liveVaultIn)
+        // The wrists' reach cursors show while a vault's buttons are waiting to be pressed.
+        scene.robotAvatars?.showsReachCursors = state.phase == .vault && state.vault?.opened != true
+            && (!session.isReplay || Self.previewsLiveButtons)
         #if DEBUG
         if let presenter {
             debugDiamondReadout?.record(normal:presenter.normalDiamonds.shownIDs,

@@ -19,6 +19,23 @@ final class LaserInputFlow {
     private let stopDiagnostics: @MainActor () async -> Void
     var canStartLive: Bool { route == .selection && !isStarting && !isClosing }
 
+    // MARK: TEMPORARY player-mode selector (testing; remove with the Home picker)
+    /// The mode the next camera setup starts in: 2 Players (co-op, the default) or 1 Player
+    /// (Solo Practice, the DEBUG solo session). Chosen on the pre-game screen only; a running
+    /// setup keeps the mode it started with (`isSolo`). Always co-op without a solo factory
+    /// (Release).
+    private(set) var selectsSoloPractice = false
+    /// The selector is shown and changeable only before a setup starts, with a solo factory.
+    var canSelectPlayerMode: Bool { canStartLive && makeSoloSession != nil }
+    func selectPlayerMode(soloPractice: Bool) {
+        guard canSelectPlayerMode else { return }
+        selectsSoloPractice = soloPractice
+    }
+    /// Starts camera setup in the selected mode (the Home Start path).
+    func startSelectedSetup() async {
+        await startLiveSetup(solo: selectsSoloPractice && makeSoloSession != nil)
+    }
+
     init(initialRoute: Route = .selection,
          makeLiveSession: @escaping @MainActor () throws -> GameSessionCoordinator,
          makeSoloSession: (@MainActor () throws -> GameSessionCoordinator)? = nil,

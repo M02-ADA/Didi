@@ -58,7 +58,11 @@ struct RobotRetargeter {
     private(set) var reference: AvatarReference?
     /// Robot metres per metre of this player's motion (shared robot height / player's standing height).
     private(set) var motionScale: Float
-    var maximumSway: Float = 0.3
+    /// Largest sideways body shift shown (metres; 0.3 read as too little to reach the buttons).
+    static let defaultMaximumSway: Float = 0.4
+    /// Wrists below this confidence show no reach cursor.
+    nonisolated static let minimumJointConfidenceForCursor = 0.3
+    var maximumSway: Float = defaultMaximumSway
     var maximumLean: Float = 0.35
     var maximumHeadRoll: Float = 0.4
     /// Largest head turn shown (about 35°), and the soft zone that keeps a
@@ -83,6 +87,9 @@ struct RobotRetargeter {
     var crouchDeadband: Float = 0.03
     /// Foot lift below this share of standing height is ankle noise (soft zone).
     var liftDeadband: Float = 0.02
+    /// Hip-centre shifts smaller than this share of standing height are natural sway, not a lean
+    /// or a step (presentation only; the measured value is unchanged).
+    var swayDeadband: Float = 0.015
     /// Visual joint confidence threshold: experimental presentation policy, not a tracker value.
     var minimumJointConfidence = 0.3
     /// Presence fades in fast and out slower: losing one frame never snaps
@@ -238,7 +245,8 @@ struct RobotRetargeter {
             }
             // LATERAL: hip centre, mirrored once about the lane (as `GameWorldMapping.cutoutPoint`).
             if let x = observation.centerX {
-                let step = Float(reference.laneCenterX - x) * motionScale
+                let standing = Float(reference.standingHeight), d = Float(reference.laneCenterX - x)
+                let step = Self.softZone(abs(d), swayDeadband * standing) * (d < 0 ? -1 : 1) * motionScale
                 measuredSway = min(maximumSway, max(-maximumSway, step))
             }
         }
@@ -492,6 +500,8 @@ final class RobotAvatarLayer {
     /// moved or slid: no tracked step, root-only motion, no plant, IK reach, timing.
     struct FootDiagnostics: Equatable {
         var pelvisX: Float = 0
+        /// The board's ride offset from the lane centre; foot X values are on the board.
+        var rideX: Float = 0
         var trackedDelta: [RobotPoseTargets.Side: Float] = [:]
         var ankleConfidence: [RobotPoseTargets.Side: Float] = [:]
         var contact: [RobotPoseTargets.Side: RobotFootPlanner.Contact] = [:]
@@ -571,10 +581,68 @@ final class RobotAvatarLayer {
     /// developer's decision 10 November 2026; team sign-off still pending), and
     /// the DEBUG `-judgedLaserBands` flag turns it off for A/B comparison.
     var normalizesLaserBands = false
-    /// Live round only: the judge's own CP1 evidence for this player (lower sole, airborne) from a
-    /// capture no older than the pose age limit, so the mascot jumps exactly when the judge would
-    /// clear a JUMP (iPad, 11 November 2026: with no evidence carried it never left the floor).
-    var jumpEvidence: ((PlayerID, _ capturedAt: Double) -> (lowerSoleY: Double?, airborne: Bool)?)?
+    #if DEBUG
+    private var lastLeanLog: Double?
+    #endif
+    /// Live vault: each tracked wrist as a reach cursor, through the same mapping as the buttons
+    /// (`GameWorldMapping.mascotPoint`): the chibi's short arm cannot reach where a person's hand
+    /// does, so the cursor shows the hand the game judges. Only while buttons wait to be pressed.
+    var showsReachCursors = false { didSet { if !showsReachCursors { hideReachCursors() } } }
+    private var reachCursors: [PlayerID: [RobotPoseTargets.Side: ModelEntity]] = [:]
+    /// Cursor size (radius, metres) and depth in front of the mascot (toward the camera): just in
+    /// front of the live vault buttons (`VaultPresentation.liveButtonDepthInFront`).
+    nonisolated static let reachCursorRadius: Float = 0.055
+    nonisolated static let reachCursorDepth: Float = 0.32
+
+    private func makeReachCursors(_ player: PlayerID, on lane: Entity) {
+        var cursors: [RobotPoseTargets.Side: ModelEntity] = [:]
+        for side in RobotPoseTargets.Side.allCases {
+            let cursor = ModelEntity(mesh: .generateSphere(radius: Self.reachCursorRadius),
+                                     materials: [UnlitMaterial(color: UIColor(white: 1, alpha: 1))])
+            cursor.name = "player.\(player.rawValue).reachCursor.\(side)"
+            cursor.components.set(OpacityComponent(opacity: 0.9))
+            cursor.isEnabled = false
+            lane.addChild(cursor)
+            cursors[side] = cursor
+        }
+        reachCursors[player] = cursors
+    }
+
+    private func hideReachCursors() {
+        for cursor in reachCursors.values.flatMap(\.values) { cursor.isEnabled = false }
+    }
+
+    /// Places one player's reach cursors from this frame's wrists (player plane, game units);
+    /// a wrist that is missing or weak hides its cursor (never a guessed position).
+    private func updateReachCursors(_ player: PlayerID, joints: [PresentationJoint: PresentationPoint]?) {
+        guard let cursors = reachCursors[player] else { return }
+        guard showsReachCursors, let joints, let reference = robots[player]?.retargeter.reference else {
+            for cursor in cursors.values { cursor.isEnabled = false }
+            return
+        }
+        let k = Float(robots[player]?.retargeter.motionScale ?? 1)
+        for (side, joint) in [(RobotPoseTargets.Side.left, PresentationJoint.leftWrist), (.right, .rightWrist)] {
+            guard let cursor = cursors[side] else { continue }
+            guard let wrist = joints[joint], wrist.confidence >= RobotRetargeter.minimumJointConfidenceForCursor else {
+                cursor.isEnabled = false; continue
+            }
+            // Lane-local: mirrored about the lane, mascot (height) scale, in front of the mascot.
+            cursor.position = [Float(reference.laneCenterX - wrist.x) * k, Float(wrist.y) * k, Self.reachCursorDepth]
+            cursor.isEnabled = true
+        }
+    }
+
+    /// The reach cursor's lane-local position, when shown (tests and diagnostics).
+    func reachCursorPosition(_ player: PlayerID, _ side: RobotPoseTargets.Side) -> SIMD3<Float>? {
+        guard let cursor = reachCursors[player]?[side], cursor.isEnabled else { return nil }
+        return cursor.position
+    }
+    /// Live round only: the judge's own CP1 evidence for this player from a capture no older than
+    /// the pose age limit (iPad, 11 November 2026: with none carried the mascot never jumped and
+    /// never moved sideways). It jumps exactly when the judge would clear a JUMP, and its root and
+    /// board follow the measured hip centre (the same mirrored, scaled player plane as the vault
+    /// buttons, so a hand that reaches a button on screen reaches its contact zone).
+    var liveEvidence: ((PlayerID, _ capturedAt: Double) -> LiveAvatarEvidence?)?
 
     /// The factor from a player's game-unit heights to their drawn laser
     /// heights, or `nil`: draw the authoritative band as is (candidate off, no
@@ -702,15 +770,17 @@ final class RobotAvatarLayer {
 
     /// Through the temporary CP1 adapter: each calibrated player's `AvatarReference`.
     convenience init(scene: LaserScene, calibrations: [PlayerID: PlayerCalibration], layout: PlayerPlaneLayout,
-                     templates: [PlayerID: Entity]) {
+                     templates: [PlayerID: Entity], withBoards: Bool = true) {
         self.init(scene: scene, references: calibrations.mapValues { AvatarReference(calibration: $0, layout: layout) },
-                  templates: templates)
+                  templates: templates, withBoards: withBoards)
     }
 
     /// Avatars for exactly the players with a reference (the CP1-calibration
     /// adapter and the DEBUG bridge).
-    convenience init(scene: LaserScene, references: [PlayerID: AvatarReference], templates: [PlayerID: Entity]) {
-        self.init(scene: scene, players: Set(references.keys), references: references, templates: templates)
+    convenience init(scene: LaserScene, references: [PlayerID: AvatarReference], templates: [PlayerID: Entity],
+                     withBoards: Bool = true) {
+        self.init(scene: scene, players: Set(references.keys), references: references, templates: templates,
+                  withBoards: withBoards)
     }
 
     /// `templates` from `loadTemplates()`: each listed player gets a clone of
@@ -720,11 +790,11 @@ final class RobotAvatarLayer {
     /// `AvatarPoseFrame`s supply references as calibration becomes compatible.
     /// `hoverboard`: the board each mascot stands on (`PlayerHoverboard`);
     /// `nil` uses the app's loaded board, if any. Without one, the corridor's
-    /// shared 2D board stays.
+    /// shared 2D board stays. `withBoards: false` (tests of the bare foot planner) uses none.
     init(scene: LaserScene, players: Set<PlayerID>, references: [PlayerID: AvatarReference] = [:],
-         templates: [PlayerID: Entity], hoverboard: Entity? = nil) {
+         templates: [PlayerID: Entity], hoverboard: Entity? = nil, withBoards: Bool = true) {
         self.scene = scene
-        let hoverboard = hoverboard ?? PlayerHoverboard.loadedTemplate
+        let hoverboard = withBoards ? hoverboard ?? PlayerHoverboard.loadedTemplate : nil
         for player in PlayerID.allCases where players.contains(player) {
             guard let entity = scene.players[player], let template = templates[player] else { continue }
             let reference = references[player]
@@ -752,6 +822,7 @@ final class RobotAvatarLayer {
             for (side, name) in [(RobotPoseTargets.Side.left, "Foot_L"), (.right, "Foot_R")] {
                 ankleX[side] = skeleton(name).map { bindWorld[$0].x } ?? (side == .left ? -0.1 : 0.1)
             }
+            makeReachCursors(player, on: entity)
             robots[player] = Robot(container: container, model: model, solver: solver,
                                    retargeter: RobotRetargeter(reference: reference, robotLegRest: legRest),
                                    planner: RobotFootPlanner(rest: ankleX.mapValues { $0 * Self.modelScale }),
@@ -830,11 +901,13 @@ final class RobotAvatarLayer {
                     robots[player]?.retargeter.setReference(reference)
                 }
                 observation = AvatarPoseAdapter.observation(pose, playerID: player, imageAspect: aspect)
-                if observation?.calibrated == true, let evidence = jumpEvidence?(player, time) {
+                if observation?.calibrated == true, let evidence = liveEvidence?(player, time) {
                     observation?.lowerSoleY = evidence.lowerSoleY
                     observation?.airborne = evidence.airborne
+                    observation?.centerX = evidence.centerX
                 }
             }
+            updateReachCursors(player, joints: observation?.calibrated == true ? observation?.joints : nil)
             robots[player]?.retargeter.update(observation, time: time)
             apply(player, time: time)
         }
@@ -905,6 +978,7 @@ final class RobotAvatarLayer {
             }
             robot.retargeter.update(sample: snapshot.players[player], joints: sample, time: snapshot.capturedAt)
             robots[player] = robot
+            updateReachCursors(player, joints: sample?.joints)
             apply(player, time: snapshot.capturedAt)
         }
     }
@@ -949,18 +1023,25 @@ final class RobotAvatarLayer {
         var t = s.targets
         let scale = Self.modelScale
         var rootX = s.sway
+        // The board carries the mascot sideways with its body, within its glide limits; the feet
+        // are planted ON the board (board space), so a lean moves both together, no sliding.
+        let ride = footPlanting
+            ? hoverboards[player].map { PlayerHoverboard.Motion.rideOffset(s.sway, inward: $0.motion.inward) } ?? 0 : 0
         var plan: RobotFootPlanner.Output?
         if footPlanting {
-            var input = RobotFootPlanner.Input(pelvisX: s.sway, rootLift: s.lift, time: time)
-            input.footDelta = s.footDelta
+            var input = RobotFootPlanner.Input(pelvisX: s.sway - ride, rootLift: s.lift, time: time)
+            // While a board carries the mascot, its feet stay planted ON the board: sideways body
+            // motion is the board's ride, and only the hips moving past the ride limit step a foot
+            // on the deck (the planner's balance rule). Knee raises still show (`footLift`).
+            input.footDelta = hoverboards[player] != nil ? [:] : s.footDelta
             input.trackedLift = t.footLift.mapValues { $0 * scale }
             input.available = r.isAvailable
             let out = robot.planner.update(input)
             robots[player] = robot
             rootX += out.pelvisShift
             for side in RobotPoseTargets.Side.allCases {
-                // Board X → model space under the moved root: the IK keeps the foot there.
-                t.footShift[side] = ((out.footX[side] ?? rootX) - rootX) / scale - (robot.bindAnkleX[side] ?? 0)
+                // Board X (+ the board's ride) → model space under the moved root: the IK keeps the foot there.
+                t.footShift[side] = ((out.footX[side].map { $0 + ride } ?? rootX) - rootX) / scale - (robot.bindAnkleX[side] ?? 0)
                 // The tracked knee lift and the step arc are one movement: show the larger, never both.
                 t.footLift[side] = max(t.footLift[side] ?? 0, (out.footHeight[side] ?? 0) / scale)
             }
@@ -972,12 +1053,22 @@ final class RobotAvatarLayer {
         if Self.headClearance { MascotPoseEnvelope.apply(to: &t) }
         // The board follows what is shown: lean, root and lift (cosmetic; `PlayerHoverboard`).
         // It glides under the stance (both feet's centre), so a side step carries it along.
-        let feet = plan.map { out in RobotPoseTargets.Side.allCases.compactMap { out.footX[$0] } } ?? []
+        let feet = plan.map { out in RobotPoseTargets.Side.allCases.compactMap { out.footX[$0].map { $0 + ride } } } ?? []
         let stanceX = feet.count == 2 ? (feet[0] + feet[1]) / 2 : rootX
-        hoverboards[player]?.input = .init(lean: t.lean, centerX: rootX, stanceX: stanceX, lift: s.lift, available: r.isAvailable)
+        hoverboards[player]?.input = .init(lean: t.lean, centerX: rootX, stanceX: stanceX, lift: s.lift,
+                                           available: r.isAvailable, ride: footPlanting ? ride : nil)
+        #if DEBUG
+        // Once a second for P1: what the lean shows (device check; numbers only).
+        if player == .player1, time - (lastLeanLog ?? -1) >= 1 {
+            lastLeanLog = time
+            print(String(format: "[LaserLean] P1 trunk %.0f° · sway %.3f m · board ride %.3f m bank %.1f° · tracked %@",
+                         t.lean * 180 / .pi, s.sway, ride, (hoverboards[player]?.motion.bank ?? 0) * 180 / .pi,
+                         r.isAvailable ? "yes" : "no"))
+        }
+        #endif
         let solved = robot.solver.solveDetailed(t)
         robot.model.jointTransforms = solved.local
-        if diagnosticsEnabled { recordFeet(player, robot, solved, rootX: rootX, lift: s.lift, plan: plan, trackedLift: t.footLift) }
+        if diagnosticsEnabled { recordFeet(player, robot, solved, rootX: rootX, ride: ride, lift: s.lift, plan: plan, trackedLift: t.footLift) }
         #if DEBUG
         if showsFairnessMarkers { updateFairnessMarkers(player) }
         #endif
@@ -989,19 +1080,21 @@ final class RobotAvatarLayer {
     }
 
     private func recordFeet(_ player: PlayerID, _ robot: Robot, _ solved: (local: [Transform], reachShortfall: [RobotPoseTargets.Side: Float]),
-                            rootX: Float, lift: Float, plan: RobotFootPlanner.Output?, trackedLift: [RobotPoseTargets.Side: Float]) {
+                            rootX: Float, ride: Float, lift: Float, plan: RobotFootPlanner.Output?, trackedLift: [RobotPoseTargets.Side: Float]) {
         let scale = Self.modelScale
         let world = robot.solver.skeleton.world(solved.local).position
         var d = footDiagnostics[player] ?? FootDiagnostics()
         let previous = d.contact
         d.pelvisX = rootX
+        d.rideX = ride
         d.trackedDelta = robot.retargeter.footDelta
         d.ankleConfidence = robot.retargeter.ankleConfidence
         d.reachShortfall = solved.reachShortfall.mapValues { $0 * scale }
         var anchors = plantAnchor[player] ?? [:]
         for (side, name) in [(RobotPoseTargets.Side.left, "Foot_L"), (.right, "Foot_R")] {
             guard let i = robot.solver.skeleton(name) else { continue }
-            let x = rootX + world[i].x * scale
+            // On the board (board space): planted feet ride with it and must not slide on it.
+            let x = rootX + world[i].x * scale - ride
             d.actualX[side] = x
             d.height[side] = lift + (world[i].y - robot.bindAnkleY) * scale
             d.targetX[side] = plan?.footX[side] ?? x
@@ -1048,3 +1141,15 @@ final class RobotAvatarLayer {
         lights.removeFromParent()
     }
 }
+
+/// Live round evidence shown on a mascot, from the judge's own CP1 sample (never invented).
+struct LiveAvatarEvidence: Equatable, Sendable {
+    /// The lower valid sole above the floor (game units), nil unless both soles are valid.
+    var lowerSoleY: Double?
+    /// Valid airborne jump phase.
+    var airborne: Bool
+    /// Valid hip-centre X on the player plane (game units, unmirrored), nil otherwise.
+    var centerX: Double?
+}
+
+

@@ -58,6 +58,43 @@ import Testing
         #expect(r.player2.state == .unbound, "no teammate is fabricated")
     }
 
+    /// iPad, 11 November 2026 (P0): losing P1 restarted the whole setup, again and again. In a
+    /// Solo Test the setup now waits for the tracker's solo re-link in the SAME binding and then
+    /// confirms again; co-op still restarts (a lost co-op identity needs a new setup).
+    @Test(arguments: [true, false])
+    func aLostPlayerWaitsForRelinkInSoloAndRestartsInCoop(solo: Bool) async throws {
+        let controls = try GateSetupControls(solo: solo)
+        let script = try LaserReplayScript.load()
+        var input = LiveVisionFixtures.configuration(controls.fixture.context.generation)
+        if solo { input.soloPlayer = .player1 }
+        let session = GameSessionCoordinator(provider: controls.input, inputConfiguration: input,
+            configuration: script.configuration, encounters: script.encounters, setupControls: controls)
+        try await session.start()
+        let setup = try #require(session.setup)
+        #expect(setup.roster == (solo ? [.player1] : PlayerID.allCases))
+        try setup.beginBinding()
+        var t = 0.0, id: UInt64 = 1
+        func frame(_ people: [PoseCandidate]) throws {
+            _ = try controls.fixture.finish(controls.fixture.result(id, t, people)); id += 1; t += 0.1
+        }
+        let people = solo ? [F.candidate(10, x: 0.5)] : F.pair
+        for _ in 0..<3 { try frame(people) }
+        setup.refresh()
+        try setup.confirmPlayers()
+        #expect(setup.hasConfirmedReliablePair)
+        for _ in 0..<30 { try frame([]) } // three seconds with nobody: lost
+        setup.refresh()
+        #expect(setup.phase == (solo ? .waitingForReliablePair : .restartRequired))
+        #expect(!setup.hasConfirmedReliablePair, "no evidence is admitted while lost")
+        guard solo else { await session.stop(); return }
+        for _ in 0..<4 { try frame([F.candidate(30, x: 0.4)]) } // back, alone
+        setup.refresh()
+        #expect(setup.phase == .confirmPlayers)
+        try setup.confirmPlayers()
+        #expect(setup.hasConfirmedReliablePair && setup.phase != .restartRequired, "same binding, no restart")
+        await session.stop()
+    }
+
     @Test func aLostCoopPlayerIsNeverRelinkedByTheTracker() throws {
         var tracker = try PlayerTracker(policy: F.policy())
         try tracker.reset(context: F.context(), controlRevision: 1)
@@ -313,6 +350,30 @@ import Testing
         await flow.startLiveSetup()
         #expect(!flow.isSolo, "co-op after solo starts a co-op setup")
         await flow.closeLiveSetup()
+    }
+
+    /// TEMPORARY Home selector: co-op by default; the chosen mode starts the setup, is locked while
+    /// it runs, and can be changed again back on Home. Without a solo factory (Release) it is co-op.
+    @Test func theTemporaryPlayerModeSelectorStartsTheChosenModeAndLocksItWhileRunning() async throws {
+        let flow = LaserInputFlow(makeLiveSession: { throw LiveVisionError.inactiveSource },
+                                  makeSoloSession: { throw LiveVisionError.invalidRequest })
+        #expect(flow.canSelectPlayerMode && !flow.selectsSoloPractice, "2 Players (co-op) is the default")
+        flow.selectPlayerMode(soloPractice: true)
+        await flow.startSelectedSetup()
+        #expect(flow.isSolo && flow.route == .liveSetup, "1 Player starts the Solo Practice setup")
+        flow.selectPlayerMode(soloPractice: false)
+        #expect(!flow.canSelectPlayerMode && flow.selectsSoloPractice, "locked while a setup runs")
+        await flow.closeLiveSetup()
+        #expect(flow.route == .selection && flow.canSelectPlayerMode, "back on Home: choose again")
+        flow.selectPlayerMode(soloPractice: false)
+        await flow.startSelectedSetup()
+        #expect(!flow.isSolo && flow.route == .liveSetup, "2 Players starts co-op as before")
+        await flow.closeLiveSetup()
+        let release = LaserInputFlow(makeLiveSession: { throw LiveVisionError.inactiveSource })
+        release.selectPlayerMode(soloPractice: true)
+        #expect(!release.canSelectPlayerMode && !release.selectsSoloPractice, "no solo factory: co-op only")
+        await release.startSelectedSetup()
+        #expect(!release.isSolo)
     }
 
     /// Found on the iPad (11 November 2026): the person mask demanded exactly two people, so every

@@ -234,6 +234,18 @@ final class LaserSessionSetup {
             return
         }
         if roster.contains(where: { tracking.latest?[$0].requiresRebind == true }) {
+            #if DEBUG
+            if roster == [.player1] {
+                // DEBUG Solo Test: the tracker re-links the only person in view inside this same
+                // binding (`PlayerTracker` solo re-link), so wait for it instead of restarting setup.
+                // The players are confirmed again once tracked; calibration samples taken while
+                // P1 was lost were already dropped (identity failure restarts the window).
+                if phase != .waitingForReliablePair { print("[LaserSetupRestart] setup: solo P1 lost · waiting for re-link (no restart)") }
+                confirmed = nil
+                phase = .waitingForReliablePair
+                return
+            }
+            #endif
             confirmed = nil; candidateTicket = nil; calibrationRequest = nil; calibrationRevision = nil
             #if DEBUG
             // Once per transition (it re-evaluates on every status read).

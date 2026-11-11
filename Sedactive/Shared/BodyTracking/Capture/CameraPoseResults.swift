@@ -520,8 +520,24 @@ nonisolated final class CameraTrackingGate: Sendable {
       else {
         increment(&$0.rejected)
         increment(&$0.staleRejected)
+        #if DEBUG
+        print(String(format: "[LaserTrack] t %.3f · frame %llu REJECTED · age %.0f ms (limit %.0f) · cancelled %@ · context %@ · revision %@",
+                     time, source.frameID, (time - source.capturedAt) * 1000, policy.freshness * 1000,
+                     cancelled ? "yes" : "no", $0.context == source.context ? "same" : "CHANGED",
+                     admission.revision == $0.revision ? "same" : "CHANGED"))
+        #endif
         return false
       }
+      #if DEBUG
+      let before = $0.latest?[.player1], after = result[.player1]
+      if before?.state != after.state || before?.reason != after.reason || before?.requiresRebind != after.requiresRebind {
+        print(String(format: "[LaserTrack] t %.3f · frame %llu · P1 %@/%@ → %@/%@%@ · age %.0f ms · gap %.0f ms · candidate %@",
+                     time, source.frameID, before?.state.rawValue ?? "-", before?.reason.rawValue ?? "-",
+                     after.state.rawValue, after.reason.rawValue, after.requiresRebind ? " REBIND" : "",
+                     (time - source.capturedAt) * 1000, $0.lastCapture.map { (source.capturedAt - $0) * 1000 } ?? -1,
+                     after.candidateID.map { "\($0)" } ?? "none"))
+      }
+      #endif
       let roster = $0.body.configuration?.roster ?? PlayerID.allCases
       if roster.contains(where: { result[$0].state != .tracking || result[$0].requiresRebind }) {
         $0.body.calibration.uncertain()
@@ -611,6 +627,10 @@ nonisolated final class CameraTrackingGate: Sendable {
     s.presentation.invalidate()
     #if DEBUG
     if s.anatomyInspection.frame == nil { s.anatomyInspection.invalidate() }
+    #endif
+    #if DEBUG
+    print(String(format: "[LaserTrack] t %.3f · no committed frame by the deadline: tracking EXPIRED (last capture %.0f ms ago, %llu stale rejected)",
+                 time, s.lastCapture.map { (time - $0) * 1000 } ?? -1, s.staleRejected))
     #endif
     s.body.calibration.uncertain()
     s.body.measurements.invalidate()

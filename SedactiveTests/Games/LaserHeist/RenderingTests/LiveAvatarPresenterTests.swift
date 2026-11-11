@@ -321,9 +321,9 @@ struct LiveAvatarPresenterTests {
         let (scene, mailbox, source) = try await attached()
         mailbox.publish(source.status)
         var current: (sole: Double, time: Double)?
-        try #require(scene.robotAvatars).jumpEvidence = { _, capturedAt in
+        try #require(scene.robotAvatars).liveEvidence = { _, capturedAt in
             guard let current, current.time == capturedAt else { return nil }
-            return (current.sole, airborne && current.sole > 0.05)
+            return LiveAvatarEvidence(lowerSoleY: current.sole, airborne: airborne && current.sole > 0.05, centerX: nil)
         }
         let frames = try sequence(.bothJump)
         var highest: Float = 0
@@ -344,6 +344,35 @@ struct LiveAvatarPresenterTests {
             highest = max(highest, try #require(scene.robotAvatars).robots.values.map(\.retargeter.lift).max() ?? 0)
         }
         #expect(airborne ? highest > 0 : highest == 0)
+    }
+
+    /// Live round: the judge's hip centre moves the mascot sideways (mirrored about its lane, so
+    /// P1 stepping toward its own wall moves toward screen left), and the other player not at all.
+    @Test func theJudgesHipCentreMovesOnlyThatMascotSideways() async throws {
+        let (scene, mailbox, source) = try await attached()
+        mailbox.publish(source.status)
+        let layout = try LaserReplayScript.load().input.configuration.playerPlaneLayout
+        try #require(scene.robotAvatars).liveEvidence = { player, _ in
+            player == .player1 ? LiveAvatarEvidence(lowerSoleY: nil, airborne: false,
+                                                    centerX: layout.centerX(for: .player1) + 0.15) : nil
+        }
+        let frames = try sequence(.bothJump)
+        for index in UInt64(1)...60 {
+            let frame = try frames.frame(index)
+            let output = source.output(frame.snapshot, joints: frame.joints)
+            mailbox.offer(AvatarSourceOutput(
+                source: output.source, contextRevision: output.contextRevision, player1: output.player1, player2: output.player2,
+                candidates: output.candidates, calibration: output.calibration.mapValues {
+                    AvatarCalibrationInput(revision: $0.revision, mapping: $0.mapping, standingCrownImageY: $0.standingCrownImageY,
+                                           standingHipImageY: $0.standingHipImageY, standingLeftAnkleImageY: $0.standingLeftAnkleImageY,
+                                           standingRightAnkleImageY: $0.standingRightAnkleImageY, visual: nil)
+                }))
+            scene.refreshLiveAvatars(now: frame.snapshot.capturedAt + 0.005)
+        }
+        let robots = try #require(scene.robotAvatars).robots
+        let p1 = try #require(robots[.player1]).container.position.x, p2 = try #require(robots[.player2]).container.position.x
+        #expect(p1 < -0.05 && p1 >= -RobotRetargeter.defaultMaximumSway - 1e-4, "P1 shifted toward its wall, bounded")
+        #expect(abs(p2) < 0.01, "P2 unaffected")
     }
 
     /// Edo's tracker values map one to one onto the avatar seam.

@@ -97,15 +97,16 @@ private struct ReplayRoundView: View {
                     // A DEBUG Solo Test tracks P1 only: Tangerine's lane is hidden, not shown untracked.
                     scene.attachLiveAvatars(mailbox: mailbox, templates: templates, pump: pump,
                         players: Set(suppliedSession?.inputConfiguration.roster ?? PlayerID.allCases),
-                        jumpEvidence: suppliedSession.map { session in { [weak session] player, capturedAt in
+                        liveEvidence: suppliedSession.map { session in { [weak session] player, capturedAt in
                             // The judge's latest evidence, only when it is as fresh as the pose shown.
                             guard let snapshot = session?.latestSnapshot,
                                   abs(snapshot.capturedAt - capturedAt) <= LiveAvatarPresenter.maximumPoseAge,
                                   let sample = snapshot.players[player], sample.trackingStatus == .reliable else { return nil }
                             let g = sample.geometry
                             let soles = [g.leftSoleY, g.rightSoleY].filter { $0.validity == .valid }.compactMap(\.value)
-                            return (soles.count == 2 ? soles.min() : nil,
-                                    sample.jumpState.validity == .valid && sample.jumpState.phase == .airborne)
+                            return LiveAvatarEvidence(lowerSoleY: soles.count == 2 ? soles.min() : nil,
+                                airborne: sample.jumpState.validity == .valid && sample.jumpState.phase == .airborne,
+                                centerX: g.centerX.validity == .valid ? g.centerX.value : nil)
                         } })
                 } catch {
                     startupError = String(describing: error)
@@ -313,11 +314,12 @@ private struct ReplayRoundView: View {
             }
             #endif
         }
-        .overlay(alignment: .leading) {
+        .overlay(alignment: .topTrailing) {
             #if DEBUG
-            // DEBUG Solo Test only (never co-op, never Release): skip and P1 gate taps.
+            // DEBUG Solo Test only (never co-op, never Release): skip and P1 gate taps. Top right,
+            // over the empty P2 side, clear of P1's buttons on the left wall.
             if let session, session.isSoloPractice, session.summary == nil, session.state != nil {
-                DebugSoloTestControls(session: session).padding(.leading, 16)
+                DebugSoloTestControls(session: session).padding(.trailing, 16).padding(.top, 130)
             }
             #endif
         }

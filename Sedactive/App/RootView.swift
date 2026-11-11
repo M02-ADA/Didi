@@ -64,7 +64,7 @@ struct ContentView: View {
         #if DEBUG
           .overlay(alignment: .top) {
             if flow.session?.isSoloPractice == true {
-              Text("SOLO TEST · P1 only · practice, not a co-op result")
+              Text("SOLO PRACTICE · 1 Player · not a co-op result")
                 .font(.system(size: 13, weight: .heavy, design: .monospaced))
                 .padding(.horizontal, 12).padding(.vertical, 5)
                 .background(Color(sketch: 0xFFC83A), in: Capsule())
@@ -91,18 +91,34 @@ struct ContentView: View {
   @ViewBuilder private func liveSetup(flow: LaserInputFlow) -> some View {
         // Automatic setup mounts the game scene from the start (hidden behind the camera screen),
         // so its first load does not stall tracking right after calibration (iPad, 11 November).
-        if let session = flow.session, session.hasLiveRoundPlan || session.automaticSetup {
-          ZStack {
+        ZStack {
+          if let session = flow.session, session.hasLiveRoundPlan || session.automaticSetup {
             PlayView(avatarSource: { try VisionK03MailboxPump(bridge: dependencies.visionPoseBridge, mailbox: $0) },
                      onExit: { Task { await flow.closeLiveSetup() } }, liveSession: session,
                      onLiveRetry: { Task { await flow.retryLiveSetup() } })
               .id(ObjectIdentifier(session)) // a new session (Retry) gets a fresh scene
-            // The countdown shows only the session's own remaining time (no second clock).
-            if session.phase == .countdown, let remaining = session.liveReadiness?.countdownRemaining {
-              RoundCountdownOverlay(value: Int(remaining.rounded(.up)))
-            } else if session.phase != .running, session.summary == nil { liveSetupStage(flow, preview: cameraPreview) }
           }
-        } else { liveSetupStage(flow, preview: cameraPreview) }
+          // The setup stage, with its camera preview, stays MOUNTED for the whole visit and is only
+          // hidden over the game: attaching or detaching the preview layer reconfigures the running
+          // capture session and stalls frames 220–500 ms (iPad, 11 November 2026), which aborted
+          // every countdown and, repeated, lost the player and restarted setup.
+          let stageShown = Self.showsSetupStage(flow.session)
+          liveSetupStage(flow, preview: cameraPreview)
+            .opacity(stageShown ? 1 : 0)
+            .allowsHitTesting(stageShown)
+            .accessibilityHidden(!stageShown)
+          // The countdown shows only the session's own remaining time (no second clock).
+          if let session = flow.session, session.phase == .countdown,
+             let remaining = session.liveReadiness?.countdownRemaining {
+            RoundCountdownOverlay(value: Int(remaining.rounded(.up)))
+          }
+        }
+  }
+  /// Whether the camera setup stage is in front: always until a live round's game scene is
+  /// mounted, then except while counting down, playing or showing results.
+  static func showsSetupStage(_ session: GameSessionCoordinator?) -> Bool {
+    guard let session, session.hasLiveRoundPlan || session.automaticSetup else { return true }
+    return session.phase != .countdown && session.phase != .running && session.summary == nil
   }
   /// The live camera image for the setup stage: the pipeline's one retained
   /// session, display only. Nil in the Simulator (no camera).

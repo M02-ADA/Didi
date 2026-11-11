@@ -288,9 +288,13 @@ final class GateSetupControls: LaserSetupControlling {
     var cancelledCalibration: CalibrationRequest?
     private var progressOverride: StandingCalibrationProgress?
 
-    init() throws {
+    init(solo: Bool = false) throws {
         fixture = try TrackingIntegrationFixture()
-        try fixture.gate.configureBody(LiveVisionFixtures.configuration(fixture.context.generation))
+        var configuration = LiveVisionFixtures.configuration(fixture.context.generation)
+        #if DEBUG
+        if solo { configuration.soloPlayer = .player1 }
+        #endif
+        try fixture.gate.configureBody(configuration)
     }
     func makeBindingRequest() throws -> CameraBindingRequest {
         bindingRequests += 1

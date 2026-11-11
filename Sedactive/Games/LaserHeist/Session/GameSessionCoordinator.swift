@@ -29,7 +29,16 @@ final class GameSessionCoordinator {
     var diamondStates: [UUID: LaserDiamondState] { game?.diamonds ?? [:] }
     var diamondsCollected: Int { game?.diamondsCollected ?? 0 }
     var activityDuration: Double { replayDriver?.script.activityDuration ?? configuration?.activityDuration ?? 0 }
-    private(set) var phase: SessionState = .idle
+    private(set) var phase: SessionState = .idle {
+        didSet {
+            #if DEBUG
+            if oldValue != phase {
+                print(String(format: "[LaserState] t %.3f · session %@ → %@ · readiness %@ · setup %@", ProcessInfo.processInfo.systemUptime,
+                             "\(oldValue)", "\(phase)", "\(String(describing: liveReadiness?.phase))", "\(String(describing: setup?.phase))"))
+            }
+            #endif
+        }
+    }
     private(set) var state: LaserGameState?
     private(set) var summary: RoundSummary?
     private(set) var results: [ReplayTargetResult] = []
@@ -159,6 +168,8 @@ final class GameSessionCoordinator {
     private var liveDirector: LaserLiveRoundDirector?
     /// The open live vault's zones, re-armed on a recreated wrist consumer after a pause.
     private var liveVault: (id: UUID, zones: [LaserVaultZone])?
+    /// The open live vault's contact zones (presentation draws the buttons on them).
+    var liveVaultZones: [LaserVaultZone]? { liveVault?.zones }
     /// Builds the live round plan from the producer's ACCEPTED context once setup is complete.
     private let liveRoundPlanner: (@MainActor (BodyInputContext, [PlayerID: PlayerCalibration]) throws -> LaserLiveWristRoundPlan)?
     private var installingLivePlan = false
@@ -178,6 +189,7 @@ final class GameSessionCoordinator {
     private(set) var setupTimeline = LaserSetupTimeline()
     private var lastLoggedIssue: [PlayerID: String] = [:]
     private var lastLoggedJump: [PlayerID: String] = [:]
+    private var lastLoggedReadiness: String?
     private var lastSearchLog = -Double.infinity
     private var lastLoggedFrame: [PlayerID: UInt64] = [:]
     #endif
@@ -470,6 +482,17 @@ final class GameSessionCoordinator {
             debugRestart("installed context changed: was \(String(describing: installedLiveWristContext)) now \(String(describing: context))")
             liveReadiness?.requireRestart() // even a pre-countdown cutover needs a new setup/plan
         }
+        #if DEBUG
+        let readinessNow = "\(String(describing: liveReadiness?.phase))"
+        // Blocked → blocked (one blocker for another, every frame while calibrating) is noise.
+        if readinessNow != lastLoggedReadiness,
+           !(readinessNow.contains("blocked") && (lastLoggedReadiness?.contains("blocked") ?? false)) {
+            print(String(format: "[LaserState] t %.3f · readiness %@ → %@ · session %@ · setup %@ · binding %@", ProcessInfo.processInfo.systemUptime,
+                         lastLoggedReadiness ?? "-", readinessNow, "\(phase)", "\(String(describing: setup?.phase))",
+                         setup?.hasConfirmedReliablePair == true ? "confirmed" : "NOT confirmed"))
+        }
+        lastLoggedReadiness = readinessNow
+        #endif
         guard liveReadiness != nil else { return } // Replay never reads a host-time source.
         do {
             let time = hostNow()
@@ -484,16 +507,18 @@ final class GameSessionCoordinator {
             // DEBUG Solo Test: losing P1 (same camera source and context) neither pauses nor ends
             // the round; P1's evidence stays UNAVAILABLE until B2 tracks them again.
             if soloRoundToleratesTrackingLoss, context != nil, context == installedLiveWristContext {
-                #if DEBUG
-                if !debugSoloTrackingLost { print("[LaserSolo] P1 tracking lost: round continues without evidence") }
-                debugSoloTrackingLost = true
-                #endif
+                // DEBUG Solo Test round: kept running (P1's evidence is UNAVAILABLE meanwhile).
             } else { debugRestart("setup restartRequired"); liveReadiness?.requireRestart() }
         }
         #if DEBUG
-        if setup?.phase != .restartRequired, debugSoloTrackingLost, controls(trackingP1IsLive: setup) {
-            debugSoloTrackingLost = false
-            print("[LaserSolo] P1 re-linked (only person in view): tracking resumed with the same calibration")
+        if inputConfiguration.soloPlayer != nil, let slot = setup?.diagnosticControls.tracking.latest?[.player1] {
+            if slot.requiresRebind, !debugSoloTrackingLost {
+                debugSoloTrackingLost = true
+                print("[LaserSolo] P1 tracking lost: no restart; evidence UNAVAILABLE until re-linked")
+            } else if debugSoloTrackingLost, controls(trackingP1IsLive: setup) {
+                debugSoloTrackingLost = false
+                print("[LaserSolo] P1 re-linked (only person in view): tracking resumed with the same calibration")
+            }
         }
         #endif
         installAcceptedLivePlanIfReady()

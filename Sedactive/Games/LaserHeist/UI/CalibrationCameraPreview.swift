@@ -29,6 +29,9 @@ struct CalibrationCameraPreview: UIViewRepresentable {
         view.previewLayer.videoGravity = .resizeAspect
         view.previewLayer.session = session
         view.levelWithHorizon()
+        #if DEBUG
+        print(String(format: "[LaserState] t %.3f · camera preview ATTACHED", CACurrentMediaTime()))
+        #endif
         return view
     }
 
@@ -43,6 +46,9 @@ struct CalibrationCameraPreview: UIViewRepresentable {
         view.stopObserving()
         view.stopWatchingSession()
         view.previewLayer.session = nil
+        #if DEBUG
+        print(String(format: "[LaserState] t %.3f · camera preview DETACHED", CACurrentMediaTime()))
+        #endif
     }
 
     final class PreviewView: UIView {

@@ -16,8 +16,10 @@ nonisolated struct LaserVaultZone: Equatable, Sendable {
 ///
 /// - Diamonds: four per player beside the body, at chest and shoulder height, out of the
 ///   resting-hand position so idle hands do not collect them.
-/// - Vault buttons: three on the player's OUTER side (toward their own corridor wall, where
-///   the wall buttons are drawn): high, level and low reaches of one arm.
+/// - Vault buttons: three on the player's OUTER side (toward their own corridor wall): high,
+///   level and low reaches of one arm. Live rounds draw each button exactly on its zone, with
+///   the mascot's own mirror and height scale (`GameWorldMapping.mascotPoint`), and the player's
+///   wrists as reach cursors through the same mapping: cursor on a button = wrist in its zone.
 nonisolated enum LaserLiveRoundGeometryV1 {
     static let version = "LaserLiveRoundGeometryV1"
     /// Diamond placements: (sideways, height) as shares of standing height.
@@ -25,10 +27,26 @@ nonisolated enum LaserLiveRoundGeometryV1 {
     /// DEBUG solo practice: the diamond planner needs at least five places, so one player gets two more.
     static let soloExtraDiamondShares: [(x: Double, y: Double)] = [(-0.3, 0.72), (0.3, 0.72)]
     static let diamondRadiusShare = 0.08
-    /// Vault buttons, outward from the lane centre: (outward, height) shares.
+    /// Vault buttons, outward from the lane centre: (outward, height) shares of each player's
+    /// own standing height, so shorter players get lower, closer buttons. One vertical stack
+    /// beside the player at body-relative reaching heights (owner request 11 November 2026):
+    /// HIGH at head level (0.95 h), MIDDLE at chest (0.70 h), LOW at the upper thigh (0.45 h,
+    /// above the knee ~0.28 h, below the hip ~0.53 h). Neighbours are 0.25 h apart (the gap
+    /// between buttons doubled; more than two radii: no overlap). HIGH and MIDDLE are about 83 %
+    /// of an arm (0.44 h) from the outer shoulder standing upright; LOW asks for a downward reach
+    /// with a slight knee bend and lean (0.1 h and 0.05 h: 90 % of an arm), never a deep squat.
+    /// The column (0.47 h out) stays clear of the leaning mascot's head, and a resting hand
+    /// (~0.16 h out, ~0.44 h up) is outside every zone even with the hips 0.1 h toward the wall.
     static let vaultShares: [LaserVaultButton: (out: Double, y: Double)] = [
-        .top: (0.33, 1.03), .middle: (0.43, 0.82), .bottom: (0.33, 0.6)]
-    static let vaultRadiusShare = 0.1
+        .top: (0.47, 0.95), .middle: (0.47, 0.70), .bottom: (0.47, 0.45)]
+    static let vaultRadiusShare = 0.105
+    /// The human reference these shares assume (anthropometric averages): the shoulder joint
+    /// (outward, height) and the shoulder→wrist arm length, as shares of standing height.
+    static let humanShoulderShare: (out: Double, y: Double) = (0.13, 0.82)
+    static let humanArmShare = 0.44
+
+    /// The standing height a vault zone was sized from (its radius is `vaultRadiusShare` of it).
+    static func standingHeight(fromVaultRadius radius: Double) -> Double { radius / vaultRadiusShare }
 
     /// Standing height in game units from the accepted reference (crown above the floor).
     static func standingHeight(_ calibration: PlayerCalibration, layout: PlayerPlaneLayout) -> Double {
