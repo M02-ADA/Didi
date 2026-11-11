@@ -67,11 +67,12 @@ struct CalibrationCameraPreview: UIViewRepresentable {
                 connection.isVideoMirrored = false
             }
             if ProcessInfo.processInfo.isiOSAppOnMac {
-                // The iPad compatibility window can give the preview a quarter-turn
-                // of its own. Use the angle of the landscape frames Vision reads.
+                // CalibrationStageView mirrors this layer horizontally. An extra
+                // clockwise quarter-turn here appears counterclockwise on screen.
                 if let output = previewLayer.session?.outputs.first(where: { $0 is AVCaptureVideoDataOutput }),
                    let capture = output.connection(with: .video) {
-                    apply(capture.videoRotationAngle)
+                    let corrected = (capture.videoRotationAngle + 90).truncatingRemainder(dividingBy: 360)
+                    apply(corrected)
                 }
                 return
             }
