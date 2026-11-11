@@ -66,6 +66,15 @@ struct CalibrationCameraPreview: UIViewRepresentable {
                 connection.automaticallyAdjustsVideoMirroring = false
                 connection.isVideoMirrored = false
             }
+            if ProcessInfo.processInfo.isiOSAppOnMac {
+                // The iPad compatibility window can give the preview a quarter-turn
+                // of its own. Use the angle of the landscape frames Vision reads.
+                if let output = previewLayer.session?.outputs.first(where: { $0 is AVCaptureVideoDataOutput }),
+                   let capture = output.connection(with: .video) {
+                    apply(capture.videoRotationAngle)
+                }
+                return
+            }
             guard let device = previewLayer.session?.inputs
                 .compactMap({ ($0 as? AVCaptureDeviceInput)?.device })
                 .first(where: { $0.hasMediaType(.video) }) else { return }
