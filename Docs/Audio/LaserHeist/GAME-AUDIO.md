@@ -54,7 +54,7 @@ Effects are edits of the Pixabay sources listed in [LICENSES.md](LICENSES.md) (P
 | `lh-round-success` | Victory Fanfare (152480) | 0.06–3.10 s |
 | `lh-round-failure` | Playful Failure (310480) | 0.10–1.10 s |
 
-`lh-music-base` and `lh-music-drive` ("Vault Run", 126 BPM, 8 bars, C–Am–F–G) are original: synthesised note by note by the same script, with no samples or third-party material. Two stems of one 15.24 s loop (672,000 frames, IMA4: `afconvert -f caff -d ima4`), seamless at the loop point.
+`lh-music-base` and `lh-music-drive` ("Night Shift", 112 BPM, 8 bars, D minor: Dm–Bb–Gm–A, two bars each) are original stealth-heist stems, synthesised note by note by `Scripts/compose-laserheist-music.swift`, with no samples or third-party material. The base stem holds a soft filtered pad, a tiptoeing staccato pluck motif with a dotted-eighth echo, and quiet ticks. The drive stem holds a staccato bass ostinato with chromatic approach notes, a light kick and rim, and laser blips that build in bars 5–8. Two stems of one 17.14 s loop (756,000 frames, IMA4: `afconvert -f caff -d ima4`), rendered over two loops so every tail wraps: seamless at the loop point (seam step below the 99th percentile of sample steps). Peaks at −10 dBFS; RMS −27 dBFS (base) and −24 dBFS (drive). They replace "Vault Run" (126 BPM, C major), which read as upbeat pop rather than a heist.
 
 Cut points were chosen from measured loudness envelopes and pitch, not by ear. Audition on the iPad speaker before release (README "Before release" checklist).
 

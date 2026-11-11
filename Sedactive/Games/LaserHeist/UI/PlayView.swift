@@ -374,9 +374,15 @@ private struct ReplayRoundView: View {
         // `-avatarFairness` (K04): mark the avatars' head tops, hands and soles beside the
         // human evidence markers and band edges, to compare them at the laser plane.
         robots.showsFairnessMarkers = ProcessInfo.processInfo.arguments.contains("-avatarFairness")
-        // `-normalizedLasers` (D07 candidate, not approved): draw each player's laser bands in
-        // their normalized avatar space for A/B comparison. Without it, beams stay as judged.
-        robots.normalizesLaserBands = ProcessInfo.processInfo.arguments.contains("-normalizedLasers")
+        // D07 presentation: draw each player's laser bands in their normalized avatar
+        // space, so beams meet the fixed-size mascots where they meet the players and a
+        // shared beam lines up. Display only. DEBUG `-judgedLaserBands` draws the judged
+        // bands instead, for A/B comparison.
+        #if DEBUG
+        robots.normalizesLaserBands = !ProcessInfo.processInfo.arguments.contains("-judgedLaserBands")
+        #else
+        robots.normalizesLaserBands = true
+        #endif
         scene.robotAvatars = robots
         return robots
     }

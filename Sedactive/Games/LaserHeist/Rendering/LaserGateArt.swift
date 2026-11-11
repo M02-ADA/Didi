@@ -48,23 +48,18 @@ enum LaserGateArt {
         let d = abs(v - 0.5) * 2
         return (hot.mix(coral, smoothstep(0.15, 0.9, d)), 1)
     }
-    /// A light-spill gradient that starts at a band edge (v = 0) and fades away from it.
-    static let halo = material("halo", width: 4, height: 64) { _, v in
-        (spill, 0.62 * pow(1 - v, 2.6))
-    }
-    /// One thin tracer line of the danger-side curtain.
-    static let tracer = material("tracer", width: 4, height: 32) { _, v in
-        let d = abs(v - 0.5) * 2
-        return (hot.mix(coral, smoothstep(0, 0.45, d)), pow(max(0, 1 - d), 1.6))
+    /// The beam's glow, from a band edge (v = 0) outward: bright coral against
+    /// the core, falling off softly into deeper coral, so core and glow read as
+    /// one beam rather than a stack of stripes. The falloff is steep, so the
+    /// beam's visual weight sits on its core (on a DUCK beam, its judged lower
+    /// edge) rather than drifting up into a tall haze.
+    static let halo = material("halo", width: 4, height: 128) { _, v in
+        (coral.mix(spill, min(1, v * 2.5)), 0.8 * pow(1 - v, 4.5))
     }
     /// A soft symmetric glow (around the riser where two halves step between heights).
     static let softGlow = material("softGlow", width: 32, height: 32) { u, v in
         let d = max(abs(u - 0.5), abs(v - 0.5)) * 2
         return (spill, 0.5 * pow(max(0, 1 - d), 2))
-    }
-    /// The faint sheet between the band and its tracers, fading away from the band (v = 0).
-    static let sheet = material("sheet", width: 4, height: 64) { _, v in
-        (spill, 0.12 * pow(1 - v, 1.4))
     }
     /// The beam's light on the corridor floor: a broad, faint pool (never a crisp
     /// line, which would read as a second, low laser), faded at both walls.
@@ -86,15 +81,6 @@ enum LaserGateArt {
         material.blending = .transparent(opacity: 1.0)
         return material
     }()
-    /// The warning's dashed targeting line (tiled along the span; see `dashes(repeats:)`).
-    static let dashTexture = texture("dash", width: 64, height: 16) { u, v in
-        let cap = 0.08 as Float
-        let inside = smoothstep(0, cap, u) * smoothstep(0, cap, 0.58 - u)
-        let across = 1 - smoothstep(0.55, 1, abs(v - 0.5) * 2)
-        return (hot.mix(coral, 0.55), u < 0.58 ? inside * across : 0)
-    }
-    static let dashPeriod: Float = 0.22
-
     /// The aperture lens, facing into the corridor: hot centre, coral ring, dark bezel.
     static let lens = material("lens", width: 64, height: 64) { u, v in
         let r = hypot(u - 0.5, v - 0.5) * 2
@@ -148,15 +134,6 @@ enum LaserGateArt {
         return material
     }()
 
-    /// A dashed-line material repeating `repeats` dashes across the span.
-    static func dashes(repeats: Float) -> UnlitMaterial {
-        var material = UnlitMaterial(applyPostProcessToneMap: false)
-        material.color = .init(tint: .white, texture: dashTexture.map { .init($0, sampler: repeating) })
-        material.blending = .transparent(opacity: 1.0)
-        material.textureCoordinateTransform.scale = [max(repeats, 1), 1]
-        return material
-    }
-
     // MARK: Meshes
 
     /// A unit square in the XY plane, facing +Z; size it with `scale`.
@@ -164,16 +141,6 @@ enum LaserGateArt {
     static let barrelMesh = MeshResource.generateBox(width: 1, height: 0.12, depth: 0.12, cornerRadius: 0.02)
 
     // MARK: Building
-
-    private static let repeating: MaterialParameters.Texture.Sampler = {
-        let descriptor = MTLSamplerDescriptor()
-        descriptor.sAddressMode = .repeat
-        descriptor.tAddressMode = .clampToEdge
-        descriptor.minFilter = .linear
-        descriptor.magFilter = .linear
-        descriptor.mipFilter = .linear
-        return .init(descriptor)
-    }()
 
     private static func material(_ name: String, width: Int, height: Int, opaque: Bool = false,
                                  _ shade: (Float, Float) -> (RGB, Float)) -> UnlitMaterial {

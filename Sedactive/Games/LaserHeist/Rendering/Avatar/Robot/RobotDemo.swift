@@ -15,13 +15,15 @@ enum RobotDemoScenario: Int, CaseIterable {
     case leanRight, leanLeft, stepRight, stepLeft, twoSteps, stepThenStop, duckPlanted, stepThenJump, lossDuringStep, p1StepP2Idle
     // Arms overhead against the mascot's head: alone, while ducking, while stepping.
     case armsOverhead
+    // K03 head turn (nose between the ears), with arm and lean, both players at once.
+    case headTurn
 
     static let duration = 4.0
 
     var key: String {
         ["idle", "p1-jump", "p2-duck", "both-jump", "p1-arm", "arms", "duck-jump", "tracking-loss",
          "lean-right", "lean-left", "step-right", "step-left", "two-steps", "step-stop", "duck-planted", "step-jump",
-         "loss-step", "p1-step-p2-idle", "arms-up"][rawValue]
+         "loss-step", "p1-step-p2-idle", "arms-up", "head-turn"][rawValue]
     }
 
     var title: String {
@@ -32,7 +34,8 @@ enum RobotDemoScenario: Int, CaseIterable {
          "P1 steps left, then back", "P1 two steps right, two back", "P1 quick step right, stops, returns",
          "P1 ducks, feet planted", "P1 steps right, jumps, steps back", "P1 tracking lost mid-step",
          "P1 side-steps; P2 idle with body sway",
-         "P1 both arms up, ducks, stands, lowers; P2 steps with right arm up"][rawValue]
+         "P1 both arms up, ducks, stands, lowers; P2 steps with right arm up",
+         "P1 turns head right (right shoulder up) then left; P2 turns head left and leans with its arm out"][rawValue]
     }
 }
 
@@ -55,6 +58,10 @@ struct RobotDemoSequence {
         /// Torso tilt toward screen right, and head roll (counter-clockwise on screen).
         var lean = 0.0
         var headRoll = 0.0
+        /// Head turn toward screen right (the player turning to their right), degrees.
+        var headYaw = 0.0
+        /// The player's right shoulder raised above the left (a shrug), share of standing height.
+        var rightShoulderUp = 0.0
         /// Hip centre sideways on screen (screen right positive).
         var sway = 0.0
         /// Each ankle sideways on screen; `nil` moves it with the hips (a whole-body shift).
@@ -242,6 +249,16 @@ struct RobotDemoSequence {
                 b.rightArm = 6 + 165 * Self.plateau(t, 0.2, 0.7, 3.3, 3.8)
                 Self.stepping(&b, t, [(1.0, 0.15), (2.6, -0.15)])
             }
+        case .headTurn:
+            if p1 {
+                b.headYaw = 30 * Self.plateau(t, 0.2, 0.6, 1.3, 1.7) - 30 * Self.plateau(t, 2.0, 2.4, 3.1, 3.5)
+                b.rightArm = 6 + 80 * Self.plateau(t, 0.2, 0.6, 1.3, 1.7)
+                b.rightShoulderUp = 0.035 * Self.plateau(t, 0.2, 0.6, 1.3, 1.7)
+            } else {
+                b.headYaw = -30 * Self.plateau(t, 0.6, 1.0, 2.6, 3.0)
+                b.lean = -12 * Self.plateau(t, 0.6, 1.0, 2.6, 3.0)
+                b.leftArm = 6 + 70 * Self.plateau(t, 0.6, 1.0, 2.6, 3.0)
+            }
         }
         return b
     }
@@ -291,11 +308,15 @@ struct RobotDemoSequence {
         let hipY = h0 + b.lift - b.drop * 0.55
         let arm = 0.35 * c0, half = 0.12 * c0
         // The player's left side is +X in the unmirrored plane.
-        let leftShoulder = (x: shoulderX + half, y: shoulderY), rightShoulder = (x: shoulderX - half, y: shoulderY)
+        // A rigid trunk: leaning toward screen right (−X here) turns the shoulder
+        // line with it, raising the player's left (+X) shoulder. A shrug adds to that.
+        let tilt = half * sin(b.lean * deg)
+        let leftShoulder = (x: shoulderX + half, y: shoulderY + tilt)
+        let rightShoulder = (x: shoulderX - half, y: shoulderY - tilt + b.rightShoulderUp * c0)
         let leftWrist = (x: leftShoulder.x + arm * sin(b.leftArm * deg), y: leftShoulder.y - arm * cos(b.leftArm * deg))
         let rightWrist = (x: rightShoulder.x - arm * sin(b.rightArm * deg), y: rightShoulder.y - arm * cos(b.rightArm * deg))
         let leftSole = b.lift + b.leftLegRaise, rightSole = b.lift + b.rightLegRaise
-        let earY = crown - 0.14 * c0, ear = 0.08 * c0, roll = (b.headRoll - b.lean) * deg
+        let earY = crown - 0.14 * c0, ear = 0.08 * c0, roll = (b.headRoll - b.lean) * deg, yaw = b.headYaw * deg
         // Ankles sit the calibrated foot height above the sole.
         let foot = calibration.leftFootOffsetShare * calibration.standingBodyImageHeight * layout.gameUnitsPerImageHeight
         let headX = shoulderX - (crown - shoulderY) * tan(b.lean * deg) * 0.5
@@ -316,9 +337,10 @@ struct RobotDemoSequence {
 
         func p(_ x: Double, _ y: Double) -> PresentationPoint { PresentationPoint(x: x, y: y, confidence: 0.9) }
         let points: [PresentationJoint: PresentationPoint] = [
-            .nose: p(headX, crown - 0.12 * c0),
-            .leftEar: p(headX + ear * cos(roll), earY - ear * sin(roll)),
-            .rightEar: p(headX - ear * cos(roll), earY + ear * sin(roll)),
+            // A turn toward screen right (−X here) swings the nose that way and narrows the ears.
+            .nose: p(headX - RobotRetargeter.noseDepthPerHalfEarSpan * ear * sin(yaw), crown - 0.12 * c0),
+            .leftEar: p(headX + ear * cos(roll) * cos(yaw), earY - ear * sin(roll)),
+            .rightEar: p(headX - ear * cos(roll) * cos(yaw), earY + ear * sin(roll)),
             .neck: p(shoulderX, shoulderY + 0.03 * c0),
             .leftShoulder: p(leftShoulder.x, leftShoulder.y), .rightShoulder: p(rightShoulder.x, rightShoulder.y),
             .leftElbow: p((leftShoulder.x + leftWrist.x) / 2, (leftShoulder.y + leftWrist.y) / 2),

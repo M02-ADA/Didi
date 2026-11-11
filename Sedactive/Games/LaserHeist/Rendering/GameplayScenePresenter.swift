@@ -125,9 +125,9 @@ final class GameplayScenePresenter {
     }
 
     /// How long before its crossing a gate comes into view: the time to travel
-    /// from the corridor's laser spawn point to the interaction plane.
+    /// from where gates emerge, deep in the corridor's haze, to the interaction plane.
     static func approachLead(in scene: LaserScene) -> Double {
-        let distance = scene.mapping.interactionPlaneZ - scene.layout.laserSpawnZ
+        let distance = scene.mapping.interactionPlaneZ - scene.layout.laserEmergeZ
         return scene.layout.travelSpeed > 0 ? Double(distance / scene.layout.travelSpeed) : 0
     }
 
@@ -361,11 +361,22 @@ final class GameplayScenePresenter {
         }
         let keys = Set(kept.map(\.key))
         for key in Array(slots.keys) where !keys.contains(key) { release(key) }
+        let pairs = sharedPairs(kept)
+        // A whole shared beam takes the more urgent of its two players' looks
+        // (decided before showing, so its state never flips within a frame).
+        var sharedLooks: [LaserTargetKey: (state: LaserGate.VisualState, warningProgress: Float?)] = [:]
+        for pair in pairs where pair.coincide {
+            let looks = [visual(for: pair.p1.target, status: pair.p1.status, at: time),
+                         visual(for: pair.p2.target, status: pair.p2.status, at: time)]
+            let urgent = looks.max { Self.urgency($0.state) < Self.urgency($1.state) }!
+            sharedLooks[pair.p1.key] = (urgent.state, urgent.state == .warning ? looks.compactMap(\.warningProgress).max() : nil)
+        }
         for (key, target, status) in kept {
             let hazard = slots[key]?.hazard ?? acquire(key, target)
-            show(hazard, target: target, status: status, depth: depth(key, target, status, at: time), at: time)
+            show(hazard, target: target, status: status, depth: depth(key, target, status, at: time), at: time,
+                 look: sharedLooks[key])
         }
-        joinSharedBeams(kept)
+        joinSharedBeams(pairs)
         // Invariant check: every pending hazard got a gate.
         diagnostics.droppedHazards += wanted.filter { Self.isPending($0.status) && slots[$0.key] == nil }.count
         anchors = anchors.filter { keys.contains($0.key) }
@@ -387,26 +398,43 @@ final class GameplayScenePresenter {
         return scene.mapping.interactionPlaneZ - (anchor - travelDistance)
     }
 
-    /// The band a target's gate is drawn at: its judged band, or with the D07
-    /// candidate (`RobotAvatarLayer.normalizesLaserBands`, DEBUG flag, off by
-    /// default) that band in the player's normalized avatar space. Display only.
+    /// The band a target's gate is drawn at. With the mascots' normalized
+    /// presentation (`RobotAvatarLayer.normalizesLaserBands`, on in gameplay)
+    /// it is the judged band in that player's normalized avatar space: the beam
+    /// meets the fixed-size mascot where it meets the player, relative to their
+    /// own height, so both halves of a shared beam line up. Otherwise it is the
+    /// judged band itself. Display only: the target, the judge and the verdict
+    /// never see this.
     func displayedBand(_ target: LaserTarget) -> ClosedRange<Float> {
         let band = Float(target.beam.lowerY)...Float(target.beam.upperY)
-        guard let scale = scene.robotAvatars?.laserBandScale(for: target.playerID, mapping: scene.mapping) else { return band }
+        guard let scale = normalizationScale(for: target.playerID) else { return band }
         return (band.lowerBound * scale)...(band.upperBound * scale)
     }
 
     /// The same display mapping for one body height (the Debug evidence markers).
     private func displayedHeight(_ y: Float, for player: PlayerID) -> Float {
-        y * (scene.robotAvatars?.laserBandScale(for: player, mapping: scene.mapping) ?? 1)
+        y * (normalizationScale(for: player) ?? 1)
     }
 
-    private func show(_ hazard: LaserHazard, target: LaserTarget, status: Status, depth: Float, at time: Double) {
+    /// One drawing scale for every player or for none. If any player has no
+    /// avatar scale (no compatible accepted calibration), every lane falls back
+    /// to its judged band: a shared beam drawn at two unrelated scales would
+    /// look aligned while meaning nothing. The judged fallback may step between
+    /// lanes, and that step is true.
+    private func normalizationScale(for player: PlayerID) -> Float? {
+        guard let avatars = scene.robotAvatars,
+              PlayerID.allCases.allSatisfy({ avatars.laserBandScale(for: $0, mapping: scene.mapping) != nil })
+        else { return nil }
+        return avatars.laserBandScale(for: player, mapping: scene.mapping)
+    }
+
+    private func show(_ hazard: LaserHazard, target: LaserTarget, status: Status, depth: Float, at time: Double,
+                      look shared: (state: LaserGate.VisualState, warningProgress: Float?)? = nil) {
         let band = displayedBand(target)
         hazard.setBand(lowerEdge: band.lowerBound, upperEdge: band.upperBound)
         hazard.setDangerSide(target.requiredMove == .duck ? .above : .below)
         hazard.setDepth(depth)
-        let look = visual(for: target, status: status, at: time)
+        let look = shared ?? visual(for: target, status: status, at: time)
         hazard.setState(look.state)
         if let progress = look.warningProgress { hazard.setWarningProgress(progress) }
         // A passed gate keeps travelling with the corridor until it nears the camera.
@@ -434,26 +462,76 @@ final class GameplayScenePresenter {
         }
     }
 
-    /// One laser, one beam: when both players face the same attempt at the
-    /// same crossing, their two lane halves join at the lane boundary into one
-    /// continuous beam from wall to wall. Each half stays at its own player's
-    /// displayed band, so where the bands differ the beam steps between them in
-    /// the gap between the lanes; nobody is shown a beam above or below the one
-    /// they are judged against. Display only: targets, verdicts and badges stay
-    /// per player, and each half keeps its own player's state.
-    private func joinSharedBeams(_ kept: [(key: LaserTargetKey, target: LaserTarget, status: Status)]) {
-        var joined: Set<LaserTargetKey> = []
-        for members in Dictionary(grouping: kept, by: { $0.key.attemptID }).values where members.count == 2 {
-            let (a, b) = (members[0], members[1])
-            guard a.key.playerID != b.key.playerID, abs(a.target.crossingTime - b.target.crossingTime) < 0.02,
-                  let left = slots[a.key]?.hazard, let right = slots[b.key]?.hazard
-            else { continue }
-            left.setJoin(partnerBand: displayedBand(b.target))
-            right.setJoin(partnerBand: displayedBand(a.target))
-            joined.formUnion([a.key, b.key])
+    /// Two drawn bands closer than this (game units) are one beam: about the
+    /// judge's clearance margin, so neither player is shown a misleading height.
+    static let sharedBeamTolerance: Float = 0.006
+
+    private typealias Kept = (key: LaserTargetKey, target: LaserTarget, status: Status)
+
+    /// Both players' members of one attempt crossing together, and whether
+    /// their drawn bands coincide (one beam) or differ (two joined halves).
+    private func sharedPairs(_ kept: [Kept]) -> [(p1: Kept, p2: Kept, coincide: Bool)] {
+        Dictionary(grouping: kept, by: { $0.key.attemptID }).values.compactMap { members in
+            guard members.count == 2,
+                  let p1 = members.first(where: { $0.key.playerID == .player1 }),
+                  let p2 = members.first(where: { $0.key.playerID == .player2 }),
+                  abs(p1.target.crossingTime - p2.target.crossingTime) < 0.02 else { return nil }
+            let a = displayedBand(p1.target), b = displayedBand(p2.target)
+            let coincide = abs(a.lowerBound - b.lowerBound) <= Self.sharedBeamTolerance
+                && abs(a.upperBound - b.upperBound) <= Self.sharedBeamTolerance
+            return (p1, p2, coincide)
         }
-        for (key, slot) in slots where !joined.contains(key) {
-            slot.hazard.setJoin(partnerBand: nil)
+    }
+
+    /// One laser, one beam. When both players face the same attempt at the
+    /// same crossing:
+    /// - If their drawn bands coincide (with the mascots' normalized bands,
+    ///   players of any height do), P1's gate draws the whole beam from wall to
+    ///   wall at P1's band and P2's gate is hidden. One gate means one core, one
+    ///   glow and one set of animations, so no seam can open at the lane
+    ///   boundary. It shows the more urgent of the two players' looks (set in
+    ///   `updateHazards`): either player's HIT flares it.
+    /// - Otherwise the two lane halves join at the boundary, each at its own
+    ///   band, stepping between them in the gap between the lanes.
+    /// Display only: targets, verdicts and badges stay per player.
+    private func joinSharedBeams(_ pairs: [(p1: Kept, p2: Kept, coincide: Bool)]) {
+        var joined: Set<LaserTargetKey> = []
+        var leads: Set<LaserTargetKey> = []
+        for pair in pairs {
+            guard let lead = slots[pair.p1.key]?.hazard, let partner = slots[pair.p2.key]?.hazard else { continue }
+            joined.formUnion([pair.p1.key, pair.p2.key])
+            guard pair.coincide else {
+                lead.setJoin(partnerBand: displayedBand(pair.p2.target))
+                partner.setJoin(partnerBand: displayedBand(pair.p1.target))
+                continue
+            }
+            if lead.span != scene.fullLaserSpan { lead.setSpan(scene.fullLaserSpan) }
+            lead.setEmitters(left: true, right: true)
+            lead.setJoin(partnerBand: nil)
+            lead.root.isEnabled = lead.root.isEnabled || partner.root.isEnabled
+            partner.root.isEnabled = false
+            leads.insert(pair.p1.key)
+        }
+        // Every other gate is its own lane half, with only its own wall's emitter.
+        for (key, slot) in slots where !leads.contains(key) {
+            let lane = scene.laneSpan(for: key.playerID)
+            if slot.hazard.span != lane { slot.hazard.setSpan(lane) }
+            slot.hazard.setEmitters(left: key.playerID == .player1, right: key.playerID == .player2)
+            if !joined.contains(key) { slot.hazard.setJoin(partnerBand: nil) }
+        }
+        sharedBeams = leads
+    }
+
+    /// The P1 gates drawing a whole shared beam this frame (tests and debugging).
+    private(set) var sharedBeams: Set<LaserTargetKey> = []
+
+    private static func urgency(_ state: LaserGate.VisualState) -> Int {
+        switch state {
+        case .disabled: 0
+        case .inactive: 1
+        case .warning: 2
+        case .active: 3
+        case .hit: 4
         }
     }
 
@@ -467,7 +545,7 @@ final class GameplayScenePresenter {
 
     /// A gate is in view once it is no farther down the corridor than the laser spawn point.
     private func isInView(_ target: LaserTarget, at time: Double) -> Bool {
-        depth(of: target, at: time) >= scene.layout.laserSpawnZ
+        depth(of: target, at: time) >= scene.layout.laserEmergeZ
     }
 
     /// When the action cue starts for this target: the round's `cueLead`

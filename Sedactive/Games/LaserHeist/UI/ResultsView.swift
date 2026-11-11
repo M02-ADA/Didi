@@ -78,20 +78,14 @@ struct ResultsView: View {
 
     private var scoreCard: some View {
         SketchArtboard {
-            Image("LaserHeistUI/home-frame")
-                .resizable()
-                .scaledToFill()
-                .sketchBackdrop()
+            ZStack {
+                Image("LaserHeistUI/home-frame")
+                    .resizable()
+                    .scaledToFill()
+                    .sketchBackdrop()
+                ResultsMascots()
+            }
         } content: { k in
-            Image("LaserHeistUI/results-mascot-lemon")
-                .resizable()
-                .shadow(color: .black.opacity(0.25), radius: 6 * k, x: 0, y: 5 * k)
-                .sketchFrame(x: -12, y: 556, width: 281, height: 366, k: k)
-                .accessibilityHidden(true)
-            Image("LaserHeistUI/results-mascot-tangerine")
-                .resizable()
-                .sketchFrame(x: 949, y: 531, width: 318, height: 383, k: k)
-                .accessibilityHidden(true)
 
             Text(title)
                 .textCase(.uppercase)
@@ -313,5 +307,34 @@ private struct SketchButtonLabelStyle: LabelStyle {
         }
         .lineLimit(1)
         .minimumScaleFactor(0.7)
+    }
+}
+
+/// Lemon and Tangerine on the Results screen, standing on the screen's bottom
+/// corners as Sketch "Home Copy 35" crops them. Their Sketch frames (Lemon
+/// x −12, y 556, 281 × 366; Tangerine x 949, y 531, 318 × 383 on the 1210 × 834
+/// artboard) are measured from the artboard's bottom corners, not its top, so
+/// on a taller screen (13-inch iPad, a Mac window) they stay on the bottom edge
+/// instead of floating up with the centred artboard and showing the cut edge
+/// of their artwork. On the 11-inch iPad (the artboard's own shape) nothing moves.
+private struct ResultsMascots: View {
+    var body: some View {
+        GeometryReader { proxy in
+            let k = min(proxy.size.width / LaserHeistDesign.artboard.width,
+                        proxy.size.height / LaserHeistDesign.artboard.height)
+            let height = LaserHeistDesign.artboard.height, width = LaserHeistDesign.artboard.width
+            Image("LaserHeistUI/results-mascot-lemon")
+                .resizable()
+                .shadow(color: .black.opacity(0.25), radius: 6 * k, x: 0, y: 5 * k)
+                .frame(width: 281 * k, height: 366 * k)
+                .position(x: (-12 + 281 / 2) * k, y: proxy.size.height - (height - 556 - 366 / 2) * k)
+            Image("LaserHeistUI/results-mascot-tangerine")
+                .resizable()
+                .frame(width: 318 * k, height: 383 * k)
+                .position(x: proxy.size.width - (width - 949 - 318 / 2) * k, y: proxy.size.height - (height - 531 - 383 / 2) * k)
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
