@@ -46,6 +46,9 @@ private struct ReplayRoundView: View {
     @State private var scene = LaserScene()
     @State private var presentation = LaserReplayPresentation()
     @State private var session: GameSessionCoordinator?
+    /// A live session mounted before its round plan exists (scene loaded during setup): starts the
+    /// presentation on the first rendered frame after the plan is installed.
+    @State private var pendingLiveStart: EventSubscription?
     @State private var startupError: String?
     @State private var leaving = false
     /// The per-frame host-clock tick: live cutout expiry and live avatars.
@@ -91,7 +94,20 @@ private struct ReplayRoundView: View {
                     guard !Task.isCancelled else { return }
                     let mailbox = AvatarPoseMailbox(maxAge: LiveAvatarPresenter.maximumPoseAge)
                     let pump = try avatarSource(mailbox)
-                    scene.attachLiveAvatars(mailbox: mailbox, templates: templates, pump: pump)
+                    // A DEBUG Solo Test tracks P1 only: Tangerine's lane is hidden, not shown untracked.
+                    scene.attachLiveAvatars(mailbox: mailbox, templates: templates, pump: pump,
+                        players: Set(suppliedSession?.inputConfiguration.roster ?? PlayerID.allCases),
+                        liveEvidence: suppliedSession.map { session in { [weak session] player, capturedAt in
+                            // The judge's latest evidence, only when it is as fresh as the pose shown.
+                            guard let snapshot = session?.latestSnapshot,
+                                  abs(snapshot.capturedAt - capturedAt) <= LiveAvatarPresenter.maximumPoseAge,
+                                  let sample = snapshot.players[player], sample.trackingStatus == .reliable else { return nil }
+                            let g = sample.geometry
+                            let soles = [g.leftSoleY, g.rightSoleY].filter { $0.validity == .valid }.compactMap(\.value)
+                            return LiveAvatarEvidence(lowerSoleY: soles.count == 2 ? soles.min() : nil,
+                                airborne: sample.jumpState.validity == .valid && sample.jumpState.phase == .airborne,
+                                centerX: g.centerX.validity == .valid ? g.centerX.value : nil)
+                        } })
                 } catch {
                     startupError = String(describing: error)
                     return
@@ -107,9 +123,21 @@ private struct ReplayRoundView: View {
             // A live session is already started by App/flow. This view never constructs its source,
             // claims CP1, or installs replay fixtures/synthetic avatars in the live path.
             if let suppliedSession {
-                guard !Task.isCancelled, suppliedSession.hasLiveRoundPlan else { return }
-                session = suppliedSession
-                presentation.start(on: content, scene: scene, session: suppliedSession)
+                guard !Task.isCancelled else { return }
+                if suppliedSession.hasLiveRoundPlan {
+                    session = suppliedSession
+                    presentation.start(on: content, scene: scene, session: suppliedSession)
+                } else {
+                    // Loaded early (behind the camera setup screen), so the first heavy scene load and
+                    // shader compile happen before anyone is linked or calibrated, not right after.
+                    let liveContent = content
+                    pendingLiveStart = content.subscribe(to: SceneEvents.Update.self) { [weak suppliedSession] _ in
+                        guard let suppliedSession, suppliedSession.hasLiveRoundPlan, session == nil else { return }
+                        session = suppliedSession
+                        pendingLiveStart?.cancel(); pendingLiveStart = nil
+                        presentation.start(on: liveContent, scene: scene, session: suppliedSession)
+                    }
+                }
                 return
             }
             // Optional world-construction guides. Replay body markers live in the presentation adapter.
@@ -286,6 +314,15 @@ private struct ReplayRoundView: View {
             }
             #endif
         }
+        .overlay(alignment: .topTrailing) {
+            #if DEBUG
+            // DEBUG Solo Test only (never co-op, never Release): skip and P1 gate taps. Top right,
+            // over the empty P2 side, clear of P1's buttons on the left wall.
+            if let session, session.isSoloPractice, session.summary == nil, session.state != nil {
+                DebugSoloTestControls(session: session).padding(.trailing, 16).padding(.top, 130)
+            }
+            #endif
+        }
         .overlay(alignment: .bottom) {
             #if DEBUG
             if let session, session.isDebugWristPreview, session.summary == nil {
@@ -308,6 +345,7 @@ private struct ReplayRoundView: View {
             if final != nil { presentation.stop() }
         }
         .onDisappear {
+            pendingLiveStart?.cancel(); pendingLiveStart = nil
             presentation.stop()
             // No gameplay sound outlives its scene (Retry, Home, teardown).
             AudioService.shared.stopEffects()

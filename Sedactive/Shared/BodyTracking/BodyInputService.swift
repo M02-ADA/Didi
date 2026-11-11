@@ -20,6 +20,8 @@ nonisolated struct LiveBodyInputState: Sendable {
   var calibration = CalibrationSession()
   var measurements = LiveMeasurementFlow()
   var latest: BodySnapshot?
+  /// Per-player live airborne estimators (reset with each calibration revision or source change).
+  var jumps: [PlayerID: LiveJumpEstimator] = [:]
   var wrists: PreparedWristFrame?
   var lastAdmission: CameraFrameMetadata?
   var lastPublication: UInt64 = 0
@@ -35,7 +37,7 @@ nonisolated struct LiveBodyInputState: Sendable {
 
   mutating func invalidate(at time: Double) {
     measurements.invalidate()
-    latest = nil; wrists = nil; calibration.invalidate("Source/control invalidated")
+    latest = nil; wrists = nil; jumps = [:]; calibration.invalidate("Source/control invalidated")
     if let configuration {
       self.configuration = configuration.replacingCalibrations([:])
       for id in PlayerID.allCases {
@@ -74,8 +76,37 @@ nonisolated struct LiveBodyInputState: Sendable {
       // Samples at/before an acceptance cutover never borrow that newly accepted baseline.
       let cut = cutovers[id]
       let usable = cut.map { pose.source.frameID > $0.frameID && pose.source.capturedAt > $0.capturedAt } ?? true
-      players[id] = BodyMeasurementExtractor.sample(id: id, candidate: candidate, slot: slot,
+      var sample = BodyMeasurementExtractor.sample(id: id, candidate: candidate, slot: slot,
         calibration: usable ? calibration : nil, layout: config.playerPlaneLayout)
+      // Live airborne estimate from this frame's valid soles against the standing reference.
+      if usable, let calibration, calibration.referenceQuality != nil, sample.trackingStatus == .reliable {
+        let layout = config.playerPlaneLayout
+        let floorLeft = calibration.mapping.gameY(imageY: calibration.standingLeftSoleImageY, layout: layout)
+        let floorRight = calibration.mapping.gameY(imageY: calibration.standingRightSoleImageY, layout: layout)
+        var estimator = jumps[id] ?? LiveJumpEstimator()
+        let jump = estimator.step(frameID: pose.source.frameID, capturedAt: pose.source.capturedAt,
+          leftSole: sample.geometry.leftSoleY.validity == .valid ? sample.geometry.leftSoleY.value : nil,
+          rightSole: sample.geometry.rightSoleY.validity == .valid ? sample.geometry.rightSoleY.value : nil,
+          standingLeftSole: floorLeft, standingRightSole: floorRight,
+          standingHeight: calibration.mapping.gameY(imageY: calibration.standingCrownImageY, layout: layout)
+            - min(floorLeft, floorRight),
+          calibrationRevision: calibration.revision)
+        jumps[id] = estimator
+        #if DEBUG
+        // Frame-level jump evidence while the lower sole is off the floor (no image data).
+        let standing = calibration.mapping.gameY(imageY: calibration.standingCrownImageY, layout: layout) - min(floorLeft, floorRight)
+        let enter = estimator.enterThreshold(standingHeight: standing)
+        if jump.phase != .grounded || (estimator.lift ?? 0) > enter / 2 {
+          print(String(format: "[LaserJumpFrame] %@ frame %llu t %.3f · lift %@ baseline %.3f enter %.3f noise %.4f → %@",
+            id.rawValue, pose.source.frameID, pose.source.capturedAt,
+            estimator.lift.map { String(format: "%.3f", $0) } ?? "-", estimator.baseline, enter, estimator.noise,
+            "\(jump.phase)"))
+        }
+        #endif
+        sample = PlayerBodySample(playerID: sample.playerID, calibrationRevision: sample.calibrationRevision,
+          trackingStatus: sample.trackingStatus, geometry: sample.geometry, jumpState: jump)
+      } else { jumps[id] = nil }
+      players[id] = sample
     }
     let base = BodySnapshot(sessionGeneration: config.sessionGeneration,
       frameID: pose.source.frameID, capturedAt: pose.source.capturedAt,
@@ -112,9 +143,9 @@ nonisolated struct LiveBodyInputState: Sendable {
     guard acceptedRevision == expectedRevision, acceptedRevision < .max,
       let candidate = calibration.candidate, candidate.id == candidateID,
       let configuration, source == candidate.admission.source else { throw LiveVisionError.contextConflict }
-    guard candidate.hasValidatedAnatomy else { throw LiveVisionError.unsupportedAnatomy }
+    guard candidate.acceptance.isAcceptable else { throw LiveVisionError.unsupportedAnatomy }
     var values: [PlayerID: PlayerCalibration] = [:]
-    for id in PlayerID.allCases {
+    for id in candidate.admission.roster {
       guard let p = candidate.players[id], let a = p.anatomy,
         let nose = p.noseY, let left = p.leftAnkleY, let right = p.rightAnkleY,
         (revisionHighWater[id] ?? 0) < .max else { throw LiveVisionError.unsupportedAnatomy }
@@ -130,14 +161,15 @@ nonisolated struct LiveBodyInputState: Sendable {
         leftFootOffsetShare: (left - a.leftSoleY) / height,
         rightFootOffsetShare: (right - a.rightSoleY) / height,
         mapping: .init(imageAspectRatio: Double(candidate.imageWidth) / Double(candidate.imageHeight),
-          floorImageY: min(a.leftSoleY, a.rightSoleY), originImageX: p.originX))
+          floorImageY: min(a.leftSoleY, a.rightSoleY), originImageX: p.originX),
+        referenceQuality: a.quality)
       try value.validate(); values[id] = value
     }
     // Validation above is all-or-nothing. Only E05 assigns revisions and acceptance here.
     let boundary = BodyInputCutover(frameID: max(lastAdmission?.frameID ?? 0, candidate.lastFrameID),
       capturedAt: max(time, lastAdmission?.capturedAt ?? candidate.lastCapturedAt))
     self.configuration = configuration.replacingCalibrations(values)
-    for id in PlayerID.allCases { revisionHighWater[id] = values[id]!.revision; cutovers[id] = boundary }
+    for id in candidate.admission.roster { revisionHighWater[id] = values[id]!.revision; cutovers[id] = boundary }
     acceptedRevision += 1; latest = nil; wrists = nil; calibration.consumed(); wake?.yield(())
     return context(active: true)!
   }
@@ -185,6 +217,10 @@ nonisolated struct LiveBodyInputRead: Sendable {
   var diagnostics: BodyInputDiagnostics { read.diagnostics }
   var calibrationProgress: StandingCalibrationProgress { read.calibration }
   var acceptedContextRevision: UInt64 { read.acceptedRevision }
+  var acceptedCalibrations: [PlayerID: PlayerCalibration] {
+    guard let session, camera.ownsBodySession(session) else { return [:] }
+    return camera.frames.tracking.acceptedBodyCalibrations()
+  }
   init(camera: CameraPipeline) { self.camera = camera }
   deinit { statusTask?.cancel() }
 
@@ -203,11 +239,17 @@ nonisolated struct LiveBodyInputRead: Sendable {
     guard configuration.calibrations.isEmpty, configuration.snapshotBufferCapacity <= 64 else {
       throw LiveVisionError.invalidConfiguration
     }
+    #if DEBUG
+    print("[LaserSetupRestart] provider: reserving camera (lifecycle \(lifecycle))")
+    #endif
     let owner = try camera.reserveBodySession()
     session = owner; lifecycle = .starting; startConfiguration = configuration
     let gate = camera.frames.tracking
     let task = Task { @MainActor in
       try await self.camera.startBodySession(owner, generation: configuration.sessionGeneration)
+      #if DEBUG
+      print("[LaserSetupRestart] provider: camera started")
+      #endif
       try Task.checkCancellation()
       guard self.session == owner, self.lifecycle == .starting else { throw CancellationError() }
       try gate.configureBody(configuration, session: owner)
@@ -248,12 +290,24 @@ nonisolated struct LiveBodyInputRead: Sendable {
     let statusUpdates = statusTask
     notify() // unavailable immediately, even while native/worker cleanup remains blocked
     let task = Task { @MainActor in
+      #if DEBUG
+      print("[LaserSetupRestart] provider: stopping camera")
+      #endif
       await self.camera.stop()
+      #if DEBUG
+      print("[LaserSetupRestart] provider: camera stopped; joining startup and status")
+      #endif
       if let startup { _ = try? await startup.value }
       if let statusUpdates { await statusUpdates.value }
+      #if DEBUG
+      print("[LaserSetupRestart] provider: releasing body session")
+      #endif
       // Keep the stopped context available to old callers without exposing a future session.
       self.stoppedRead = self.camera.frames.tracking.readBody()
       let released = await self.camera.releaseBodySession(owner)
+      #if DEBUG
+      print("[LaserSetupRestart] provider: released \(released)")
+      #endif
       self.starting = nil; self.statusTask = nil; self.stopping = nil
       if released {
         self.session = nil; self.startConfiguration = nil; self.lifecycle = .idle

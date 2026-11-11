@@ -55,8 +55,8 @@ struct PlayerHoverboardTests {
             #expect(motion.height + rise <= 1e-6)
             lowest = min(lowest, motion.height)
         }
-        // Subtle: never more than a few centimetres below the feet.
-        #expect(lowest > -0.03)
+        // Never more than a few centimetres below the feet (3.5 cm with the 6° lean bank).
+        #expect(lowest > -0.035)
     }
 
     @Test("The board glides under the stance, never far enough to meet the other lane's board")
@@ -191,6 +191,65 @@ struct PlayerHoverboardTests {
             let shown = try #require(rgb(try accent(player)))
             let wanted = try #require(rgb(PlayerHoverboard.accentColor[player]))
             #expect(simd_length(shown - wanted) < 0.02, "\(player): \(shown) vs \(wanted)")
+        }
+        layer.remove()
+    }
+
+    /// Live lean (11 November 2026): the board carries the mascot sideways with its hips, the
+    /// feet stay planted ON the board (no sliding), the board banks toward the lean, and toward
+    /// the partner the ride stops at its short limit and the rest is stepped on the deck.
+    @Test(arguments: [RobotDemoScenario.leanLeft, .leanRight, .stepLeft, .stepRight])
+    func theBoardCarriesTheMascotWithItsLean(_ scenario: RobotDemoScenario) async throws {
+        let scene = LaserScene()
+        scene.installEnvironment(authored: await LaserScene.loadAuthoredEnvironment())
+        let input = try LaserReplayScript.load().input
+        let layer = RobotAvatarLayer(scene: scene, calibrations: input.configuration.calibrations,
+                                     layout: input.configuration.playerPlaneLayout,
+                                     templates: try await RobotAvatarLayer.sharedTemplates())
+        scene.robotAvatars = layer
+        layer.footPlanting = true
+        layer.diagnosticsEnabled = true
+        layer.smoothing = 0.03
+        let board = try #require(layer.hoverboards[.player1], "boards are part of the live scene")
+        let sequence = RobotDemoSequence(configuration: input.configuration,
+                                         cameraGeometryRevision: input.cameraGeometryRevision, only: scenario)
+        var lastFrame: UInt64 = 0, maxRide: Float = 0, maxBank: Float = 0, maxGap: Float = 0
+        var steps = 0, drift: Float = 0
+        var anchors: [RobotPoseTargets.Side: Float] = [:]
+        for n in 1..<Int(RobotDemoScenario.duration * 60) {
+            let time = Double(n) / 60
+            let index = UInt64(time * RobotDemoSequence.frameRate)
+            if index > lastFrame {
+                let f = try sequence.frame(index)
+                layer.apply(f.snapshot, joints: f.joints)
+                lastFrame = index
+            }
+            layer.render(now: time)
+            board.step(dt: 1 / 60)
+            let d = try #require(layer.footDiagnostics[.player1])
+            if abs(d.rideX) > abs(maxRide) { maxRide = d.rideX }
+            maxBank = max(maxBank, abs(board.motion.bank))
+            // The board sits exactly where it carries the feet.
+            maxGap = max(maxGap, abs(board.motion.offsetX - d.rideX))
+            steps = max(steps, d.steps.values.max() ?? 0)
+            for side in RobotPoseTargets.Side.allCases where d.contact[side] == .planted {
+                let x = d.actualX[side] ?? 0
+                drift = max(drift, abs(x - (anchors[side] ?? x)))
+                anchors[side] = anchors[side] ?? x
+            }
+            for side in RobotPoseTargets.Side.allCases where d.contact[side] != .planted { anchors[side] = nil }
+        }
+        let toward: Float = scenario == .leanLeft || scenario == .stepLeft ? -1 : 1
+        // P1's lane is screen-left: its partner (and the short ride limit) is to screen right.
+        let limit = toward > 0 ? PlayerHoverboard.maximumInwardGlide : PlayerHoverboard.maximumGlide
+        print(String(format: "BOARD-RIDE %@ ride %.3f m (limit %.2f) bank %.1f° gap %.4f steps %d drift %.4f",
+                     scenario.key, maxRide, limit, maxBank * 180 / .pi, maxGap, steps, drift))
+        #expect(maxRide * toward > 0.05 && abs(maxRide) <= limit + 1e-4, "the board rides the body, bounded")
+        #expect(maxGap < 1e-4, "board and planted feet move together")
+        #expect(drift < 0.003, "planted feet never slide on the board")
+        if scenario == .leanLeft || scenario == .leanRight {
+            #expect(steps == 0, "a lean never steps")
+            #expect(maxBank > 0.03, "the board visibly banks with the lean")
         }
         layer.remove()
     }

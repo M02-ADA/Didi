@@ -21,7 +21,7 @@ struct CalibrationView: View {
             } else if setup.phase == .awaitingGameplayReadiness {
                 Label("Standing calibration accepted", systemImage: "checkmark.circle")
             } else {
-                Text("Measurements must be validated before play.").foregroundStyle(.secondary)
+                Text("Both players' head and feet must be measured clearly before play.").foregroundStyle(.secondary)
             }
             if setup.canCancelCalibration {
                 Button("Cancel calibration") { setup.cancelCalibration() }

@@ -18,6 +18,8 @@ nonisolated struct PersonMaskObservation: Sendable {
   let outputBytes: Int
   let serviceSeconds: Double
   var anatomy: [PlayerID: AnatomicalPlayerCandidate] = [:]
+  /// Rows in the native instance mask the anatomy was read from (its Y quantization).
+  var maskHeight: Int? = nil
   // Native labels do NOT establish crown or separate anatomical soles.
 }
 nonisolated protocol PersonMaskDetecting: AnyObject {
@@ -45,8 +47,10 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
       request.revision = VNGeneratePersonInstanceMaskRequestRevision1
       let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up, options: [:])
       try handler.perform([request])
-      guard let observations = request.results, observations.count == 1,
-        let observation = observations.first, observation.allInstances.count == 2,
+      // As many people as there are linked players: two in co-op, one in a DEBUG Solo Test.
+      let roster = Self.linkedRoster(association)
+      guard !roster.isEmpty, let observations = request.results, observations.count == 1,
+        let observation = observations.first, observation.allInstances.count == roster.count,
         observation.allInstances.allSatisfy({ $0 > 0 && $0 <= 255 }) else {
         return .init(source: pose.source, quality: .insufficientEvidence, regions: [:],
           outputBytes: 0, serviceSeconds: CameraHostClock.now() - start)
@@ -100,9 +104,9 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
         }
       }
       return .init(source: pose.source,
-        quality: result.count == 2 ? .torsoSupportedGeometryUnverified : .insufficientEvidence,
+        quality: result.count == roster.count ? .torsoSupportedGeometryUnverified : .insufficientEvidence,
         regions: result, outputBytes: max(bytes, CVPixelBufferGetDataSize(mask)),
-        serviceSeconds: CameraHostClock.now() - start, anatomy: anatomy)
+        serviceSeconds: CameraHostClock.now() - start, anatomy: anatomy, maskHeight: h)
     }
   }
 
@@ -111,7 +115,9 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
   static func associate(pose: CameraPoseResult, association: PlayerTrackingSnapshot,
     labels: [UInt8], bounds: [[Int]], width: Int, height: Int,
     labelAt: (Int, Int) -> UInt8) -> [PlayerID: PersonMaskRegion] {
-    guard pose.matchesSource, pose.observationCount == 2, pose.frame.candidates.count == 2,
+    let roster = linkedRoster(association)
+    guard !roster.isEmpty, pose.matchesSource, pose.observationCount == roster.count,
+      pose.frame.candidates.count == roster.count,
       let original = association.source, original.frameID == pose.source.frameID,
       original.capturedAt == pose.source.capturedAt, original.controlRevision == association.controlRevision,
       original.context.generation == pose.source.context.generation,
@@ -120,10 +126,10 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
       original.context.imageWidth == pose.frame.imageWidth,
       original.context.imageHeight == pose.frame.imageHeight,
       original.context.rotationAngle == pose.source.rotationAngle, !original.context.mirrored,
-      width > 0, height > 0, labels.count == 2, Set(labels).count == 2,
-      !labels.contains(0), bounds.count == 2, bounds.allSatisfy({ $0.count == 4 }) else { return [:] }
+      width > 0, height > 0, labels.count == roster.count, Set(labels).count == roster.count,
+      !labels.contains(0), bounds.count == roster.count, bounds.allSatisfy({ $0.count == 4 }) else { return [:] }
     var output: [PlayerID: PersonMaskRegion] = [:]
-    for id in PlayerID.allCases {
+    for id in roster {
       let slot = association[id]
       guard slot.state == .tracking, !slot.requiresRebind,
         let candidate = pose.frame.candidates.first(where: { $0.candidateID == slot.candidateID })
@@ -146,8 +152,14 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
         minX: Double(b[0]) / Double(width), maxX: Double(b[1] + 1) / Double(width),
         minY: 1 - Double(b[3] + 1) / Double(height), maxY: 1 - Double(b[2]) / Double(height))
     }
-    guard output[.player1]?.label != output[.player2]?.label else { return [:] }
+    guard roster.count == 1 || output[.player1]?.label != output[.player2]?.label else { return [:] }
     return output
+  }
+
+  /// The players the tracker has linked (co-op: both after binding; DEBUG Solo Test: P1 only,
+  /// P2 never bound). Each needs its own person in the mask; nobody else may be in it.
+  static func linkedRoster(_ association: PlayerTrackingSnapshot) -> [PlayerID] {
+    PlayerID.allCases.filter { association[$0].state != .unbound }
   }
 }
 

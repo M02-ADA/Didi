@@ -58,8 +58,15 @@ nonisolated struct LaserEncounter: Equatable, Sendable {
     /// Stable producer slot order; renderer and replay never depend on Dictionary iteration.
     let targets: [LaserTarget]
 
-    init(id: UUID, attemptID: UUID, targets: [LaserTarget]) throws {
-        try requireLaserValue(targets.count == 2 && Set(targets.map(\.playerID)) == Set(PlayerID.allCases),
+    /// - Parameter roster: the players this encounter judges: both (always, in Release), or P1
+    ///   alone in a DEBUG Solo Test practice round. Never a fabricated teammate target.
+    init(id: UUID, attemptID: UUID, targets: [LaserTarget], roster: Set<PlayerID> = Set(PlayerID.allCases)) throws {
+        #if DEBUG
+        try requireLaserValue(roster == Set(PlayerID.allCases) || roster == [.player1], "co-op or solo P1 encounter")
+        #else
+        try requireLaserValue(roster == Set(PlayerID.allCases), "encounter requires both players")
+        #endif
+        try requireLaserValue(targets.count == roster.count && Set(targets.map(\.playerID)) == roster,
                               "encounter requires both players exactly once")
         try requireLaserValue(Set(targets.map(\.requiredMove)).count == 1, "horizontal lasers require the same move")
         self.id = id

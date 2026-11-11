@@ -123,6 +123,8 @@ nonisolated struct CameraTrackingAdmission: Equatable, Sendable {
   var calibration: CalibrationAdmission? = nil
   var acceptedBodyRevision: UInt64? = nil // E08 only; immutable acceptance context at admission
   var presentationRevision: UInt64? = nil
+  /// DEBUG Solo Test session: the tracker acquires one person into P1 only.
+  var solo = false
   #if DEBUG
   var anatomyInspection: UUID? = nil
   #endif
@@ -468,6 +470,7 @@ nonisolated final class CameraTrackingGate: Sendable {
         calibration: $0.body.calibration.admission,
         acceptedBodyRevision: $0.body.acceptedRevision,
         presentationRevision: $0.presentation.admit(source, authorized: $0.requestID != nil))
+      stamp.solo = $0.body.configuration?.soloPlayer != nil
       #if DEBUG
       stamp.anatomyInspection = $0.anatomyInspection.ticket?.id
       #endif
@@ -517,10 +520,26 @@ nonisolated final class CameraTrackingGate: Sendable {
       else {
         increment(&$0.rejected)
         increment(&$0.staleRejected)
+        #if DEBUG
+        print(String(format: "[LaserTrack] t %.3f · frame %llu REJECTED · age %.0f ms (limit %.0f) · cancelled %@ · context %@ · revision %@",
+                     time, source.frameID, (time - source.capturedAt) * 1000, policy.freshness * 1000,
+                     cancelled ? "yes" : "no", $0.context == source.context ? "same" : "CHANGED",
+                     admission.revision == $0.revision ? "same" : "CHANGED"))
+        #endif
         return false
       }
-      if result.player1.state != .tracking || result.player2.state != .tracking
-        || result.player1.requiresRebind || result.player2.requiresRebind {
+      #if DEBUG
+      let before = $0.latest?[.player1], after = result[.player1]
+      if before?.state != after.state || before?.reason != after.reason || before?.requiresRebind != after.requiresRebind {
+        print(String(format: "[LaserTrack] t %.3f · frame %llu · P1 %@/%@ → %@/%@%@ · age %.0f ms · gap %.0f ms · candidate %@",
+                     time, source.frameID, before?.state.rawValue ?? "-", before?.reason.rawValue ?? "-",
+                     after.state.rawValue, after.reason.rawValue, after.requiresRebind ? " REBIND" : "",
+                     (time - source.capturedAt) * 1000, $0.lastCapture.map { (source.capturedAt - $0) * 1000 } ?? -1,
+                     after.candidateID.map { "\($0)" } ?? "none"))
+      }
+      #endif
+      let roster = $0.body.configuration?.roster ?? PlayerID.allCases
+      if roster.contains(where: { result[$0].state != .tracking || result[$0].requiresRebind }) {
         $0.body.calibration.uncertain()
         #if DEBUG
         if $0.anatomyInspection.frame == nil { $0.anatomyInspection.invalidate() }
@@ -534,7 +553,7 @@ nonisolated final class CameraTrackingGate: Sendable {
       $0.captureToCommitAge = time - source.capturedAt
       $0.reason = "source accepted"
       increment(&$0.accepted)
-      if result.player1.state != .tracking || result.player2.state != .tracking {
+      if roster.contains(where: { result[$0].state != .tracking }) {
         increment(&$0.refusals)
       } else if $0.acknowledgment == nil {
         $0.acknowledgment = .init(requestID: request, source: original,
@@ -609,6 +628,10 @@ nonisolated final class CameraTrackingGate: Sendable {
     #if DEBUG
     if s.anatomyInspection.frame == nil { s.anatomyInspection.invalidate() }
     #endif
+    #if DEBUG
+    print(String(format: "[LaserTrack] t %.3f · no committed frame by the deadline: tracking EXPIRED (last capture %.0f ms ago, %llu stale rejected)",
+                 time, s.lastCapture.map { (time - $0) * 1000 } ?? -1, s.staleRejected))
+    #endif
     s.body.calibration.uncertain()
     s.body.measurements.invalidate()
     s.body.latest = nil; s.body.wrists = nil
@@ -626,7 +649,9 @@ nonisolated final class CameraTrackingGate: Sendable {
   private func pairEligible(_ s: State) -> Bool {
     guard s.active, s.foreground, s.requestID != nil, s.acknowledgment != nil,
       let pair = s.latest, pair.controlRevision == s.revision else { return false }
-    return [pair.player1, pair.player2].allSatisfy { $0.state == .tracking && !$0.requiresRebind }
+    return (s.body.configuration?.roster ?? PlayerID.allCases).allSatisfy {
+      pair[$0].state == .tracking && !pair[$0].requiresRebind
+    }
   }
   // CameraPipeline reserves/releases this lease only at fully drained capture boundaries.
   // It does not reset B2 control/request serials or the worker's retained-generation guard.
@@ -705,6 +730,10 @@ nonisolated final class CameraTrackingGate: Sendable {
         } : nil)
     }
   }
+  /// Read-only copy of the accepted standing references (empty until acceptance).
+  func acceptedBodyCalibrations() -> [PlayerID: PlayerCalibration] {
+    state.withLock { $0.body.stopped ? [:] : $0.body.configuration?.calibrations ?? [:] }
+  }
   func requestCalibration(id: UUID) throws -> CalibrationRequest {
     try state.withLock {
       let time = now(); expire(&$0, at: time)
@@ -712,7 +741,7 @@ nonisolated final class CameraTrackingGate: Sendable {
         $0.body.source == source, $0.body.configuration != nil else { throw LiveVisionError.inactiveSource }
       let prior = $0.body.calibration.admission?.request
       let result = try $0.body.calibration.request(id: id, source: source, revision: $0.revision,
-        bindingRequest: request, at: time)
+        bindingRequest: request, at: time, roster: $0.body.configuration?.roster ?? PlayerID.allCases)
       if result != prior {
         $0.body.measurements.invalidate()
         #if DEBUG

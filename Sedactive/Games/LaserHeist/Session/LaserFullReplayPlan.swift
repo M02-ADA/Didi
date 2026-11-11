@@ -25,13 +25,21 @@ nonisolated struct LaserFullReplayPlan: Sendable {
     var duration: Double { bonusStart + 10 }
 
     /// Positions and times are test/demo inputs, not approved camera mapping or comfortable reach.
-    static func make(base: ReplayFixture, seed: UInt64,
-                     scenario: LaserReplayScript.Scenario = .standard) throws -> LaserReplayScript {
+    /// The complete round's rules: evidence windows, clearance, diamond points and scheduling.
+    /// Shared by the complete replay and the live round, so there is one schedule definition.
+    static func roundConfiguration() throws -> LaserRoundConfiguration {
         let settings = try LaserSchedulingConfiguration(players: [.player1: .conservativeCandidate,
             .player2: .conservativeCandidate], searchStep: 0.25, maximumSearchSteps: 2000)
-        let config = try LaserRoundConfiguration(
+        return try LaserRoundConfiguration(
             evidenceTiming: LaserEvidenceTiming(windowBefore: 0.35, windowAfter: 0.25, deliveryAllowance: 0.1),
             clearanceMargin: 0.005, diamondPoints: LaserRoundConfiguration.approvedDiamondPoints, scheduling: settings)
+    }
+
+    /// - Parameter scenario: the DEBUG replay variants (all hits, an unpressed first vault);
+    ///   `.standard` is the complete replay.
+    static func make(base: ReplayFixture, seed: UInt64,
+                     scenario: LaserReplayScript.Scenario = .standard) throws -> LaserReplayScript {
+        let config = try roundConfiguration()
         let wave = try LaserWaveDirector().schedule(script: LaserWaveBeat.fiveMinuteScript(),
             calibrations: base.configuration.calibrations, layout: base.configuration.playerPlaneLayout, configuration: config)
         try requireLaserValue(wave.deferred.isEmpty && wave.encounters.count == 50, "full replay wave plan")

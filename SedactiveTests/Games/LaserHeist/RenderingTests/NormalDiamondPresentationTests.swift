@@ -140,7 +140,8 @@ struct NormalDiamondPresentationTests {
         let mapped = LaserReplayPresentation.normalDiamonds([passage.spawn.id: passage, bonus.spawn.id: bonus], layout: layout)
         #expect(mapped.count == 1)
         let item = try #require(mapped.first)
-        #expect(item.lane == .player2 && item.outcome == .missed && abs(item.offsetX - 0.2) < 1e-5)
+        // Mirrored about the lane like the players: plane +0.2 shows 0.2 toward screen left.
+        #expect(item.lane == .player2 && item.outcome == .missed && abs(item.offsetX + 0.2) < 1e-5)
         #expect(item.spawnedAt == 1 && item.crossingTime == 3.5)
     }
 

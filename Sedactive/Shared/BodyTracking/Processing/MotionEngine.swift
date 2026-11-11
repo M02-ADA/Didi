@@ -67,7 +67,7 @@ nonisolated struct MotionEngine: Sendable {
       revision = admission.revision
       context = c
       appliedExpiry = 0
-      try tracker.armBinding(controlRevision: revision)
+      try tracker.armBinding(controlRevision: revision, solo: admission.solo)
     }
     guard context == c else { throw PlayerTrackingError.incompatibleSource }
     return .init(context: c, frameID: source.frameID, capturedAt: source.capturedAt,

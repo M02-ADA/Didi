@@ -75,7 +75,9 @@ import Testing
     private let roundConfiguration: LaserRoundConfiguration
     private let plannedEncounters: [LaserEncounter]
     private var host: LaserLiveFrameAttachment?
-    init(controls existing:GateSetupControls? = nil, configured:Bool = true, deferredPlan:Bool = false) throws {
+    init(controls existing:GateSetupControls? = nil, configured:Bool = true, deferredPlan:Bool = false,
+         liveRoundPlanner:(@MainActor (BodyInputContext,[PlayerID:PlayerCalibration]) throws -> LaserLiveWristRoundPlan)? = nil,
+         automaticSetup:Bool = false) throws {
         self.deferredPlan = deferredPlan
         let controls = try existing ?? GateSetupControls();self.controls = controls
         fixture = try WristGameplayFixture(generation:controls.fixture.context.generation)
@@ -98,7 +100,7 @@ import Testing
                             crossingTime:request.gameTime+10)
                     })
                 }
-            })
+            },liveRoundPlanner:liveRoundPlanner,automaticSetup:automaticSetup,automaticSetupTimer:false)
     }
     func start(installDeferredPlan:Bool = true) async throws {
         try await session.start()
@@ -137,10 +139,11 @@ import Testing
         try session.spawnLiveDiamonds([LaserDiamondTests.spawn(1,at:0,entry:0.125,exit:2)],beforeVaultAt:3)
         try await send(0.75) // activation tick records the original host watermark
     }
-    @discardableResult func send(_ time:Double,points:[LaserContactHand:WristPlanePoint] = [:]) async throws -> BodySnapshot {
+    @discardableResult func send(_ time:Double,points:[LaserContactHand:WristPlanePoint] = [:],
+                                 bad:String? = nil) async throws -> BodySnapshot {
         let id = frame;frame += 1
         try #require(try controls.fixture.finish(controls.fixture.result(id,time,LiveVisionFixtures.standingPair)))
-        let s = try fixture.packet(id,time,points:points)
+        let s = try fixture.packet(id,time,points:points,bad:bad)
         await controls.input.sendAndWaitForContextRead(s)
         return s
     }

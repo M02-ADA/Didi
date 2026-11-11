@@ -121,6 +121,22 @@ final class VaultPresentation {
     private var anchor: Float?
     private var shownButtons: [PlayerID: Set<LaserVaultButton>] = [:]
     private var completedSides: Set<PlayerID> = []
+    /// Live rounds: each button's world centre (X, height) and radius: its wrist contact zone
+    /// through the mascot mapping (`GameWorldMapping.mascotPoint`), the same as the wrists' reach
+    /// cursors: a cursor on a button is a wrist in its zone. Nil (replay, or no zone): Theo's walls.
+    var liveButtons: ((PlayerID, LaserVaultButton) -> (center: SIMD2<Float>, radius: Float)?)?
+    /// Live buttons stand IN FRONT of the mascots (toward the camera), so a leaning mascot's
+    /// large head never covers them (iPad screenshot, 11 November 2026); the reach cursors are
+    /// drawn just in front of the buttons.
+    static let liveButtonDepthInFront: Float = 0.25
+    /// Depth of the button columns while the door stands at its stop (wall or live layout).
+    private var buttonsBaseZ = indicatorDepthZ
+    private var liveLayout = false
+    private var outlineRest: [PlayerID: SIMD3<Float>] = [:]
+    /// The players whose button column is shown: both, or P1 alone in a DEBUG Solo Test.
+    var visiblePlayers: Set<PlayerID> = Set(PlayerID.allCases) {
+        didSet { for (player, parts) in indicators { for p in parts.values { p.part.isEnabled = visiblePlayers.contains(player) } } }
+    }
     private var succeeded: Set<UUID> = []
     private var failed: Set<UUID> = []
     private var openedID: UUID?
@@ -358,6 +374,7 @@ final class VaultPresentation {
             part.components.set(OpacityComponent(opacity: 1))
             part.isEnabled = true
         }
+        layoutButtons()
         indicatorsShown = true
         diagnostics.reveals += 1
     }
@@ -396,11 +413,12 @@ final class VaultPresentation {
                 diagnostics.activations += 1
             }
             shownButtons[player] = now
-            if now.count == LaserVaultButton.allCases.count, completedSides.insert(player).inserted,
+            if now.count == LaserVaultButton.allCases.count, visiblePlayers.contains(player),
+               completedSides.insert(player).inserted,
                let outline = outlines[player] {
                 outline.isEnabled = true
                 if !reducesMotion() {
-                    Self.pop(outline, to: 1.06)
+                    Self.pop(outline, to: 1.06, rest: outlineRest[player] ?? .one)
                     diagnostics.pops += 1
                 }
                 diagnostics.sideCompletions += 1
@@ -470,9 +488,59 @@ final class VaultPresentation {
         guard let anchor else { return }
         let depth = scene.mapping.interactionPlaneZ - (anchor - travelDistance)
         // The wall columns travel with the door once it opens.
-        buttons.position.z = Self.indicatorDepthZ + (depth - scene.layout.vaultDoorStopZ)
+        // Wall columns ride with the door; live buttons beside the players stay put (they fade).
+        buttons.position.z = liveLayout ? buttonsBaseZ : buttonsBaseZ + (depth - scene.layout.vaultDoorStopZ)
         let nearCamera = scene.layout.cameraPosition.z - GameplayScenePresenter.cameraClearance
         scene.setVaultDoorDepth(depth < nearCamera ? depth : nil)
+    }
+
+    /// Places every shown column: on its live contact zones when all of them are known, else on
+    /// the wall columns. Each button's art then spans its zone's diameter.
+    private func layoutButtons() {
+        let shown = PlayerID.allCases.filter { visiblePlayers.contains($0) }
+        var live: [PlayerID: [LaserVaultButton: (center: SIMD2<Float>, radius: Float)]] = [:]
+        for player in shown {
+            for button in LaserVaultButton.allCases {
+                if let zone = liveButtons?(player, button) { live[player, default: [:]][button] = zone }
+            }
+        }
+        let isLive = !shown.isEmpty && shown.allSatisfy { live[$0]?.count == LaserVaultButton.allCases.count }
+        liveLayout = isLive
+        buttonsBaseZ = isLive ? scene.mapping.interactionPlaneZ + Self.liveButtonDepthInFront : Self.indicatorDepthZ
+        buttons.position.z = buttonsBaseZ
+        for (player, parts) in indicators {
+            let x = (player == .player1 ? -1 : 1) * Self.indicatorColumnX
+            var bounds: (min: SIMD2<Float>, max: SIMD2<Float>)?
+            for (button, part) in parts {
+                let zone = isLive ? live[player]?[button] : nil
+                let center = zone?.center ?? [x, Self.indicatorHeights[button] ?? 1.6]
+                let size = zone.map { 2 * $0.radius / Self.buttonSize.y } ?? 1
+                part.part.position = [center.x, center.y, 0.05]
+                part.idle.scale = [size, size, size]
+                part.active.scale = [size, size, size]
+                let half = Self.buttonSize * size / 2
+                bounds = (min(bounds?.min ?? center - half, center - half), max(bounds?.max ?? center + half, center + half))
+            }
+            if let outline = outlines[player], !isLive {
+                // Theo's wall columns: the outline as designed.
+                outline.position = [x, Self.outlineCenterY, 0.045]
+                outline.scale = .one
+                outlineRest[player] = .one
+            } else if let outline = outlines[player], let bounds {
+                let pad = Self.outlinePadding
+                let extent = bounds.max - bounds.min + 2 * pad
+                let center = (bounds.max + bounds.min) / 2
+                outline.position = [center.x, center.y, 0.045]
+                outline.scale = [extent.x / Self.outlineSize.x, extent.y / Self.outlineSize.y, 1]
+                outlineRest[player] = outline.scale
+            }
+        }
+    }
+
+    /// Where one button is drawn now (world X/height), for tests and diagnostics.
+    func buttonPosition(_ player: PlayerID, _ button: LaserVaultButton) -> SIMD3<Float>? {
+        guard let part = indicators[player]?[button]?.part else { return nil }
+        return [part.position.x, part.position.y, buttons.position.z + part.position.z]
     }
 
     private func hideAll() {
@@ -542,12 +610,12 @@ final class VaultPresentation {
     }
 
     /// A quick scale pop about the entity's own place (its translation is kept).
-    private static func pop(_ part: Entity, to peak: Float) {
+    private static func pop(_ part: Entity, to peak: Float, rest scale: SIMD3<Float> = .one) {
         part.stopAllAnimations()
-        part.scale = .one
+        part.scale = scale
         let rest = part.transform
         var big = rest
-        big.scale = .init(repeating: peak)
+        big.scale = scale * peak
         let up = FromToByAnimation(from: rest, to: big, duration: 0.12, timing: .easeOut, bindTarget: .transform)
         let down = FromToByAnimation(from: big, to: rest, duration: 0.18, timing: .easeIn, bindTarget: .transform)
         guard let steps = try? [up, down].map({ try AnimationResource.generate(with: $0) }),

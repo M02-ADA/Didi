@@ -41,8 +41,11 @@ struct RobotFootPlantingTests {
     /// Plays one scenario (4 s) and returns every rendered frame's diagnostics.
     private func play(_ scenario: RobotDemoScenario, planting: Bool, seconds: Double = RobotDemoScenario.duration) async throws -> [Tick] {
         let input = try LaserReplayScript.load().input
+        // The bare foot planner, without a board (a board carries the stance instead:
+        // `PlayerHoverboardTests.theBoardCarriesTheMascotWithItsLean`).
         let layer = RobotAvatarLayer(scene: LaserScene(), calibrations: input.configuration.calibrations,
-                                     layout: input.configuration.playerPlaneLayout, templates: try await templates())
+                                     layout: input.configuration.playerPlaneLayout, templates: try await templates(),
+                                     withBoards: false)
         layer.footPlanting = planting
         layer.diagnosticsEnabled = true
         layer.smoothing = 0.03

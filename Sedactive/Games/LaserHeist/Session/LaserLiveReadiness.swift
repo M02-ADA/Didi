@@ -45,7 +45,26 @@ nonisolated struct LaserLiveReadiness: Sendable {
         return max(0, countdownDeadline - lastEvaluation)
     }
 
-    init(policy: LaserLiveTimingPolicy? = nil) { self.policy = policy }
+    /// The players whose evidence admits the round: both, or P1 alone in a DEBUG Solo Test.
+    let roster: [PlayerID]
+    #if DEBUG
+    /// DEBUG Solo Test only: once RUNNING, missing, invalid or stale body evidence (or a lost
+    /// binding) no longer pauses the clock, so the tester can walk to the iPad. The evidence is
+    /// still not admitted: the judge sees no sample and the lasers are UNAVAILABLE. Starting,
+    /// the countdown and a manual pause keep the normal rules.
+    var continuesWithoutEvidence = false
+    #endif
+    private var toleratesMissingEvidence: Bool {
+        #if DEBUG
+        continuesWithoutEvidence && phase == .running
+        #else
+        false
+        #endif
+    }
+
+    init(policy: LaserLiveTimingPolicy? = nil, roster: [PlayerID] = PlayerID.allCases) {
+        self.policy = policy; self.roster = roster
+    }
 
     mutating func updateContext(_ value: BodyInputContext?, at time: Double) throws {
         try validateTime(time)
@@ -56,7 +75,7 @@ nonisolated struct LaserLiveReadiness: Sendable {
             context = value
         }
         guard value?.isActive == true else { try block(.source, at: time); return }
-        guard PlayerID.allCases.allSatisfy({ value?.calibrationRevisions[$0] != nil }) else {
+        guard roster.allSatisfy({ value?.calibrationRevisions[$0] != nil }) else {
             try block(.calibration, at: time); return
         }
         try evaluate(at: time)
@@ -67,8 +86,8 @@ nonisolated struct LaserLiveReadiness: Sendable {
         try updateContext(value, at: time)
         guard phase != .restartRequired else { return }
         guard value.isActive else { try block(.source, at: time); return }
-        guard bindingConfirmed else { try block(.binding, at: time); return }
-        guard PlayerID.allCases.allSatisfy({ value.calibrationRevisions[$0] != nil }), value.accepts(packet) else {
+        guard bindingConfirmed else { if !toleratesMissingEvidence { try block(.binding, at: time) }; return }
+        guard roster.allSatisfy({ value.calibrationRevisions[$0] != nil }), value.accepts(packet) else {
             try block(.calibration, at: time); return
         }
         guard (try? packet.validate()) != nil else { try block(.measurements, at: time); return }
@@ -76,20 +95,20 @@ nonisolated struct LaserLiveReadiness: Sendable {
         // not replace current readiness (the same packet still reaches the domain evidence path).
         if let lastFrame, let lastCapture,
            packet.frameID <= lastFrame || packet.capturedAt <= lastCapture { return }
-        guard PlayerID.allCases.allSatisfy({ id in
+        guard roster.allSatisfy({ id in
             guard let sample = packet.players[id] else { return false }
             return sample.trackingStatus == .reliable
                 && [sample.geometry.crownY, sample.geometry.leftWristY, sample.geometry.rightWristY,
                     sample.geometry.leftSoleY, sample.geometry.rightSoleY].allSatisfy { $0.validity == .valid }
                 && sample.jumpState.validity == .valid
-        }) else { try block(.measurements, at: time); return }
+        }) else { if !toleratesMissingEvidence { try block(.measurements, at: time) }; return }
         guard let policy else { try block(.timingPolicy, at: time); return }
         guard packet.capturedAt <= time, time - packet.capturedAt < policy.maximumEvidenceAge else {
-            try block(.staleEvidence, at: time); return
+            if !toleratesMissingEvidence { try block(.staleEvidence, at: time) }; return
         }
         if let evidenceCutover, packet.capturedAt <= evidenceCutover { return }
         if manualPause { try block(.manualPause, at: time); return }
-        if let lastCapture, packet.capturedAt - lastCapture >= policy.maximumEvidenceAge {
+        if let lastCapture, packet.capturedAt - lastCapture >= policy.maximumEvidenceAge, !toleratesMissingEvidence {
             try block(.staleEvidence, at: time)
         }
         lastFrame = packet.frameID
@@ -108,7 +127,7 @@ nonisolated struct LaserLiveReadiness: Sendable {
         guard phase != .restartRequired else { return }
         if manualPause { try block(.manualPause, at: time); return }
         guard let policy, let lastCapture else { return }
-        guard time >= lastCapture, time - lastCapture < policy.maximumEvidenceAge else {
+        guard time >= lastCapture, time - lastCapture < policy.maximumEvidenceAge || toleratesMissingEvidence else {
             try block(.staleEvidence, at: time); return
         }
         if phase == .countdown, let deadline = countdownDeadline, time >= deadline {

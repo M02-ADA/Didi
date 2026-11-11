@@ -52,7 +52,10 @@ nonisolated struct PoseEstimatorTests {
     #expect(result.invalidJointCount == 5)
   }
   @Test func anatomicalNamesCanonicalCornersAndReorderedCandidatesAreNotTrackedIdentities() throws {
-    #expect(PoseEstimator.joints.count == 14)
+    // 14 original joints plus both knees (kept for setup diagnostics, 11 November 2026).
+    #expect(PoseEstimator.joints.count == 16)
+    #expect(PoseEstimator.joints.first { $0.0 == .leftKnee }?.1 == .leftKnee)
+    #expect(PoseEstimator.joints.first { $0.0 == .rightKnee }?.1 == .rightKnee)
     #expect(PoseEstimator.joints.first { $0.0 == .leftWrist }?.1 == .leftWrist)
     #expect(PoseEstimator.joints.first { $0.0 == .rightAnkle }?.1 == .rightAnkle)
     let left = PoseJoint(x: 0, y: 1, confidence: 1)

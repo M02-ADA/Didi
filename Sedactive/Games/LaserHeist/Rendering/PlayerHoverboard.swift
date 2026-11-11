@@ -25,8 +25,12 @@ import RealityKitContent
 /// - Bank: the board tilts toward the mascot's shown trunk lean (K03), at most
 ///   `maximumBank`, smoothed over `bankTime`. The deck drops by the bank's rise
 ///   under the stance, so the higher side stays under the raised foot.
-/// - Glide: the board stays under the mascot's stance, so a side step or
-///   dodge carries it along the lane: up to `maximumGlide` outward, and only
+/// - Ride (live lean, 11 November 2026): the board CARRIES the mascot sideways
+///   with its body (`Input.ride`, the shown hip shift clamped to the glide limits),
+///   and the mascot's feet are planted on the board, so a lean moves avatar and
+///   board together with no foot sliding; beyond the limit the feet step on the deck.
+/// - Glide (no ride given): the board stays under the mascot's stance, so a side
+///   step or dodge carries it along the lane: up to `maximumGlide` outward, and only
 ///   `maximumInwardGlide` toward the partner's lane, so the boards never meet.
 /// - A jump push-off sinks the board slightly, and the contact shadow under
 ///   the mascot fades while it is airborne.
@@ -41,10 +45,12 @@ final class PlayerHoverboard {
     /// size (`RobotAvatarLayer.standingHeight`), so it always fits their stance.
     nonisolated static let scale: Float = RobotAvatarLayer.standingHeight / 1.6
 
-    /// Largest bank, about 3°. A subtle tilt, so the mascot never looks unstable.
-    nonisolated static let maximumBank: Float = 0.052
+    /// Largest bank, about 6°: clearly visible with a lean, never unstable-looking
+    /// (owner request 11 November 2026; 3° read as no response). The deck drops by its rise
+    /// under the stance, so together with the hover and push-off it stays within 3.5 cm.
+    nonisolated static let maximumBank: Float = 0.105
     /// Bank per radian of shown trunk lean (the robot's lean is at most 0.35).
-    nonisolated static let bankPerLean: Float = 0.3
+    nonisolated static let bankPerLean: Float = 0.5
     /// Bank smoothing time constant (seconds): responsive, but never a snap.
     nonisolated static let bankTime: Float = 0.12
     /// How far the idle hover sinks the deck, and how long one breath takes.
@@ -65,7 +71,7 @@ final class PlayerHoverboard {
     /// How far the board glides from its lane centre with the stance, and how
     /// quickly it follows. Toward the partner it glides much less: lanes are
     /// 1.4 m apart and the boards 1.16 m wide, so both fully inward still leave 0.12 m.
-    nonisolated static let maximumGlide: Float = 0.2
+    nonisolated static let maximumGlide: Float = 0.35
     nonisolated static let maximumInwardGlide: Float = 0.06
     nonisolated static let glideTime: Float = 0.08
     /// Lift at which the contact shadow is gone.
@@ -89,6 +95,10 @@ final class PlayerHoverboard {
         var lift: Float = 0
         /// Whether the player is tracked. Unavailable: the board levels out.
         var available = false
+        /// The board's ride offset (metres from the lane centre, already clamped and
+        /// render-smoothed): the board sits exactly here, carrying the planted feet.
+        /// Nil: glide under the stance instead.
+        var ride: Float?
     }
 
     /// The board's own motion, stepped on frame time. Deterministic: the same
@@ -119,12 +129,21 @@ final class PlayerHoverboard {
             bank += (Self.bankTarget(for: input) - bank) * (1 - exp(-dt / bankTime))
             let push = input.available && input.lift.isFinite ? min(maximumRecoil, recoilPerLift * max(0, input.lift)) : 0
             recoil += (push - recoil) * (1 - exp(-dt / recoilTime))
-            let upper = inward > 0 ? maximumInwardGlide : maximumGlide
-            let lower = inward < 0 ? -maximumInwardGlide : -maximumGlide
-            let glide = input.stanceX.isFinite ? min(upper, max(lower, input.stanceX)) : 0
-            offsetX += (glide - offsetX) * (1 - exp(-dt / glideTime))
+            if let ride = input.ride, ride.isFinite {
+                offsetX = Self.rideOffset(ride, inward: inward) // the feet are planted on it: no lag
+            } else {
+                let glide = input.stanceX.isFinite ? Self.rideOffset(input.stanceX, inward: inward) : 0
+                offsetX += (glide - offsetX) * (1 - exp(-dt / glideTime))
+            }
             hoverPhase = (hoverPhase + 2 * .pi * dt / hoverPeriod).truncatingRemainder(dividingBy: 2 * .pi)
             pitchPhase = (pitchPhase + 2 * .pi * dt / pitchPeriod).truncatingRemainder(dividingBy: 2 * .pi)
+        }
+
+        /// A lateral offset within the glide limits (short toward the partner's lane).
+        static func rideOffset(_ x: Float, inward: Float) -> Float {
+            let upper = inward > 0 ? maximumInwardGlide : maximumGlide
+            let lower = inward < 0 ? -maximumInwardGlide : -maximumGlide
+            return min(upper, max(lower, x))
         }
 
         /// Roll about the board's long axis: a lean to screen right dips the right side.

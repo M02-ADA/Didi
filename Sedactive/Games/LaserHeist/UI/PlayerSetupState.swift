@@ -9,7 +9,7 @@ import Foundation
 
 /// A copy/affordance projection, never another source of binding or calibration state.
 nonisolated struct PlayerSetupState: Equatable, Sendable {
-    enum Action: Equatable, Sendable { case bind, confirmPlayers, calibrate, confirmCandidate }
+    enum Action: Equatable, Sendable { case bind, confirmPlayers, calibrate, confirmCandidate, recollect }
     let title: String
     let instruction: String
     let action: Action?
@@ -35,6 +35,8 @@ nonisolated struct PlayerSetupState: Equatable, Sendable {
             (title, instruction, action, buttonTitle) = ("Review standing calibration", "Both players' standing measurements are ready to confirm. Movement checks come next.", .confirmCandidate, "Confirm standing calibration")
         case .awaitingGameplayReadiness:
             (title, instruction, action, buttonTitle) = ("Waiting for movement checks", "Standing calibration is accepted. A round can start only when both players' movement can be checked reliably.", nil, nil)
+        case .blocked(let reason) where StandingEstimateAcceptancePolicyV1.isPlayerFacing(reason):
+            (title, instruction, action, buttonTitle) = ("Calibration needs another try", reason + " No round has started.", .recollect, "Collect again")
         case .blocked(let reason):
             let explanation = reason.contains("Crown and soles")
                 ? "Head and foot measurements are not ready for play yet. No round has started. You can cancel calibration or leave setup."

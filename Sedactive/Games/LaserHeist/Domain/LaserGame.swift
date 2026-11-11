@@ -85,6 +85,13 @@ nonisolated struct LaserGame: Sendable {
     private var diamondPoints: Int?
     private var diamondField = LaserDiamondField()
     private var bonusDiamondsStarted = false
+    /// Targets each registered attempt carries; its effects commit when all are judged.
+    private var targetCounts: [UUID: Int] = [:]
+    #if DEBUG
+    /// DEBUG Solo Test only: this one player's three presses open a vault (there is no second
+    /// player to press theirs). Nil in every co-op round, where both sides are always required.
+    var soloPracticePlayer: PlayerID?
+    #endif
 
     var diamonds: [UUID: LaserDiamondState] { diamondField.states }
     var activeDiamonds: [LaserDiamondSpawn] { diamondField.active }
@@ -117,6 +124,9 @@ nonisolated struct LaserGame: Sendable {
     }
 
     var historyCount: Int { history.values.reduce(0) { $0 + $1.count } }
+    /// Registered laser targets still waiting for their verdict.
+    var pendingCrossingCount: Int { crossings.values.filter { $0.result == .pending }.count }
+    var hasStartedDiamondTimeDiamonds: Bool { bonusDiamondsStarted }
     var crossingCount: Int { crossings.count }
     var isPaused: Bool { blocked && !exited && roundOutcome == nil }
     func hasUsedAttempt(_ id: UUID) -> Bool {
@@ -135,6 +145,7 @@ nonisolated struct LaserGame: Sendable {
             let key = LaserTargetKey(encounterID: encounter.id, attemptID: encounter.attemptID, playerID: target.playerID)
             try requireLaserValue(crossings[key] == nil && !processedTargets.contains(key), "duplicate crossing")
         }
+        targetCounts[encounter.attemptID] = encounter.targets.count
         for target in encounter.targets {
             let key = LaserTargetKey(encounterID: encounter.id, attemptID: encounter.attemptID, playerID: target.playerID)
             crossings[key] = Crossing(target: target, result: .pending)
@@ -308,7 +319,11 @@ nonisolated struct LaserGame: Sendable {
         let verdicts = Dictionary(uniqueKeysWithValues: PlayerID.allCases.map {
             ($0, current.buttons[$0]?.count == 3 ? Judgement.clear : .pending(.awaitingFinalization))
         })
-        if LaserCoopDecision.evaluate(verdicts) == .succeeded {
+        var succeeded = LaserCoopDecision.evaluate(verdicts) == .succeeded
+        #if DEBUG
+        if let solo = soloPracticePlayer { succeeded = current.buttons[solo]?.count == LaserVaultButton.allCases.count }
+        #endif
+        if succeeded {
             current.opened = true
             vault = current
             consumedVaults.insert(id)
@@ -461,11 +476,12 @@ nonisolated struct LaserGame: Sendable {
     private mutating func commitEncounter(for key: LaserTargetKey) {
         guard !effectEncounters.contains(key.encounterID) && !processedTargets.contains(key) else { return }
         let pair = crossings.filter { $0.key.encounterID == key.encounterID && $0.key.attemptID == key.attemptID }
-        guard pair.count == 2, pair.values.allSatisfy({ $0.judgement != nil }) else { return }
+        // Every target the encounter registered (two in co-op; one in a DEBUG solo practice).
+        guard pair.count == targetCounts[key.attemptID], pair.values.allSatisfy({ $0.judgement != nil }) else { return }
         let time = pair.values.map { timing.finalizationTime(crossing: $0.target.crossingTime) }.max()!
         let values = pair.values.compactMap(\.judgement)
         processedTargets.formUnion(pair.keys)
-        for player in PlayerID.allCases {
+        for player in PlayerID.allCases where pair.contains(where: { $0.key.playerID == player }) {
             let value = pair.first { $0.key.playerID == player }!.value.judgement!
             let old = playerStats[player]!
             var clear = 0, hit = 0, unavailable = 0

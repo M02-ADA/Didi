@@ -58,10 +58,11 @@ nonisolated struct LaserWaveSchedule: Equatable, Sendable {
 nonisolated struct LaserWaveDirector: Sendable {
     func schedule(script: [LaserWaveBeat], calibrations: [PlayerID: PlayerCalibration], layout: PlayerPlaneLayout,
                   configuration: LaserRoundConfiguration, previousDemands: [LaserScheduledDemand] = [],
-                  notBefore: [PlayerID: Double] = [:]) throws -> LaserWaveSchedule {
+                  notBefore: [PlayerID: Double] = [:], players: [PlayerID] = PlayerID.allCases) throws -> LaserWaveSchedule {
         guard let settings = configuration.scheduling else { throw LaserDataError.invalidValue("missing scheduling configuration") }
         try layout.validate()
-        try requireLaserValue(Set(calibrations.keys) == Set(PlayerID.allCases), "both calibrations required")
+        // `players` is both (co-op) or P1 alone (DEBUG solo practice): each from its own calibration.
+        try requireLaserValue(Set(calibrations.keys) == Set(players) && !players.isEmpty, "both calibrations required")
         for (id, calibration) in calibrations {
             try calibration.validate()
             try requireLaserValue(id == calibration.playerID, "calibration slot")
@@ -85,14 +86,14 @@ nonisolated struct LaserWaveDirector: Sendable {
                                   && beat.nominalCrossingTime < beat.segmentEnd
                                   && beat.segmentEnd <= configuration.activityDuration, "beat timeline")
             lastNominal = beat.nominalCrossingTime
-            if beat.move == .jump && PlayerID.allCases.contains(where: { player in
+            if beat.move == .jump && players.contains(where: { player in
                 let consecutive = history.filter { $0.playerID == player }.reversed().prefix { $0.move == .jump }.count
                 return consecutive >= settings.players[player]!.maximumConsecutiveJumps
             }) {
                 deferred.append(LaserWaveDeferral(beatID: beat.id, reason: .consecutiveJumps))
                 continue
             }
-            let bands = try PlayerID.allCases.map { player in
+            let bands = try players.map { player in
                 try band(for: beat.move, calibration: calibrations[player]!, layout: layout,
                          profile: settings.players[player]!, margin: configuration.clearanceMargin)
             }
@@ -100,7 +101,7 @@ nonisolated struct LaserWaveDirector: Sendable {
             var scheduled = false
             for _ in 0..<settings.maximumSearchSteps {
                 var fits = true
-                for player in PlayerID.allCases {
+                for player in players {
                     let profile = settings.players[player]!
                     let time = candidate + profile.crossingOffset
                     let prior = history.filter { $0.playerID == player }
@@ -115,13 +116,13 @@ nonisolated struct LaserWaveDirector: Sendable {
                     }
                 }
                 if fits {
-                    let targets = try PlayerID.allCases.enumerated().map { index, player in
+                    let targets = try players.enumerated().map { index, player in
                         let profile = settings.players[player]!, crossing = candidate + profile.crossingOffset
                         return try LaserTarget(playerID: player, calibrationRevision: calibrations[player]!.revision,
                             requiredMove: beat.move, beam: bands[index], warningTime: crossing - profile.warningLead,
                             crossingTime: crossing)
                     }
-                    encounters.append(try LaserEncounter(id: beat.id, attemptID: beat.id, targets: targets))
+                    encounters.append(try LaserEncounter(id: beat.id, attemptID: beat.id, targets: targets, roster: Set(players)))
                     for target in targets {
                         history.append(LaserScheduledDemand(playerID: target.playerID, move: target.requiredMove,
                                                             crossingTime: target.crossingTime))

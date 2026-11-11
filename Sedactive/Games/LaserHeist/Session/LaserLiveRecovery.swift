@@ -11,8 +11,10 @@ nonisolated struct LaserLiveRecoveryRequest: Sendable {
 nonisolated enum LaserLiveRecovery {
     /// Preserve judge geometry and require full warnings. The injected owner-reviewed planner must
     /// additionally approve physical jump reservations, comfort, and segment/vault boundaries.
+    /// - Parameter boundary: the live director's current vault time; replacements must be
+    ///   judged before it. Without a director, the round's activity duration (no vault pauses).
     static func validate(_ replacements: [LaserEncounter], request: LaserLiveRecoveryRequest,
-                         configuration: LaserRoundConfiguration) throws {
+                         configuration: LaserRoundConfiguration, boundary: Double? = nil) throws {
         try requireLaserValue(Set(replacements.map(\.id)) == Set(request.withdrawn.map(\.id))
             && replacements.count == request.withdrawn.count
             && Set(replacements.map(\.attemptID)).count == replacements.count, "complete recovery plan")
@@ -29,7 +31,7 @@ nonisolated enum LaserLiveRecovery {
                     && target.warningTime >= request.gameTime
                     && target.crossingTime - target.warningTime >= previous.crossingTime - previous.warningTime
                     && configuration.evidenceTiming.finalizationTime(crossing: target.crossingTime)
-                        < configuration.activityDuration, "recovery geometry/warning/boundary")
+                        < (boundary ?? configuration.activityDuration), "recovery geometry/warning/boundary")
             }
         }
     }

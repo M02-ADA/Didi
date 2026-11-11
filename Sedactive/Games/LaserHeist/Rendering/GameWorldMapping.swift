@@ -63,6 +63,17 @@ struct GameWorldMapping {
         SIMD2<Float>(SIMD2(laneCenter - x, y) * Double(metersPerGameUnit))
     }
 
+    /// A player-plane point where the player's mascot world shows it: mirrored about the lane
+    /// like the cutout, scaled by the mascot's motion scale (mascot height ÷ the player's standing
+    /// height, as `RobotRetargeter.motionScale`, which also moves the mascot sideways). Live vault
+    /// buttons AND the wrists' reach cursors use it, so a cursor on a button is a wrist in its
+    /// zone. World X/height on the interaction plane, and the size factor.
+    func mascotPoint(x: Double, y: Double, player: PlayerID, laneCenter: Double, standingHeight h: Double,
+                     mascotHeight: Float = RobotAvatarLayer.standingHeight) -> (center: SIMD2<Float>, scale: Float) {
+        let k = Double(mascotHeight) / h
+        return ([laneCenterX[player, default: 0] + Float((laneCenter - x) * k), Float(y * k)], Float(k))
+    }
+
     /// The centre of a laser beam at a game-space height and a world depth.
     func laserPosition(heightAboveFloor: Float, worldZ: Float) -> SIMD3<Float> {
         [0, heightAboveFloor * metersPerGameUnit, worldZ]

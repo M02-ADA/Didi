@@ -46,6 +46,11 @@ nonisolated struct BodyInputConfiguration: Equatable, Sendable, Codable {
     let playerPlaneLayout: PlayerPlaneLayout
     let snapshotBufferCapacity: Int
     let noProgressPolicy: NoProgressPolicy
+    /// DEBUG Solo Test only: the one player this session tracks and calibrates (P1, Lemon).
+    /// Nil is the production two-player session. Release builds refuse a solo session.
+    var soloPlayer: PlayerID? = nil
+    /// The players this session links, calibrates and judges.
+    var roster: [PlayerID] { soloPlayer.map { [$0] } ?? PlayerID.allCases }
 
     init(sessionGeneration: UUID,
          calibrations: [PlayerID: PlayerCalibration], playerPlaneLayout: PlayerPlaneLayout,
@@ -67,13 +72,20 @@ nonisolated struct BodyInputConfiguration: Equatable, Sendable, Codable {
         }
         try requireBodyValue(Set(calibrations.values.map(\.cameraGeometryRevision)).count <= 1,
                              "mixed camera calibration geometry")
+        #if DEBUG
+        try requireBodyValue(soloPlayer == nil || soloPlayer == .player1, "solo test tracks P1")
+        #else
+        try requireBodyValue(soloPlayer == nil, "solo test is DEBUG only")
+        #endif
     }
 
     /// Complete replacement: omitted slots lose acceptance; callers validate before committing.
     func replacingCalibrations(_ values: [PlayerID: PlayerCalibration]) -> Self {
-        Self(sessionGeneration: sessionGeneration, calibrations: values,
+        var next = Self(sessionGeneration: sessionGeneration, calibrations: values,
              playerPlaneLayout: playerPlaneLayout, snapshotBufferCapacity: snapshotBufferCapacity,
              noProgressPolicy: noProgressPolicy)
+        next.soloPlayer = soloPlayer
+        return next
     }
 }
 
@@ -162,4 +174,11 @@ protocol BodyInputProviding: AnyObject {
     @discardableResult
     func statusUpdates(_ observer: @escaping @MainActor (BodyInputStatusEvent) -> Void) throws -> UUID
     func removeStatusObserver(_ token: UUID) throws
+    /// The accepted standing references behind `currentContext.calibrationRevisions`,
+    /// read-only. Round planning reads them; only the producer accepts or replaces them.
+    var acceptedCalibrations: [PlayerID: PlayerCalibration] { get }
+}
+
+extension BodyInputProviding {
+    var acceptedCalibrations: [PlayerID: PlayerCalibration] { [:] }
 }
