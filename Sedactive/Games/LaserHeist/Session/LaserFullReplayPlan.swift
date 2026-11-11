@@ -43,12 +43,15 @@ nonisolated struct LaserFullReplayPlan: Sendable {
         let wave = try LaserWaveDirector().schedule(script: LaserWaveBeat.fiveMinuteScript(),
             calibrations: base.configuration.calibrations, layout: base.configuration.playerPlaneLayout, configuration: config)
         try requireLaserValue(wave.deferred.isEmpty && wave.encounters.count == 50, "full replay wave plan")
-        var planner = try LaserDiamondPlanner(seed: seed, placements: (0..<8).map { index in
-            let player: PlayerID = index < 4 ? .player1 : .player2
-            let lane = base.configuration.playerPlaneLayout.centerX(for: player)
-            return try LaserDiamondPlacement(position: LaserDiamondPosition(
-                x: lane + (index.isMultiple(of: 2) ? -0.15 : 0.15), y: index % 4 < 2 ? 0.7 : 1), eligiblePlayers: [player])
-        }, approachLead: 0.5, passageDuration: 1)
+        let layout = base.configuration.playerPlaneLayout
+        let placements = try PlayerID.allCases.flatMap { player in
+            guard let calibration = base.configuration.calibrations[player] else {
+                throw LaserDataError.invalidValue("missing replay calibration for diamond placement")
+            }
+            return try LaserLiveRoundGeometryV1.diamondPlacements(player: player, lane: layout.centerX(for: player),
+                height: LaserLiveRoundGeometryV1.standingHeight(calibration, layout: layout))
+        }
+        var planner = try LaserDiamondPlanner(seed: seed, placements: placements, approachLead: 0.5, passageDuration: 1)
         var steps: [Step] = [], encounters: [LaserEncounter] = [], records: [ReplayRecord] = []
         var frame: UInt64 = 0, diamondCount = 0
         func packet(_ encounter: LaserEncounter, capturedAt: Double, standing: Bool = false) throws -> BodySnapshot {

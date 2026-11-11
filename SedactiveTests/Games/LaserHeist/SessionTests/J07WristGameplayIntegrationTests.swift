@@ -140,10 +140,10 @@ import Testing
         try await send(0.75) // activation tick records the original host watermark
     }
     @discardableResult func send(_ time:Double,points:[LaserContactHand:WristPlanePoint] = [:],
-                                 bad:String? = nil) async throws -> BodySnapshot {
+                                 bad:String? = nil, bodySamples: [PlayerID: PlayerBodySample]? = nil) async throws -> BodySnapshot {
         let id = frame;frame += 1
         try #require(try controls.fixture.finish(controls.fixture.result(id,time,LiveVisionFixtures.standingPair)))
-        let s = try fixture.packet(id,time,points:points,bad:bad)
+        let s = try fixture.packet(id,time,points:points,bad:bad,bodySamples:bodySamples)
         await controls.input.sendAndWaitForContextRead(s)
         return s
     }

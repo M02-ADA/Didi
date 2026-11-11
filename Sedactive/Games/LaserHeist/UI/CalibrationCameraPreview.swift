@@ -66,6 +66,16 @@ struct CalibrationCameraPreview: UIViewRepresentable {
                 connection.automaticallyAdjustsVideoMirroring = false
                 connection.isVideoMirrored = false
             }
+            if ProcessInfo.processInfo.isiOSAppOnMac {
+                // CalibrationStageView mirrors this layer horizontally. An extra
+                // clockwise quarter-turn here appears counterclockwise on screen.
+                if let output = previewLayer.session?.outputs.first(where: { $0 is AVCaptureVideoDataOutput }),
+                   let capture = output.connection(with: .video) {
+                    let corrected = (capture.videoRotationAngle + 90).truncatingRemainder(dividingBy: 360)
+                    apply(corrected)
+                }
+                return
+            }
             guard let device = previewLayer.session?.inputs
                 .compactMap({ ($0 as? AVCaptureDeviceInput)?.device })
                 .first(where: { $0.hasMediaType(.video) }) else { return }
