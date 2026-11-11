@@ -64,8 +64,8 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
     /// Every encounter of the whole round at its base (replay-script) times, for display sizing.
     let baseEncounters: [LaserEncounter]
     let diamondRadius: Double
-    /// Both players, or P1 alone in a DEBUG Solo Test practice (P1's lasers and diamonds only,
-    /// no co-op vaults: each minute runs straight into the next, and the practice then ends).
+    /// Both players, or P1 alone in a DEBUG Solo Test practice (P1's lasers, diamonds and vault
+    /// buttons only; `LaserGame.soloPracticePlayer` opens a solo vault on P1's three presses).
     let roster: [PlayerID]
     var isSolo: Bool { roster.count == 1 }
     private let minutes: [[LaserEncounter]]
@@ -191,18 +191,12 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
             }
             guard pending.isEmpty, let boundary = vaultBoundary, boundary <= time,
                   game.activeDiamonds.isEmpty, game.isEveryRegisteredEncounterSettled else { return nil }
-            if isSolo {
-                // No co-op vault in a solo practice: the next minute starts here, or the practice ends.
-                minute += 1; minuteStart = nil
-                guard !isFinishedPlanning else { return nil }
-                try beginMinute(at: game.gameTime)
-                return try nextDue(through: time, game: game)
-            }
             // The vault waits for every registered laser to be judged; it never withdraws one.
+            // A DEBUG Solo Test vault has the roster's (P1's) three buttons only.
             vaultOpened = true
             let id = UUID(uuidString: String(format: "D1B00000-0000-4000-8000-%012d", minute + 1))!
             var zones: [LaserVaultZone] = []
-            for (playerIndex, player) in PlayerID.allCases.enumerated() {
+            for (playerIndex, player) in PlayerID.allCases.enumerated() where roster.contains(player) {
                 for (buttonIndex, button) in LaserVaultButton.allCases.enumerated() {
                     let zone = vaultZones[player]![button]!
                     let target = UUID(uuidString: String(format: "D1C00000-0000-4000-8000-%012d",
@@ -216,6 +210,37 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
             return nil
         }
     }
+
+    #if DEBUG
+    /// DEBUG Solo Test "Skip to Next Gate": game seconds between the skip and the vault.
+    static let debugSkipLead = 5.0
+
+    /// DEBUG Solo Test only: ends the current minute early so its vault comes due
+    /// `debugSkipLead` game seconds from now. No clock moves: the minute is shortened. Its
+    /// not-yet-registered lasers and diamonds are dropped (never registered, judged or scored);
+    /// lasers already registered are still judged before the vault opens, as always.
+    /// Nil (nothing changed) outside the activity of a begun minute, or when its vault is
+    /// already that close, so repeated taps are harmless.
+    mutating func debugSkipToVault(game: LaserGame) -> (droppedLasers: Int, droppedDiamonds: Int, vaultAt: Double)? {
+        guard isSolo, game.roundOutcome == nil, game.roundPhase == .activity, !isFinishedPlanning,
+              !vaultOpened, minuteStart != nil, let boundary = vaultBoundary else { return nil }
+        let target = game.gameTime + Self.debugSkipLead
+        guard boundary > target else { return nil }
+        var lasers = 0, diamonds = 0
+        for item in pending {
+            switch item.action {
+            case .register: lasers += 1
+            case .normalDiamond: diamonds += 1
+            case .openVault: break
+            }
+        }
+        pending = []
+        minuteStart = target - segmentLength
+        return (lasers, diamonds, target)
+    }
+    /// Index (0-based) of the vault the current minute leads to.
+    var currentVaultIndex: Int { minute }
+    #endif
 
     /// Bonus targets for Diamond Time, from the same planner the normal minutes used.
     mutating func diamondTimeSpawns(at time: Double, deadline: Double) throws -> [LaserDiamondSpawn] {

@@ -313,6 +313,14 @@ private struct ReplayRoundView: View {
             }
             #endif
         }
+        .overlay(alignment: .leading) {
+            #if DEBUG
+            // DEBUG Solo Test only (never co-op, never Release): skip and P1 gate taps.
+            if let session, session.isSoloPractice, session.summary == nil, session.state != nil {
+                DebugSoloTestControls(session: session).padding(.leading, 16)
+            }
+            #endif
+        }
         .overlay(alignment: .bottom) {
             #if DEBUG
             if let session, session.isDebugWristPreview, session.summary == nil {

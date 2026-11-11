@@ -179,6 +179,11 @@ nonisolated struct PlayerTracker: Sendable {
     let descriptors = f.candidates.map { descriptor($0, at: s.capturedAt, context: s.context) }
     if slots.allSatisfy({ $0.state == .unbound }) {
       acquire(descriptors, overflow: input.observationCount > f.candidates.count, source: s)
+    } else if solo, slots[0].state == .lost {
+      // DEBUG Solo Test (solo is never armed in Release): a lost P1 is re-linked by the same rule
+      // that linked them (exactly one fully visible person, held for the acquisition dwell), in
+      // the same binding, so their accepted calibration still applies. Two people: no guessing.
+      acquireSolo(descriptors, overflow: input.observationCount > f.candidates.count, source: s, relink: true)
     } else {
       associate(descriptors, overflow: input.observationCount > f.candidates.count,
         at: s.capturedAt, sourceGap: sourceGap)
@@ -373,7 +378,8 @@ nonisolated struct PlayerTracker: Sendable {
   /// DEBUG Solo Test: exactly one fully visible person (both shoulders and hips), anywhere in
   /// the frame, held for the same acquisition dwell, becomes P1. Two people refuse (no guessing),
   /// and P2's slot is left unbound: it never receives a descriptor.
-  private mutating func acquireSolo(_ values: [Descriptor?], overflow: Bool, source: PlayerTrackingSource) {
+  private mutating func acquireSolo(_ values: [Descriptor?], overflow: Bool, source: PlayerTrackingSource,
+    relink: Bool = false) {
     let eligible = values.compactMap { $0 }
     guard !overflow, eligible.count == 1, let person = eligible.first, person.points.count == 4 else {
       acquisitionRefused(overflow ? .overflow : .acquisitionRefused); return
@@ -383,9 +389,9 @@ nonisolated struct PlayerTracker: Sendable {
       let distance = proximity(prior.latest, person), distance <= policy.positionGate,
       shapeDifference(prior.latest, person).map({ $0 <= policy.maximumLogScaleChange }) == true {
       if source.capturedAt - prior.since >= policy.acquisitionDwell {
+        if relink { slots[0].identityAmbiguous = false; slots[0].previous = nil }
         confirm(0, descriptor: person, cost: 0)
-        lastBoundGeneration = source.context.generation
-        armed = false
+        if !relink { lastBoundGeneration = source.context.generation; armed = false }
       } else {
         slots[0].provisional = Provisional(since: prior.since, latest: person)
         slots[0].reason = .acquiring

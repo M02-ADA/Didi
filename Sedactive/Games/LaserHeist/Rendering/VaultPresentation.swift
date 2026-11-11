@@ -121,6 +121,10 @@ final class VaultPresentation {
     private var anchor: Float?
     private var shownButtons: [PlayerID: Set<LaserVaultButton>] = [:]
     private var completedSides: Set<PlayerID> = []
+    /// The players whose button column is shown: both, or P1 alone in a DEBUG Solo Test.
+    var visiblePlayers: Set<PlayerID> = Set(PlayerID.allCases) {
+        didSet { for (player, parts) in indicators { for p in parts.values { p.part.isEnabled = visiblePlayers.contains(player) } } }
+    }
     private var succeeded: Set<UUID> = []
     private var failed: Set<UUID> = []
     private var openedID: UUID?
@@ -396,7 +400,8 @@ final class VaultPresentation {
                 diagnostics.activations += 1
             }
             shownButtons[player] = now
-            if now.count == LaserVaultButton.allCases.count, completedSides.insert(player).inserted,
+            if now.count == LaserVaultButton.allCases.count, visiblePlayers.contains(player),
+               completedSides.insert(player).inserted,
                let outline = outlines[player] {
                 outline.isEnabled = true
                 if !reducesMotion() {

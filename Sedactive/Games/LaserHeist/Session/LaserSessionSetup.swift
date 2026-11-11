@@ -236,10 +236,11 @@ final class LaserSessionSetup {
         if roster.contains(where: { tracking.latest?[$0].requiresRebind == true }) {
             confirmed = nil; candidateTicket = nil; calibrationRequest = nil; calibrationRevision = nil
             #if DEBUG
-            print("[LaserSetupRestart] setup: rebind required · " + roster.map { id in
+            // Once per transition (it re-evaluates on every status read).
+            if phase != .restartRequired { print("[LaserSetupRestart] setup: rebind required · " + roster.map { id in
                 let slot = tracking.latest?[id]
                 return "\(id.rawValue) \(slot?.state.rawValue ?? "-")/\(slot?.reason.rawValue ?? "-")"
-            }.joined(separator: ", ") + " · people \(controls.peopleInView ?? -1) · \(controls.debugVision)")
+            }.joined(separator: ", ") + " · people \(controls.peopleInView ?? -1) · \(controls.debugVision)") }
             #endif
             phase = .restartRequired
             return

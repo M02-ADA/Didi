@@ -32,6 +32,44 @@ import Testing
         }
     }
 
+    /// iPad, 11 November 2026: walking to the iPad lost P1 for good, so the mascot froze for the
+    /// rest of the round. In a Solo Test a lost P1 is re-linked by the solo linking rule (exactly
+    /// one person, held for the dwell) in the same binding; two people never re-link anyone.
+    @Test func aLostSoloPlayerIsRelinkedOnlyWhenAloneInView() throws {
+        var tracker = try Self.soloTracker()
+        var t = 1.0, frame: UInt64 = 0
+        func step(_ people: [PoseCandidate]) throws -> PlayerTrackingSnapshot {
+            frame += 1; t += 0.1
+            return try tracker.process(F.input(frame, t, people))
+        }
+        for _ in 0..<4 { _ = try step([F.candidate(10, x: 0.5)]) }
+        #expect(tracker.snapshot.player1.state == .tracking)
+        // Out of view long enough to be lost (recovery window).
+        for _ in 0..<30 { _ = try step([]) }
+        #expect(tracker.snapshot.player1.state == .lost && tracker.snapshot.player1.requiresRebind)
+        // Two people: still lost, no guessing.
+        for _ in 0..<5 { _ = try step(F.pair) }
+        #expect(tracker.snapshot.player1.state == .lost)
+        // Back alone, somewhere else: one dwell later P1 is tracked again, rebind cleared.
+        var r = try step([F.candidate(30, x: 0.3)])
+        #expect(r.player1.state == .lost)
+        for _ in 0..<3 { r = try step([F.candidate(30, x: 0.3)]) }
+        #expect(r.player1.state == .tracking && r.player1.candidateID == 30 && !r.player1.requiresRebind)
+        #expect(r.player2.state == .unbound, "no teammate is fabricated")
+    }
+
+    @Test func aLostCoopPlayerIsNeverRelinkedByTheTracker() throws {
+        var tracker = try PlayerTracker(policy: F.policy())
+        try tracker.reset(context: F.context(), controlRevision: 1)
+        try tracker.armBinding(controlRevision: 1)
+        var t = 1.0, frame: UInt64 = 0
+        for _ in 0..<4 { frame += 1; t += 0.1; _ = try tracker.process(F.input(frame, t, F.pair)) }
+        #expect(tracker.snapshot.player1.state == .tracking)
+        for _ in 0..<30 { frame += 1; t += 0.1; _ = try tracker.process(F.input(frame, t, [])) }
+        for _ in 0..<6 { frame += 1; t += 0.1; _ = try tracker.process(F.input(frame, t, [F.candidate(30, x: 0.3)])) }
+        #expect(tracker.snapshot.player1.state == .lost, "co-op identity loss still needs a new setup")
+    }
+
     @Test func soloRefusesTwoPeopleAndCoopStillRefusesOne() throws {
         var solo = try Self.soloTracker()
         for i in 1...4 {
@@ -102,23 +140,32 @@ import Testing
         #expect(solo.targets.map(\.playerID) == [.player1])
     }
 
-    /// The practice uses the same schedule and game: P1's lasers judged from P1's evidence,
-    /// no vault (co-op), each minute straight into the next, then it ends.
-    @Test func soloPracticeRunsP1LasersWithoutVaultsAndEnds() throws {
+    private static func soloRound(segment: Double = 15) throws
+        -> (director: LaserLiveRoundDirector, game: LaserGame, context: BodyInputContext, revision: UInt64) {
         let script = try LaserReplayScript.load()
         let input = script.input.configuration
         let calibration = try #require(input.calibrations[.player1])
         let configuration = try LaserFullReplayPlan.roundConfiguration()
-        var director = try LaserLiveRoundDirector(calibrations: [.player1: calibration], layout: input.playerPlaneLayout,
-            configuration: configuration, seed: 3, segmentLength: 15, roster: [.player1])
-        #expect(director.isSolo && director.baseEncounters.allSatisfy { $0.targets.map(\.playerID) == [.player1] })
+        let director = try LaserLiveRoundDirector(calibrations: [.player1: calibration], layout: input.playerPlaneLayout,
+            configuration: configuration, seed: 3, segmentLength: segment, roster: [.player1])
         let context = BodyInputContext(sessionGeneration: input.sessionGeneration,
             cameraGeometryRevision: script.input.cameraGeometryRevision,
             calibrationRevisions: [.player1: calibration.revision], cutovers: [:], isActive: true, wristContact: nil)
         var game = try LaserGame(configuration: configuration, context: context, historyCapacityPerPlayer: 120)
-        var registered = 0, vaults = 0, diamonds: [LaserDiamondSpawn] = []
+        game.soloPracticePlayer = .player1
+        return (director, game, context, calibration.revision)
+    }
+
+    /// The whole DEBUG Solo Test round on the same schedule and game: P1's lasers, a P1-only
+    /// gate after every minute (three P1 presses open it), Diamond Time after the fifth, then
+    /// the round completes with a summary for Results. No body evidence is given, so no laser
+    /// is CLEAR and nothing is scored from movement.
+    @Test func soloRoundPlaysEveryGateThroughDiamondTimeToResults() throws {
+        var (director, game, context, revision) = try Self.soloRound()
+        #expect(director.isSolo && director.baseEncounters.allSatisfy { $0.targets.map(\.playerID) == [.player1] })
+        var registered = 0, gates: [Double] = [], diamonds: [LaserDiamondSpawn] = []
         var time = 0.0
-        while time < 90, game.roundOutcome == nil {
+        while time < 200, game.roundOutcome == nil {
             time += 0.05
             while let due = try director.nextDue(through: time, game: game) {
                 try game.advance(to: max(game.gameTime, due.time))
@@ -126,18 +173,98 @@ import Testing
                 case .register(let encounter): try game.register(encounter); registered += 1
                 case .normalDiamond(let spawn, let boundary):
                     try game.spawnNormalDiamonds([spawn], beforeVaultAt: boundary); diamonds.append(spawn)
-                case .openVault: vaults += 1
+                case .openVault(let id, let zones):
+                    #expect(zones.count == 3 && zones.allSatisfy { $0.playerID == .player1 }, "P1's three buttons only")
+                    try game.openVault(id: id, at: game.gameTime)
+                    gates.append(game.gameTime)
+                    // Two presses do not open it; the third (P1's last) does.
+                    try game.touchVaultBatch(id: id, contacts: [.init(playerID: .player1, button: .top, calibrationRevision: revision),
+                        .init(playerID: .player1, button: .middle, calibrationRevision: revision)],
+                        generation: context.sessionGeneration, at: game.gameTime + 0.5)
+                    #expect(game.roundPhase == .vault && game.vault?.opened == false)
+                    try game.touchVaultBatch(id: id, contacts: [.init(playerID: .player1, button: .bottom, calibrationRevision: revision)],
+                        generation: context.sessionGeneration, at: game.gameTime + 0.5)
+                    #expect(game.vault?.opened == true && game.missionProgress == gates.count)
                 }
             }
-            try game.advance(to: time)
-            if director.isFinishedPlanning, game.isEveryRegisteredEncounterSettled, game.activeDiamonds.isEmpty { break }
+            if game.roundPhase == .diamondTime, !game.hasStartedDiamondTimeDiamonds {
+                try game.startDiamondTimeDiamonds(try director.diamondTimeSpawns(at: game.gameTime,
+                    deadline: game.gameTime + LaserRoundConfiguration.defaultDiamondTimeDuration))
+            }
+            try game.advance(to: max(time, game.gameTime))
         }
-        #expect(vaults == 0 && registered == director.baseEncounters.count && registered > 0)
-        #expect(director.isFinishedPlanning, "five short minutes, then the practice is over")
+        #expect(gates.count == 5 && game.missionProgress == 5 && registered == director.baseEncounters.count)
+        #expect(game.roundOutcome == .completed)
+        let summary = try #require(game.summary, "Results has a summary")
+        #expect(summary.vaultsOpened == 5 && summary.teamScore == 0)
         #expect(diamonds.allSatisfy { $0.eligiblePlayers == [.player1] })
-        // No evidence was given: every P1 laser is UNAVAILABLE, never CLEAR; no teammate stats.
-        #expect(game.playerStats[.player1]?.cleared == 0 && game.playerStats[.player1]?.hit == 0)
+        #expect(game.playerStats[.player1]?.cleared == 0, "no evidence: never CLEAR")
         #expect(game.playerStats[.player2] == nil)
+    }
+
+    /// Co-op is unchanged: P1's three presses never open a co-op vault on their own.
+    @Test func coopVaultStillNeedsBothPlayers() throws {
+        let script = try LaserReplayScript.load()
+        let input = script.input.configuration
+        let context = BodyInputContext(sessionGeneration: input.sessionGeneration,
+            cameraGeometryRevision: script.input.cameraGeometryRevision,
+            calibrationRevisions: [.player1: 1, .player2: 1], cutovers: [:], isActive: true, wristContact: nil)
+        var game = try LaserGame(configuration: try LaserFullReplayPlan.roundConfiguration(), context: context,
+                                 historyCapacityPerPlayer: 120)
+        #expect(game.soloPracticePlayer == nil)
+        let id = UUID()
+        try game.openVault(id: id, at: 1)
+        try game.touchVaultBatch(id: id, contacts: LaserVaultButton.allCases.map { .init(playerID: .player1, button: $0, calibrationRevision: 1) },
+                                 generation: input.sessionGeneration, at: 1.5)
+        #expect(game.vault?.opened == false && game.missionProgress == 0)
+        try game.touchVaultBatch(id: id, contacts: LaserVaultButton.allCases.map { .init(playerID: .player2, button: $0, calibrationRevision: 1) },
+                                 generation: input.sessionGeneration, at: 2)
+        #expect(game.vault?.opened == true && game.missionProgress == 1)
+    }
+
+    /// "Skip to Next Gate" shortens the current minute only: unregistered lasers and diamonds
+    /// are dropped (never judged or scored), registered ones are still judged, the gate comes
+    /// due five game seconds later, and repeated taps, an open gate or a co-op round change nothing.
+    @Test func skipToNextGateShortensTheMinuteWithoutScoring() throws {
+        var (director, game, _, _) = try Self.soloRound(segment: 60)
+        var time = 0.0, registered = 0
+        func run(until end: Double) throws -> (id: UUID, at: Double)? {
+            while time < end {
+                time += 0.05
+                while let due = try director.nextDue(through: time, game: game) {
+                    try game.advance(to: max(game.gameTime, due.time))
+                    switch due.action {
+                    case .register(let e): try game.register(e); registered += 1
+                    case .normalDiamond(let s, let b): try game.spawnNormalDiamonds([s], beforeVaultAt: b)
+                    case .openVault(let id, _): try game.openVault(id: id, at: game.gameTime); return (id, game.gameTime)
+                    }
+                }
+                try game.advance(to: time)
+            }
+            return nil
+        }
+        _ = try run(until: 2)
+        let skipped = director.debugSkipToVault(game: game)
+        let skip = try #require(skipped)
+        #expect(skip.droppedLasers > 0 && abs(skip.vaultAt - (game.gameTime + LaserLiveRoundDirector.debugSkipLead)) < 1e-9)
+        let again = director.debugSkipToVault(game: game)
+        #expect(again == nil, "a second tap changes nothing")
+        let gate = try run(until: 30)
+        let opened = try #require(gate, "the gate opens soon after the skip, not at 60 s")
+        #expect(opened.at >= skip.vaultAt - 1e-9 && opened.at < skip.vaultAt + 5)
+        #expect(registered + skip.droppedLasers == director.baseEncounters.filter {
+            Int($0.targets[0].crossingTime / 60) == 0 }.count, "every minute-1 laser is either played or dropped")
+        #expect(game.teamScore == 0 && game.playerStats[.player1]?.cleared ?? 0 == 0, "nothing scored by skipping")
+        let during = director.debugSkipToVault(game: game)
+        #expect(during == nil, "no skip while the gate is open")
+        // Co-op directors never skip.
+        let script = try LaserReplayScript.load()
+        let input = script.input.configuration
+        let coop = try LaserLiveRoundDirector(calibrations: input.calibrations, layout: input.playerPlaneLayout,
+            configuration: try LaserFullReplayPlan.roundConfiguration(), seed: 3)
+        var coopDirector = coop
+        let coopSkip = coopDirector.debugSkipToVault(game: game)
+        #expect(coopSkip == nil)
     }
 
     @Test func aSoloLaserHitCostsHealthFromP1Alone() throws {

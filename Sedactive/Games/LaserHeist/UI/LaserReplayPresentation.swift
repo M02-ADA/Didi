@@ -39,6 +39,8 @@ final class LaserReplayPresentation {
         #endif
         presenter = GameplayScenePresenter(scene: scene, configuration: configuration,
                                            encounters: session.plannedEncounters, showsDebugMarkers: markers)
+        // A DEBUG Solo Test vault shows P1's buttons only (its roster); co-op shows both.
+        presenter?.vault.visiblePlayers = Set(session.inputConfiguration.roster)
         // Sound follows what the presenter shows; the round's music joins in.
         presenter?.onSound = { AudioService.shared.play($0) }
         AudioService.shared.preloadEffects()
