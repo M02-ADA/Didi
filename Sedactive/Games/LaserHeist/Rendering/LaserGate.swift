@@ -16,11 +16,17 @@ import UIKit
 /// core is exactly the band (`setBandHeight`), and nothing animates its height.
 /// The decorative layers follow one rule. A miss is judged at one edge only:
 /// a DUCK clears below the band's lower edge, and a JUMP clears above its
-/// upper edge (`LaserCollisionJudge`). So glow, tracer lines and the curtain
-/// may spread only to the danger side (`setDangerSide`). On the safe side, a
+/// upper edge (`LaserCollisionJudge`). So the beam's glow may spread only to
+/// the danger side (`setDangerSide`). On the safe side, a
 /// faint fringe of at most `safeFringe` (the judge's clearance margin) softens
 /// the edge. Rendering never decides a state: callers pass the state that
 /// Jevon's game state implies (TEAM_ALIGNMENT §B).
+///
+/// One gate keeps one identity from far away to the crossing, and its beam
+/// powers on like an energy blade: during the warning the emitters charge,
+/// then the beam extends out of its emitter across the corridor (driven by the
+/// warning's own progress, so it is fully extended exactly when the gate turns
+/// active); after the verdict it retracts back into the emitter.
 ///
 /// State changes animate on RealityKit time, which is cosmetic (TEAM_ALIGNMENT §C).
 /// With Reduce Motion, movement is replaced by fades.
@@ -64,14 +70,11 @@ final class LaserGate {
 
     // Code-built layers.
     private let flash = ModelEntity(mesh: LaserGateArt.unitQuad, materials: [LaserGateArt.flash])
-    private let dashes = ModelEntity(mesh: LaserGateArt.unitQuad, materials: [LaserGateArt.dashes(repeats: 14)])
-    /// Light spill above and below the band (one is the danger halo, the other the safe fringe).
+    /// The warning's beam: the same core, shown faint while it charges (in the `Warning` slot).
+    private let charge = ModelEntity(mesh: LaserGateArt.unitQuad, materials: [LaserGateArt.core])
+    /// Light spill above and below the band (one is the danger-side glow, the other the safe fringe).
     private let upperSpill = ModelEntity(mesh: LaserGateArt.unitQuad, materials: [LaserGateArt.halo])
     private let lowerSpill = ModelEntity(mesh: LaserGateArt.unitQuad, materials: [LaserGateArt.halo])
-    /// Danger-side curtain: a faint sheet and two tracer lines beyond the band.
-    private let curtain = Entity()
-    private let sheet = ModelEntity(mesh: LaserGateArt.unitQuad, materials: [LaserGateArt.sheet])
-    private let tracers = (0..<2).map { _ in ModelEntity(mesh: LaserGateArt.unitQuad, materials: [LaserGateArt.tracer]) }
     private let floorLight = ModelEntity(mesh: LaserGateArt.unitQuad, materials: [LaserGateArt.floorLight])
     /// Where two players' halves meet at different heights, the beam steps between them here.
     private let riser = Entity()
@@ -88,6 +91,8 @@ final class LaserGate {
     private var emittersShown = (left: true, right: true)
     private var ringPulses: [AnimationPlaybackController] = []
     private var warningProgress: Float = 0
+    /// How much of the span the warning's beam covers right now (0…1).
+    private var reach: Float = 0
 
     private struct Emitter {
         /// -1 for the left wall, +1 for the right.
@@ -141,15 +146,11 @@ final class LaserGate {
         glow.transform = .identity
         gate.addChild(glow)
         Self.place(flash, size: [coreSize.x, coreSize.y], at: [0, 0, 0.002], in: beam)
-        Self.place(dashes, size: [coreSize.x, coreSize.y], at: .zero, in: warning)
+        Self.place(charge, size: [coreSize.x, coreSize.y], at: .zero, in: warning)
         for (part, z) in [(upperSpill, -0.004), (lowerSpill, -0.004)] as [(Entity, Float)] {
             part.position.z = z
             glow.addChild(part)
         }
-        curtain.position.z = -0.003
-        glow.addChild(curtain)
-        curtain.addChild(sheet)
-        for tracer in tracers { curtain.addChild(tracer) }
         floorLight.orientation = simd_quatf(angle: -.pi / 2, axis: [1, 0, 0])
         glow.addChild(floorLight)
         riser.addChild(riserSpill)
@@ -227,7 +228,7 @@ final class LaserGate {
         layout()
     }
 
-    /// Sizes the solid core (and the dashed warning) to the judged band height in meters.
+    /// Sizes the solid core (and the warning's charging beam) to the judged band height in meters.
     func setBandHeight(_ height: Float) {
         guard height != bandHeight else { return }
         bandHeight = height
@@ -272,42 +273,89 @@ final class LaserGate {
     /// The riser is left out: it sits in the gap between the lanes.
     var decorationReach: (below: Float, above: Float) {
         var low: Float = 0, high: Float = 0
-        for part in [upperSpill, lowerSpill, packet, sheet] + tracers where part.isEnabled {
-            let parentY = part.parent === curtain ? curtain.position.y : 0
+        for part in [upperSpill, lowerSpill, packet] where part.isEnabled {
             let half = abs(part.scale.y) / 2
-            low = min(low, parentY + part.position.y - half)
-            high = max(high, parentY + part.position.y + half)
+            low = min(low, part.position.y - half)
+            high = max(high, part.position.y + half)
         }
         return (max(0, -bandHeight / 2 - low), max(0, high - bandHeight / 2))
     }
 
     // MARK: - States
 
+    /// Where in the warning the beam starts to extend; before it the emitters only charge.
+    static let extensionStart: Float = 0.7
+    /// The glowing stub at the aperture while the emitter charges (meters).
+    static let stubLength: Float = 0.08
+
     /// How close the warning is to turning active, from 0 (warning shown) to 1
-    /// (beam goes solid). Callers derive it from Jevon's warning and cue times.
-    /// The charge builds as it rises: the dashes brighten, the rings gather
-    /// faster, the lenses heat up and light starts to spill.
+    /// (the gate turns active). Callers derive it from Jevon's warning and cue
+    /// times, so the ignition is deterministic and needs no clock of its own:
+    /// - Charge (0 … `extensionStart`): the rings gather faster, the lenses heat
+    ///   up, light pools on the walls; only a short glowing stub sits at the aperture.
+    /// - Extension (`extensionStart` … 1): the beam grows out of the emitter
+    ///   across the corridor with a white-hot tip, eased out (fast start, gentle
+    ///   arrival), reaching the far wall exactly as the gate turns active.
     func setWarningProgress(_ progress: Float) {
         warningProgress = min(max(progress, 0), 1)
         guard state == .warning else { return }
         let p = warningProgress
-        warning.components.set(OpacityComponent(opacity: 0.5 + 0.5 * p))
+        let charge = min(1, p / Self.extensionStart)
+        let t = max(0, (p - Self.extensionStart) / (1 - Self.extensionStart))
+        let extended = 1 - pow(1 - t, 3)
+        let stub = min(1, Self.stubLength / max(spanLength, 0.01))
         for pulse in ringPulses {
-            pulse.speed = 1 + 1.6 * p
+            pulse.speed = 1 + 1.6 * charge
         }
         if Self.reduceMotion {
-            for emitter in emitters { emitter.ring.components.set(OpacityComponent(opacity: 0.4 + 0.6 * p)) }
+            for emitter in emitters { emitter.ring.components.set(OpacityComponent(opacity: 0.4 + 0.6 * charge)) }
         }
         for emitter in emitters {
-            emitter.active.components.set(OpacityComponent(opacity: 0.55 + 0.45 * p))
-            emitter.splash.components.set(OpacityComponent(opacity: 0.35 + 0.65 * p * p))
+            emitter.active.components.set(OpacityComponent(opacity: 0.55 + 0.45 * charge))
+            emitter.splash.components.set(OpacityComponent(opacity: 0.35 + 0.65 * charge * charge))
         }
-        // Charge-up: light gathers on the danger side, eased in, so ignition reads as earned.
-        showGlow(curtain: false)
-        glow.isEnabled = p > 0
-        glow.components.set(OpacityComponent(opacity: 0.45 * p * p))
-        riser.isEnabled = hasRiser
-        riser.components.set(OpacityComponent(opacity: 0.25 + 0.35 * p))
+        // With Reduce Motion the beam doesn't travel: it fades in at full length.
+        reach = Self.reduceMotion ? (t > 0 ? 1 : stub) : stub + (1 - stub) * extended
+        let brightness: Float = Self.reduceMotion && t > 0 ? 0.35 + 0.65 * extended : 0.45 + 0.55 * max(charge * charge, extended)
+        showBeam(reach: reach, opacity: brightness)
+        // The glow travels with the beam.
+        showGlow()
+        floorLight.isEnabled = false
+        glow.components.set(OpacityComponent(opacity: 0.9 * extended))
+        layoutSpills(reach: reach)
+        // The white-hot tip leads the extension.
+        packet.isEnabled = t > 0 && t < 1 && !Self.reduceMotion
+        packet.position.x = originX - originSide * reach * spanLength
+        packet.scale = [0.22, bandHeight, 1]
+        packet.components.set(OpacityComponent(opacity: 1))
+        riser.isEnabled = hasRiser && extended > 0.98
+    }
+
+    /// The warning's beam at `reach` of the span, anchored at the emitter.
+    private func showBeam(reach: Float, opacity: Float) {
+        warning.isEnabled = true
+        warning.transform = beamTransform(reach: reach)
+        warning.components.set(OpacityComponent(opacity: opacity))
+    }
+
+    /// A beam slot covering `reach` of the span from the emitter end (beam-local units).
+    private func beamTransform(reach: Float) -> Transform {
+        var transform = restTransforms[warning.id] ?? Transform()
+        let r = max(reach, 0.001)
+        transform.scale.x *= r
+        transform.translation.x += originSide * (1 - r) * authoredBeamSize.x / 2
+        return transform
+    }
+
+    /// The glow's spills covering `reach` of the span from the emitter end.
+    private func layoutSpills(reach: Float) {
+        let sizes = spillSizes, r = max(reach, 0.001)
+        for (part, upper, height) in [(upperSpill, true, sizes.upper), (lowerSpill, false, sizes.lower)] {
+            var transform = spillRest(upper: upper, height: height)
+            transform.scale.x = r
+            transform.translation.x = originSide * (1 - r) / 2
+            part.transform = transform
+        }
     }
 
     func setState(_ newState: VisualState) {
@@ -319,7 +367,8 @@ final class LaserGate {
         case .inactive: 0.5
         default: 1
         }
-        let litWarning: Float? = state == .warning ? 0.5 + 0.5 * warningProgress : nil
+        let litWarning: Float? = state == .warning ? 1 : nil
+        let shownReach = state == .warning ? reach : (beamWasOn ? 1 : 0)
         state = newState
         for part in animatedSlots + codeLayers {
             reset(part)
@@ -339,10 +388,9 @@ final class LaserGate {
                 emitter.splash.components.set(OpacityComponent(opacity: 0.5))
             }
         case .warning:
-            // The dashed targeting line draws out of the emitter while energy gathers into it.
+            // The emitters charge, then the beam extends (`setWarningProgress`).
             showEmitters()
             warning.isEnabled = true
-            sweepIn(warning, duration: 0.32)
             for emitter in emitters {
                 emitter.ring.isEnabled = true
                 if let gather = play(Self.gather(emitter.ring.transform), on: emitter.ring) {
@@ -353,7 +401,7 @@ final class LaserGate {
         case .active, .hit:
             showEmitters()
             core.isEnabled = true
-            showGlow(curtain: true)
+            showGlow()
             riser.isEnabled = hasRiser
             if newState == .hit {
                 // A zap, not a celebration: the core flashes white, the light flares, the emitters spark.
@@ -366,11 +414,20 @@ final class LaserGate {
                     fade(emitter.splash, from: 1, to: 0.8, duration: 0.22)
                 }
             } else if !beamWasOn {
-                // Ignition, front-loaded: the core fires out of the emitter, then
-                // the light and the curtain follow, the lenses flash, light hits the floor.
-                sweepIn(core, duration: 0.12)
-                sweepSpill(duration: 0.2, flare: 1.7)
-                sweepCurtain(duration: 0.26, delay: 0.05)
+                // Armed: the extended beam settles into its full look with a soft
+                // bloom; the lenses pop and light reaches the floor. If the warning
+                // ended before the beam reached the far wall, it finishes extending
+                // at once (0.12 s), so it is complete while it can hit anyone.
+                if shownReach < 0.999, let rest = restTransforms[core.id] {
+                    var from = rest
+                    let r = max(shownReach, 0.001)
+                    from.scale.x *= r
+                    from.translation.x += originSide * (1 - r) * authoredBeamSize.x / 2
+                    settle(core, from: from, to: rest, duration: 0.12, timing: .easeOut)
+                }
+                flash.isEnabled = true
+                fade(flash, from: 0.3, to: 0, duration: 0.14)
+                flareSpill(height: 1.4, duration: 0.22)
                 fade(floorLight, from: 0, to: floorLightOpacity, duration: 0.2)
                 fade(riser, from: 0, to: 1, duration: 0.14)
                 for emitter in emitters {
@@ -397,20 +454,22 @@ final class LaserGate {
                     }
                 }
             }
-            if let litWarning {
-                warning.isEnabled = true
-                fade(warning, from: litWarning, to: 0, duration: 0.2)
-            }
-            if beamWasOn {
-                core.isEnabled = true
-                showGlow(curtain: true)
+            if beamWasOn || (litWarning != nil && shownReach > 0) {
+                // Retraction: the beam pulls back into its emitter as it fades (the
+                // warning slot carries it: the same core, so nothing swaps), the glow
+                // follows and a last streak drains into the lens. With Reduce Motion
+                // it fades in place.
+                let rest = beamTransform(reach: shownReach)
+                showBeam(reach: shownReach, opacity: 1)
+                settle(warning, from: rest, to: Self.reduceMotion ? rest : beamTransform(reach: 0), duration: 0.25, timing: .easeIn)
+                fade(warning, from: litWarning == nil ? 1 : 0.9, to: 0, duration: 0.25)
+                showGlow()
+                floorLight.isEnabled = beamWasOn && floorLightOpacity > 0
                 riser.isEnabled = hasRiser
-                fade(core, from: 1, to: 0, duration: 0.22)
-                fade(glow, from: 1, to: 0, duration: 0.2)
-                fade(curtain, from: 1, to: 0, duration: 0.14)
-                fade(riser, from: 1, to: 0, duration: 0.2)
-                collapseSpill(duration: 0.2)
-                drainPacket(duration: 0.2)
+                fade(glow, from: beamWasOn ? 1 : 0.9, to: 0, duration: 0.22)
+                fade(riser, from: 1, to: 0, duration: 0.18)
+                retractSpills(from: shownReach, duration: 0.22)
+                if beamWasOn { drainPacket(duration: 0.22) }
             }
         }
     }
@@ -422,6 +481,8 @@ final class LaserGate {
     /// The emitter end of the beam: the wall whose emitter is shown (left when both are).
     private var originSide: Float { emittersShown.left || !emittersShown.right ? -1 : 1 }
     private var innerX: Float { originSide < 0 ? span.upperBound : span.lowerBound }
+    /// The emitter end of the span, where the beam extends from and retracts into.
+    private var originX: Float { originSide < 0 ? span.lowerBound : span.upperBound }
     /// Only a beam running near the floor (a JUMP) lights it; a DUCK beam high up
     /// leaves the floor dark, so no red smudges collect around the mascots' legs.
     private var floorLightOpacity: Float {
@@ -435,12 +496,20 @@ final class LaserGate {
         let lower: Float
     }
 
-    /// Danger-side halo against safe-side fringe, in meters beyond each band edge.
+    /// How far the danger-side glow reaches past the band: one soft bloom that
+    /// merges into the core, not separate lines.
+    static let dangerGlow: Float = 0.11
+
+
+    /// Danger-side glow against safe-side fringe, in meters beyond each band edge.
+    /// Below a JUMP band the glow stops short of the corridor floor.
     private var spillSizes: SpillSizes {
         switch dangerSide {
-        case .above: SpillSizes(upper: 0.05, lower: Self.safeFringe)
-        case .below: SpillSizes(upper: Self.safeFringe, lower: 0.05)
-        case .both: SpillSizes(upper: 0.035, lower: 0.035)
+        case .above: return SpillSizes(upper: Self.dangerGlow, lower: Self.safeFringe)
+        case .below:
+            let room = floorDrop.map { max(Self.safeFringe, $0 - bandHeight / 2 - 0.02) } ?? Self.dangerGlow
+            return SpillSizes(upper: Self.safeFringe, lower: min(Self.dangerGlow, room))
+        case .both: return SpillSizes(upper: 0.06, lower: 0.06)
         }
     }
 
@@ -453,10 +522,6 @@ final class LaserGate {
         emitters[1].mount.isEnabled = emittersShown.right
         beam.position.x = centerX
         beam.scale = [spanLength / authoredBeamSize.x, bandHeight / authoredBeamSize.y, 1]
-        if var model = dashes.components[ModelComponent.self] {
-            model.materials = [LaserGateArt.dashes(repeats: (spanLength / LaserGateArt.dashPeriod).rounded())]
-            dashes.components.set(model)
-        }
         glow.position = [centerX, 0, 0]
         glow.scale = [spanLength, 1, 1]
         let sizes = spillSizes
@@ -464,7 +529,6 @@ final class LaserGate {
         lowerSpill.transform = spillRest(upper: false, height: sizes.lower)
         upperSpill.components.set(OpacityComponent(opacity: dangerSide == .below ? 0.7 : 1))
         lowerSpill.components.set(OpacityComponent(opacity: dangerSide == .above ? 0.7 : 1))
-        layoutCurtain()
         if let floorDrop {
             floorLight.position = [0, -floorDrop + 0.004, 0]
             floorLight.scale = [1, 3, 1]
@@ -497,26 +561,6 @@ final class LaserGate {
         return transform
     }
 
-    /// The danger-side curtain: two tracer lines and a sheet beyond the far edge.
-    /// For a JUMP it stops above the floor; previews (`.both`) have none.
-    private func layoutCurtain() {
-        guard dangerSide != .both else { return }
-        let sign: Float = dangerSide == .above ? 1 : -1
-        let edge = bandHeight / 2
-        // Room below a JUMP band before the floor.
-        let room = dangerSide == .below ? max(0, (floorDrop ?? .infinity) - edge - 0.03) : .infinity
-        for (index, tracer) in tracers.enumerated() {
-            let gap = 0.065 * Float(index + 1)
-            tracer.isEnabled = gap + 0.007 <= room
-            tracer.position = [0, sign * (edge + gap), 0]
-            tracer.scale = [1, 0.016, 1]
-            tracer.components.set(OpacityComponent(opacity: index == 0 ? 0.8 : 0.5))
-        }
-        let sheetHeight = min(0.15, room)
-        sheet.isEnabled = sheetHeight > 0.02
-        sheet.transform = spillRest(upper: sign > 0, height: sheetHeight)
-    }
-
     // MARK: - Animation
 
     private var animatedSlots: [Entity] {
@@ -524,7 +568,7 @@ final class LaserGate {
     }
 
     private var codeLayers: [Entity] {
-        [flash, curtain, floorLight, riser, packet, upperSpill, lowerSpill] + emitters.flatMap { [$0.flare, $0.splash] }
+        [flash, floorLight, riser, packet, upperSpill, lowerSpill] + emitters.flatMap { [$0.flare, $0.splash] }
     }
 
     private static var reduceMotion: Bool { UIAccessibility.isReduceMotionEnabled }
@@ -539,14 +583,12 @@ final class LaserGate {
         part.isEnabled = false
     }
 
-    /// Shows the light around the beam: both spills, the floor light and, on
-    /// request, the danger-side curtain (never for a preview with no danger side).
-    private func showGlow(curtain showsCurtain: Bool) {
+    /// Shows the light around the beam: both spills and the floor light.
+    private func showGlow() {
         glow.isEnabled = true
         upperSpill.isEnabled = true
         lowerSpill.isEnabled = true
         floorLight.isEnabled = floorLightOpacity > 0
-        curtain.isEnabled = showsCurtain && dangerSide != .both
     }
 
     private func showEmitters() {
@@ -555,36 +597,6 @@ final class LaserGate {
             emitter.flare.isEnabled = true
             emitter.splash.isEnabled = true
         }
-    }
-
-    /// Grows a beam slot out of the emitter. Only its width and x position
-    /// animate, so the core's height (the band) never changes.
-    private func sweepIn(_ part: Entity, duration: TimeInterval) {
-        guard let rest = restTransforms[part.id] else { return }
-        var from = rest
-        from.scale.x = 0.001
-        from.translation.x += originSide * authoredBeamSize.x / 2
-        settle(part, from: from, to: rest, duration: duration, timing: .easeOut)
-    }
-
-    /// The spill follows the core out of the emitter, briefly flared on its danger side.
-    private func sweepSpill(duration: TimeInterval, flare: Float) {
-        let sizes = spillSizes
-        for (part, upper, height) in [(upperSpill, true, sizes.upper), (lowerSpill, false, sizes.lower)] {
-            let rest = spillRest(upper: upper, height: height)
-            var from = spillRest(upper: upper, height: height * (height > Self.safeFringe ? flare : 1))
-            from.scale.x = 0.001
-            from.translation.x = originSide * 0.5
-            settle(part, from: from, to: rest, duration: duration, timing: .easeOut)
-        }
-    }
-
-    private func sweepCurtain(duration: TimeInterval, delay: TimeInterval) {
-        guard curtain.isEnabled else { return }
-        var from = Transform()
-        from.scale.x = 0.001
-        from.translation.x = originSide * 0.5
-        settle(curtain, from: from, to: Transform(), duration: duration, timing: .easeOut, delay: delay)
     }
 
     /// A HIT: the danger-side light flares and settles; the safe fringe stays put.
@@ -596,12 +608,19 @@ final class LaserGate {
         }
     }
 
-    /// Power-down: the light shrinks back onto the band as it fades.
-    private func collapseSpill(duration: TimeInterval) {
-        let sizes = spillSizes
-        for (part, upper, size) in [(upperSpill, true, sizes.upper), (lowerSpill, false, sizes.lower)] {
-            settle(part, from: spillRest(upper: upper, height: size), to: spillRest(upper: upper, height: size * 0.25),
-                   duration: duration, timing: .easeIn)
+    /// Retraction: the glow shrinks back toward the emitter with the beam.
+    private func retractSpills(from reach: Float, duration: TimeInterval) {
+        let sizes = spillSizes, r = max(reach, 0.001)
+        for (part, upper, height) in [(upperSpill, true, sizes.upper), (lowerSpill, false, sizes.lower)] {
+            var from = spillRest(upper: upper, height: height)
+            from.scale.x = r
+            from.translation.x = originSide * (1 - r) / 2
+            var to = from
+            if !Self.reduceMotion {
+                to.scale.x = 0.001
+                to.translation.x = originSide * 0.5
+            }
+            settle(part, from: from, to: to, duration: duration, timing: .easeIn)
         }
     }
 
@@ -618,7 +637,7 @@ final class LaserGate {
         let sizes = spillSizes
         for (part, upper, size) in [(upperSpill, true, sizes.upper), (lowerSpill, false, sizes.lower)] where size > Self.safeFringe {
             let swell = FromToByAnimation(from: spillRest(upper: upper, height: size),
-                                          to: spillRest(upper: upper, height: size * 1.35), duration: 0.9,
+                                          to: spillRest(upper: upper, height: size * 1.2), duration: 0.9,
                                           timing: .easeInOut, bindTarget: .transform, repeatMode: .autoReverse)
             if let resource = try? AnimationResource.generate(with: swell).repeat() {
                 part.playAnimation(resource, handoffType: .compose)

@@ -44,6 +44,11 @@ struct LaserWorldLayout {
     // judged band comes from Jevon's target geometry through `setLaserBand`.
     var laserHeightAboveFloor: Float = 1.25
     var laserSpawnZ: Float = -22
+    /// Where gameplay gates first come into view, deep in the corridor's haze
+    /// (`CorridorDepth`), so they emerge from far away instead of popping in at
+    /// the spawn point. Presentation only: each gate still meets the players at
+    /// its own crossing time.
+    var laserEmergeZ: Float = -60
     var laserCoreThickness: Float = 0.022
 
     // Forward travel, in meters per second of travelling game time. The
@@ -97,6 +102,14 @@ final class LaserScene {
     private let feedback = LaserFeedback()
     /// Corridor details that stream past; see `advanceTravel(by:)`.
     private var travel: Entity?
+    /// The corridor's atmospheric depth, and every streaming part it fades (with its depth in `travel`).
+    private var corridorDepth: CorridorDepth?
+    private var streaming: [(entity: Entity, z: Float)] = []
+    /// Holds the vault door, so the corridor's haze can fade it without touching its own reveal opacity.
+    private let vaultHaze = Entity()
+    /// The vault keeps a little more presence than the hall: a faint goal
+    /// silhouette at the far end that grows clear as it approaches.
+    static let vaultHazeShare: Float = 0.9
     private var travelLoop: Float = 12
     /// Where the corridor's travel group sits within its loop (tests and debugging).
     private(set) var travelOffset: Float = 0
@@ -123,6 +136,8 @@ final class LaserScene {
     private(set) var liveAvatars: LiveAvatarPresenter?
     /// Wall mount x positions, from the authored `LaserMount_*` anchors when available.
     private var laserSpan: ClosedRange<Float>
+    /// The full wall-to-wall span between the two laser mounts (one shared beam).
+    var fullLaserSpan: ClosedRange<Float> { laserSpan }
 
     var laserWorldZ: Float { laser.worldZ }
 
@@ -221,6 +236,17 @@ final class LaserScene {
         }
         environment.name = "environment"
         root.addChild(environment)
+        let depth = CorridorDepth(layout: layout)
+        root.addChild(depth.root)
+        corridorDepth = depth
+        if let travel {
+            let runway = Entity()
+            runway.name = "RunwayLights"
+            for light in CorridorDepth.runwayLights(layout: layout, span: travelLoop * 7) { runway.addChild(light) }
+            travel.addChild(runway)
+            streaming = travel.children.flatMap { group in group.children.map { ($0, $0.position.z) } }
+            setTravelOffset(travelOffset)
+        }
         if let board = environment.findEntity(named: "Corridor")?.findEntity(named: "Hoverboard"),
            let hoverboard = Hoverboard(entity: board, camera: layout.cameraPosition, backDepth: layout.hoverboardBackZ) {
             self.hoverboard = hoverboard
@@ -259,6 +285,9 @@ final class LaserScene {
             travelOffset += travelLoop
         }
         travel.position.z = travelOffset
+        if let corridorDepth {
+            for item in streaming { corridorDepth.apply(to: item.entity, worldZ: item.z + travelOffset) }
+        }
     }
 
     /// Shows or hides the laser, e.g. for previews without an encounter.
@@ -283,6 +312,7 @@ final class LaserScene {
         }
         hazard.setEmitters(left: player == .player1, right: player == .player2)
         hazard.floorWorldY = layout.corridorFloorY
+        hazard.hazeCameraZ = layout.cameraPosition.z
         hazard.root.isEnabled = false
         laneHazards.append((player, hazard))
         root.addChild(hazard.root)
@@ -405,7 +435,9 @@ final class LaserScene {
         vaultDoor = door
         door.root.name = "vaultDoor"
         door.root.isEnabled = false
-        root.addChild(door.root)
+        vaultHaze.name = "vaultHaze"
+        vaultHaze.addChild(door.root)
+        root.addChild(vaultHaze)
     }
 
     /// All four `VaultButtons` templates, or `nil` if any is missing (the code art shows instead).
@@ -431,6 +463,12 @@ final class LaserScene {
         door.isEnabled = worldZ != nil
         if let worldZ {
             door.position = [0, 0, worldZ]
+            let haze = CorridorDepth.haze(atDistance: layout.cameraPosition.z - worldZ) * Self.vaultHazeShare
+            if haze < 0.001 {
+                vaultHaze.components.remove(OpacityComponent.self)
+            } else {
+                vaultHaze.components.set(OpacityComponent(opacity: 1 - haze))
+            }
         }
     }
 

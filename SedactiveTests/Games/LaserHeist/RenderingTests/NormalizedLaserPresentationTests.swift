@@ -61,3 +61,61 @@ struct NormalizedLaserPresentationTests {
         layer.remove()
     }
 }
+
+/// When both players' drawn bands coincide, the shared laser is ONE gate drawn
+/// from wall to wall (no seam can open between two halves), and its look is
+/// the more urgent of the two players'.
+@MainActor
+struct SharedBeamGateTests {
+    /// The replay slice: both players share every band exactly.
+    private static func setup() throws -> (LaserScene, GameplayScenePresenter, LaserReplayScript, LaserEncounter) {
+        let script = try LaserReplayScript.load()
+        let scene = LaserScene()
+        let presenter = GameplayScenePresenter(scene: scene, configuration: script.configuration, encounters: script.encounters)
+        let duck = try #require(script.encounters.first { $0.targets.allSatisfy { $0.requiredMove == .duck } })
+        return (scene, presenter, script, duck)
+    }
+
+    private static func state(_ script: LaserReplayScript, _ time: Double, judged: [PlayerID: Judgement] = [:],
+                              encounter: LaserEncounter) -> LaserGameState {
+        let judgements = Dictionary(uniqueKeysWithValues: PlayerID.allCases.map {
+            ($0, judged[$0] ?? Judgement.pending(.awaitingFinalization))
+        })
+        return LaserGameState(sessionGeneration: script.input.configuration.sessionGeneration, phase: .activity,
+                              gameTime: time, activityProgress: time, teamHealth: 5, teamScore: 0,
+                              encounters: [LaserEncounterState(encounter: encounter, judgements: judgements, effectsCommitted: false)])
+    }
+
+    private static func key(_ encounter: LaserEncounter, _ player: PlayerID) -> LaserTargetKey {
+        LaserTargetKey(encounterID: encounter.id, attemptID: encounter.attemptID, playerID: player)
+    }
+
+    @Test("Coinciding bands draw one wall-to-wall gate; the partner's half is not drawn")
+    func oneGateWallToWall() throws {
+        let (scene, presenter, script, duck) = try Self.setup()
+        let crossing = try #require(duck.targets.first?.crossingTime)
+        presenter.apply(state: Self.state(script, crossing - 2, encounter: duck), events: [], snapshot: nil)
+        let p1 = try #require(presenter.hazard(for: Self.key(duck, .player1)))
+        let p2 = try #require(presenter.hazard(for: Self.key(duck, .player2)))
+        #expect(presenter.sharedBeams == [Self.key(duck, .player1)])
+        #expect(p1.root.isEnabled && !p2.root.isEnabled)
+        #expect(p1.span == scene.fullLaserSpan && p1.emittersShown.left && p1.emittersShown.right)
+        #expect(p1.joinedBand == nil)
+        // Each player's band is still their own judged band.
+        for target in duck.targets {
+            #expect(presenter.displayedBand(target) == Float(target.beam.lowerY)...Float(target.beam.upperY))
+        }
+    }
+
+    @Test("Either player's HIT flares the one shared gate")
+    func partnerHitFlaresTheSharedGate() throws {
+        let (_, presenter, script, duck) = try Self.setup()
+        let crossing = try #require(duck.targets.first?.crossingTime)
+        presenter.apply(state: Self.state(script, crossing - 0.5, encounter: duck), events: [], snapshot: nil)
+        let p1 = try #require(presenter.hazard(for: Self.key(duck, .player1)))
+        #expect(p1.state == .active)
+        presenter.apply(state: Self.state(script, crossing + 0.3, judged: [.player1: .clear, .player2: .hit(.notAirborne)],
+                                          encounter: duck), events: [], snapshot: nil)
+        #expect(p1.state == .hit)
+    }
+}

@@ -353,12 +353,12 @@ struct GameplayScenePresenterTests {
             clearanceMargin: 0.005, diamondPoints: nil, scheduling: scheduling)
         let schedule = try LaserWaveDirector().schedule(script: LaserWaveBeat.fiveMinuteScript(), calibrations: fixture.calibrations,
                                                         layout: fixture.playerPlaneLayout, configuration: configuration)
-        // A gate is in view about 4.2 s before its crossing, plus 0.35 s to
-        // finalize and 0.5 s to power down: a little over the 5 s spacing, so
-        // two can be visible per player, plus headroom.
+        // A gate emerges from the corridor's haze about 11.5 s before its crossing
+        // (60 m at 5.2 m/s), plus 0.35 s to finalize and 0.5 s to power down: over
+        // two 5 s spacings, so three can be in view per player, plus headroom.
         let capacity = GameplayScenePresenter.capacity(for: schedule.encounters, configuration: configuration,
                                                        approachLead: GameplayScenePresenter.approachLead(in: LaserScene()))
-        #expect(capacity == [.player1: 3, .player2: 3])
+        #expect(capacity == [.player1: 4, .player2: 4])
         // And the director really gives the two players different bands.
         let first = try #require(schedule.encounters.first)
         #expect(first.targets[0].beam != first.targets[1].beam)
@@ -495,10 +495,11 @@ struct GameplayScenePresenterTests {
         try await session.start()
         let scene = LaserScene()
         let presenter = GameplayScenePresenter(scene: scene, configuration: script.configuration, encounters: script.encounters)
-        // Mid-approach of the first laser (crossing at 4 s, warning at 1 s).
+        // Mid-approach of the first laser (crossing at 4 s, warning at 1 s); the
+        // second (crossing at 10 s) is already emerging from the haze about 34 m out.
         for tick in 0...105 { try await session.advance(to: Double(tick) / 30) }
         presenter.apply(state: try #require(session.state), events: session.events, snapshot: session.latestSnapshot)
-        #expect(presenter.visibleHazardCount == 2)
+        #expect(presenter.visibleHazardCount == 4)
         #expect(scene.shownMoveCue != nil)
 
         // End round: the session ends the round, then PlayView stops the presentation.

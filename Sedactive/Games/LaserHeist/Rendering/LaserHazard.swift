@@ -28,6 +28,12 @@ final class LaserHazard {
     private(set) var dangerSide: LaserGate.DangerSide = .both
     /// The partner half's band this half joins at its inner end, if any.
     private(set) var joinedBand: ClosedRange<Float>?
+    /// Past the players, where a gate starts and finishes resolving (meters).
+    static let resolveStart: Float = 0.8
+    static let resolveEnd: Float = 2.6
+    /// The camera's world depth: with it, the gate fades into the corridor's
+    /// haze by distance (`CorridorDepth`), so a far gate emerges from the dark.
+    var hazeCameraZ: Float?
     /// The corridor floor's world height, for the beam's light on the floor.
     var floorWorldY: Float? {
         didSet { applyGeometry() }
@@ -77,6 +83,7 @@ final class LaserHazard {
 
     /// Shows or hides each end's emitter; a lane-local half hides its inner one.
     func setEmitters(left: Bool, right: Bool) {
+        guard emittersShown != (left, right) else { return }
         emittersShown = (left, right)
         applyGeometry()
     }
@@ -105,6 +112,21 @@ final class LaserHazard {
     func setDepth(_ worldZ: Float) {
         root.position = mapping.laserPosition(heightAboveFloor: (band.lowerBound + band.upperBound) / 2, worldZ: worldZ)
         gate?.setFloorDrop(floorWorldY.map { root.position.y - $0 })
+        if let hazeCameraZ {
+            // Far away it emerges from the corridor's haze. After the crossing it keeps
+            // travelling toward the camera and would sweep overhead across the HUD, so it
+            // resolves instead: it fades out between 0.8 m and 2.6 m past the players,
+            // where the presenter hides it anyway (half a meter before the camera).
+            let haze = CorridorDepth.haze(atDistance: hazeCameraZ - worldZ)
+            let past = worldZ - mapping.interactionPlaneZ
+            let t = min(max((past - Self.resolveStart) / (Self.resolveEnd - Self.resolveStart), 0), 1)
+            let opacity = (1 - haze) * (1 - t * t * (3 - 2 * t))
+            if opacity > 0.999 {
+                root.components.remove(OpacityComponent.self)
+            } else {
+                root.components.set(OpacityComponent(opacity: opacity))
+            }
+        }
     }
 
     func setState(_ newState: LaserGate.VisualState) {
