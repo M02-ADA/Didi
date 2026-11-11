@@ -80,6 +80,15 @@ struct LaserHeistIntroView: View {
                 .accessibilityIdentifier("chooseReplay")
                 .accessibilityHint("A sample round with no camera.")
                 #if DEBUG
+                // One real player, P1 (Lemon), for device testing. Co-op stays the game.
+                Button {
+                    AudioService.shared.play(.uiTap)
+                    Task { await flow.startLiveSetup(solo: true) }
+                } label: {
+                    Label("Solo Test (1 Player)", systemImage: "person.fill")
+                }
+                .disabled(!flow.canStartSolo)
+                .accessibilityIdentifier("chooseSoloTest")
                 Button("Camera diagnostics") { flow.showDiagnostics() }
                     .accessibilityIdentifier("cameraDiagnostics")
                 if let onInGameCamera {

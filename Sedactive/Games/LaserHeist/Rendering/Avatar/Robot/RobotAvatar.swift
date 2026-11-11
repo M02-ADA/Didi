@@ -571,6 +571,10 @@ final class RobotAvatarLayer {
     /// developer's decision 10 November 2026; team sign-off still pending), and
     /// the DEBUG `-judgedLaserBands` flag turns it off for A/B comparison.
     var normalizesLaserBands = false
+    /// Live round only: the judge's own CP1 evidence for this player (lower sole, airborne) from a
+    /// capture no older than the pose age limit, so the mascot jumps exactly when the judge would
+    /// clear a JUMP (iPad, 11 November 2026: with no evidence carried it never left the floor).
+    var jumpEvidence: ((PlayerID, _ capturedAt: Double) -> (lowerSoleY: Double?, airborne: Bool)?)?
 
     /// The factor from a player's game-unit heights to their drawn laser
     /// heights, or `nil`: draw the authoritative band as is (candidate off, no
@@ -826,6 +830,10 @@ final class RobotAvatarLayer {
                     robots[player]?.retargeter.setReference(reference)
                 }
                 observation = AvatarPoseAdapter.observation(pose, playerID: player, imageAspect: aspect)
+                if observation?.calibrated == true, let evidence = jumpEvidence?(player, time) {
+                    observation?.lowerSoleY = evidence.lowerSoleY
+                    observation?.airborne = evidence.airborne
+                }
             }
             robots[player]?.retargeter.update(observation, time: time)
             apply(player, time: time)

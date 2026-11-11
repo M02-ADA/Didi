@@ -17,7 +17,7 @@ struct LiveWristSetupControls: View {
                     .accessibilityIdentifier("liveWristCalibrationProgress")
                 Text(progress.reason).font(.caption2)
                 if let candidate = progress.candidate {
-                    Text("\(candidate.hasValidatedAnatomy ? "Validated references" : "EXPERIMENTAL / NOT ACCEPTABLE") · source frame \(candidate.lastFrameID)")
+                    Text("\(candidate.acceptance.isAcceptable ? (candidate.hasValidatedAnatomy ? "Acceptable (validated)" : "Acceptable (stable estimates)") : "NOT ACCEPTABLE") · source frame \(candidate.lastFrameID)")
                         .accessibilityIdentifier("liveWristCandidateQuality")
                 }
                 HStack {
@@ -34,7 +34,7 @@ struct LiveWristSetupControls: View {
                             guard let id = setup.candidateIDForConfirmation else { throw LiveVisionError.unsupportedAnatomy }
                             try setup.confirmCandidate(id:id)
                         }
-                    }.disabled(setup.candidateIDForConfirmation == nil || progress.candidate?.hasValidatedAnatomy != true)
+                    }.disabled(setup.candidateIDForConfirmation == nil || progress.candidate?.acceptance.isAcceptable != true)
                         .accessibilityIdentifier("liveWristAccept")
                 }
                 Text("Contact: \(session.liveWristBlockers.isEmpty && session.phase == .running ? "CURRENT SESSION GATES ONLY" : "REFUSED")")

@@ -29,6 +29,16 @@ nonisolated enum LiveVisionFixtures {
     return .init(source: pose.source, quality: .torsoSupportedGeometryUnverified, regions: regions,
       outputBytes: 64, serviceSeconds: service)
   }
+  /// Head-top 0.9 and soles 0.1 for both players, as the segmenter would attach them.
+  static func withAnatomy(_ mask: PersonMaskObservation, pose: CameraPoseResult, revision: UInt64) -> PersonMaskObservation {
+    var mask = mask
+    for (id, region) in mask.regions {
+      mask.anatomy[id] = .init(source: pose.source, controlRevision: revision, candidateID: region.candidateID,
+        crown: .init(imageY: 0.9, status: .experimental), leftSole: .init(imageY: 0.1, status: .experimental),
+        rightSole: .init(imageY: 0.1, status: .experimental))
+    }
+    return mask
+  }
   static func association(_ pose: CameraPoseResult, revision: UInt64) -> PlayerTrackingSnapshot {
     let c = pose.source
     let context = PlayerTrackingContext(generation: c.context.generation, epoch: c.context.epoch,
@@ -103,7 +113,9 @@ nonisolated struct LiveVisionPipelineTests {
     try #require(try f.finish(pose, stamp: old))
     #expect(!f.gate.beginMask(pose: pose, admission: old, receipt: try #require(f.gate.snapshot.latest)))
   }
-  @Test func tenActualPairedSamplesMakeOnlyUnacceptedCandidate() throws {
+  /// Without head-top/sole readings no sample joins a window: no candidate, nothing to accept,
+  /// and the request ends with the reason instead of waiting forever.
+  @Test func tenActualPairedSamplesWithoutAnatomyMakeNoCandidate() throws {
     let (f, initialSession, stamp) = try LiveVisionFixtures.sessionFixture()
     var session = initialSession
     for i in 0..<10 {
@@ -114,21 +126,20 @@ nonisolated struct LiveVisionPipelineTests {
         association: LiveVisionFixtures.association(pose, revision: stamp.bindingRevision),
         stamp: stamp, at: pose.source.capturedAt + 0.01)
     }
-    #expect(session.progress.phase == .candidateReady)
-    let candidate = try #require(session.candidate)
-    #expect(candidate.samples == 10 && candidate.firstFrameID == 3 && candidate.lastFrameID == 12)
-    #expect(!candidate.hasValidatedAnatomy)
-    #expect(candidate.players.values.allSatisfy { $0.anatomy == nil })
+    #expect(session.progress.phase == .collecting && session.candidate == nil && session.count == 0)
+    for id in PlayerID.allCases {
+      #expect(session.players[id]?.rejected[.bodyNotFullyVisible] == 10 && session.players[id]?.samples == 0)
+    }
     var body = LiveBodyInputState()
     try body.configure(LiveVisionFixtures.configuration(f.context.generation), source: f.context)
     body.calibration = session
-    #expect(throws: LiveVisionError.unsupportedAnatomy) {
-      try body.accept(candidateID: candidate.id, expectedRevision: 0, at: 9.3)
+    #expect(throws: LiveVisionError.contextConflict) {
+      try body.accept(candidateID: UUID(), expectedRevision: 0, at: 9.3)
     }
     #expect(body.configuration?.calibrations.isEmpty == true && body.acceptedRevision == 0)
-    f.clock.time = candidate.expiresAt
-    session.expire(at: candidate.expiresAt)
-    #expect(session.candidate == nil && session.phase == .expired)
+    session.expire(at: 0.125 + StandingCollectionPolicyV1.requestLifetime)
+    #expect(session.phase == .expired && session.reason.contains("bodyNotFullyVisible"))
+    _ = f
   }
   @Test func cadenceCannotReuseFrameOrRepeatedHostInstant() throws {
     let (f, initial, stamp) = try LiveVisionFixtures.sessionFixture(); var session = initial
@@ -146,8 +157,8 @@ nonisolated struct LiveVisionPipelineTests {
     let p = try f.result(3, 0.25, LiveVisionFixtures.standingPair)
     let started = session.beginSample(stamp, source: p.source, at: 0.25)
     try #require(started)
-    session.observe(LiveVisionFixtures.mask(p), pose: p,
-      association: LiveVisionFixtures.association(p, revision: stamp.bindingRevision), stamp: stamp, at: 0.26)
+    session.observe(LiveVisionFixtures.withAnatomy(LiveVisionFixtures.mask(p), pose: p, revision: stamp.bindingRevision),
+      pose: p, association: LiveVisionFixtures.association(p, revision: stamp.bindingRevision), stamp: stamp, at: 0.26)
     #expect(session.count == 1)
     session.uncertain()
     #expect(session.count == 0 && session.phase == .waitingForReliablePair)
@@ -325,7 +336,9 @@ nonisolated struct LiveVisionWorkerTests {
       #expect(store.tracking.readBody().calibration.sampleCount == 0)
     } else {
       #expect(store.tracking.snapshot.latest?.player1.state == .tracking)
-      #expect(store.tracking.readBody().calibration.phase == .waitingForReliablePair)
+      // A failed optional mask skips the sample; it is not an identity failure.
+      let calibration = store.tracking.readBody().calibration
+      #expect(calibration.phase == .collecting && calibration.players.values.allSatisfy { $0.latestIssue == .notSeparated })
       #expect(store.tracking.snapshot.accepted == 3)
     }
     store.end(context); await sink.reset()

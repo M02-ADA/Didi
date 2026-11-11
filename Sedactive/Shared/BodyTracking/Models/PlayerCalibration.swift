@@ -47,6 +47,10 @@ nonisolated struct PlayerCalibration: Equatable, Sendable, Codable {
     let leftFootOffsetShare: Double
     let rightFootOffsetShare: Double
     let mapping: ImageToPlayerPlaneMapping
+    /// Provenance of the head-top/sole references: `.experimental` for live
+    /// mask-derived estimates accepted under `StandingEstimateAcceptancePolicyV1`.
+    /// Nil for synthetic/replay references, which record none.
+    var referenceQuality: AnatomicalReferenceQuality? = nil
 
     func validate() throws {
         try mapping.validate()

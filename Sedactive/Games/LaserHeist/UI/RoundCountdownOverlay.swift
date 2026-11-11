@@ -37,6 +37,9 @@ struct RoundCountdownOverlay: View {
         .accessibilityLabel("Starting in \(value)")
         .accessibilityAddTraits(.updatesFrequently)
         .accessibilityIdentifier("roundCountdown")
+        // An audible tick on each number, so players looking at the corridor know it is coming.
+        .onAppear { AudioService.shared.play(.uiTap) }
+        .onChange(of: value) { _, _ in AudioService.shared.play(.uiTap) }
     }
 }
 

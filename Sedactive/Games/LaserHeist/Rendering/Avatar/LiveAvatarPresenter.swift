@@ -63,9 +63,23 @@ final class LiveAvatarPresenter {
             feedEnded = true
             drain.reset.all = true
         }
+        #if DEBUG
+        if let frame = drain.frame {
+            for player in PlayerID.allCases {
+                let available = if case .available = frame.slot(player) { true } else { false }
+                Self.debugLastFrame[player] = (frame.source.capturedAt, available)
+            }
+        }
+        #endif
         avatars.apply(drain, now: now)
         avatars.render(now: now)
     }
+
+    #if DEBUG
+    /// Setup diagnostics: the capture time of the last pose frame each mascot received, and
+    /// whether that player's slot was available in it. Numbers only.
+    static var debugLastFrame: [PlayerID: (capturedAt: Double, available: Bool)] = [:]
+    #endif
 
     /// Runs the producer's hand-off for this tick; whether the feed is still live.
     private func runFeed() -> Bool {

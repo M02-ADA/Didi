@@ -19,7 +19,7 @@ struct PlayerSetupView: View {
             // Compact, in the stage's title band, so the standing guides stay clear.
             controls
                 .dynamicTypeSize(.xSmall)
-                .frame(maxWidth: 820, maxHeight: 206)
+                .frame(maxWidth: 980)
                 .background(.regularMaterial, in: .rect(cornerRadius: 20))
                 .preferredColorScheme(.dark)
         } else {
@@ -28,7 +28,68 @@ struct PlayerSetupView: View {
         }
     }
 
-    private var controls: some View {
+    /// Automatic onboarding: what is happening and what to do, without step buttons.
+    @ViewBuilder private var controls: some View {
+        if flow.session?.automaticSetup == true { automaticControls } else { manualControls }
+    }
+
+    private var automaticCopy: LaserAutomaticSetupCopy {
+        let session = flow.session
+        return LaserAutomaticSetupCopy(.init(isStarting: flow.isStarting, message: flow.message,
+            sessionPhase: session?.phase, setupPhase: session?.setup?.phase,
+            presence: session?.presence ?? .init(), hasRoundPlan: session?.hasLiveRoundPlan == true,
+            roundStarted: session?.state != nil,
+            manualPause: session?.liveReadiness?.blocker == .manualPause,
+            solo: session?.isSoloPractice == true,
+            readinessBlocker: session?.liveReadiness?.blocker))
+    }
+
+    private var automaticControls: some View {
+        let copy = automaticCopy
+        // One compact row: what is happening on the left, any action on the right, so the
+        // band above the camera image stays short and never covers the players.
+        return HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(copy.title).font(.title.bold()).accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier(flow.isStarting ? "liveSetupStarting" : "setupPhase")
+                Text(copy.instruction).font(.title3).foregroundStyle(.secondary).lineLimit(2)
+                    .accessibilityIdentifier(flow.message != nil ? "liveSetupError" : "setupInstruction")
+            }
+            Spacer(minLength: 8)
+            HStack(spacing: 12) {
+                switch copy.action {
+                case .tryAgain:
+                    Button(copy.actionTitle ?? "") { flow.session?.retryCalibrationManually() }
+                        .buttonStyle(.borderedProminent).tint(.orange).foregroundStyle(.black)
+                        .accessibilityIdentifier("setupTryAgain")
+                case .restartSetup:
+                    Button(copy.actionTitle ?? "") { Task { await flow.retryLiveSetup() } }
+                        .buttonStyle(.borderedProminent).tint(.orange).foregroundStyle(.black)
+                        .disabled(flow.isClosing || flow.isStarting).accessibilityIdentifier("retryLiveSetup")
+                case .continueRound:
+                    Button(copy.actionTitle ?? "") { flow.session?.continueLiveRound() }
+                        .buttonStyle(.borderedProminent).accessibilityIdentifier("continueLiveRound")
+                case nil:
+                    EmptyView()
+                }
+                Button(flow.isClosing ? "Stopping camera…" : "Leave camera setup", role: .cancel) {
+                    Task { await flow.closeLiveSetup() }
+                }
+                .buttonStyle(.bordered).disabled(flow.isClosing).accessibilityIdentifier("leaveLiveSetup")
+            }
+            .controlSize(.large)
+        }
+        .padding(.horizontal, 18).padding(.vertical, 10).frame(maxWidth: .infinity)
+        // Identity lost before the round: start a fresh setup by itself (bounded by the flow).
+        .task(id: flow.session.map { ObjectIdentifier($0) }) {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1.5))
+                await flow.restartAutomaticallyIfNeeded()
+            }
+        }
+    }
+
+    private var manualControls: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: isOverlay ? 8 : 24) {
                 if !isOverlay {
@@ -123,6 +184,9 @@ struct PlayerSetupView: View {
             case .bind: try setup.beginBinding()
             case .confirmPlayers: try setup.confirmPlayers()
             case .calibrate: try setup.requestCalibration(id: UUID())
+            case .recollect:
+                setup.cancelCalibration()
+                try setup.requestCalibration(id: UUID())
             case .confirmCandidate:
                 guard let id = setup.candidateIDForConfirmation else { return }
                 try setup.confirmCandidate(id: id)

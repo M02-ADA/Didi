@@ -221,6 +221,9 @@ protocol CameraDriving: Actor {
   private var bindingRestart: (request: CameraBindingRequest, token: UUID, task: Task<Void, Error>)?
   private(set) var status: CameraPipelineStatus = .stopped
   private(set) var negotiated: CameraNegotiatedConfiguration?
+  /// Display-only handle on the retained capture session, for the setup
+  /// screen's live camera image. Nil with a non-native (test) driver.
+  var previewSession: AVCaptureSession? { (driver as? AVCameraDriver)?.previewSession }
   var state: CameraPipelineState {
     CameraPipelineState(
       revision: revision, context: context, status: status, negotiated: negotiated)
@@ -661,6 +664,10 @@ nonisolated final class CameraSampleDelegate: NSObject, AVCaptureVideoDataOutput
 
 /// One native session for this pipeline's lifetime. All mutations/blocking start/stop run on this actor.
 actor AVCameraDriver: CameraDriving {
+  /// The one retained native session, readable for display only (an
+  /// `AVCaptureVideoPreviewLayer`). Every configuration change still happens
+  /// on this actor; a preview layer never configures, starts or stops it.
+  nonisolated(unsafe) let previewSession = AVCaptureSession()
   private var session: AVCaptureSession?
   private var context: CameraSourceContext?
   private var device: AVCaptureDevice?
@@ -678,7 +685,7 @@ actor AVCameraDriver: CameraDriving {
     frames: FrameStore, events: CameraEventChannel
   ) throws -> CameraNegotiatedConfiguration {
     guard self.context == nil else { throw CameraFailure.operationConflict }
-    let session = self.session ?? AVCaptureSession()
+    let session = self.session ?? previewSession
     self.session = session
     self.context = context
     do {

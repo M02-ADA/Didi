@@ -11,6 +11,9 @@ nonisolated enum BodyJoint: String, Sendable, Codable {
     case nose, leftEye, rightEye, leftEar, rightEar, neck
     case leftShoulder, rightShoulder, leftWrist, rightWrist
     case leftHip, rightHip, leftAnkle, rightAnkle
+    /// Vision observes knees too. Kept for setup diagnostics and lower-body hints; B2 identity
+    /// uses only shoulders and hips, and no gameplay measurement reads knees.
+    case leftKnee, rightKnee
 }
 
 nonisolated struct PoseJoint: Equatable, Sendable, Codable {

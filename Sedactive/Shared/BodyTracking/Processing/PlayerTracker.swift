@@ -111,6 +111,8 @@ nonisolated struct PlayerTracker: Sendable {
   private var context: PlayerTrackingContext?
   private var revision: UInt64 = 0
   private var armed = false
+  /// DEBUG Solo Test: acquire exactly one person into P1; P2 stays unbound (never fabricated).
+  private var solo = false
   private var lastBoundGeneration: UUID?
   private var lastSource: PlayerTrackingSource?
   private var evaluatedAt: Double?
@@ -145,13 +147,17 @@ nonisolated struct PlayerTracker: Sendable {
     for i in slots.indices { slots[i].reason = reason }
     assignmentCount = 0
   }
-  mutating func armBinding(controlRevision: UInt64) throws {
+  mutating func armBinding(controlRevision: UInt64, solo: Bool = false) throws {
     guard controlRevision == revision, let context else { throw PlayerTrackingError.staleControl }
     guard context.generation != lastBoundGeneration else {
       throw PlayerTrackingError.bindingRequiresNewGeneration
     }
+    #if !DEBUG
+    guard !solo else { throw PlayerTrackingError.incompatibleSource }
+    #endif
     // An idempotent repeated arm must not restart an existing acquisition dwell.
     armed = true
+    self.solo = solo
   }
 
   @discardableResult
@@ -328,6 +334,7 @@ nonisolated struct PlayerTracker: Sendable {
 
   private mutating func acquire(_ values: [Descriptor?], overflow: Bool, source: PlayerTrackingSource) {
     guard armed else { return }
+    if solo { return acquireSolo(values, overflow: overflow, source: source) }
     let eligible = values.compactMap { $0 }
     guard !overflow, eligible.count == 2, eligible.allSatisfy({ $0.points.count == 4 }),
       let separation = proximity(eligible[0], eligible[1]), separation > policy.minimumPairSeparation
@@ -362,6 +369,32 @@ nonisolated struct PlayerTracker: Sendable {
         slots[i].reason = .acquiring
       }
     }
+  }
+  /// DEBUG Solo Test: exactly one fully visible person (both shoulders and hips), anywhere in
+  /// the frame, held for the same acquisition dwell, becomes P1. Two people refuse (no guessing),
+  /// and P2's slot is left unbound: it never receives a descriptor.
+  private mutating func acquireSolo(_ values: [Descriptor?], overflow: Bool, source: PlayerTrackingSource) {
+    let eligible = values.compactMap { $0 }
+    guard !overflow, eligible.count == 1, let person = eligible.first, person.points.count == 4 else {
+      acquisitionRefused(overflow ? .overflow : .acquisitionRefused); return
+    }
+    if let prior = slots[0].provisional,
+      source.capturedAt - prior.latest.time <= policy.maximumObservationGap,
+      let distance = proximity(prior.latest, person), distance <= policy.positionGate,
+      shapeDifference(prior.latest, person).map({ $0 <= policy.maximumLogScaleChange }) == true {
+      if source.capturedAt - prior.since >= policy.acquisitionDwell {
+        confirm(0, descriptor: person, cost: 0)
+        lastBoundGeneration = source.context.generation
+        armed = false
+      } else {
+        slots[0].provisional = Provisional(since: prior.since, latest: person)
+        slots[0].reason = .acquiring
+      }
+    } else {
+      slots[0].provisional = Provisional(since: source.capturedAt, latest: person)
+      slots[0].reason = .acquiring
+    }
+    slots[1].provisional = nil
   }
   private mutating func acquisitionRefused(_ reason: PlayerTrackingReason) {
     for i in slots.indices { slots[i].provisional = nil; slots[i].reason = reason }

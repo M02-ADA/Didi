@@ -92,7 +92,9 @@ struct LaserSessionSetupTests {
         await session.stop()
     }
 
-    @Test func experimentalAnatomyNeverReachesAcceptanceOrGameplay() async throws {
+    /// Owner decision (11 November 2026): stable mask estimates may be accepted, but only by an
+    /// explicit confirmation, and their experimental quality is kept (never relabelled validated).
+    @Test func stableEstimatesReachReviewOnlyByExplicitConfirmation() async throws {
         let controls = try GateSetupControls()
         let session = try session(controls)
         try await session.start()
@@ -101,7 +103,45 @@ struct LaserSessionSetupTests {
         controls.showCandidate(validated: false)
         setup.refresh()
         let candidate = try #require(controls.calibration.candidate)
-        if case .blocked = setup.phase {} else { Issue.record("Experimental anatomy must stay blocked") }
+        #expect(candidate.acceptance == .stableEstimate && !candidate.hasValidatedAnatomy)
+        #expect(setup.phase == .reviewCandidate && controls.confirmCalls == 0)
+        #expect(session.inputContext?.calibrationRevisions.isEmpty == true && session.state == nil)
+        try setup.confirmCandidate(id: candidate.id)
+        #expect(controls.confirmCalls == 1)
+        await session.stop()
+    }
+
+    @Test(arguments: [(PlayerID?.none, 0.7), (PlayerID?.some(.player2), 0.9), (PlayerID?.some(.player1), 0.9)])
+    func missingOrInconsistentEstimatesStayBlocked(missing: PlayerID?, crown: Double) async throws {
+        let controls = try GateSetupControls()
+        let session = try session(controls)
+        try await session.start()
+        let setup = try confirmed(session, controls)
+        try setup.requestCalibration(id: UUID())
+        // Head-top below the nose, or one player's references missing in a sample.
+        controls.showCandidate(validated: false, crownY: crown, missing: missing)
+        setup.refresh()
+        let candidate = try #require(controls.calibration.candidate)
+        guard case .blocked(let reason) = setup.phase else { Issue.record("must stay blocked"); return }
+        if let missing { #expect(reason.hasPrefix(missing == .player1 ? "P1's" : "P2's")) }
+        let copy = PlayerSetupState(phase: setup.phase)
+        #expect(copy.action == .recollect && copy.instruction.contains("No round has started"))
+        #expect(throws: LiveVisionError.staleEvidence) { try setup.confirmCandidate(id: candidate.id) }
+        #expect(controls.confirmCalls == 0 && session.inputContext?.calibrationRevisions.isEmpty == true)
+        await session.stop()
+    }
+
+    @Test func experimentalAnatomyNeverReachesAcceptanceOrGameplay() async throws {
+        let controls = try GateSetupControls()
+        let session = try session(controls)
+        try await session.start()
+        let setup = try confirmed(session, controls)
+        try setup.requestCalibration(id: UUID())
+        // Experimental references that disagree with the landmarks (head-top below the nose).
+        controls.showCandidate(validated: false, crownY: 0.75)
+        setup.refresh()
+        let candidate = try #require(controls.calibration.candidate)
+        if case .blocked = setup.phase {} else { Issue.record("Inconsistent anatomy must stay blocked") }
         #expect(throws: LiveVisionError.staleEvidence) { try setup.confirmCandidate(id: candidate.id) }
         #expect(controls.confirmCalls == 0)
         #expect(session.inputContext?.calibrationRevisions.isEmpty == true)
@@ -287,7 +327,8 @@ final class GateSetupControls: LaserSetupControlling {
         try #require(try fixture.finish(fixture.result(1, 0)))
         try #require(try fixture.finish(fixture.result(2, 0.125)))
     }
-    func showCandidate(validated: Bool, id: UUID = UUID(), epoch: UUID? = nil, width: Int = 1280) {
+    func showCandidate(validated: Bool, id: UUID = UUID(), epoch: UUID? = nil, width: Int = 1280,
+                       crownY: Double = 0.9, missing: PlayerID? = nil) {
         guard let request = lastCalibration, let binding = tracking.requestID else { return }
         let c = fixture.context
         let candidate = StandingCalibrationCandidate(id: id,
@@ -300,8 +341,8 @@ final class GateSetupControls: LaserSetupControlling {
                 ($0, StandingPlayerObservation(noseY: 0.8, leftAnkleY: 0.1, rightAnkleY: 0.1,
                     hipY: 0.5, torsoLength: 0.2, originX: $0 == .player1 ? 0.75 : 0.25,
                     maskMinY: 0.05, maskMaxY: 0.9,
-                    anatomy: StandingAnatomicalReferences(crownY: 0.9, leftSoleY: 0.05, rightSoleY: 0.05,
-                        quality: validated ? .validated : .experimental)))
+                    anatomy: $0 == missing ? nil : StandingAnatomicalReferences(crownY: crownY, leftSoleY: 0.05,
+                        rightSoleY: 0.05, quality: validated ? .validated : .experimental)))
             }), imageWidth: width, imageHeight: 720, rotationAngle: 180, mirrored: false, samples: 10)
         progressOverride = .init(request: request, phase: .candidateReady, sampleCount: 10,
                                  candidate: candidate, reason: "Controlled candidate")

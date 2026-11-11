@@ -412,9 +412,15 @@ final class LaserScene {
     /// dimmed and neutral until the producer delivers a tracked pose. The
     /// mailbox serves this one attachment: a new scene needs a new one. A
     /// `pump`, if given, runs on the render tick before the mailbox is drained.
-    func attachLiveAvatars(mailbox: AvatarPoseMailbox, templates: [PlayerID: Entity], pump: (any AvatarPosePump)? = nil) {
+    /// - Parameter players: the tracked players. A lane with no tracked player (P2 in a DEBUG
+    ///   Solo Test) is hidden entirely, never shown as an untracked mascot.
+    func attachLiveAvatars(mailbox: AvatarPoseMailbox, templates: [PlayerID: Entity], pump: (any AvatarPosePump)? = nil,
+                           players tracked: Set<PlayerID> = Set(PlayerID.allCases),
+                           jumpEvidence: ((PlayerID, Double) -> (lowerSoleY: Double?, airborne: Bool)?)? = nil) {
         detachLiveAvatars()
-        let avatars = RobotAvatarLayer(scene: self, players: Set(PlayerID.allCases), templates: templates)
+        for (id, lane) in players { lane.isEnabled = tracked.contains(id) }
+        let avatars = RobotAvatarLayer(scene: self, players: tracked, templates: templates)
+        avatars.jumpEvidence = jumpEvidence
         robotAvatars = avatars
         liveAvatars = LiveAvatarPresenter(avatars: avatars, mailbox: mailbox, pump: pump)
     }
@@ -428,10 +434,12 @@ final class LaserScene {
     /// Revokes the live attachment and removes every mascot and its lights;
     /// the pictograms return. Safe to call when nothing is attached.
     func detachLiveAvatars() {
+        let hadAvatars = robotAvatars != nil
         liveAvatars?.stop()
         liveAvatars = nil
         robotAvatars?.remove()
         robotAvatars = nil
+        if hadAvatars { for lane in players.values { lane.isEnabled = true } }
     }
 
     // MARK: - Vault door and diamonds

@@ -322,6 +322,11 @@ struct GameplayHUD: View {
             VStack(spacing: 2 * k) {
                 Text("PRESS THE BUTTONS").font(.system(size: 52.7 * k, weight: .black, design: .rounded))
                 Text("TO OPEN THE DOOR").font(.system(size: 18.7 * k, weight: .black, design: .rounded))
+                // How a live press works (wrist zones on each player's outer side,
+                // `LaserLiveRoundGeometryV1`). Not Sketch copy; pending Theo.
+                Text("Reach toward your wall: high, middle, low")
+                    .font(.system(size: 16 * k, weight: .bold, design: .rounded))
+                    .padding(.top, 4 * k)
             }
             .modifier(SketchTitle(k: k))
             .transition(titleTransition)

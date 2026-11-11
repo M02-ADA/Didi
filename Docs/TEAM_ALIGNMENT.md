@@ -112,6 +112,26 @@ The **producer** defines each contract type once. Consumers import it and do not
 
 ## G. Decisions
 
+- **Confirmed — task owner (Kevin), 11 November 2026 (evening):** head-top estimate fix and setup framing.
+  - **Head-top (`AnatomicalCandidatePolicyV1`):**
+    - The "nothing above the head" check now tests columns outside the ears by 25 % of the ear span. Previously it tested the ear columns themselves; real ears lie on the head's outline, so every real head was refused, as a synthetic test against the committed code shows.
+    - Head-top rays may differ by up to 15 % of half the ear span, not a fixed 2 px, which had refused players standing near the camera.
+    - A head-top more than 1.2 ear spans above the eyes is refused (hands on the head).
+  - **Feet and confidence:** the foot rules and all confidence rules are unchanged.
+  - **Refusal reasons:** each refusal now carries its own reason. The players' hints no longer merge head and foot problems.
+  - **Joints:** B1 also keeps Vision's knees, for diagnostics only. B2 identity, gameplay and K03 do not read them.
+  - **Setup screen:** shows the whole camera frame (aspect fit), with guides sized as shares of the image.
+- **Confirmed — task owner (Kevin), 11 November 2026 (later the same day):** automatic onboarding and faster standing calibration.
+  - **Automatic setup:** the setup steps run by themselves, each only when its existing conditions hold: pair search, linking, an "upright" prompt (1.5 s) before any sample, calibration, acceptance, and the countdown. No step buttons remain. Retries are bounded: 3 calibration attempts, then "Try again"; 2 automatic setup restarts after identity loss, then "Restart setup".
+  - **Calibration sampling (`StandingCollectionPolicyV1.1`):**
+    - One sample every 0.25 s instead of 1 s.
+    - Each player keeps their own window of 10 consecutive stable samples (within 10 s). A refused sample is skipped for that player only; only an identity failure restarts a window.
+    - The 3 px stability limit is kept but never set below one row of the person mask the estimate comes from (quantization). Confidence, freshness, identity and the landmark consistency checks are unchanged.
+  - **Pending:** real device spread and timing data, logged as `[LaserSetupTiming]` in DEBUG.
+- **Confirmed — task owner (Kevin, full integration ownership), 11 November 2026:** live end-to-end play on the iPad.
+  - **Calibration:** a standing candidate may be accepted with mask-derived head-top and sole **estimates** (`StandingEstimateAcceptancePolicyV1`). Each must be present, uncropped and stable in all 10 samples within the existing 3 px candidate, and must agree with the pose landmarks (head-top above the nose, each sole at or below its ankle, hips between). The players still confirm explicitly. Accepted references keep `referenceQuality = .experimental` and are never relabelled validated; the 3 px spread is a stability check, not proof of accuracy.
+  - **Live round:** the complete replay's five-minute wave script, evidence windows, diamond planner and one-vault-per-minute rule. A live director (`LaserLiveRoundDirector`) runs them on the one live `GameClock`, rebasing each minute onto the game time at which it starts. Vault buttons and diamonds use the existing D09 wrist-entry path. The interaction geometry (`LaserLiveRoundGeometryV1`) is scaled to each player's accepted standing height and still needs device comfort testing.
+  - **Contract changes:** `CameraPipeline.previewSession` (display only); `BodyInputProviding.acceptedCalibrations` (read only); `PlayerCalibration.referenceQuality` (optional, provenance); `LaserLiveRecovery.validate(boundary:)`. Diamonds are now drawn mirrored about each lane, like the players.
 - **Confirmed — task owner, 10 November 2026:** each valid diamond collection awards **25 team points**; Diamond Time starts with **four** diamonds; **Diamond Time targets persist until collected or phase end**, with no passage miss; normal diamonds are permanently missed after passing. This clarification supersedes the earlier missed-slot interpretation for Diamond Time. Collection-triggered replacement, the maximum of four active team diamonds and ten-active-second duration remain unchanged. See the [D09 decision record](LaserHeist-D09-Contact-Decision-Proposal.md#subsequent-d09-v1-approval). This is a product choice, not approval of producer schema, coordinate mapping, reach parameters or physical acceptance.
 - **Confirmed — Edo, Tech Lead, forwarded by Jevon on 10 November 2026:** D09 v1 architecture/behavior permits optional atomic wrist evidence on the single CP1 gameplay path, independently valid wrists, fresh projected outside→inside circular-zone entry, strict pre-deadline capture/arrival, timeout on equality, deterministic deduplicated batches, no retroactive out-of-order awards and invalidation on lifecycle/context changes. Jevon may proceed with J04/J05 synthetic fixtures. **Exact field-level freeze remains pending** CP1 compatibility and agreed coordinate mapping; Edo owns E08 and Kevin owns zone rendering. Details and limits are in the [D09 record](LaserHeist-D09-Contact-Decision-Proposal.md#subsequent-d09-v1-approval).
 

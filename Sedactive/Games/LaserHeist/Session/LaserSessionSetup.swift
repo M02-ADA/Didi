@@ -14,6 +14,21 @@ protocol LaserSetupControlling: AnyObject {
     func requestCalibration(id: UUID) throws -> CalibrationRequest
     func cancelCalibration(_ request: CalibrationRequest)
     func confirmCandidate(_ id: UUID, expectedRevision: UInt64) throws -> BodyInputContext
+    /// People the camera sees right now (raw, unassociated pose candidates), for setup hints only.
+    var peopleInView: Int? { get }
+    #if DEBUG
+    // Requirements (not extension-only) so the live controls' versions are the ones called.
+    var debugPeople: [(x: Double, core: [Double])] { get }
+    var debugVision: String { get }
+    #endif
+}
+
+extension LaserSetupControlling {
+    var peopleInView: Int? { nil }
+    #if DEBUG
+    var debugPeople: [(x: Double, core: [Double])] { [] }
+    var debugVision: String { "" }
+    #endif
 }
 
 /// Uses the retained live provider and its one tracker; no new camera, observer, or CP1 reader.
@@ -33,6 +48,31 @@ final class LaserLiveSetupControls: LaserSetupControlling {
     func confirmCandidate(_ id: UUID, expectedRevision: UInt64) throws -> BodyInputContext {
         try service.confirmStandingCandidate(id, expectedContextRevision: expectedRevision)
     }
+    var peopleInView: Int? {
+        guard let latest = service.camera.frames.poses.snapshot.latest,
+              latest.source.context == service.camera.state.context else { return nil }
+        let age = CameraHostClock.now() - latest.source.capturedAt
+        guard age >= 0, age < LiveAvatarPresenter.maximumPoseAge * 2 else { return 0 }
+        return min(2, latest.frame.candidates.count)
+    }
+    #if DEBUG
+    /// Vision's raw body count and the age of its latest result (DEBUG setup log).
+    var debugVision: String {
+        guard let latest = service.camera.frames.poses.snapshot.latest else { return "vision: no result yet" }
+        return String(format: "vision: %d bodies, result %.2fs old, %d completed",
+                      latest.observationCount, CameraHostClock.now() - latest.source.capturedAt,
+                      service.camera.frames.poses.snapshot.statistics.completed)
+    }
+    /// Raw pose candidates now: mean x and shoulder/hip confidences (DEBUG setup log).
+    var debugPeople: [(x: Double, core: [Double])] {
+        guard let latest = service.camera.frames.poses.snapshot.latest else { return [] }
+        return latest.frame.candidates.map { c in
+            let core: [BodyJoint] = [.leftShoulder, .rightShoulder, .leftHip, .rightHip]
+            let xs = core.compactMap { c.joints[$0]?.x }
+            return (xs.isEmpty ? -1 : xs.reduce(0, +) / Double(xs.count), core.map { c.joints[$0]?.confidence ?? 0 })
+        }
+    }
+    #endif
 }
 
 nonisolated enum LaserSetupPhase: Equatable, Sendable {
@@ -56,6 +96,10 @@ final class LaserSessionSetup {
         let acceptedRevision: UInt64
     }
     private let controls: any LaserSetupControlling
+    /// Read-only access for the automatic driver's presence and diagnostics.
+    var diagnosticControls: any LaserSetupControlling { controls }
+    /// The current phase's reason text (blocked phases), for hints and diagnostics.
+    var diagnosticReason: String { if case .blocked(let why) = phase { why } else { reason } }
     private let generation: UUID
     private var active = false
     private var bindingRequest: CameraBindingRequest?
@@ -74,9 +118,13 @@ final class LaserSessionSetup {
         return confirmed == binding
     }
 
-    init(controls: any LaserSetupControlling, generation: UUID) {
+    /// The players this setup links and calibrates: both, or P1 alone in a DEBUG Solo Test.
+    let roster: [PlayerID]
+
+    init(controls: any LaserSetupControlling, generation: UUID, roster: [PlayerID] = PlayerID.allCases) {
         self.controls = controls
         self.generation = generation
+        self.roster = roster
     }
 
     func activate() { active = true; phase = .awaitingBinding; refresh() }
@@ -150,7 +198,7 @@ final class LaserSessionSetup {
             let committed = try controls.confirmCandidate(id, expectedRevision: ticket.acceptedRevision)
             guard committed == controls.provider.currentContext, committed.isActive,
                   committed.sessionGeneration == generation,
-                  PlayerID.allCases.allSatisfy({ committed.calibrationRevisions[$0] != nil }) else {
+                  roster.allSatisfy({ committed.calibrationRevisions[$0] != nil }) else {
                 throw LiveVisionError.contextConflict
             }
             calibrationRequest = nil
@@ -169,6 +217,9 @@ final class LaserSessionSetup {
         guard let context = controls.provider.currentContext, context.isActive,
               context.sessionGeneration == generation else {
             confirmed = nil; candidateTicket = nil; calibrationRequest = nil; calibrationRevision = nil
+            #if DEBUG
+            print("[LaserSetupRestart] setup: context inactive or changed")
+            #endif
             phase = .restartRequired
             return
         }
@@ -176,11 +227,20 @@ final class LaserSessionSetup {
         let tracking = controls.tracking
         guard tracking.requestID == bindingRequest?.requestID, tracking.revision == bindingRevision else {
             confirmed = nil; candidateTicket = nil; calibrationRequest = nil; calibrationRevision = nil
+            #if DEBUG
+            print("[LaserSetupRestart] setup: binding request/revision changed")
+            #endif
             phase = .restartRequired
             return
         }
-        if [tracking.latest?.player1, tracking.latest?.player2].contains(where: { $0?.requiresRebind == true }) {
+        if roster.contains(where: { tracking.latest?[$0].requiresRebind == true }) {
             confirmed = nil; candidateTicket = nil; calibrationRequest = nil; calibrationRevision = nil
+            #if DEBUG
+            print("[LaserSetupRestart] setup: rebind required · " + roster.map { id in
+                let slot = tracking.latest?[id]
+                return "\(id.rawValue) \(slot?.state.rawValue ?? "-")/\(slot?.reason.rawValue ?? "-")"
+            }.joined(separator: ", ") + " · people \(controls.peopleInView ?? -1) · \(controls.debugVision)")
+            #endif
             phase = .restartRequired
             return
         }
@@ -190,7 +250,7 @@ final class LaserSessionSetup {
             return
         }
         guard confirmed == binding else { phase = .confirmPlayers; return }
-        if PlayerID.allCases.allSatisfy({ context.calibrationRevisions[$0] != nil }) {
+        if roster.allSatisfy({ context.calibrationRevisions[$0] != nil }) {
             phase = .awaitingGameplayReadiness // J03 still checks evidence, settling, and all blockers.
             return
         }
@@ -235,8 +295,8 @@ final class LaserSessionSetup {
             phase = .blocked("Accepted calibration context changed")
             return
         }
-        guard candidate.hasValidatedAnatomy else {
-            phase = .blocked("Crown and soles still require validated anatomical evidence")
+        if case .refused(let why) = candidate.acceptance {
+            phase = .blocked(why)
             return
         }
         phase = .reviewCandidate
@@ -267,7 +327,7 @@ final class LaserSessionSetup {
               source.context == ack.source.context, source.context.generation == generation,
               source.context.geometryRevision == context.cameraGeometryRevision,
               source.frameID >= ack.source.frameID, source.capturedAt >= ack.source.capturedAt,
-              [ack.player1, ack.player2, latest.player1, latest.player2].allSatisfy({
+              roster.flatMap({ [$0 == .player1 ? ack.player1 : ack.player2, latest[$0]] }).allSatisfy({
                   $0.state == .tracking && !$0.requiresRebind
               }) else { return nil }
         return Binding(request: request.requestID, context: source.context, revision: revision)

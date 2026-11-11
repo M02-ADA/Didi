@@ -120,6 +120,7 @@ final class ReplayBodyInput: BodyInputProviding {
     }
     #endif
 
+    var acceptedCalibrations: [PlayerID: PlayerCalibration] { configuration?.calibrations ?? [:] }
     var currentContext: BodyInputContext? {
         guard let configuration else { return nil }
         #if DEBUG

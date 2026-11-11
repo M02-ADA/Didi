@@ -40,7 +40,22 @@ final class GameSessionCoordinator {
     private(set) var inputStreamEnded = false
     private(set) var liveReadiness: LaserLiveReadiness?
     private(set) var recoveryNeedsPlan = false
-    var hasLiveRoundPlan: Bool { !isReplay && configuration != nil && !encounters.isEmpty && liveReadiness?.policy != nil }
+    var hasLiveRoundPlan: Bool {
+        !isReplay && configuration != nil && (!encounters.isEmpty || liveDirector != nil) && liveReadiness?.policy != nil
+    }
+    /// The round's whole laser schedule as known now (registered plus the director's plan),
+    /// for display sizing only.
+    var plannedEncounters: [LaserEncounter] {
+        guard let liveDirector else { return encounters }
+        let registered = Set(encounters.map(\.id))
+        return encounters + liveDirector.baseEncounters.filter { !registered.contains($0.id) }
+    }
+    /// Live rounds: game seconds until the current minute's vault, during the activity.
+    var liveVaultIn: Double? {
+        guard let boundary = liveDirector?.vaultBoundary, state?.phase == .activity, let time = state?.gameTime,
+              boundary > time else { return nil }
+        return boundary - time
+    }
     private(set) var liveFrameHostReady = false
     var canStartLiveRound: Bool {
         hasLiveRoundPlan && liveFrameHostReady && phase == .awaitingSetup && liveReadiness?.phase == .ready
@@ -51,7 +66,7 @@ final class GameSessionCoordinator {
         let context = provider.currentContext
         if context?.isActive != true || provider.status != .running { result.append(.source) }
         if setup?.hasConfirmedReliablePair != true || context?.wristContact == nil { result.append(.binding) }
-        if !PlayerID.allCases.allSatisfy({ context?.calibrationRevisions[$0] != nil }) { result.append(.calibration) }
+        if !inputConfiguration.roster.allSatisfy({ context?.calibrationRevisions[$0] != nil }) { result.append(.calibration) }
         if !hasWristDiamondPlan { result.append(.geometry) }
         if !hasLiveRoundPlan { result.append(.roundPlan) }
         if liveReadiness?.phase != .ready && liveReadiness?.phase != .running { result.append(.measurements) }
@@ -84,6 +99,32 @@ final class GameSessionCoordinator {
     private var wristDiamondConfiguration: LaserWristDiamondConfiguration?
     private var installedLiveWristContext: BodyInputContext?
     private var wristDiamonds: LaserWristDiamondConsumer?
+    /// Live round director (complete replay schedule on the live GameClock); nil in replay.
+    private var liveDirector: LaserLiveRoundDirector?
+    /// The open live vault's zones, re-armed on a recreated wrist consumer after a pause.
+    private var liveVault: (id: UUID, zones: [LaserVaultZone])?
+    /// Builds the live round plan from the producer's ACCEPTED context once setup is complete.
+    private let liveRoundPlanner: (@MainActor (BodyInputContext, [PlayerID: PlayerCalibration]) throws -> LaserLiveWristRoundPlan)?
+    private var installingLivePlan = false
+    private(set) var livePlanError: String?
+    /// Automatic onboarding: link, calibrate, accept and count down without buttons, each step
+    /// only when the same conditions its button required hold. Off for tests and DEBUG tools.
+    let automaticSetup: Bool
+    /// Tests step the driver themselves (`advanceSetupAutomatically`) for determinism.
+    private let automaticSetupTimer: Bool
+    private(set) var presence = LaserSetupPresence()
+    /// DEBUG Solo Test: one player (P1) practises; results are diagnostic, not a co-op round.
+    var isSoloPractice: Bool { inputConfiguration.soloPlayer != nil }
+    private var setupTask: Task<Void, Never>?
+    private var uprightPromptStart: Double?
+    private var retryAt: Double?
+    #if DEBUG
+    private(set) var setupTimeline = LaserSetupTimeline()
+    private var lastLoggedIssue: [PlayerID: String] = [:]
+    private var lastLoggedJump: [PlayerID: String] = [:]
+    private var lastSearchLog = -Double.infinity
+    private var lastLoggedFrame: [PlayerID: UInt64] = [:]
+    #endif
 
     init(provider: any BodyInputProviding, inputConfiguration: BodyInputConfiguration,
          configuration: LaserRoundConfiguration? = nil, encounters: [LaserEncounter] = [],
@@ -91,7 +132,11 @@ final class GameSessionCoordinator {
          liveTimingPolicy: LaserLiveTimingPolicy? = nil,
          wristDiamondConfiguration: LaserWristDiamondConfiguration? = nil,
          hostNow: @escaping @MainActor () -> Double = CameraHostClock.now,
-         recoveryPlanner: (@MainActor (LaserLiveRecoveryRequest) throws -> [LaserEncounter]?)? = nil) {
+         recoveryPlanner: (@MainActor (LaserLiveRecoveryRequest) throws -> [LaserEncounter]?)? = nil,
+         liveRoundPlanner: (@MainActor (BodyInputContext, [PlayerID: PlayerCalibration]) throws -> LaserLiveWristRoundPlan)? = nil,
+         automaticSetup: Bool = false, automaticSetupTimer: Bool = true) {
+        self.automaticSetup = automaticSetup && replayDriver == nil
+        self.automaticSetupTimer = automaticSetupTimer
         precondition(replayDriver == nil || replayDriver?.provider === provider,
                      "Replay driving must use the injected provider")
         self.provider = provider
@@ -101,6 +146,7 @@ final class GameSessionCoordinator {
         self.replayDriver = replayDriver
         self.hostNow = hostNow
         self.recoveryPlanner = recoveryPlanner
+        self.liveRoundPlanner = liveRoundPlanner
         #if DEBUG
         precondition(wristDiamondConfiguration == nil || replayDriver == nil || replayDriver?.isWristDiamondPreview == true,
                      "Only the explicit DEBUG E08 fixture may replace scripted diamond contacts")
@@ -111,21 +157,28 @@ final class GameSessionCoordinator {
         precondition(wristDiamondConfiguration.map { $0.layout == inputConfiguration.playerPlaneLayout } ?? true,
                      "Diamond zones must use the accepted CP1 player plane")
         self.wristDiamondConfiguration = wristDiamondConfiguration
-        liveReadiness = replayDriver == nil ? LaserLiveReadiness(policy: liveTimingPolicy) : nil
+        liveReadiness = replayDriver == nil ? LaserLiveReadiness(policy: liveTimingPolicy, roster: inputConfiguration.roster) : nil
         precondition(setupControls == nil || (replayDriver == nil && setupControls?.provider === provider),
                      "Setup must control the injected live provider")
-        setup = setupControls.map { LaserSessionSetup(controls: $0, generation: inputConfiguration.sessionGeneration) }
+        setup = setupControls.map { LaserSessionSetup(controls: $0, generation: inputConfiguration.sessionGeneration,
+                                                      roster: inputConfiguration.roster) }
     }
 
     convenience init(liveProvider: BodyInputService, inputConfiguration: BodyInputConfiguration,
-                     configuration: LaserRoundConfiguration? = nil, encounters: [LaserEncounter] = []) {
+                     configuration: LaserRoundConfiguration? = nil, encounters: [LaserEncounter] = [],
+                     liveRoundPlanner: (@MainActor (BodyInputContext, [PlayerID: PlayerCalibration]) throws -> LaserLiveWristRoundPlan)? = nil,
+                     automaticSetup: Bool = false) {
         self.init(provider: liveProvider, inputConfiguration: inputConfiguration, configuration: configuration,
-                  encounters: encounters, setupControls: LaserLiveSetupControls(service: liveProvider))
+                  encounters: encounters, setupControls: LaserLiveSetupControls(service: liveProvider),
+                  liveRoundPlanner: liveRoundPlanner, automaticSetup: automaticSetup)
     }
 
     func start() async throws {
         guard phase == .idle else { return }
         phase = .starting
+        #if DEBUG
+        if automaticSetup { setupTimeline.mark("setup opened", at: hostNow()) }
+        #endif
         let token = UUID()
         lifetime = token
         do {
@@ -180,6 +233,19 @@ final class GameSessionCoordinator {
                 // Source activity/uncalibrated CP1 packets are not permission to run a game.
                 phase = .awaitingSetup
                 setup?.activate()
+                #if DEBUG
+                if automaticSetup { setupTimeline.mark("camera running", at: hostNow()) }
+                #endif
+                if automaticSetup, automaticSetupTimer {
+                    // Status reads and controls run here, outside the provider's status callback.
+                    setupTask = Task { @MainActor [weak self] in
+                        while !Task.isCancelled {
+                            try? await Task.sleep(for: LaserAutomaticSetupPolicy.tick)
+                            guard let self, self.lifetime == token else { return }
+                            self.advanceSetupAutomatically()
+                        }
+                    }
+                }
                 inputTask = Task { @MainActor [weak self] in
                     guard self?.lifetime == token else { return }
                     for await packet in stream {
@@ -189,6 +255,7 @@ final class GameSessionCoordinator {
                     guard let self, self.lifetime == token else { return }
                     self.inputStreamEnded = true
                     self.latestSnapshot = nil
+                    debugRestart("stream ended")
                     self.liveReadiness?.requireRestart()
                     self.synchronizeLiveGame()
                 }
@@ -278,6 +345,7 @@ final class GameSessionCoordinator {
     }
 
     func stop(reason: LaserRoundOutcome = .aborted) async {
+        setupTask?.cancel(); setupTask = nil
         let hadLifetime = lifetime != nil
         wristDiamonds = nil
         lifetime = nil
@@ -285,6 +353,7 @@ final class GameSessionCoordinator {
         liveFrameAttachment = nil
         liveFrameHostReady = false
         setup?.close()
+        debugRestart("stop")
         liveReadiness?.requireRestart()
         game?.exit(outcome: reason)
         if let more = game?.drainEvents() { events.append(contentsOf: more) }
@@ -307,12 +376,21 @@ final class GameSessionCoordinator {
               inputContext?.accepts(packet) == true else { return }
         // Keep one current snapshot; the same sole stream also supplies authoritative live evidence.
         if latestSnapshot == nil || packet.frameID > latestSnapshot!.frameID { latestSnapshot = packet }
+        #if DEBUG
+        // Every jump-phase change with the soles and head behind it (the 1 Hz line misses jumps).
+        for (player, sample) in packet.players where lastLoggedJump[player] != "\(sample.jumpState.phase)" {
+            lastLoggedJump[player] = "\(sample.jumpState.phase)"
+            let g = sample.geometry
+            func v(_ m: EstimatedScalar) -> String { m.value.map { String(format: "%.2f", $0) } ?? "\(m.validity)" }
+            print("[LaserJump] \(player.rawValue) frame \(packet.frameID) → \(sample.jumpState.phase) · soles \(v(g.leftSoleY))/\(v(g.rightSoleY)) head \(v(g.crownY))")
+        }
+        #endif
         if let context = inputContext {
             do {
                 try liveReadiness?.observe(packet, context: context,
                     bindingConfirmed: setup?.hasConfirmedReliablePair == true && setup?.canCancelCalibration == false,
                     at: hostNow())
-            } catch { liveReadiness?.requireRestart() }
+            } catch { debugRestart("observe threw: \(error)"); liveReadiness?.requireRestart() }
         }
         synchronizeLiveGame(packet: packet)
     }
@@ -333,6 +411,7 @@ final class GameSessionCoordinator {
         inputStatus = status
         setup?.refresh()
         if let installedLiveWristContext, installedLiveWristContext != context {
+            debugRestart("installed context changed: was \(String(describing: installedLiveWristContext)) now \(String(describing: context))")
             liveReadiness?.requireRestart() // even a pre-countdown cutover needs a new setup/plan
         }
         guard liveReadiness != nil else { return } // Replay never reads a host-time source.
@@ -344,10 +423,213 @@ final class GameSessionCoordinator {
                 try liveReadiness?.invalidateBinding(at: time)
             }
         }
-        catch { liveReadiness?.requireRestart() }
-        if setup?.phase == .restartRequired { liveReadiness?.requireRestart() }
+        catch { debugRestart("status read threw: \(error)"); liveReadiness?.requireRestart() }
+        if setup?.phase == .restartRequired { debugRestart("setup restartRequired"); liveReadiness?.requireRestart() }
+        installAcceptedLivePlanIfReady()
         if synchronizeLive { synchronizeLiveGame(allowAdvance: false) }
     }
+
+    /// Once setup has accepted both calibrations, install the live round built from them.
+    /// Runs inside the status read, only once per session; failure leaves the round blocked.
+    private func installAcceptedLivePlanIfReady() {
+        guard let liveRoundPlanner, !installingLivePlan, configuration == nil, !isReplay, lifetime != nil,
+              phase == .awaitingSetup, setup?.phase == .awaitingGameplayReadiness,
+              let context = provider.currentContext, context.isActive else { return }
+        installingLivePlan = true
+        defer { installingLivePlan = false }
+        do {
+            try installLiveWristRound(liveRoundPlanner(context, provider.acceptedCalibrations))
+            livePlanError = nil
+        } catch { livePlanError = String(describing: error) }
+    }
+
+    /// One step of the automatic onboarding (the setup tick calls this; tests call it directly).
+    /// Searching → linked → upright prompt → calibrating → accepted → plan → countdown. Each
+    /// step uses the existing setup command, so binding, freshness, identity and anatomy rules
+    /// are unchanged; a step whose conditions do not hold simply waits or reports why.
+    func advanceSetupAutomatically() {
+        guard automaticSetup, !isReplay, lifetime != nil, let setup else { return }
+        let now = hostNow()
+        setup.refresh()
+        #if DEBUG
+        let controls = setup.diagnosticControls
+        if let latest = controls.tracking.latest {
+            for player in PlayerID.allCases where latest[player].state == .tracking {
+                setupTimeline.mark("\(player.rawValue) tracked", at: now)
+            }
+        }
+        if (controls.peopleInView ?? 0) >= 1 { setupTimeline.mark("first person in view", at: now) }
+        if (controls.peopleInView ?? 0) >= 2 { setupTimeline.mark("both people in view", at: now) }
+        #endif
+        switch setup.phase {
+        case .awaitingBinding:
+            if provider.currentContext?.isActive == true { try? setup.beginBinding() }
+        case .confirmPlayers:
+            if (try? setup.confirmPlayers()) != nil {
+                #if DEBUG
+                setupTimeline.mark("players linked", at: now)
+                #endif
+            }
+        case .awaitingCalibration:
+            guard presence.attempts < LaserAutomaticSetupPolicy.maximumAttempts else { break }
+            // The players are asked to stand still and upright BEFORE any sample is taken.
+            if let start = uprightPromptStart {
+                if now - start >= LaserAutomaticSetupPolicy.uprightPrompt, (try? setup.requestCalibration(id: UUID())) != nil {
+                    uprightPromptStart = nil; presence.attempts += 1
+                    #if DEBUG
+                    setupTimeline.mark("calibration started", at: now, detail: "attempt \(presence.attempts)")
+                    #endif
+                }
+            } else { uprightPromptStart = now }
+        case .reviewCandidate:
+            if let id = setup.candidateIDForConfirmation, (try? setup.confirmCandidate(id: id)) != nil {
+                #if DEBUG
+                logCalibration(accepted: true, at: now)
+                #endif
+            }
+        case .blocked:
+            // A failed attempt: show why, then try again by itself a limited number of times.
+            if retryAt == nil {
+                presence.lastIssue = setup.diagnosticControls.calibration.players.values.compactMap(\.latestIssue).first
+                    ?? Self.issue(in: setup.diagnosticReason)
+                #if DEBUG
+                logCalibration(accepted: false, at: now)
+                #endif
+                retryAt = now + LaserAutomaticSetupPolicy.retryDelay
+            } else if let at = retryAt, now >= at, presence.attempts < LaserAutomaticSetupPolicy.maximumAttempts {
+                retryAt = nil
+                setup.cancelCalibration()
+            }
+        default:
+            break
+        }
+        if setup.phase != .awaitingCalibration { uprightPromptStart = nil }
+        if case .blocked = setup.phase {} else { retryAt = nil }
+        #if DEBUG
+        // While searching for the pair: who Vision sees and why the tracker has not linked, every 2 s.
+        if setup.phase == .binding || setup.phase == .awaitingBinding || setup.phase == .waitingForReliablePair,
+           now - lastSearchLog >= 2 {
+            lastSearchLog = now
+            let controls = setup.diagnosticControls
+            let people = controls.debugPeople.map { p in
+                String(format: "x %.2f sh %.2f/%.2f hip %.2f/%.2f", p.x, p.core[0], p.core[1], p.core[2], p.core[3])
+            }
+            let slots = PlayerID.allCases.map { player in
+                controls.tracking.latest.map { "\(player.rawValue) \($0[player].state.rawValue)/\($0[player].reason.rawValue)" } ?? "\(player.rawValue) -"
+            }
+            print("[LaserSetupSearch] \(setup.phase) armed \(controls.tracking.requestID != nil) · \(controls.debugVision) · people \(people.count): \(people.joined(separator: " | ")) · \(slots.joined(separator: ", "))")
+        }
+        // One console line whenever a player's refusal reason changes (no image data).
+        for player in PlayerID.allCases {
+            let p = setup.diagnosticControls.calibration.players[player]
+            let issue = p?.latestIssue?.rawValue ?? (p == nil ? "-" : "ok")
+            if lastLoggedIssue[player] != issue {
+                lastLoggedIssue[player] = issue
+                let d = p?.last
+                print(String(format: "[LaserSetupSample] %@ %@ window %d/%d · head %@ · soles %@ · ankles apart %@",
+                    player.rawValue, issue, p?.samples ?? 0, StandingCollectionPolicyV1.sampleCount,
+                    d?.crownSeen == true ? "seen" : d?.crown?.rawValue ?? "-",
+                    d?.solesSeen == true ? "seen" : d?.soles?.rawValue ?? "-",
+                    d?.ankleSeparationShare.map { String(format: "%.2f of body", $0) } ?? "-"))
+            }
+            // Every sample (not only changes): the raw numbers behind the reason.
+            if let d = setup.diagnosticControls.calibration.players[player]?.last, d.frameID != lastLoggedFrame[player] {
+                lastLoggedFrame[player] = d.frameID
+                func c(_ j: BodyJoint) -> String { String(format: "%.2f", d.confidence[j] ?? 0) }
+                let ranges: [String] = (p?.moveRangePixels ?? []).map { String(format: "%.1f", $0) }
+                let stabilityText: String = " · window \(p?.samples ?? 0) range head/soles px " + ranges.joined(separator: "/")
+                print("[LaserSetupJoints] \(player.rawValue) frame \(d.frameID) · vision bodies \(d.visionBodies) · mask \(d.maskQuality) regions \(d.maskRegions)"
+                    + " · nose \(c(.nose)) eyes \(c(.leftEye))/\(c(.rightEye)) ears \(c(.leftEar))/\(c(.rightEar)) neck \(c(.neck))"
+                    + " · hips \(c(.leftHip))/\(c(.rightHip)) knees \(c(.leftKnee))/\(c(.rightKnee)) ankles \(c(.leftAnkle))/\(c(.rightAnkle))"
+                    + " · head \(d.crownSeen ? "seen" : d.crown?.rawValue ?? "-") soles \(d.solesSeen ? "seen" : d.soles?.rawValue ?? "-")"
+                    + (d.bodyHeightPixels.map { String(format: " · body %.0f px", $0) } ?? "")
+                    + String(format: " · head-top above nose %@ [%.2f–%.2f] · foot height %@ [≤%.2f] · feet gap filled %@",
+                        d.crownAboveNose.map { String(format: "%.3f", $0) } ?? "-",
+                        AnatomicalCandidatePolicyV1.minimumCrownAboveNoseShare, AnatomicalCandidatePolicyV1.maximumCrownAboveNoseShare,
+                        d.footHeight.map { String(format: "%.3f", $0) } ?? "-",
+                        AnatomicalCandidatePolicyV1.maximumFootHeightShare,
+                        d.feetGapFilled.map { String(format: "%.2f", $0) } ?? "-")
+                    + stabilityText)
+            }
+        }
+        #endif
+        presence.promptingUpright = uprightPromptStart != nil
+        presence.willRetry = presence.attempts < LaserAutomaticSetupPolicy.maximumAttempts
+        refreshPresence()
+        // Both references accepted, the round planned and the scene drawing: count down.
+        if canStartLiveRound, !countdownRequested, (try? beginLiveCountdown()) != nil {
+            #if DEBUG
+            setupTimeline.mark("countdown", at: now)
+            #endif
+        }
+        #if DEBUG
+        // Once a second during the round: the live evidence the judge would use.
+        if phase == .running || phase == .countdown || phase == .paused, now - lastSearchLog >= 1 {
+            lastSearchLog = now
+            for player in inputConfiguration.roster {
+                let s = latestSnapshot?.players[player]
+                func v(_ e: EstimatedScalar?) -> String { e.map { $0.validity == .valid ? String(format: "%.2f", $0.value ?? 0) : "\($0.validity)" } ?? "-" }
+                print("[LaserLive] \(phase) readiness \(String(describing: liveReadiness?.phase)) · \(player.rawValue) head \(v(s?.geometry.crownY)) wrists \(v(s?.geometry.leftWristY))/\(v(s?.geometry.rightWristY)) soles \(v(s?.geometry.leftSoleY))/\(v(s?.geometry.rightSoleY)) jump \(s.map { "\($0.jumpState.phase)" } ?? "-") · health \(state?.teamHealth ?? -1) score \(state?.teamScore ?? -1)")
+            }
+        }
+        if hasLiveRoundPlan { setupTimeline.mark("round planned", at: now) }
+        if phase == .running { setupTimeline.mark("gameplay running", at: now) }
+        #endif
+    }
+
+    /// DEBUG: why a live session had to restart (no-op in Release).
+    private func debugRestart(_ reason: @autoclosure () -> String) {
+        #if DEBUG
+        print("[LaserSetupRestart] \(reason())")
+        #endif
+    }
+
+    /// Players asked to try again after the automatic attempts ran out.
+    func retryCalibrationManually() {
+        guard let setup else { return }
+        presence.attempts = 0; retryAt = nil; uprightPromptStart = nil
+        setup.cancelCalibration()
+        advanceSetupAutomatically()
+    }
+
+    private func refreshPresence() {
+        guard let setup else { return }
+        let controls = setup.diagnosticControls
+        presence.peopleInView = controls.peopleInView ?? presence.peopleInView
+        let progress = controls.calibration
+        let context = provider.currentContext
+        presence.players = presence.players.filter { inputConfiguration.roster.contains($0.key) }
+        for player in inputConfiguration.roster {
+            if context?.calibrationRevisions[player] != nil {
+                presence.players[player] = .ready
+            } else if setup.canCancelCalibration, let value = progress.players[player] {
+                presence.players[player] = .calibrating(
+                    progress: Double(value.samples) / Double(StandingCollectionPolicyV1.sampleCount), issue: value.latestIssue)
+            } else if setup.hasConfirmedReliablePair || controls.tracking.latest?[player].state == .tracking {
+                presence.players[player] = setup.canCancelCalibration ? .calibrating(progress: 0, issue: nil) : .linked
+            } else {
+                presence.players[player] = .searching
+            }
+        }
+    }
+
+    private static func issue(in reason: String) -> StandingSampleIssue? {
+        StandingSampleIssue.allCases.first { reason.contains("(\($0.rawValue))") }
+    }
+
+    #if DEBUG
+    private func logCalibration(accepted: Bool, at now: Double) {
+        guard let setup else { return }
+        let progress = setup.diagnosticControls.calibration
+        let detail = PlayerID.allCases.map { player -> String in
+            let p = progress.players[player] ?? .init()
+            let reasons = p.rejected.sorted { $0.key.rawValue < $1.key.rawValue }.map { "\($0.key.rawValue)=\($0.value)" }
+            return "\(player.rawValue): accepted \(p.accepted), window \(p.samples), refused [\(reasons.joined(separator: ","))], "
+                + String(format: "spread %.1f px, mask rows %@", p.spreadPixels, p.maskRows.map(String.init) ?? "?")
+        }.joined(separator: " | ")
+        setupTimeline.mark(accepted ? "calibration accepted" : "calibration attempt \(presence.attempts) failed", at: now, detail: detail)
+    }
+    #endif
 
     /// Read status/readiness without finalizing deadlines or publishing a fake snapshot.
     func refreshLiveReadiness() {
@@ -369,9 +651,12 @@ final class GameSessionCoordinator {
             throw LaserDataError.invalidValue("live wrist plan requires current accepted setup")
         }
         // All candidate/context validation precedes assignment. No acceptance is created here.
-        configuration = plan.configuration; encounters = plan.encounters
+        configuration = plan.configuration
+        // A director registers its encounters as the round reaches them; a fixed plan registers all.
+        encounters = plan.director == nil ? plan.encounters : []
+        liveDirector = plan.director
         wristDiamondConfiguration = plan.diamonds; installedLiveWristContext = context
-        liveReadiness = LaserLiveReadiness(policy:plan.timing)
+        liveReadiness = LaserLiveReadiness(policy:plan.timing, roster: inputConfiguration.roster)
         readInputStatus() // new fresh settling/scene attachment/countdown remain mandatory
     }
 
@@ -403,7 +688,7 @@ final class GameSessionCoordinator {
         liveFrameHostReady = false
         guard lifetime != nil else { return }
         do { try liveReadiness?.invalidatePresentation(at: hostNow()) }
-        catch { liveReadiness?.requireRestart() }
+        catch { debugRestart("pause threw: \(error)"); liveReadiness?.requireRestart() }
         synchronizeLiveGame()
     }
 
@@ -422,7 +707,7 @@ final class GameSessionCoordinator {
     func pauseLiveRound() {
         guard canPauseLiveRound else { return }
         do { try liveReadiness?.setManualPause(true, at: hostNow()) }
-        catch { liveReadiness?.requireRestart() }
+        catch { debugRestart("continue threw: \(error)"); liveReadiness?.requireRestart() }
         synchronizeLiveGame()
     }
 
@@ -470,7 +755,7 @@ final class GameSessionCoordinator {
     func continueLiveRound() {
         guard !isReplay, phase == .paused, lifetime != nil else { return }
         do { try liveReadiness?.setManualPause(false, at: hostNow()) }
-        catch { liveReadiness?.requireRestart() }
+        catch { debugRestart("detach host threw: \(error)"); liveReadiness?.requireRestart() }
         countdownRequested = true
         recoveryAttempted = false
         synchronizeLiveGame()
@@ -495,10 +780,14 @@ final class GameSessionCoordinator {
                     let request = LaserLiveRecoveryRequest(withdrawn: withdrawnLiveEncounters,
                         gameTime: readiness.gameTime, hostTime: hostNow(), context: context)
                     do {
-                        guard let replacement = try recoveryPlanner?(request) else {
+                        let planned: [LaserEncounter]?
+                        if let recoveryPlanner { planned = try recoveryPlanner(request) }
+                        else { planned = try liveDirector?.recover(request) }
+                        guard let replacement = planned else {
                             recoveryNeedsPlan = true; phase = .paused; return
                         }
-                        try LaserLiveRecovery.validate(replacement, request: request, configuration: configuration)
+                        try LaserLiveRecovery.validate(replacement, request: request, configuration: configuration,
+                                                       boundary: liveDirector?.vaultBoundary)
                         try requireLaserValue(replacement.allSatisfy { game?.hasUsedAttempt($0.attemptID) == false },
                                               "recovery attempt identity already used in round")
                         approvedRecovery = replacement
@@ -546,23 +835,65 @@ final class GameSessionCoordinator {
                     withdrawnLiveEncounters = []; approvedRecovery = nil; recoveryAttempted = false
                 }
                 if phase != .running, let plan = wristDiamondConfiguration, let token = lifetime {
-                    wristDiamonds = try LaserWristDiamondConsumer(configuration: plan, context: context,
-                        lifetime: token, afterCapturedAt: hostNow())
+                    var consumer = try LaserWristDiamondConsumer(configuration: plan, context: context,
+                        lifetime: token, afterCapturedAt: hostNow(), planner: wristDiamonds?.replacementPlanner)
+                    if let vault = liveVault, game?.roundPhase == .vault, let current = game {
+                        try consumer.openVault(id: vault.id, zones: vault.zones, game: current, atHostTime: hostNow())
+                    }
+                    wristDiamonds = consumer
                 }
                 phase = .running
-                // Receive before inclusive advance: equal-deadline arrivals remain eligible.
-                var stagedGame = game!, stagedWrist = wristDiamonds
+                var stagedGame = game!, stagedWrist = wristDiamonds, stagedDirector = liveDirector
+                var stagedRegistered: [LaserEncounter] = [], stagedVault = liveVault
                 let revision = inputRevision
+                // Planned work that has come due: each at its own exact game time, in order.
+                // The director's own state (minute start, planner) is kept even when nothing is due.
+                if var director = stagedDirector {
+                    while let due = try director.nextDue(through: readiness.gameTime, game: stagedGame) {
+                        try stagedGame.advance(to: max(stagedGame.gameTime, due.time))
+                        guard stagedGame.roundOutcome == nil else { break }
+                        switch due.action {
+                        case .register(let encounter):
+                            try stagedGame.register(encounter); stagedRegistered.append(encounter)
+                        case .normalDiamond(let spawn, let boundary):
+                            try stagedGame.spawnNormalDiamonds([spawn], beforeVaultAt: boundary)
+                        case .openVault(let id, let zones):
+                            try stagedGame.openVault(id: id, at: stagedGame.gameTime)
+                            try stagedWrist?.openVault(id: id, zones: zones, game: stagedGame, atHostTime: hostNow())
+                            stagedVault = (id, zones)
+                        }
+                        try stagedWrist?.refresh(game: stagedGame, context: context, atHostTime: hostNow())
+                    }
+                    stagedDirector = director
+                }
+                // Receive before inclusive advance: equal-deadline arrivals remain eligible.
                 if let packet, let captured = liveReadiness?.capturedGameTime(for: packet) {
                     try stagedGame.receive(packet, capturedGameTime: captured, arrivedAt: readiness.gameTime)
                     try stagedWrist?.receive(packet, context: context, atHostTime: hostNow(),
                         capturedGameTime: captured, arrivedGameTime: readiness.gameTime, game: &stagedGame)
                 }
+                // DEBUG solo practice: no vault ends it, so it ends once its last minute is judged.
+                if inputConfiguration.soloPlayer != nil, stagedDirector?.isFinishedPlanning == true,
+                   stagedGame.roundOutcome == nil, stagedGame.isEveryRegisteredEncounterSettled,
+                   stagedGame.activeDiamonds.isEmpty {
+                    stagedGame.exit(outcome: .completed)
+                }
+                // The final vault unlocks Diamond Time at the opening press: place its targets then.
+                if stagedGame.roundPhase == .diamondTime, !stagedGame.hasStartedDiamondTimeDiamonds,
+                   var director = stagedDirector {
+                    let spawns = try director.diamondTimeSpawns(at: stagedGame.gameTime,
+                        deadline: stagedGame.gameTime + configuration.diamondTimeDuration)
+                    try stagedGame.startDiamondTimeDiamonds(spawns)
+                    stagedWrist?.adoptPlanner(director.planner)
+                    stagedDirector = director
+                }
+                if stagedGame.roundPhase != .vault { stagedVault = nil }
                 try stagedGame.advance(to: readiness.gameTime)
                 try stagedWrist?.refresh(game: stagedGame, context: context, atHostTime: hostNow())
                 // No suspension/callback between this producer recheck and staged assignment.
                 guard lifetime != nil, inputRevision == revision, provider.currentContext == context else { return }
-                game = stagedGame; wristDiamonds = stagedWrist
+                game = stagedGame; wristDiamonds = stagedWrist; liveDirector = stagedDirector
+                encounters.append(contentsOf: stagedRegistered); liveVault = stagedVault
                 collectLiveState()
                 if summary != nil { phase = .finished; finishLiveInput(); return }
                 if encounters.contains(where: { encounter in
@@ -581,6 +912,7 @@ final class GameSessionCoordinator {
                 }
             }
         } catch {
+            debugRestart("synchronize threw: \(error)")
             liveReadiness?.requireRestart()
             game?.exit(outcome: .technicalInterruption)
             collectLiveState()
@@ -609,18 +941,34 @@ final class GameSessionCoordinator {
     }
 
     private func collectLiveState() {
-        if let more = game?.drainEvents() { events.append(contentsOf: more) }
+        if let more = game?.drainEvents() {
+            events.append(contentsOf: more)
+            #if DEBUG
+            for event in more { if case .targetJudged(let id, let player, let verdict) = event.kind,
+                let target = encounters.first(where: { $0.id == id })?.targets.first(where: { $0.playerID == player }) {
+                let sample = latestSnapshot?.players[player]
+                print(String(format: "[LaserVerdict] %@ %@ beam %.2f–%.2f → %@ · head %@ soles %@/%@ jump %@",
+                    player.rawValue, target.requiredMove.rawValue, target.beam.lowerY, target.beam.upperY, "\(verdict)",
+                    sample?.geometry.crownY.value.map { String(format: "%.2f", $0) } ?? "-",
+                    sample?.geometry.leftSoleY.value.map { String(format: "%.2f", $0) } ?? "-",
+                    sample?.geometry.rightSoleY.value.map { String(format: "%.2f", $0) } ?? "-",
+                    sample.map { "\($0.jumpState.phase)" } ?? "-"))
+            } }
+            #endif
+        }
         if summary == nil { summary = game?.summary }
         refresh(at: game?.gameTime ?? 0)
     }
 
     private func finishLiveInput() {
         guard liveTerminationTask == nil else { return }
+        setupTask?.cancel(); setupTask = nil
         wristDiamonds = nil
         lifetime = nil
         liveFrameAttachment = nil
         liveFrameHostReady = false
         setup?.close()
+        debugRestart("finishLiveInput")
         liveReadiness?.requireRestart()
         liveTerminationTask = Task { @MainActor [weak self] in await self?.releaseInput() }
     }
@@ -673,7 +1021,7 @@ final class GameSessionCoordinator {
             }
             let finalized = verdicts.values.allSatisfy { if case .pending = $0 { false } else { true } }
             if finalized, committed.insert(encounter.id).inserted {
-                for player in PlayerID.allCases {
+                for player in encounter.targets.map(\.playerID) {
                     let key = LaserTargetKey(encounterID: encounter.id, attemptID: encounter.attemptID, playerID: player)
                     var frame: UInt64?
                     if case .selected(let evidence) = game.selection(for: key) { frame = evidence.snapshot.frameID }

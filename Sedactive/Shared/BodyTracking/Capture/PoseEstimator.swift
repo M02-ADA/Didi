@@ -36,6 +36,7 @@ nonisolated final class PoseEstimator: CameraPoseDetecting {
     (.leftWrist, .leftWrist), (.rightWrist, .rightWrist),
     (.leftHip, .leftHip), (.rightHip, .rightHip),
     (.leftAnkle, .leftAnkle), (.rightAnkle, .rightAnkle),
+    (.leftKnee, .leftKnee), (.rightKnee, .rightKnee),
   ]
   func detect(in buffer: CVPixelBuffer) throws -> CameraPoseObservations {
     try autoreleasepool {

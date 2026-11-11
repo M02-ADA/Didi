@@ -16,15 +16,17 @@ import UIKit
 /// see themselves as in a mirror, P1 on the left); the capture data is never
 /// mirrored.
 ///
-/// PENDING Edo: `CameraPipeline` keeps its `AVCaptureSession` private, and
-/// the release composition has no pipeline yet, so nothing passes a session
-/// here. Not verified with a real camera (Simulator only).
+/// The session is `CameraPipeline.previewSession`, the retained native
+/// session. The layer attaches before the camera input exists and levels
+/// itself each time the session starts running.
 struct CalibrationCameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
 
     func makeUIView(context: Context) -> PreviewView {
         let view = PreviewView()
-        view.previewLayer.videoGravity = .resizeAspectFill
+        // The whole capture frame, never cropped: the stage sizes this view to the camera's
+        // aspect, so aspect fit fills it exactly and players see what tracking sees.
+        view.previewLayer.videoGravity = .resizeAspect
         view.previewLayer.session = session
         view.levelWithHorizon()
         return view
@@ -39,6 +41,7 @@ struct CalibrationCameraPreview: UIViewRepresentable {
 
     static func dismantleUIView(_ view: PreviewView, coordinator: ()) {
         view.stopObserving()
+        view.stopWatchingSession()
         view.previewLayer.session = nil
     }
 
@@ -47,10 +50,12 @@ struct CalibrationCameraPreview: UIViewRepresentable {
         var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
         private var rotation: AVCaptureDevice.RotationCoordinator?
         private var rotationObservation: NSKeyValueObservation?
+        private var started: (any NSObjectProtocol)?
 
         /// Keeps the preview level as the iPad turns, and unmirrored.
         func levelWithHorizon() {
             stopObserving()
+            watchSession()
             if let connection = previewLayer.connection, connection.isVideoMirroringSupported {
                 connection.automaticallyAdjustsVideoMirroring = false
                 connection.isVideoMirrored = false
@@ -65,6 +70,21 @@ struct CalibrationCameraPreview: UIViewRepresentable {
                 guard let angle = change.newValue else { return }
                 Task { @MainActor [weak self] in self?.apply(angle) }
             }
+        }
+
+        /// The camera input attaches when setup starts the camera, after this
+        /// layer exists, so level again whenever the session starts running.
+        private func watchSession() {
+            guard started == nil, let session = previewLayer.session else { return }
+            started = NotificationCenter.default.addObserver(forName: AVCaptureSession.didStartRunningNotification,
+                                                             object: session, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.levelWithHorizon() }
+            }
+        }
+
+        func stopWatchingSession() {
+            if let started { NotificationCenter.default.removeObserver(started) }
+            started = nil
         }
 
         func stopObserving() {

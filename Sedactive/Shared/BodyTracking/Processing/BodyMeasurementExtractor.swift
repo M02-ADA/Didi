@@ -38,12 +38,36 @@ nonisolated enum BodyMeasurementExtractor {
     if let left = hips[0], let right = hips[1], left.confidence >= 0.5, right.confidence >= 0.5 {
       center = scalar(calibration.mapping.gameX(imageX: (left.x + right.x) / 2, playerID: id, layout: layout))
     } else { center = unavailable(.missingLandmarks) }
-    // Standing offsets alone do not validate live anatomical support across crouch/occlusion.
-    // Keep the CP1 requirements intact; no nose-only crown or ankle-only sole fallback.
-    let anatomy = unavailable(.missingLandmarks)
+    // Live head-top and soles (policy V2, 11 November 2026): this frame's nose and ankles plus the
+    // offsets measured on THIS player at their accepted standing calibration (TEAM_ALIGNMENT §C:
+    // "estimates built from landmarks plus each player's standing calibration"). Only from a
+    // calibration accepted from live standing evidence (recorded provenance); a calibration with
+    // no recorded provenance still yields none. A landmark below confidence yields UNAVAILABLE.
+    guard calibration.referenceQuality != nil else {
+      let anatomy = unavailable(.missingLandmarks)
+      return .init(playerID: id, calibrationRevision: calibration.revision, trackingStatus: status,
+        geometry: .init(crownY: anatomy, leftWristY: wrist(.leftWrist), rightWristY: wrist(.rightWrist),
+          leftSoleY: anatomy, rightSoleY: anatomy, centerX: center),
+        jumpState: JumpDetector.unavailable(.missingLandmarks))
+    }
+    let height = calibration.standingBodyImageHeight
+    func offset(_ joint: BodyJoint, by share: Double) -> EstimatedScalar {
+      guard let p = candidate.joints[joint] else { return unavailable(.missingLandmarks) }
+      guard p.confidence >= 0.5 else { return unavailable(.lowConfidence) }
+      return scalar(calibration.mapping.gameY(imageY: p.y + share * height, layout: layout))
+    }
     return .init(playerID: id, calibrationRevision: calibration.revision, trackingStatus: status,
-      geometry: .init(crownY: anatomy, leftWristY: wrist(.leftWrist), rightWristY: wrist(.rightWrist),
-        leftSoleY: anatomy, rightSoleY: anatomy, centerX: center),
-      jumpState: JumpDetector.unavailable(.missingLandmarks))
+      geometry: .init(crownY: offset(.nose, by: calibration.headOffsetFromNoseShare),
+        leftWristY: wrist(.leftWrist), rightWristY: wrist(.rightWrist),
+        leftSoleY: offset(.leftAnkle, by: -calibration.leftFootOffsetShare),
+        rightSoleY: offset(.rightAnkle, by: -calibration.rightFootOffsetShare), centerX: center),
+      jumpState: JumpDetector.unavailable(.missingLandmarks)) // the stateful estimator fills this in
+  }
+
+  /// The player's hips in game units this frame (for the airborne estimator), or nil.
+  static func hipGameY(candidate: PoseCandidate?, calibration: PlayerCalibration, layout: PlayerPlaneLayout) -> Double? {
+    guard let l = candidate?.joints[.leftHip], let r = candidate?.joints[.rightHip],
+      l.confidence >= 0.5, r.confidence >= 0.5 else { return nil }
+    return calibration.mapping.gameY(imageY: (l.y + r.y) / 2, layout: layout)
   }
 }
