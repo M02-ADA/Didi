@@ -118,6 +118,7 @@ nonisolated struct CameraTrackingAdmission: Equatable, Sendable {
   let revision: UInt64
   let requestID: UUID?
   var calibration: CalibrationAdmission? = nil
+  var acceptedBodyRevision: UInt64? = nil // E08 only; immutable acceptance context at admission
   var presentationRevision: UInt64? = nil
 }
 nonisolated struct CameraTrackingControl: Sendable {
@@ -454,6 +455,7 @@ nonisolated final class CameraTrackingGate: Sendable {
       if $0.body.source == source.context { $0.body.lastAdmission = source }
       return .init(context: source.context, revision: $0.revision, requestID: $0.requestID,
         calibration: $0.body.calibration.admission,
+        acceptedBodyRevision: $0.body.acceptedRevision,
         presentationRevision: $0.presentation.admit(source, authorized: $0.requestID != nil))
     }
   }
@@ -574,7 +576,7 @@ nonisolated final class CameraTrackingGate: Sendable {
     s.presentation.invalidate()
     s.body.calibration.uncertain()
     s.body.measurements.invalidate()
-    s.body.latest = nil
+    s.body.latest = nil; s.body.wrists = nil
     s.body.wake?.yield(())
     s.watermark = max(s.watermark, time)
     s.latest = nil
@@ -636,6 +638,16 @@ nonisolated final class CameraTrackingGate: Sendable {
     s.body.delivery = .closed; s.body.stopped = true
     s.body.wake?.finish(); s.body.wake = nil
   }
+  private func wristContext(_ s: State) -> WristContactContextV1? {
+    guard s.active, s.foreground, !s.body.stopped, s.body.source == s.context,
+      let source = s.context, let request = s.requestID, let ack = s.acknowledgment,
+      ack.requestID == request, ack.source.context.generation == source.generation,
+      ack.source.context.epoch == source.epoch, ack.source.context.geometryRevision == source.geometryRevision,
+      ack.source.controlRevision == s.revision else { return nil }
+    return .init(sourceEpoch:source.epoch,controlRevision:s.revision,bindingRequestID:request,
+      bindingFrameID:ack.source.frameID,bindingCapturedAt:ack.source.capturedAt,
+      acceptedContextRevision:s.body.acceptedRevision,freshness:policy.freshness)
+  }
   func readBody() -> LiveBodyInputRead {
     state.withLock {
       let time = now(); expire(&$0, at: time); $0.body.calibration.expire(at: time)
@@ -647,10 +659,10 @@ nonisolated final class CameraTrackingGate: Sendable {
       }
       let status: BodyInputStatus = $0.body.terminalFailure.map { .failed($0) }
         ?? ($0.body.configuration == nil || $0.body.stopped ? .stopped : active ? .running : .interrupted(.system))
-      return .init(context: $0.body.context(active: active), latest: latest, status: status,
+      return .init(context: $0.body.context(active: active, wristContact: wristContext($0)), latest: latest, status: status,
         diagnostics: $0.body.diagnostics, delivery: $0.body.delivery,
         calibration: $0.body.calibration.progress, acceptedRevision: $0.body.acceptedRevision,
-        progress: $0.body.progress(at: time), measurements: active ? $0.body.measurements.latest.flatMap {
+        progress: $0.body.progress(at: time), wrists: latest == nil ? nil : $0.body.wrists, measurements: active ? $0.body.measurements.latest.flatMap {
           time >= $0.source.capturedAt && time - $0.source.capturedAt < policy.freshness ? $0 : nil
         } : nil)
     }
@@ -799,7 +811,7 @@ nonisolated final class CameraTrackingGate: Sendable {
       if admission.requestID != nil {
         guard let receipt, $0.latest == receipt, $0.lastFrame == pose.source.frameID else { return }
       }
-      $0.body.publish(pose, association: receipt)
+      $0.body.publish(pose, association: receipt, admission: admission, acknowledgment: $0.acknowledgment)
     }
   }
   func acceptBodyCandidate(_ id: UUID, expectedRevision: UInt64) throws -> BodyInputContext {
@@ -808,10 +820,10 @@ nonisolated final class CameraTrackingGate: Sendable {
       guard pairEligible($0), let stamp = $0.body.calibration.admission,
         stamp.source == $0.context, stamp.bindingRevision == $0.revision,
         stamp.bindingRequest == $0.requestID else { throw LiveVisionError.staleEvidence }
-      let context = try $0.body.accept(candidateID: id, expectedRevision: expectedRevision, at: time)
+      _ = try $0.body.accept(candidateID: id, expectedRevision: expectedRevision, at: time)
       $0.presentation.invalidate()
       programTimer(&$0, at: time)
-      return context
+      return $0.body.context(active: true, wristContact: wristContext($0))!
     }
   }
   func replaceBodyCalibrations(_ values: [PlayerID: PlayerCalibration], generation: UUID) throws -> BodyInputContext {
@@ -829,9 +841,9 @@ nonisolated final class CameraTrackingGate: Sendable {
         }
         $0.body.configuration = config.replacingCalibrations(values)
         $0.presentation.invalidate()
-        $0.body.acceptedRevision += 1; $0.body.latest = nil; $0.body.wake?.yield(())
+        $0.body.acceptedRevision += 1; $0.body.latest = nil; $0.body.wrists = nil; $0.body.wake?.yield(())
       }
-      return $0.body.context(active: true)!
+      return $0.body.context(active: true, wristContact: wristContext($0))!
     }
   }
   func bodyStream(generation: UUID) throws -> AsyncStream<BodySnapshot> {

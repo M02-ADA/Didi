@@ -21,6 +21,18 @@ final class LaserReplayDriver {
         planner = script.fullRound?.plannerAfterNormal
     }
 
+    #if DEBUG
+    private(set) var isWristDiamondPreview = false
+    func enableDebugWristFixture(_ authority: WristContactContextV1) throws {
+        guard cursor == 0, actionCursor == 0, let full = script.fullRound,
+              !full.steps.contains(where: { step in
+                  switch step.action { case .bonusOutside, .bonusCollect: true; default: false }
+              }) else { throw LaserDataError.invalidValue("incompatible scripted diamond contacts") }
+        try provider.configureDebugWristAuthority(authority)
+        isWristDiamondPreview = true
+    }
+    #endif
+
     /// Compose outside the authoritative coordinator; App can inject its retained live provider instead.
     static func makeSession(script: LaserReplayScript) throws -> GameSessionCoordinator {
         let driver = try LaserReplayDriver(script: script)
@@ -110,6 +122,9 @@ final class LaserReplayDriver {
                         try nextContacts.replaceTargets(spawns.map(target))
                     }
                 } else {
+                    #if DEBUG
+                    guard !isWristDiamondPreview else { throw LaserDataError.invalidValue("J07 owns diamond contacts") }
+                    #endif
                     let accepted = try nextGame.collectDiamonds(batch, generation: generation, calibrationRevisions: revisions,
                         capturedAt: nextClock.gameTime, arrivedAt: nextClock.gameTime)
                     nextContacts.removeTargets(Set(accepted.map(\.targetID)))

@@ -51,6 +51,7 @@ private struct ReplayRoundView: View {
     /// The per-frame host-clock tick: live cutout expiry and live avatars.
     @State private var frameRefresh: EventSubscription?
     #if DEBUG
+    @State private var diamondReadout = DebugDiamondVisualReadout()
     @State private var preview = LaserApproachPreview()
     @State private var environmentPreview = EnvironmentPreview()
     @State private var cutoutFeed: SyntheticCutoutFeed?
@@ -182,6 +183,19 @@ private struct ReplayRoundView: View {
             #endif
             do {
                 guard !Task.isCancelled else { return }
+                #if DEBUG
+                if DebugWristDiamondControls.requested(ProcessInfo.processInfo.arguments) {
+                    let fixture = try DebugWristDiamondFixture.make(generation:generation)
+                    let replay = try fixture.makeSession()
+                    session = replay
+                    try await replay.start()
+                    guard !Task.isCancelled else { await replay.stop();return }
+                    try await replay.advance(to:0.25) // active target, no outside/inside wrist delivered yet
+                    presentation.debugDiamondReadout = diamondReadout
+                    presentation.start(on:content,scene:scene,session:replay)
+                    return
+                }
+                #endif
                 var useSlice = ProcessInfo.processInfo.arguments.contains("-replaySlice")
                 #if DEBUG
                 useSlice = useSlice || DiamondTimeFixture.isRequested
@@ -266,6 +280,13 @@ private struct ReplayRoundView: View {
             }
             #endif
         }
+        .overlay(alignment: .bottom) {
+            #if DEBUG
+            if let session, session.isDebugWristPreview, session.summary == nil {
+                DebugWristDiamondControls(session:session,readout:diamondReadout).padding(.bottom,100)
+            }
+            #endif
+        }
         .overlay(alignment: .bottomTrailing) {
             // Ending a round stays reachable: here while the session offers no pause
             // (the HUD's pause menu, which carries Leave Game, needs one), and always
@@ -344,7 +365,7 @@ private struct ReplayRoundView: View {
     /// The HUD's view of the session's authoritative state and events.
     private func hudModel(_ session: GameSessionCoordinator) -> GameplayHUDModel? {
         guard let configuration = session.configuration else { return nil }
-        var collected: Int? = session.isCompleteReplay ? session.diamondsCollected : nil
+        var collected: Int? = session.isCompleteReplay || session.hasWristDiamondPlan ? session.diamondsCollected : nil
         var fixture = false
         #if DEBUG
         // `-diamondFixture`: the labelled synthetic Diamond Time (J05 pending), counted

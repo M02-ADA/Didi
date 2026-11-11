@@ -16,6 +16,9 @@ final class LaserReplayPresentation {
     private var busy = false
     private var presenter: GameplayScenePresenter?
     private var liveAttachment: LaserLiveFrameAttachment?
+    #if DEBUG
+    var debugDiamondReadout: DebugDiamondVisualReadout?
+    #endif
 
     func start(on content: RealityViewCameraContent, scene: LaserScene,
                session: GameSessionCoordinator) {
@@ -40,7 +43,7 @@ final class LaserReplayPresentation {
         presenter?.onSound = { AudioService.shared.play($0) }
         AudioService.shared.preloadEffects()
         AudioService.shared.setMusic(.mission)
-        if session.isCompleteReplay {
+        if session.isCompleteReplay || session.hasWristDiamondPlan {
             // Existing K06 source hook. Domain decides presence/collection; this adapter only maps display values.
             let layout = session.inputConfiguration.playerPlaneLayout
             presenter?.diamondTime.source = { [weak session] _ in
@@ -60,8 +63,8 @@ final class LaserReplayPresentation {
                         heightAboveFloor: Float(state.spawn.position.y), collected: collected)
                 }.sorted { $0.id < $1.id }
             }
-            // K06: normal diamonds from the same domain states, complete replay only
-            // (its placements are the replay plan's, not production defaults).
+            // Same K06 domain-state mapping for replay OR explicitly configured live geometry.
+            // This does not select any production radius/placement or infer a collection.
             presenter?.normalDiamonds.source = { [weak session] in
                 guard let session else { return [] }
                 return Self.normalDiamonds(session.diamondStates, layout: layout)
@@ -76,6 +79,12 @@ final class LaserReplayPresentation {
                 return
             }
             guard session.phase == .running else { return }
+            #if DEBUG
+            if session.isDebugWristPreview {
+                self.render(scene:scene,session:session) // user advances original fixture time; no extra clock
+                return
+            }
+            #endif
             let elapsed = self.frameClock.frame(deltaTime: event.deltaTime)
             guard !self.busy else { return }
             self.busy = true
@@ -99,6 +108,9 @@ final class LaserReplayPresentation {
         presenter?.stop()
         presenter = nil
         session = nil
+        #if DEBUG
+        debugDiamondReadout?.clear()
+        #endif
     }
 
     private func render(scene: LaserScene, session: GameSessionCoordinator) {
@@ -106,6 +118,14 @@ final class LaserReplayPresentation {
         presenter?.apply(state: state, events: session.events, snapshot: session.latestSnapshot,
                          upcomingVaultIn: session.isCompleteReplay
                             ? Self.upcomingVaultIn(state: state, activityDuration: session.activityDuration) : nil)
+        #if DEBUG
+        if let presenter {
+            debugDiamondReadout?.record(normal:presenter.normalDiamonds.shownIDs,
+                bonus:presenter.diamondTime.floatingIDs,
+                collections:presenter.normalDiamonds.collections + presenter.diamondTime.collections,
+                generation:state.sessionGeneration)
+        }
+        #endif
     }
 
     /// The domain's normal (passage) diamonds in display terms: lane from the

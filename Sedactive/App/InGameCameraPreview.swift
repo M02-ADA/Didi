@@ -95,10 +95,20 @@ struct InGameCameraPreviewView: View {
   @State private var stage = InGameCameraStage()
   @State private var refresh: EventSubscription?
   let onExit: () -> Void
+  let offersWristSetup: Bool
+  let onContinueToGame: (() -> Void)?
+  @State private var handingOff = false
   init(flow: LaserInputFlow, service: BodyInputService, bridge: VisionNumericPoseBridge,
+    offersWristSetup: Bool = false, onContinueToGame: (() -> Void)? = nil,
     onExit: @escaping () -> Void) {
     _model = State(initialValue: LiveAvatarSmokeModel(flow: flow, service: service, bridge: bridge))
-    self.onExit = onExit
+    self.onExit = onExit; self.offersWristSetup = offersWristSetup; self.onContinueToGame = onContinueToGame
+  }
+  nonisolated static func wristRequested(_ args:[String]) -> Bool {
+    args.contains("--live-wrist-mvp") && !args.contains(where: {
+      ["--live-avatar-smoke","--synthetic-gameplay-preview","--camera-diagnostics",
+       "--camera-diagnostics-run","-robotDemo","-replay"].contains($0)
+    })
   }
   nonisolated static func requested(_ args: [String]) -> Bool {
     args.contains("--ingame-camera-preview") && !args.contains("--live-avatar-smoke")
@@ -111,7 +121,8 @@ struct InGameCameraPreviewView: View {
       VStack(spacing: 8) {
         Text("LASER HEIST · REAL CAMERA GAME SCENE · DEBUG")
           .font(.headline).accessibilityIdentifier("inGameCameraTitle")
-        Text("NO GAMEPLAY · no scoring, collision, vaults, diamonds or accepted calibration")
+        Text(offersWristSetup ? "LIVE WRIST MVP SETUP · scoring stays blocked by calibration, geometry and existing J03 readiness"
+          : "NO GAMEPLAY · no scoring, collision, vaults, diamonds or accepted calibration")
           .font(.caption).foregroundStyle(.orange)
         HStack {
           Button("Start camera setup") { Task { await model.start() } }
@@ -152,6 +163,24 @@ struct InGameCameraPreviewView: View {
             .font(.caption).padding(8).background(.black.opacity(0.75))
             .accessibilityIdentifier(stage.ready ? "gameSceneReady" : "gameSceneLoading")
         }
+        .overlay(alignment:.topLeading) {
+          if offersWristSetup {
+            ScrollView {
+              VStack(alignment:.leading,spacing:6) {
+              LiveWristSetupControls(flow:model.flow,service:model.service)
+              Button("Open configured game") {
+                guard model.flow.session?.hasLiveRoundPlan == true, let onContinueToGame else { return }
+                // Retire E07 synchronously before PlayView can claim its replacement mailbox.
+                handingOff = true;stage.dispose();onContinueToGame()
+              }.buttonStyle(.borderedProminent)
+                .disabled(model.flow.session?.hasLiveRoundPlan != true || onContinueToGame == nil)
+                .accessibilityIdentifier("liveWristOpenGame")
+              }
+            }
+            .frame(width:min(520,max(1,geometry.size.width-64)),height:300)
+            .padding(.top,64).padding(.leading,8)
+          }
+        }
         // Full window width preserves the game's lane framing; controls do not narrow the 3D viewport.
         .frame(width: max(1, geometry.size.width - 32), height: max(1, geometry.size.height - 350))
         readout.frame(height: 140)
@@ -160,7 +189,7 @@ struct InGameCameraPreviewView: View {
     }.background(.black).foregroundStyle(.white)
       .onDisappear {
         refresh?.cancel(); refresh = nil; stage.dispose()
-        Task { await model.stop() }
+        if !handingOff { Task { await model.stop() } }
       }
   }
   private var readout: some View {

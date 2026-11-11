@@ -42,11 +42,21 @@ nonisolated struct BodySnapshot: Equatable, Sendable, Codable {
     let capturedAt: Double
     let cameraGeometryRevision: UInt64
     let players: [PlayerID: PlayerBodySample]
+    let wristContact: WristContactAttachmentV1?
+
+    init(sessionGeneration: UUID, frameID: UInt64, capturedAt: Double,
+         cameraGeometryRevision: UInt64, players: [PlayerID: PlayerBodySample],
+         wristContact: WristContactAttachmentV1? = nil) {
+        self.sessionGeneration = sessionGeneration; self.frameID = frameID; self.capturedAt = capturedAt
+        self.cameraGeometryRevision = cameraGeometryRevision; self.players = players
+        self.wristContact = wristContact
+    }
 
     func validate() throws {
         try requireBodyValue(capturedAt.isFinite && capturedAt >= 0, "capturedAt")
         try requireBodyValue(cameraGeometryRevision > 0 && Set(players.keys) == Set(PlayerID.allCases),
                              "snapshot requires player1 and player2")
+        try wristContact?.validate(matching: self)
         for (id, sample) in players {
             try requireBodyValue(id == sample.playerID, "sample dictionary identity")
             try sample.validate()

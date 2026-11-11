@@ -111,12 +111,26 @@ final class ReplayBodyInput: BodyInputProviding {
         cameraRevision = fixture.cameraGeometryRevision
     }
 
+    #if DEBUG
+    private var debugWristAuthority: WristContactContextV1?
+    /// Explicit fixture authority BEFORE start, never inferred from a packet or available on live input.
+    func configureDebugWristAuthority(_ value: WristContactContextV1) throws {
+        guard configuration == nil, !active else { throw BodyInputOperationError.configurationChanged }
+        debugWristAuthority = value
+    }
+    #endif
+
     var currentContext: BodyInputContext? {
         guard let configuration else { return nil }
+        #if DEBUG
+        let wrist = debugWristAuthority
+        #else
+        let wrist: WristContactContextV1? = nil
+        #endif
         return BodyInputContext(sessionGeneration: configuration.sessionGeneration,
                                 cameraGeometryRevision: cameraRevision,
                                 calibrationRevisions: configuration.calibrations.mapValues(\.revision),
-                                cutovers: cutovers, isActive: active && status == .running)
+                                cutovers: cutovers, isActive: active && status == .running, wristContact: wrist)
     }
 
     func start(configuration: BodyInputConfiguration) async throws {
