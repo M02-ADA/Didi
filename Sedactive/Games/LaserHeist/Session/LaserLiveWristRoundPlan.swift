@@ -44,9 +44,13 @@ nonisolated struct LaserLiveWristRoundPlan: Sendable {
         let configuration = try LaserFullReplayPlan.roundConfiguration()
         let director = try LaserLiveRoundDirector(calibrations: calibrations, layout: layout,
             configuration: configuration, seed: seed, segmentLength: segmentLength, roster: roster)
+        let standingHeights = calibrations.mapValues {
+            LaserLiveRoundGeometryV1.standingHeight($0, layout: layout)
+        }
         return try Self(expectedContext: context, configuration: configuration,
             encounters: director.baseEncounters, timing: liveTiming,
-            diamonds: .init(layout: layout, radius: director.diamondRadius, replacementPlanner: director.planner),
+            diamonds: .init(layout: layout, radius: director.diamondRadius, replacementPlanner: director.planner,
+                            standingHeights: standingHeights),
             director: director)
     }
 

@@ -6,10 +6,25 @@ nonisolated struct LaserWristDiamondConfiguration: Sendable {
     let layout: PlayerPlaneLayout
     let radius: Double
     let replacementPlanner: LaserDiamondPlanner
-    init(layout: PlayerPlaneLayout, radius: Double, replacementPlanner: LaserDiamondPlanner) throws {
+    let standingHeights: [PlayerID: Double]
+    init(layout: PlayerPlaneLayout, radius: Double, replacementPlanner: LaserDiamondPlanner,
+         standingHeights: [PlayerID: Double] = [:]) throws {
         try layout.validate()
         try requireLaserValue(radius.isFinite && radius > 0, "reviewed diamond interaction radius")
+        try requireLaserValue(standingHeights.values.allSatisfy { $0.isFinite && $0 > 0 }, "diamond standing height")
         self.layout = layout; self.radius = radius; self.replacementPlanner = replacementPlanner
+        self.standingHeights = standingHeights
+    }
+
+    func admitsReach(_ wrist: WristPlanePoint, to target: LaserDiamondPosition, player: PlayerID,
+                     geometry: BodyGeometry?) -> Bool {
+        guard let height = standingHeights[player] else { return true }
+        if target.y > height {
+            guard let crown = geometry?.crownY, crown.validity == .valid, let top = crown.value else { return false }
+            return wrist.y - top >= height * LaserLiveRoundGeometryV1.diamondOverheadClearanceShare
+        }
+        guard let center = geometry?.centerX, center.validity == .valid, let x = center.value else { return false }
+        return abs(wrist.x - x) >= height * LaserLiveRoundGeometryV1.diamondMinimumLateralReachShare
     }
 }
 
@@ -132,8 +147,11 @@ nonisolated struct LaserWristDiamondConsumer: Sendable {
                     guard observation.observationRefusal == nil, observation.contactRefusal == nil,
                           let xy = observation.playerPlane else { hands[hand] = .unavailable; continue }
                     // Same accepted Y-up/unmirrored plane as E08. No rig coordinates or offsets.
-                    hands[hand] = hypot(xy.x - spawn.position.x, xy.y - spawn.position.y) <= configuration.radius
-                        ? .inside : .outside
+                    guard hypot(xy.x - spawn.position.x, xy.y - spawn.position.y) <= configuration.radius else {
+                        hands[hand] = .outside; continue
+                    }
+                    hands[hand] = configuration.admitsReach(xy, to: spawn.position, player: player,
+                        geometry: snapshot.players[player]?.geometry) ? .inside : .unavailable
                 }
             }
             locations[spawn.id] = hands

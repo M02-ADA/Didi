@@ -14,8 +14,7 @@ nonisolated struct LaserVaultZone: Equatable, Sendable {
 /// reach works for a child and an adult. Owner-approved for the first device rounds
 /// (11 November 2026); physical comfort/reach acceptance is still pending device testing.
 ///
-/// - Diamonds: four per player beside the body, at chest and shoulder height, out of the
-///   resting-hand position so idle hands do not collect them.
+/// - Diamonds: candidate positions to either side of the torso and above the head.
 /// - Vault buttons: three on the player's OUTER side (toward their own corridor wall): high,
 ///   level and low reaches of one arm. Live rounds draw each button exactly on its zone, with
 ///   the mascot's own mirror and height scale (`GameWorldMapping.mascotPoint`), and the player's
@@ -23,10 +22,21 @@ nonisolated struct LaserVaultZone: Equatable, Sendable {
 nonisolated enum LaserLiveRoundGeometryV1 {
     static let version = "LaserLiveRoundGeometryV1"
     /// Diamond placements: (sideways, height) as shares of standing height.
-    static let diamondShares: [(x: Double, y: Double)] = [(-0.2, 0.6), (0.2, 0.6), (-0.2, 0.85), (0.2, 0.85)]
-    /// DEBUG solo practice: the diamond planner needs at least five places, so one player gets two more.
-    static let soloExtraDiamondShares: [(x: Double, y: Double)] = [(-0.3, 0.72), (0.3, 0.72)]
+    static let diamondShares: [(x: Double, y: Double)] = [
+        (-0.39, 0.54), (0.39, 0.54), (-0.47, 0.78), (0.47, 0.78),
+        (-0.42, 0.98), (0.42, 0.98), (0, 1.14),
+    ]
     static let diamondRadiusShare = 0.08
+    static let diamondMinimumLateralReachShare = 0.28
+    static let diamondOverheadClearanceShare = 0.04
+
+    static func diamondPlacements(player: PlayerID, lane: Double, height: Double) throws
+        -> [LaserDiamondPlacement] {
+        try diamondShares.map { share in
+            try LaserDiamondPlacement(position: .init(x: lane + share.x * height, y: share.y * height),
+                                      eligiblePlayers: [player])
+        }
+    }
     /// Vault buttons, outward from the lane centre: (outward, height) shares of each player's
     /// own standing height, so shorter players get lower, closer buttons. One vertical stack
     /// beside the player at body-relative reaching heights (owner request 11 November 2026):
@@ -141,12 +151,8 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
             try requireLaserValue(h.isFinite && h > 0, "accepted standing height")
             heights[player] = h
             let lane = layout.centerX(for: player)
-            let shares = LaserLiveRoundGeometryV1.diamondShares
-                + (roster.count == 1 ? LaserLiveRoundGeometryV1.soloExtraDiamondShares : [])
-            for share in shares {
-                placements.append(try LaserDiamondPlacement(position: .init(x: lane + share.x * h, y: share.y * h),
-                                                            eligiblePlayers: [player]))
-            }
+            placements += try LaserLiveRoundGeometryV1.diamondPlacements(player: player, lane: lane,
+                                                                         height: h)
             for (button, share) in LaserLiveRoundGeometryV1.vaultShares {
                 let x = lane + LaserLiveRoundGeometryV1.outward(player) * share.out * h
                 zones[player, default: [:]][button] = (try .init(x: x, y: share.y * h),

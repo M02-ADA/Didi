@@ -21,20 +21,27 @@ import Testing
             hostTime += 0.125
             let gameTime = hostTime - 0.625
             let samples = try rig.fixture.players.mapValues { standing in
+                let center = try EstimatedScalar(value: complete.diamonds.layout.centerX(for: standing.playerID), validity: .valid)
                 let target = rig.session.encounters.flatMap(\.targets).first {
                     $0.playerID == standing.playerID && abs($0.crossingTime - gameTime) <= 0.25
                 }
-                guard let target else { return standing }
+                guard let target else {
+                    let g = standing.geometry
+                    return PlayerBodySample(playerID: standing.playerID, calibrationRevision: standing.calibrationRevision,
+                        trackingStatus: standing.trackingStatus, geometry: .init(crownY: g.crownY, leftWristY: g.leftWristY,
+                            rightWristY: g.rightWristY, leftSoleY: g.leftSoleY, rightSoleY: g.rightSoleY, centerX: center),
+                        jumpState: standing.jumpState)
+                }
                 let margin = complete.configuration.clearanceMargin
                 let upper = try EstimatedScalar(value: target.beam.lowerY - margin - 0.01, validity: .valid)
                 let sole = try EstimatedScalar(value: target.beam.upperY + margin + 0.01, validity: .valid)
                 return PlayerBodySample(playerID: standing.playerID, calibrationRevision: standing.calibrationRevision,
                     trackingStatus: .reliable, geometry: target.requiredMove == .duck
                         ? .init(crownY: upper, leftWristY: upper, rightWristY: upper, leftSoleY: standing.geometry.leftSoleY,
-                                rightSoleY: standing.geometry.rightSoleY, centerX: standing.geometry.centerX)
+                                rightSoleY: standing.geometry.rightSoleY, centerX: center)
                         : .init(crownY: standing.geometry.crownY, leftWristY: standing.geometry.leftWristY,
                                 rightWristY: standing.geometry.rightWristY, leftSoleY: sole, rightSoleY: sole,
-                                centerX: standing.geometry.centerX),
+                                centerX: center),
                     jumpState: target.requiredMove == .jump ? .init(phase: .airborne, validity: .valid) : standing.jumpState)
             }
             try await rig.send(hostTime, points: points, bodySamples: samples)

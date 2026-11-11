@@ -90,6 +90,102 @@ nonisolated struct WristGameplayFixture {
 }
 
 nonisolated struct LaserWristDiamondConsumerTests {
+    @Test func randomDiamondCatalogIncludesReachableCornersSidesAndOverhead() throws {
+        let fixture = try WristGameplayFixture()
+        let layout = fixture.input.playerPlaneLayout
+        let lane = layout.centerX(for: .player1), height = 1.6
+        let placements = try LaserLiveRoundGeometryV1.diamondPlacements(player: .player1, lane: lane, height: height)
+        let radius = height * LaserLiveRoundGeometryV1.diamondRadiusShare
+        let above = try #require(placements.first { $0.position.x == lane })
+        #expect(above.position.y - radius > height)
+        #expect(placements.filter { $0.position.x < lane }.count == 3)
+        #expect(placements.filter { $0.position.x > lane }.count == 3)
+        for (i, placement) in placements.enumerated() {
+            #expect(placements.prefix(i).allSatisfy {
+                hypot(placement.position.x - $0.position.x, placement.position.y - $0.position.y) > 2 * radius
+            })
+        }
+        var seen = Set<Int>()
+        for seed in 0..<12 {
+            var planner = try LaserDiamondPlanner(seed: UInt64(seed), placements: placements, approachLead: 0.5, passageDuration: 1)
+            for target in try planner.bonusInitial(at: 0, deadline: 10) {
+                seen.insert(try #require(placements.firstIndex { $0.position == target.position }))
+            }
+        }
+        #expect(seen.count == placements.count)
+        let configuration = try LaserWristDiamondConfiguration(layout: layout, radius: radius,
+            replacementPlanner: .init(seed: 0, placements: placements, approachLead: 0.5, passageDuration: 1),
+            standingHeights: [.player1: height])
+        let base = try #require(fixture.players[.player1]?.geometry)
+        func body(crown: Double) throws -> BodyGeometry {
+            try .init(crownY: EstimatedScalar(value: crown, validity: .valid), leftWristY: base.leftWristY,
+                rightWristY: base.rightWristY, leftSoleY: base.leftSoleY, rightSoleY: base.rightSoleY, centerX: base.centerX)
+        }
+        let wrist = WristPlanePoint(x: lane, y: above.position.y)
+        #expect(try configuration.admitsReach(wrist, to: above.position, player: .player1, geometry: body(crown: height)))
+        #expect(try !configuration.admitsReach(wrist, to: above.position, player: .player1, geometry: body(crown: wrist.y)))
+    }
+
+    @Test(arguments: [false, true])
+    func passingDiamondRequiresWristToReachBeyondTheTorso(_ reaches: Bool) throws {
+        let fixture = try WristGameplayFixture()
+        let input = try LaserReplayScript.load().input.configuration
+        let layout = input.playerPlaneLayout
+        let lane = layout.centerX(for: .player1)
+        let calibration = try #require(input.calibrations[.player1])
+        let height = LaserLiveRoundGeometryV1.standingHeight(calibration, layout: layout)
+        let placements = try LaserLiveRoundGeometryV1.diamondPlacements(player: .player1, lane: lane,
+                                                                       height: height)
+        let side = try #require(placements.first { $0.position.x > lane })
+        let radius = height * LaserLiveRoundGeometryV1.diamondRadiusShare
+        for placement in placements {
+            let x = abs(placement.position.x - lane) / height
+            let y = placement.position.y / height
+            let shoulder = LaserLiveRoundGeometryV1.humanShoulderShare
+            #expect(hypot(x - shoulder.out, y - shoulder.y) < LaserLiveRoundGeometryV1.humanArmShare)
+        }
+        let spawn = try LaserDiamondSpawn(id: LaserDiamondTests.id(1), position: side.position,
+                                          eligiblePlayers: [.player1], spawnedAt: 0, entry: 1, exit: 2)
+        let plan = try LaserWristDiamondConfiguration(layout: layout, radius: radius,
+            replacementPlanner: .init(seed: 2, placements: placements, approachLead: 0.5, passageDuration: 1),
+            standingHeights: [.player1: height])
+        var game = try fixture.game()
+        try game.spawnNormalDiamonds([spawn], beforeVaultAt: 3)
+        try game.advance(to: 1)
+        var consumer = try LaserWristDiamondConsumer(configuration: plan, context: fixture.context,
+                                                      lifetime: UUID(), afterCapturedAt: 100)
+        try consumer.refresh(game: game, context: fixture.context, atHostTime: 101)
+        let hand = WristGameplayFixture.left
+        try fixture.send(&consumer, &game, frame: 3, capture: 1.125,
+                         points: [hand: .init(x: lane, y: spawn.position.y)])
+        // A wrist at the side of the torso could reach the previous zone without extending.
+        #expect(try fixture.send(&consumer, &game, frame: 4, capture: 1.25,
+            points: [hand: .init(x: lane + 0.2 * height, y: spawn.position.y)]).isEmpty)
+        // If the whole body shifts sideways, an unextended wrist can touch the zone.
+        let sample = try #require(fixture.players[.player1])
+        let geometry = sample.geometry
+        var shifted = fixture.players
+        shifted[.player1] = try PlayerBodySample(playerID: .player1, calibrationRevision: sample.calibrationRevision,
+            trackingStatus: sample.trackingStatus,
+            geometry: .init(crownY: geometry.crownY, leftWristY: geometry.leftWristY, rightWristY: geometry.rightWristY,
+                leftSoleY: geometry.leftSoleY, rightSoleY: geometry.rightSoleY,
+                centerX: EstimatedScalar(value: spawn.position.x - 0.16 * height, validity: .valid)),
+            jumpState: sample.jumpState)
+        let point = WristPlanePoint(x: spawn.position.x, y: spawn.position.y)
+        let shiftedPacket = try fixture.packet(5, 101.375, points: [hand: point], bodySamples: shifted)
+        #expect(try consumer.receive(shiftedPacket, context: fixture.context, atHostTime: 101.375,
+                                     capturedGameTime: 1.375, arrivedGameTime: 1.375, game: &game).isEmpty)
+        if reaches {
+            try fixture.send(&consumer, &game, frame: 6, capture: 1.5,
+                             points: [hand: .init(x: lane + 0.2 * height, y: spawn.position.y)])
+            let pickup = try fixture.send(&consumer, &game, frame: 7, capture: 1.625, points: [hand: point])
+            #expect(pickup.map(\.targetID) == [spawn.id])
+        }
+        try game.advance(to: 2)
+        #expect(game.teamScore == (reaches ? 25 : 0))
+        if !reaches { #expect(game.diamonds[spawn.id]?.outcome == .missed(at: 2)) }
+    }
+
     @Test func eligibleOutsideInsideUsesHostNotGameClockAndAwardsOnce() throws {
         let f = try WristGameplayFixture(); var (g,c) = try f.normal()
         #expect(try f.send(&c,&g,frame:3,capture:1.0625,points:[WristGameplayFixture.left:WristGameplayFixture.outside]).isEmpty)
