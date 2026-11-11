@@ -31,3 +31,19 @@ Links identify specific assets. The manifest also records source IDs and SHA-256
 | 152480 | [Victory Fanfare](https://pixabay.com/sound-effects/musical-victory-fanfare-152480/) | Universfield | [victory-fanfare-152480.mp3](Sources/victory-fanfare-152480.mp3) | Not recorded during inspection |
 | 310480 | [Playful Failure](https://pixabay.com/sound-effects/musical-playful-failure-310480/) | Universfield | [playful-failure-310480.mp3](Sources/playful-failure-310480.mp3) | Not recorded during inspection |
 | 417444 | [VIDEO GAME PAUSE SFX](https://pixabay.com/sound-effects/film-special-effects-video-game-pause-sfx-417444/) | ROHHSADOTCOM | [video-game-pause-417444.mp3](Sources/video-game-pause-417444.mp3) | Not recorded during inspection |
+| 417465 | [Game Over](https://pixabay.com/sound-effects/musical-game-over-417465/) | Alphix | [game-over-417465.mp3](Sources/game-over-417465.mp3) | Not recorded during inspection |
+
+## Current cue edits
+
+These edits supersede the corresponding original cuts in [GAME-AUDIO.md](GAME-AUDIO.md). The original asset generator still describes the earlier package.
+
+| Bundled cue | Source | Excerpt and peak |
+|---|---|---|
+| `lh-laser-clear` | zap (127476), drebddronefish | 0.745–1.10 s, −8 dBFS |
+| `lh-round-failure` | Game Over (417465), Alphix | 0–2.50 s, −8 dBFS |
+| `lh-diamond-collect-1` | Diamond found (190255), Liecio | 0.005–0.65 s, −9 dBFS |
+| `lh-diamond-collect-2` | Diamond found (190255), Liecio | 2.64–3.29 s, −9 dBFS |
+
+Both pickup clips come from separate passages in the original source and alternate in playback order. The Alphix source was obtained from the official Pixabay page player.
+
+The vault countdown uses the existing Warning Notification excerpt (199277) once for each positive displayed second, with no catch-up ticks when a replay jumps ahead.

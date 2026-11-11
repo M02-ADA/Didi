@@ -102,7 +102,7 @@ final class GameplayScenePresenter {
     private var cuedAttempts: Set<String> = []
     /// Active vault buttons last seen, per vault.
     private var vaultButtonsSeen: (id: UUID, count: Int)?
-    private var warnedVaults: Set<UUID> = []
+    private var lastVaultTick: (id: UUID, second: Int)?
     private var diamondsHeard = 0
 
     /// - Parameters:
@@ -220,13 +220,13 @@ final class GameplayScenePresenter {
         lastSequence = nil
         cuedAttempts = []
         vaultButtonsSeen = nil
-        warnedVaults = []
+        lastVaultTick = nil
         diamondsHeard = diamondTime.collections + normalDiamonds.collections
     }
 
     // MARK: - Sound
 
-    /// A button newly accepted by the vault, and its last seconds, once each.
+    /// Play accepted button sounds and one countdown tick per displayed second.
     private func soundVault(_ state: LaserGameState) {
         guard let current = state.vault, endedAt == nil else { return }
         let count = current.buttons.values.reduce(0) { $0 + $1.count }
@@ -235,11 +235,13 @@ final class GameplayScenePresenter {
             onSound?(.vaultButton)
         }
         vaultButtonsSeen = (current.id, count)
-        if state.phase == .vault, !current.opened,
-           current.deadline - state.gameTime <= VaultPresentation.urgentRemaining,
-           warnedVaults.insert(current.id).inserted {
-            onSound?(.vaultWarning)
-        }
+        guard state.phase == .vault, !current.opened else { return }
+        // Match the displayed digit. A slow frame or seek plays only the new digit.
+        let second = Int(max(0, current.deadline - state.gameTime).rounded(.up))
+        guard second > 0 else { return }
+        if let tick = lastVaultTick, tick.id == current.id, second >= tick.second { return }
+        lastVaultTick = (current.id, second)
+        onSound?(.vaultWarning)
     }
 
     // MARK: - Events

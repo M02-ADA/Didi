@@ -25,17 +25,16 @@ enum SoundCue: String, CaseIterable {
     case roundSuccess = "round-success"
     case roundFailure = "round-failure"
 
-    /// Resource names; pickups rotate through small pitch variants so repeats
-    /// don't sound mechanical. Instruction cues never vary.
+    /// Diamond pickups alternate between the two excerpts in the original recording.
     var resources: [String] {
-        self == .diamondCollect ? (1...3).map { "lh-\(rawValue)-\($0)" } : ["lh-\(rawValue)"]
+        self == .diamondCollect ? (1...2).map { "lh-\(rawValue)-\($0)" } : ["lh-\(rawValue)"]
     }
 
     /// The same cue again within this time is dropped: one sound per event,
     /// even when both players' events arrive together or a button is tapped twice.
     var minimumInterval: TimeInterval {
         switch self {
-        case .uiTap: 0.12
+        case .uiTap, .vaultWarning: 0.12
         case .vaultButton, .diamondCollect: 0.06
         case .cueDuck, .cueJump, .laserClear, .laserHit: 0.25
         default: 0.5
@@ -48,10 +47,10 @@ enum SoundCue: String, CaseIterable {
     /// Keep the impact clear without making it louder than the movement instructions.
     var gain: Float { self == .laserHit ? 0.71 : 1 }
 
-    /// Instructions, the vault timer and stings briefly lower the music.
+    /// Instructions, CLEAR, the vault timer and stings briefly lower the music.
     var ducksMusic: Bool {
         switch self {
-        case .cueDuck, .cueJump, .vaultWarning, .diamondTime, .roundSuccess, .roundFailure: true
+        case .cueDuck, .cueJump, .laserClear, .vaultWarning, .diamondTime, .roundSuccess, .roundFailure: true
         default: false
         }
     }
@@ -196,7 +195,7 @@ final class AudioService {
         let started = player.play()
         playCount[cue, default: 0] += 1
         Self.log.debug("play \(cue.rawValue, privacy: .public) started=\(started)")
-        if cue.ducksMusic { duck(for: player.duration) }
+        if cue.ducksMusic { duck(for: player.duration, attack: cue == .laserClear ? 0.04 : 0.12) }
     }
 
     /// Stops every effect, e.g. when a round's scene is torn down.
@@ -288,12 +287,12 @@ final class AudioService {
         updateMusic(fade: 0.4)
     }
 
-    private func duck(for duration: TimeInterval) {
+    private func duck(for duration: TimeInterval, attack: TimeInterval) {
         let start = now()
         let deadline = start + duration
         guard deadline > duckedUntil else { return }
         duckedUntil = deadline
-        applyMusicVolume(fade: 0.12)
+        applyMusicVolume(fade: attack)
         duckTask?.cancel()
         duckTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(duration))

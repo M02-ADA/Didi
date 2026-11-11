@@ -67,13 +67,17 @@ struct AudioServiceTests {
         #expect(audio.playCount[.uiTap] == 1)
     }
 
-    @Test func pickupsRotateThroughTheirVariants() {
+    @Test func pickupsAlternateBetweenTheTwoSourceWaves() {
         let harness = Harness()
         let audio = service(harness)
-        for step in 0..<3 { harness.clock = Double(step); audio.play(.diamondCollect) }
-        let pickups = harness.made.filter { $0.name.hasPrefix("lh-diamond-collect") }
-        #expect(Set(pickups.map(\.name)).count == 3)
-        #expect(pickups.allSatisfy { $0.plays == 1 })
+        let expectedCounts = [[1, 0], [1, 1], [2, 1], [2, 2]]
+        for (step, expected) in expectedCounts.enumerated() {
+            harness.clock = Double(step)
+            audio.play(.diamondCollect)
+            let pickups = harness.made.filter { $0.name.hasPrefix("lh-diamond-collect") }
+            #expect(pickups.map(\.name) == ["lh-diamond-collect-1", "lh-diamond-collect-2"])
+            #expect(pickups.map(\.plays) == expected)
+        }
     }
 
     @Test func aMissingFileIsSilentNotACrash() {
@@ -127,7 +131,7 @@ struct AudioServiceTests {
         #expect(menu.volume == 0 && mission.volume == 0)
     }
 
-    @Test(arguments: [SoundCue.diamondTime, .cueDuck, .cueJump, .vaultWarning])
+    @Test(arguments: [SoundCue.diamondTime, .cueDuck, .cueJump, .laserClear, .vaultWarning])
     func priorityCuesDuckTheMusic(cue: SoundCue) throws {
         let harness = Harness()
         let audio = service(harness)
@@ -135,6 +139,9 @@ struct AudioServiceTests {
         audio.play(cue)
         let mission = try #require(harness.made.first { $0.name == "lh-music-silky-spy" })
         #expect(abs(mission.volume - audio.musicVolume * 0.5 * AudioService.duckedShare) < 1e-6)
+        if cue == .laserClear {
+            #expect(mission.fades.last?.1 == 0.04)
+        }
     }
 
     @Test func stopEffectsSilencesEveryEffect() {
