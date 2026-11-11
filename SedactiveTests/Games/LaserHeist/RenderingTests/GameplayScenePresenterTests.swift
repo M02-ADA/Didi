@@ -399,6 +399,32 @@ struct GameplayScenePresenterTests {
 
     // MARK: - Sound
 
+    @Test func vaultTicksOncePerVisibleSecondAndStopsAtZeroOrOpening() throws {
+        let presenter = GameplayScenePresenter(scene: LaserScene(), configuration: try configuration(), encounters: [])
+        var ticks = 0
+        presenter.onSound = { if $0 == .vaultWarning { ticks += 1 } }
+        let firstVault = UUID()
+        func frame(_ time: Double, deadline: Double = 15, id: UUID = firstVault, opened: Bool = false) {
+            var snapshot = state(time, [], phase: .vault)
+            snapshot.vault = LaserVaultState(id: id, deadline: deadline, buttons: [:], opened: opened)
+            presenter.apply(state: snapshot, events: [], snapshot: nil)
+        }
+        for (index, time) in [10.0, 11, 12, 13, 14].enumerated() {
+            frame(time)
+            frame(time + 0.5)
+            #expect(ticks == index + 1)
+        }
+        frame(15)
+        #expect(ticks == 5)
+
+        let secondVault = UUID()
+        frame(20, deadline: 25, id: secondVault)
+        frame(23, deadline: 25, id: secondVault)
+        #expect(ticks == 7, "A jump across seconds must not replay their ticks")
+        frame(24, deadline: 25, id: secondVault, opened: true)
+        #expect(ticks == 7)
+    }
+
     /// Verdict sounds follow the authoritative verdict events, once per event,
     /// however often the same history is applied; UNAVAILABLE stays silent.
     @Test func verdictSoundsFollowTheVerdictEventsOnce() throws {

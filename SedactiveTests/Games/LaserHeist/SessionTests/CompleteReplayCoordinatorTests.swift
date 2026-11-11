@@ -46,6 +46,29 @@ struct CompleteReplayCoordinatorTests {
         #expect(fine.summary?.playerResults.map(\.movementChallengeSeconds) == skipped.summary?.playerResults.map(\.movementChallengeSeconds))
     }
 
+    @Test func standingPlayersLoseAllHealthThroughRealLaserJudgements() async throws {
+        let script = try LaserReplayScript.complete(seed: 1, scenario: .healthDepleted)
+        let session = try await run(script, step: 0.25)
+        let summary = try #require(session.summary)
+        #expect(summary.outcome == .healthDepleted)
+        #expect(summary.remainingTeamHealth == 0 && summary.vaultsOpened == 0)
+        #expect(!session.results.isEmpty)
+        #expect(session.results.allSatisfy { result in
+            if case .hit = result.judgement { return true }
+            return false
+        })
+        #expect(summary.gameDuration < 60)
+    }
+
+    @Test func untouchedFirstVaultReachesItsDeadline() async throws {
+        let script = try LaserReplayScript.complete(seed: 1, scenario: .vaultTimeout)
+        let session = try await run(script, step: 0.25)
+        let summary = try #require(session.summary)
+        #expect(summary.outcome == .vaultFailed)
+        #expect(summary.remainingTeamHealth == 5 && summary.vaultsOpened == 0)
+        #expect(abs(summary.gameDuration - (60 + script.configuration.vaultDuration)) < 1e-8)
+    }
+
     @Test func abortAndRetryDoNotReuseAPreviousRoundLifetime() async throws {
         let script = try LaserReplayScript.complete(seed: 1)
         let first = try LaserReplayDriver.makeSession(script: script)

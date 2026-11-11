@@ -25,7 +25,8 @@ nonisolated struct LaserFullReplayPlan: Sendable {
     var duration: Double { bonusStart + 10 }
 
     /// Positions and times are test/demo inputs, not approved camera mapping or comfortable reach.
-    static func make(base: ReplayFixture, seed: UInt64) throws -> LaserReplayScript {
+    static func make(base: ReplayFixture, seed: UInt64,
+                     scenario: LaserReplayScript.Scenario = .standard) throws -> LaserReplayScript {
         let settings = try LaserSchedulingConfiguration(players: [.player1: .conservativeCandidate,
             .player2: .conservativeCandidate], searchStep: 0.25, maximumSearchSteps: 2000)
         let config = try LaserRoundConfiguration(
@@ -78,7 +79,8 @@ nonisolated struct LaserFullReplayPlan: Sendable {
                 encounters.append(encounter)
                 steps.append(Step(time: targets[0].warningTime, action: .register(encounter.id)))
                 records.append(ReplayRecord(deliveredAt: targets[0].crossingTime + 0.05,
-                    snapshot: try packet(encounter, capturedAt: targets[0].crossingTime)))
+                    snapshot: try packet(encounter, capturedAt: targets[0].crossingTime,
+                                         standing: scenario == .healthDepleted)))
                 // Return to neutral outside the judgment window; never hold a synthetic jump for the next five seconds.
                 records.append(ReplayRecord(deliveredAt: targets[0].crossingTime + 0.65,
                     snapshot: try packet(encounter, capturedAt: targets[0].crossingTime + 0.6, standing: true)))
@@ -100,6 +102,8 @@ nonisolated struct LaserFullReplayPlan: Sendable {
                 }
             }
             steps.append(Step(time: boundary, action: .openVault(vaultID, buttons)))
+            // Leave the first vault untouched so the real deadline ends the round.
+            if scenario == .vaultTimeout { break }
             for (index, button) in buttons.enumerated() {
                 let time = boundary + Double(index + 1) * 0.2
                 let hand = LaserContactHand(playerID: button.player, wrist: .left)

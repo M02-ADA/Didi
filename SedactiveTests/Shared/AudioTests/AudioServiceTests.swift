@@ -67,13 +67,17 @@ struct AudioServiceTests {
         #expect(audio.playCount[.uiTap] == 1)
     }
 
-    @Test func pickupsRotateThroughTheirVariants() {
+    @Test func pickupsAlternateBetweenTheTwoSourceWaves() {
         let harness = Harness()
         let audio = service(harness)
-        for step in 0..<3 { harness.clock = Double(step); audio.play(.diamondCollect) }
-        let pickups = harness.made.filter { $0.name.hasPrefix("lh-diamond-collect") }
-        #expect(Set(pickups.map(\.name)).count == 3)
-        #expect(pickups.allSatisfy { $0.plays == 1 })
+        let expectedCounts = [[1, 0], [1, 1], [2, 1], [2, 2]]
+        for (step, expected) in expectedCounts.enumerated() {
+            harness.clock = Double(step)
+            audio.play(.diamondCollect)
+            let pickups = harness.made.filter { $0.name.hasPrefix("lh-diamond-collect") }
+            #expect(pickups.map(\.name) == ["lh-diamond-collect-1", "lh-diamond-collect-2"])
+            #expect(pickups.map(\.plays) == expected)
+        }
     }
 
     @Test func aMissingFileIsSilentNotACrash() {
@@ -102,39 +106,42 @@ struct AudioServiceTests {
         #expect(other.isMusicPlaying, "turning music on resumes the wanted mood")
     }
 
-    /// Navigation back and forth never makes a second pair of music players.
-    @Test func oneMusicPairForAnyNavigation() {
-        let harness = Harness()
-        let audio = service(harness)
-        for mood in [MusicMood.menu, .mission, .menu, .menu, .mission, .menu] { audio.setMusic(mood) }
-        let music = harness.made.filter { $0.name.hasPrefix("lh-music") }
-        #expect(music.count == 2)
-        #expect(music.allSatisfy { $0.numberOfLoops == -1 && $0.plays == 1 })
-        #expect(music[0].startedAt == music[1].startedAt, "both layers start in step")
-    }
-
-    /// The menu plays the base layer alone; a round adds the drive layer.
-    @Test func moodsSetTheLayers() throws {
+    @Test func menuAndMissionSelectSeparateTracks() throws {
         let harness = Harness()
         let audio = service(harness)
         audio.setMusic(.menu)
-        let base = try #require(harness.made.first { $0.name == "lh-music-base" })
-        let drive = try #require(harness.made.first { $0.name == "lh-music-drive" })
-        #expect(base.volume == audio.musicVolume && drive.volume == 0)
+        audio.setMusic(.menu)
+        let menu = try #require(harness.made.first { $0.name == "lh-music-60s-special-agent" })
+        #expect(harness.made.count == 1)
+        #expect(menu.plays == 1 && menu.numberOfLoops == -1)
+        #expect(menu.volume == audio.musicVolume)
+
         audio.setMusic(.mission)
-        #expect(base.volume == audio.musicVolume && drive.volume == audio.musicVolume)
+        let mission = try #require(harness.made.first { $0.name == "lh-music-silky-spy" })
+        #expect(mission.plays == 1 && mission.numberOfLoops == -1)
+        #expect(menu.volume == 0 && mission.volume == audio.musicVolume * 0.5)
+        #expect(mission.fades.last?.1 == 2.5)
+        #expect(menu.fades.last?.1 == 0.8)
+
+        audio.setMusic(.menu)
+        #expect(harness.made.count == 2)
+        #expect(menu.volume == audio.musicVolume && mission.volume == 0)
+
         audio.setMusic(nil)
-        #expect(base.volume == 0 && drive.volume == 0)
+        #expect(menu.volume == 0 && mission.volume == 0)
     }
 
-    /// A sting dips the music under it.
-    @Test func stingsDuckTheMusic() throws {
+    @Test(arguments: [SoundCue.diamondTime, .cueDuck, .cueJump, .laserClear, .vaultWarning])
+    func priorityCuesDuckTheMusic(cue: SoundCue) throws {
         let harness = Harness()
         let audio = service(harness)
         audio.setMusic(.mission)
-        audio.play(.diamondTime)
-        let base = try #require(harness.made.first { $0.name == "lh-music-base" })
-        #expect(abs(base.volume - audio.musicVolume * AudioService.duckedShare) < 1e-6)
+        audio.play(cue)
+        let mission = try #require(harness.made.first { $0.name == "lh-music-silky-spy" })
+        #expect(abs(mission.volume - audio.musicVolume * 0.5 * AudioService.duckedShare) < 1e-6)
+        if cue == .laserClear {
+            #expect(mission.fades.last?.1 == 0.04)
+        }
     }
 
     @Test func stopEffectsSilencesEveryEffect() {
@@ -154,9 +161,9 @@ struct AudioServiceTests {
         }
     }
 
-    @Test func musicStemsAreBundled() {
-        for name in ["lh-music-base", "lh-music-drive"] {
-            #expect(Bundle.main.url(forResource: name, withExtension: "caf") != nil)
+    @Test func selectedMusicTracksAreBundled() {
+        for name in ["lh-music-60s-special-agent", "lh-music-silky-spy"] {
+            #expect(Bundle.main.url(forResource: name, withExtension: "mp3") != nil)
         }
     }
 

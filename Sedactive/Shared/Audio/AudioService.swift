@@ -25,17 +25,16 @@ enum SoundCue: String, CaseIterable {
     case roundSuccess = "round-success"
     case roundFailure = "round-failure"
 
-    /// Resource names; pickups rotate through small pitch variants so repeats
-    /// don't sound mechanical. Instruction cues never vary.
+    /// Diamond pickups alternate between the two excerpts in the original recording.
     var resources: [String] {
-        self == .diamondCollect ? (1...3).map { "lh-\(rawValue)-\($0)" } : ["lh-\(rawValue)"]
+        self == .diamondCollect ? (1...2).map { "lh-\(rawValue)-\($0)" } : ["lh-\(rawValue)"]
     }
 
     /// The same cue again within this time is dropped: one sound per event,
     /// even when both players' events arrive together or a button is tapped twice.
     var minimumInterval: TimeInterval {
         switch self {
-        case .uiTap: 0.12
+        case .uiTap, .vaultWarning: 0.12
         case .vaultButton, .diamondCollect: 0.06
         case .cueDuck, .cueJump, .laserClear, .laserHit: 0.25
         default: 0.5
@@ -45,16 +44,32 @@ enum SoundCue: String, CaseIterable {
     /// Simultaneous copies allowed (a small pool, never one player per play).
     var voices: Int { self == .vaultButton || self == .diamondCollect ? 3 : 1 }
 
-    /// Stings dip the music while they play.
-    var ducksMusic: Bool { self == .diamondTime || self == .roundSuccess || self == .roundFailure }
+    /// Keep the impact clear without making it louder than the movement instructions.
+    var gain: Float { self == .laserHit ? 0.71 : 1 }
+
+    /// Instructions, CLEAR, the vault timer and stings briefly lower the music.
+    var ducksMusic: Bool {
+        switch self {
+        case .cueDuck, .cueJump, .laserClear, .vaultWarning, .diamondTime, .roundSuccess, .roundFailure: true
+        default: false
+        }
+    }
 }
 
-/// What the background music plays: the same original loop in two layers.
-enum MusicMood: Equatable {
-    /// Home, Set Up and calibration: the base layer alone.
+/// The background track selected by the current screen or round.
+enum MusicMood: Hashable {
     case menu
-    /// A round: the drive layer (bass, drums) joins in sync.
     case mission
+
+    // Silky Spy is about 10 dB louder in RMS than the menu source.
+    var gain: Float { self == .mission ? 0.5 : 1 }
+
+    var resource: String {
+        switch self {
+        case .menu: "lh-music-60s-special-agent"
+        case .mission: "lh-music-silky-spy"
+        }
+    }
 }
 
 /// A loaded sound that can be played; `AVAudioPlayer` in the app, fakes in tests.
@@ -77,7 +92,7 @@ protocol SoundPlaying: AnyObject {
 extension AVAudioPlayer: SoundPlaying {}
 
 /// The app's one place for sound: preloaded effects with per-cue rate limits,
-/// and the layered background music, on separate music and effects volumes.
+/// and background music, on separate music and effects volumes.
 ///
 /// Presentation only. It never decides anything: callers play a cue when an
 /// authoritative event they already present happens (Jevon's game events,
@@ -97,7 +112,7 @@ final class AudioService {
     var musicEnabled: Bool {
         didSet {
             defaults?.set(musicEnabled, forKey: Self.musicKey)
-            musicEnabled ? resumeMusic() : silenceMusic(fade: 0.3)
+            updateMusic(fade: 0.3)
         }
     }
     var effectsEnabled: Bool {
@@ -120,8 +135,8 @@ final class AudioService {
     private var nextVoice: [SoundCue: Int] = [:]
     private var lastPlayed: [SoundCue: TimeInterval] = [:]
     private var missing: Set<String> = []
-    private var base: (any SoundPlaying)?
-    private var drive: (any SoundPlaying)?
+    private var musicPlayers: [MusicMood: any SoundPlaying] = [:]
+    private var musicSuspended = false
     private var duckedUntil: TimeInterval = 0
     private var duckTask: Task<Void, Never>?
     private var stopTask: Task<Void, Never>?
@@ -155,7 +170,8 @@ final class AudioService {
     }
 
     private static func bundlePlayer(_ name: String) -> (any SoundPlaying)? {
-        guard let url = Bundle.main.url(forResource: name, withExtension: "caf") else { return nil }
+        let ext = name.hasPrefix("lh-music-") ? "mp3" : "caf"
+        guard let url = Bundle.main.url(forResource: name, withExtension: ext) else { return nil }
         return try? AVAudioPlayer(contentsOf: url)
     }
 
@@ -175,11 +191,11 @@ final class AudioService {
         lastPlayed[cue] = time
         activateSession()
         player.currentTime = 0
-        player.volume = effectsVolume
+        player.volume = effectsVolume * cue.gain
         let started = player.play()
         playCount[cue, default: 0] += 1
         Self.log.debug("play \(cue.rawValue, privacy: .public) started=\(started)")
-        if cue.ducksMusic { duck(for: player.duration) }
+        if cue.ducksMusic { duck(for: player.duration, attack: cue == .laserClear ? 0.04 : 0.12) }
     }
 
     /// Stops every effect, e.g. when a round's scene is torn down.
@@ -219,72 +235,64 @@ final class AudioService {
 
     // MARK: - Music
 
-    /// Plays the music for `mood`, or fades it out with `nil`. Calling it again
-    /// with the same mood changes nothing: there is only ever one pair of players.
+    /// Switches tracks when the presentation moves between menu and mission.
     func setMusic(_ mood: MusicMood?, fade: TimeInterval = 0.8) {
         guard mood != self.mood else { return }
         self.mood = mood
         Self.log.debug("music \(String(describing: mood), privacy: .public)")
-        guard mood != nil else { return silenceMusic(fade: fade) }
-        guard musicEnabled else { return }
-        stopTask?.cancel()
-        if base?.isPlaying != true { startMusic() }
-        applyMusicVolume(fade: fade)
+        let fadeIn = mood == .mission ? max(fade, 2.5) : fade
+        updateMusic(fade: fade, fadeIn: fadeIn)
     }
 
-    private func startMusic() {
-        if base == nil, let b = makePlayer("lh-music-base"), let d = makePlayer("lh-music-drive") {
-            for player in [b, d] {
-                player.numberOfLoops = -1
-                player.prepareToPlay()
-            }
-            base = b
-            drive = d
+    private var wantedMusic: MusicMood? {
+        musicEnabled && !musicSuspended ? mood : nil
+    }
+
+    private func updateMusic(fade: TimeInterval, fadeIn: TimeInterval? = nil) {
+        stopTask?.cancel()
+        let wanted = wantedMusic
+        if let wanted, musicPlayers[wanted] == nil, let player = makePlayer(wanted.resource) {
+            player.numberOfLoops = -1
+            player.prepareToPlay()
+            musicPlayers[wanted] = player
         }
-        guard let base, let drive else { return }
-        activateSession()
-        base.volume = 0
-        drive.volume = 0
-        base.currentTime = 0
-        drive.currentTime = 0
-        // Both layers start on the same device time so they stay in step.
-        let start = base.deviceCurrentTime + 0.05
-        let started = base.play(atTime: start) && drive.play(atTime: start)
-        Self.log.debug("music start started=\(started) loop=\(base.duration)")
-    }
+        if let wanted, let player = musicPlayers[wanted], !player.isPlaying {
+            activateSession()
+            player.volume = 0
+            player.play()
+        }
 
-    /// Fades the layers to the mood's levels (ducked while a sting plays).
-    private func applyMusicVolume(fade: TimeInterval) {
-        guard let base, let drive, musicEnabled, let mood else { return }
-        let duck: Float = now() < duckedUntil ? Self.duckedShare : 1
-        base.setVolume(musicVolume * duck, fadeDuration: fade)
-        drive.setVolume(mood == .mission ? musicVolume * duck : 0, fadeDuration: fade)
-    }
-
-    /// Fades the music out, then stops it (players are kept for reuse).
-    private func silenceMusic(fade: TimeInterval) {
-        guard let base, let drive, base.isPlaying else { return }
-        base.setVolume(0, fadeDuration: fade)
-        drive.setVolume(0, fadeDuration: fade)
-        stopTask?.cancel()
+        applyMusicVolume(fade: fadeIn ?? fade)
+        for (track, player) in musicPlayers where track != wanted {
+            player.setVolume(0, fadeDuration: fade)
+        }
         stopTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(fade + 0.05))
-            guard !Task.isCancelled, let self, self.mood == nil || !self.musicEnabled else { return }
-            self.base?.stop()
-            self.drive?.stop()
+            try? await Task.sleep(for: .seconds(fade))
+            guard !Task.isCancelled, let self else { return }
+            for (track, player) in self.musicPlayers where track != self.wantedMusic {
+                player.stop()
+                player.currentTime = 0
+            }
         }
+    }
+
+    private func applyMusicVolume(fade: TimeInterval) {
+        guard let wantedMusic, let player = musicPlayers[wantedMusic] else { return }
+        let duck: Float = now() < duckedUntil ? Self.duckedShare : 1
+        player.setVolume(musicVolume * wantedMusic.gain * duck, fadeDuration: fade)
     }
 
     private func resumeMusic() {
-        guard musicEnabled, mood != nil else { return }
-        stopTask?.cancel()
-        if base?.isPlaying != true { startMusic() }
-        applyMusicVolume(fade: 0.4)
+        musicSuspended = false
+        updateMusic(fade: 0.4)
     }
 
-    private func duck(for duration: TimeInterval) {
-        duckedUntil = now() + duration
-        applyMusicVolume(fade: 0.12)
+    private func duck(for duration: TimeInterval, attack: TimeInterval) {
+        let start = now()
+        let deadline = start + duration
+        guard deadline > duckedUntil else { return }
+        duckedUntil = deadline
+        applyMusicVolume(fade: attack)
         duckTask?.cancel()
         duckTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(duration))
@@ -327,11 +335,19 @@ final class AudioService {
     }
 
     private func pauseForSystem() {
-        base?.pause()
-        drive?.pause()
+        musicSuspended = true
+        stopTask?.cancel()
+        for (track, player) in musicPlayers {
+            if track == mood {
+                player.pause()
+            } else {
+                player.stop()
+                player.currentTime = 0
+            }
+        }
         stopEffects()
     }
 
-    /// Whether the music layers are playing (tests and debugging).
-    var isMusicPlaying: Bool { base?.isPlaying == true }
+    /// Whether the selected track is playing (tests and debugging).
+    var isMusicPlaying: Bool { wantedMusic.flatMap { musicPlayers[$0]?.isPlaying } == true }
 }
