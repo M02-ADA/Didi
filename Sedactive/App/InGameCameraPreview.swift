@@ -98,6 +98,7 @@ struct InGameCameraPreviewView: View {
   let offersWristSetup: Bool
   let onContinueToGame: (() -> Void)?
   @State private var handingOff = false
+  @State private var anatomyInspectorPresented = false
   init(flow: LaserInputFlow, service: BodyInputService, bridge: VisionNumericPoseBridge,
     offersWristSetup: Bool = false, onContinueToGame: (() -> Void)? = nil,
     onExit: @escaping () -> Void) {
@@ -131,6 +132,8 @@ struct InGameCameraPreviewView: View {
             .disabled(model.sourceGeneration == nil).accessibilityIdentifier("gameCameraArm")
           Button("Cancel binding") { model.cancelBinding() }
             .disabled(model.sourceGeneration == nil).accessibilityIdentifier("gameCameraCancel")
+          Button("Anatomy evidence") { anatomyInspectorPresented = true }
+            .accessibilityIdentifier("gameAnatomyEvidence")
           Button("Stop camera") {
             stage.endCamera()
             Task { await model.stop() }
@@ -187,6 +190,12 @@ struct InGameCameraPreviewView: View {
       }.frame(width: max(1, geometry.size.width - 32), height: max(1, geometry.size.height - 32))
         .padding(16)
     }.background(.black).foregroundStyle(.white)
+      .sheet(isPresented: $anatomyInspectorPresented) {
+        AnatomyEvidenceInspectorView(model: model) {
+          stage.endCamera()
+          Task { await model.stop() }
+        }
+      }
       .onDisappear {
         refresh?.cancel(); refresh = nil; stage.dispose()
         if !handingOff { Task { await model.stop() } }
