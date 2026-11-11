@@ -545,6 +545,9 @@ final class RobotAvatarLayer {
     static let unavailableOpacity: Float = 0.5
 
     private(set) var robots: [PlayerID: Robot] = [:]
+    /// Each mascot's own 3D hoverboard (`PlayerHoverboard`), when the board
+    /// asset is loaded. While they stand, the corridor's shared 2D board is hidden.
+    private(set) var hoverboards: [PlayerID: PlayerHoverboard] = [:]
     /// Procedural planted feet and side steps (`RobotFootPlanner`, the K07
     /// proof of concept; adoption is a separate, pending team decision). On:
     /// planted feet and stepping. Off: the earlier behaviour, where the whole
@@ -671,10 +674,16 @@ final class RobotAvatarLayer {
     /// The app's templates, loaded from the bundle once and reused by every
     /// scene (Retry included); templates are only ever cloned, never shown.
     /// A failed load is not cached, so a later call tries again.
+    /// The players' hoverboard is loaded with them (`PlayerHoverboard.sharedTemplate()`);
+    /// a missing board never fails the avatars.
     static func sharedTemplates() async throws -> [PlayerID: Entity] {
         let load = sharedLoad ?? Task { try await loadTemplates() }
         sharedLoad = load
-        do { return try await load.value } catch {
+        do {
+            let templates = try await load.value
+            _ = await PlayerHoverboard.sharedTemplate()
+            return templates
+        } catch {
             sharedLoad = nil
             throw error
         }
@@ -705,9 +714,13 @@ final class RobotAvatarLayer {
     /// `PlayerCutoutEntity` (its lane); one solver setup, size and lighting
     /// for every player. A player without a reference starts direction-only;
     /// `AvatarPoseFrame`s supply references as calibration becomes compatible.
+    /// `hoverboard`: the board each mascot stands on (`PlayerHoverboard`);
+    /// `nil` uses the app's loaded board, if any. Without one, the corridor's
+    /// shared 2D board stays.
     init(scene: LaserScene, players: Set<PlayerID>, references: [PlayerID: AvatarReference] = [:],
-         templates: [PlayerID: Entity]) {
+         templates: [PlayerID: Entity], hoverboard: Entity? = nil) {
         self.scene = scene
+        let hoverboard = hoverboard ?? PlayerHoverboard.loadedTemplate
         for player in PlayerID.allCases where players.contains(player) {
             guard let entity = scene.players[player], let template = templates[player] else { continue }
             let reference = references[player]
@@ -722,6 +735,13 @@ final class RobotAvatarLayer {
             container.addChild(robot)
             entity.addChild(container)
             entity.hasMascot = true
+            if let hoverboard {
+                // A sibling of the mascot and the lane's `ride`: it never moves either.
+                let board = PlayerHoverboard(template: hoverboard, player: player,
+                                             floorY: scene.layout.corridorFloorY - entity.position.y, laneX: entity.position.x)
+                entity.addChild(board.root)
+                hoverboards[player] = board
+            }
             let bindWorld = skeleton.world(skeleton.bind).position
             let legRest = skeleton("Thigh_L").flatMap { t in skeleton("Foot_L").map { bindWorld[t].y - bindWorld[$0].y } } ?? solver.legLength
             var ankleX: [RobotPoseTargets.Side: Float] = [:]
@@ -754,7 +774,10 @@ final class RobotAvatarLayer {
         if let environment = Self.neutralEnvironment() {
             lights.components.set(ImageBasedLightComponent(source: .single(environment)))
             for robot in robots.values { robot.container.components.set(ImageBasedLightReceiverComponent(imageBasedLight: lights)) }
+            for board in hoverboards.values { board.model.components.set(ImageBasedLightReceiverComponent(imageBasedLight: lights)) }
         }
+        // One board per mascot replaces the shared 2D board.
+        if !hoverboards.isEmpty { scene.hoverboard?.root.isEnabled = false }
     }
 
     /// A uniform dark-grey environment (sRGB 0.18): soft fill so shadowed sides
@@ -939,6 +962,11 @@ final class RobotAvatarLayer {
         robot.container.position = [rootX, s.lift, 0]
         // After smoothing and foot planning, just before the solve: presentation targets only.
         if Self.headClearance { MascotPoseEnvelope.apply(to: &t) }
+        // The board follows what is shown: lean, root and lift (cosmetic; `PlayerHoverboard`).
+        // It glides under the stance (both feet's centre), so a side step carries it along.
+        let feet = plan.map { out in RobotPoseTargets.Side.allCases.compactMap { out.footX[$0] } } ?? []
+        let stanceX = feet.count == 2 ? (feet[0] + feet[1]) / 2 : rootX
+        hoverboards[player]?.input = .init(lean: t.lean, centerX: rootX, stanceX: stanceX, lift: s.lift, available: r.isAvailable)
         let solved = robot.solver.solveDetailed(t)
         robot.model.jointTransforms = solved.local
         if diagnosticsEnabled { recordFeet(player, robot, solved, rootX: rootX, lift: s.lift, plan: plan, trackedLift: t.footLift) }
@@ -995,6 +1023,11 @@ final class RobotAvatarLayer {
         for (player, robot) in robots {
             robot.container.removeFromParent()
             scene?.players[player]?.hasMascot = false
+        }
+        if !hoverboards.isEmpty {
+            for board in hoverboards.values { board.root.removeFromParent() }
+            hoverboards = [:]
+            scene?.hoverboard?.root.isEnabled = true
         }
         #if DEBUG
         for marker in fairnessMarkers.values.flatMap({ $0 }) { marker.removeFromParent() }

@@ -20,6 +20,9 @@ import RealityKit
 /// instead of disappearing behind it. Each half carries a darker copy of its
 /// silhouette just below it, which reads as the board's thickness, and the
 /// corridor floor lies well below with a soft shadow, so the board hovers.
+///
+/// While the mascots stand, each on its own 3D board (`PlayerHoverboard`),
+/// this shared board is hidden. It shows under the pictograms and live cutouts.
 @MainActor
 final class Hoverboard {
     let root: Entity
