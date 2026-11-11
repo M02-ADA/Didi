@@ -54,6 +54,7 @@ private struct ReplayRoundView: View {
     @State private var diamondReadout = DebugDiamondVisualReadout()
     @State private var preview = LaserApproachPreview()
     @State private var environmentPreview = EnvironmentPreview()
+    @State private var hoverboardPreview = HoverboardPreview()
     @State private var cutoutFeed: SyntheticCutoutFeed?
     @State private var directorPreview = DirectorLaserPreview()
     @State private var robotDemo = RobotDemoDriver()
@@ -131,6 +132,11 @@ private struct ReplayRoundView: View {
             // vault door and diamonds. Each preview replaces the gameplay driver.
             if let mode = EnvironmentPreview.requestedMode {
                 environmentPreview.start(on: content, scene: scene, mode: mode)
+                return
+            }
+            // Launch with `-hoverboardPreview [turntable|bank] -hideDebugOverlay` to review the players' 3D hoverboard alone.
+            if let mode = HoverboardPreview.requestedMode {
+                await hoverboardPreview.start(on: content, scene: scene, mode: mode)
                 return
             }
             // Launch with `-directorLaserPreview` to drive the gameplay presenter from
@@ -324,6 +330,8 @@ private struct ReplayRoundView: View {
             // Preview subscriptions capture their owners weakly; replacing them releases the subscriptions.
             preview = LaserApproachPreview()
             environmentPreview = EnvironmentPreview()
+            hoverboardPreview.stop()
+            hoverboardPreview = HoverboardPreview()
             #endif
             let previous = session
             Task { await previous?.stop() }

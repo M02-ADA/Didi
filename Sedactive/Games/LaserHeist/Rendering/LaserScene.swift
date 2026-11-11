@@ -30,9 +30,14 @@ struct LaserWorldLayout {
 
     // Fixed virtual camera at roughly chest height, framed like the Hi-Fi:
     // the vanishing point sits near the screen centre and players fill the lower half.
+    // The field of view is wider than the Hi-Fi's 50° (11 November 2026): the
+    // players and their boards show at about 0.75 of that size, leaving visible
+    // room on each lane to lean and move sideways. Only the projection changed;
+    // the world (1.6 m mascots, lanes, crossing plane, camera position and aim)
+    // is the same, so every distance-based fade and clearance is unchanged.
     var cameraPosition: SIMD3<Float> = [0, 1.05, 3.1]
     var cameraTarget: SIMD3<Float> = [0, 1.0, -10]
-    var cameraVerticalFieldOfView: Float = 50
+    var cameraVerticalFieldOfView: Float = 64
 
     // Placeholder players: size is width x height, scale is per player.
     var player1Size: SIMD2<Float> = [0.74, 1.75]
@@ -250,6 +255,8 @@ final class LaserScene {
         if let board = environment.findEntity(named: "Corridor")?.findEntity(named: "Hoverboard"),
            let hoverboard = Hoverboard(entity: board, camera: layout.cameraPosition, backDepth: layout.hoverboardBackZ) {
             self.hoverboard = hoverboard
+            // Mascots already standing on their own 3D boards (`PlayerHoverboard`) replace it.
+            board.isEnabled = robotAvatars?.hoverboards.isEmpty ?? true
             for (id, player) in players {
                 hoverboard.setFootShadow(id, atWorldX: player.position.x)
             }
