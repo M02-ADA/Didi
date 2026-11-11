@@ -61,6 +61,7 @@ nonisolated final class CameraCaptureMetrics: Sendable {
     var sourceBytes = 0, peakOwnedPixelBytes = 0
     #if DEBUG
       var previewBytes = 0
+      var anatomyInspectionBudget: CameraPreviewBudget?
     #endif
     var ownedBytes: Int {
       let (base, overflow) = sourceBytes.addingReportingOverflow(workspaceBytes)
@@ -68,7 +69,8 @@ nonisolated final class CameraCaptureMetrics: Sendable {
       var count = overflow || maskOverflow ? Int.max : total
       #if DEBUG
         let (combined, previewOverflow) = count.addingReportingOverflow(previewBytes)
-        count = previewOverflow ? Int.max : combined
+        let (withInspection, inspectionOverflow) = combined.addingReportingOverflow(anatomyInspectionBudget?.usage.bytes ?? 0)
+        count = previewOverflow || inspectionOverflow ? Int.max : withInspection
       #endif
       return count
     }
@@ -84,6 +86,7 @@ nonisolated final class CameraCaptureMetrics: Sendable {
       let raw = $0.sourceBytes
       #if DEBUG
         let preview = $0.previewBytes
+        let inspection = $0.anatomyInspectionBudget
       #endif
       $0 = State(context: context)
       $0.workspaceBytes = retained
@@ -92,6 +95,7 @@ nonisolated final class CameraCaptureMetrics: Sendable {
       $0.peakWorkspaceBytes = retained
       #if DEBUG
         $0.previewBytes = preview
+        $0.anatomyInspectionBudget = inspection
       #endif
       $0.peakOwnedPixelBytes = $0.ownedBytes
     }
@@ -153,6 +157,9 @@ nonisolated final class CameraCaptureMetrics: Sendable {
     }
   }
   #if DEBUG
+    func attachAnatomyInspectionBudget(_ budget: CameraPreviewBudget) {
+      state.withLock { if $0.anatomyInspectionBudget == nil { $0.anatomyInspectionBudget = budget } }
+    }
     func previewBytes(_ bytes: Int) {
       state.withLock {
         $0.previewBytes = bytes

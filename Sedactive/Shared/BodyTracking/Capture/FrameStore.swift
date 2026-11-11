@@ -157,6 +157,7 @@ nonisolated final class FrameStore: Sendable {
     let metrics = CameraCaptureMetrics()
     self.metrics = metrics
     #if DEBUG
+      metrics.attachAnatomyInspectionBudget(tracking.anatomyInspectionBudget)
       preview = CameraDiagnosticPreview(onBytesChanged: { metrics.previewBytes($0) })
     #endif
     budget = CameraSourceBudget(maximumBytes: maximumRetainedBytes, metrics: metrics)
@@ -411,6 +412,16 @@ actor CameraCopySink: CameraFrameSink {
               let metrics = self.metrics
               segmenter = makeSegmenter?() ?? PersonSegmenter(onOwnedBytes: { metrics?.maskOutputBytes($0) })
             }
+            #if DEBUG
+            let inspectionTicket = tracking.beginAnatomyInspection(pose: result,
+              admission: frame.trackingAdmission, receipt: receipt)
+            let inspectionImages = inspectionTicket.map { _ in
+              AnatomyInspectionImageBuilder(source: result.source, budget: tracking.anatomyInspectionBudget)
+            }
+            let inspectionSegmenter = segmenter as? any AnatomyInspectionMaskDetecting
+            inspectionSegmenter?.anatomyInspectionImages = inspectionImages
+            defer { inspectionSegmenter?.anatomyInspectionImages = nil }
+            #endif
             let maskStart = CameraHostClock.now()
             let mask: PersonMaskObservation
             do {
@@ -425,6 +436,15 @@ actor CameraCopySink: CameraFrameSink {
             if !Task.isCancelled {
               tracking.finishMask(mask, pose: result, admission: frame.trackingAdmission, receipt: receipt)
             }
+            #if DEBUG
+            if let inspectionTicket, let inspectionImages {
+              // Copy only the current reconstructed source, never a latest preview mailbox.
+              let image = Task.isCancelled ? nil : inspectionImages.cameraImage(buffer)
+              tracking.finishAnatomyInspection(inspectionTicket, pose: result,
+                admission: frame.trackingAdmission, receipt: receipt, mask: mask,
+                images: inspectionImages, image: image, cancelled: Task.isCancelled)
+            }
+            #endif
           }
           if !Task.isCancelled {
             tracking?.publishMeasurements(result, admission: frame.trackingAdmission,

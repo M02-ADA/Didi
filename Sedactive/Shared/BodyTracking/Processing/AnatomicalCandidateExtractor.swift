@@ -51,7 +51,10 @@ nonisolated enum AnatomicalCandidateExtractor {
       guard let p = candidate.joints[name], (try? p.validate()) != nil,
         p.confidence >= AnatomicalCandidatePolicyV1.confidence,
         p.x > 0, p.x < 1, p.y > 0, p.y < 1 else { return nil }
-      return (Int(p.x * Double(width)), Int((1 - p.y) * Double(height)))
+      let x = Int(p.x * Double(width)), y = Int((1 - p.y) * Double(height))
+      // Strictly interior normalized values can still round to a mask boundary.
+      guard (0..<width).contains(x), (0..<height).contains(y) else { return nil }
+      return (x, y)
     }
     func failure(_ names: [BodyJoint]) -> AnatomicalCandidateScalar {
       .refused(names.contains(where: { candidate.joints[$0] == nil }) ? .missingLandmarks : .lowConfidence)

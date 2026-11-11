@@ -2,6 +2,9 @@ import Dispatch
 import Foundation
 import Synchronization
 import UIKit
+#if DEBUG
+import CoreGraphics
+#endif
 
 nonisolated struct CameraPoseStatistics: Sendable {
   var completed: UInt64 = 0, rejected: UInt64 = 0, failures: UInt64 = 0
@@ -120,6 +123,9 @@ nonisolated struct CameraTrackingAdmission: Equatable, Sendable {
   var calibration: CalibrationAdmission? = nil
   var acceptedBodyRevision: UInt64? = nil // E08 only; immutable acceptance context at admission
   var presentationRevision: UInt64? = nil
+  #if DEBUG
+  var anatomyInspection: UUID? = nil
+  #endif
 }
 nonisolated struct CameraTrackingControl: Sendable {
   let revision: UInt64
@@ -203,11 +209,15 @@ nonisolated final class CameraTrackingGate: Sendable {
     var body = LiveBodyInputState()
     var presentation = VisionNumericPoseChannel()
     #if DEBUG
+    var anatomyInspection = AnatomyInspectionState()
     var visionPreviewMask: VisionPreviewMaskDiagnostic?
     #endif
     var commandPhase: CameraBindingCommandPhase = .revoked
     var restartFromGeneration: UUID?
   }
+  #if DEBUG
+  let anatomyInspectionBudget = CameraPreviewBudget(limit: 8 * 1024 * 1024)
+  #endif
   let policy: PlayerTrackingPolicy
   let policyVersion: String
   private let now: @Sendable () -> Double
@@ -246,6 +256,7 @@ nonisolated final class CameraTrackingGate: Sendable {
     s.presentation.invalidate()
     #if DEBUG
     s.visionPreviewMask = nil
+    s.anatomyInspection.invalidate()
     #endif
     s.requestID = nil
     s.acknowledgment = nil
@@ -453,10 +464,14 @@ nonisolated final class CameraTrackingGate: Sendable {
       guard $0.validPolicy, $0.foreground, $0.active, $0.context == source.context else { return nil }
       $0.body.calibration.expire(at: now())
       if $0.body.source == source.context { $0.body.lastAdmission = source }
-      return .init(context: source.context, revision: $0.revision, requestID: $0.requestID,
+      var stamp = CameraTrackingAdmission(context: source.context, revision: $0.revision, requestID: $0.requestID,
         calibration: $0.body.calibration.admission,
         acceptedBodyRevision: $0.body.acceptedRevision,
         presentationRevision: $0.presentation.admit(source, authorized: $0.requestID != nil))
+      #if DEBUG
+      stamp.anatomyInspection = $0.anatomyInspection.ticket?.id
+      #endif
+      return stamp
     }
   }
   func rejected(_ error: Error? = nil) {
@@ -505,7 +520,12 @@ nonisolated final class CameraTrackingGate: Sendable {
         return false
       }
       if result.player1.state != .tracking || result.player2.state != .tracking
-        || result.player1.requiresRebind || result.player2.requiresRebind { $0.body.calibration.uncertain() }
+        || result.player1.requiresRebind || result.player2.requiresRebind {
+        $0.body.calibration.uncertain()
+        #if DEBUG
+        if $0.anatomyInspection.frame == nil { $0.anatomyInspection.invalidate() }
+        #endif
+      }
       commit() // LINEARIZATION: authoritative worker assignment inside the revocation critical section.
       $0.latest = result
       $0.lastFrame = source.frameID
@@ -556,7 +576,11 @@ nonisolated final class CameraTrackingGate: Sendable {
     programTimer(&s, at: time)
   }
   private func programTimer(_ s: inout State, at time: Double) {
-    if let deadline = [s.deadline, s.body.calibration.nextDeadline].compactMap({ $0 }).min() {
+    var deadlines = [s.deadline, s.body.calibration.nextDeadline]
+    #if DEBUG
+    deadlines.append(s.anatomyInspection.ticket?.expiresAt)
+    #endif
+    if let deadline = deadlines.compactMap({ $0 }).min() {
       s.timer?.schedule(deadline: .now() + max(0, deadline - time))
     } else { s.timer?.schedule(deadline: .distantFuture) }
   }
@@ -567,6 +591,14 @@ nonisolated final class CameraTrackingGate: Sendable {
   }
   private func expire(_ s: inout State, at time: Double) {
     guard time.isFinite else { return }
+    #if DEBUG
+    if let ticket = s.anatomyInspection.ticket,
+      time >= ticket.expiresAt || s.context != ticket.calibration.source
+        || s.revision != ticket.calibration.bindingRevision || s.requestID != ticket.calibration.bindingRequest
+        || s.body.acceptedRevision != ticket.acceptedRevision || !s.active || !s.foreground || s.body.stopped {
+      s.anatomyInspection.invalidate()
+    }
+    #endif
     let old = s.body.calibration.phase
     s.body.calibration.expire(at: time)
     if old != s.body.calibration.phase { s.body.wake?.yield(()) }
@@ -574,6 +606,9 @@ nonisolated final class CameraTrackingGate: Sendable {
     guard time.isFinite, let deadline = s.deadline, time >= deadline,
       s.active, s.requestID != nil else { return }
     s.presentation.invalidate()
+    #if DEBUG
+    if s.anatomyInspection.frame == nil { s.anatomyInspection.invalidate() }
+    #endif
     s.body.calibration.uncertain()
     s.body.measurements.invalidate()
     s.body.latest = nil; s.body.wrists = nil
@@ -632,6 +667,9 @@ nonisolated final class CameraTrackingGate: Sendable {
   }
   func bodyWake(_ wake: AsyncStream<Void>.Continuation) { state.withLock { $0.body.wake = wake } }
   private func stopBody(_ s: inout State) {
+    #if DEBUG
+    s.anatomyInspection.invalidate()
+    #endif
     s.presentation.invalidate()
     s.body.invalidate(at: now()); s.body.subscription = nil
     s.body.continuation?.finish(); s.body.continuation = nil
@@ -675,7 +713,12 @@ nonisolated final class CameraTrackingGate: Sendable {
       let prior = $0.body.calibration.admission?.request
       let result = try $0.body.calibration.request(id: id, source: source, revision: $0.revision,
         bindingRequest: request, at: time)
-      if result != prior { $0.body.measurements.invalidate() }
+      if result != prior {
+        $0.body.measurements.invalidate()
+        #if DEBUG
+        $0.anatomyInspection.invalidate()
+        #endif
+      }
       programTimer(&$0, at: time); $0.body.wake?.yield(())
       return result
     }
@@ -684,6 +727,9 @@ nonisolated final class CameraTrackingGate: Sendable {
     state.withLock {
       guard $0.body.calibration.admission?.request == request else { return }
       $0.body.measurements.invalidate()
+      #if DEBUG
+      $0.anatomyInspection.invalidate()
+      #endif
       $0.body.calibration.invalidate("Explicit calibration cancel"); $0.body.wake?.yield(())
       programTimer(&$0, at: now())
     }
@@ -722,6 +768,9 @@ nonisolated final class CameraTrackingGate: Sendable {
         admission.revision == $0.revision, admission.requestID == $0.requestID,
         observation.serviceSeconds > StandingCollectionPolicyV1.serviceTripwire {
         $0.body.calibration.stopForReview(stamp)
+        #if DEBUG
+        $0.anatomyInspection.invalidate()
+        #endif
       }
       expire(&$0, at: time)
       guard pairEligible($0), $0.latest == receipt, $0.lastFrame == pose.source.frameID,
@@ -773,6 +822,104 @@ nonisolated final class CameraTrackingGate: Sendable {
         calibrations: $0.body.configuration?.calibrations ?? [:], mask: eligibleMask)
     }
   }
+  #if DEBUG
+  /// Explicit DEBUG intent only. It cannot start calibration, arm B2 or create an acknowledgment.
+  @discardableResult func requestAnatomyInspection() throws -> UUID {
+    try state.withLock {
+      let time = now(); expire(&$0, at: time)
+      guard pairEligible($0), !$0.body.stopped, $0.body.source == $0.context,
+        let stamp = $0.body.calibration.admission,
+        stamp.source == $0.context, stamp.bindingRevision == $0.revision,
+        stamp.bindingRequest == $0.requestID,
+        $0.body.calibration.phase == .collecting || $0.body.calibration.phase == .waitingForReliablePair,
+        let deadline = $0.body.calibration.inspectionRequestDeadline else { throw AnatomyInspectionError.inactive }
+      let id = try $0.anatomyInspection.request(calibration: stamp,
+        acceptedRevision: $0.body.acceptedRevision, at: time, deadline: deadline,
+        ownedBytes: anatomyInspectionBudget.usage.bytes)
+      programTimer(&$0, at: time)
+      return id
+    }
+  }
+  func beginAnatomyInspection(pose: CameraPoseResult, admission: CameraTrackingAdmission,
+    receipt: PlayerTrackingSnapshot) -> AnatomyInspectionTicket? {
+    state.withLock {
+      let time = now(); expire(&$0, at: time)
+      guard pairEligible($0), !$0.body.stopped, $0.context == pose.source.context,
+        $0.latest == receipt, $0.lastFrame == pose.source.frameID,
+        admission.context == pose.source.context, admission.revision == $0.revision,
+        admission.requestID == $0.requestID, admission.acceptedBodyRevision == $0.body.acceptedRevision,
+        admission.calibration == $0.body.calibration.admission else { return nil }
+      return $0.anatomyInspection.begin(admission.anatomyInspection, calibration: admission.calibration,
+        source: pose.source, at: time)
+    }
+  }
+  func finishAnatomyInspection(_ ticket: AnatomyInspectionTicket, pose: CameraPoseResult,
+    admission: CameraTrackingAdmission, receipt: PlayerTrackingSnapshot,
+    mask: PersonMaskObservation, images: AnatomyInspectionImageBuilder, image: CGImage?, cancelled: Bool = false) {
+    state.withLock { state in
+      let time = now(); expire(&state, at: time)
+      defer { state.anatomyInspection.ended(ticket.id) }
+      guard !cancelled, pairEligible(state), !state.body.stopped, state.context == pose.source.context,
+        admission.context == pose.source.context, admission.revision == state.revision,
+        admission.requestID == state.requestID, admission.acceptedBodyRevision == state.body.acceptedRevision,
+        admission.calibration == ticket.calibration, admission.anatomyInspection == ticket.id,
+        state.body.calibration.admission == ticket.calibration,
+        state.body.calibration.phase != .stoppedForReview,
+        state.latest == receipt, state.lastFrame == pose.source.frameID, pose.matchesSource,
+        mask.source == pose.source, images.source == pose.source,
+        mask.serviceSeconds.isFinite, mask.serviceSeconds >= 0,
+        mask.serviceSeconds <= StandingCollectionPolicyV1.serviceTripwire,
+        let ack = state.acknowledgment, ack.requestID == ticket.calibration.bindingRequest else { return }
+      var players: [PlayerID: AnatomyInspectionPlayer] = [:]
+      for id in PlayerID.allCases {
+        guard let candidate = pose.frame.candidates.first(where: { $0.candidateID == receipt[id].candidateID }) else { return }
+        let raw = mask.anatomy[id]
+        let anatomy = raw.flatMap { value in
+          value.source == pose.source && value.controlRevision == admission.revision
+            && value.candidateID == candidate.candidateID ? value : nil
+        }
+        let region = mask.regions[id].flatMap { $0.candidateID == candidate.candidateID ? $0 : nil }
+        players[id] = .init(candidateID: candidate.candidateID, tracking: receipt[id], joints: candidate.joints, region: region, anatomy: anatomy)
+      }
+      let value = AnatomyInspectionFrame(ticket: ticket, source: pose.source, acknowledgment: ack,
+        players: players, image: image, mask: images.mask, nativeWidth: images.width,
+        nativeHeight: images.height, nativeStride: images.stride, nativeFormat: images.format,
+        quality: mask.quality, serviceSeconds: mask.serviceSeconds)
+      _ = state.anatomyInspection.finish(value, at: time)
+      programTimer(&state, at: time)
+    }
+  }
+  func readAnatomyInspection() -> AnatomyInspectionState {
+    state.withLock { expire(&$0, at: now()); return $0.anatomyInspection }
+  }
+  func markAnatomyReference(_ reference: AnatomyInspectionReference) throws {
+    try state.withLock {
+      expire(&$0, at: now())
+      guard now().isFinite, $0.active, $0.foreground, !$0.body.stopped else { throw AnatomyInspectionError.inactive }
+      try $0.anatomyInspection.mark(reference)
+    }
+  }
+  func setAnatomyReferenceRegion(inspection: UUID, source: CameraFrameMetadata, player: PlayerID,
+    candidateID: UInt64, a: AnatomyInspectionPoint, b: AnatomyInspectionPoint) throws {
+    try state.withLock {
+      expire(&$0, at: now())
+      guard now().isFinite, $0.active, $0.foreground, !$0.body.stopped else { throw AnatomyInspectionError.inactive }
+      try $0.anatomyInspection.setRegion(inspection: inspection, source: source, player: player,
+        candidateID: candidateID, a: a, b: b)
+    }
+  }
+  func revealAnatomyComparisons() throws {
+    try state.withLock {
+      expire(&$0, at: now())
+      guard now().isFinite, $0.active, $0.foreground, !$0.body.stopped else { throw AnatomyInspectionError.inactive }
+      try $0.anatomyInspection.reveal()
+    }
+  }
+  func discardAnatomyInspection() {
+    state.withLock { $0.anatomyInspection.discard(); programTimer(&$0, at: now()) }
+  }
+  #endif
+
   func attachPresentation() throws -> VisionPoseAttachment {
     try state.withLock { try $0.presentation.attach() }
   }
@@ -821,6 +968,9 @@ nonisolated final class CameraTrackingGate: Sendable {
         stamp.source == $0.context, stamp.bindingRevision == $0.revision,
         stamp.bindingRequest == $0.requestID else { throw LiveVisionError.staleEvidence }
       _ = try $0.body.accept(candidateID: id, expectedRevision: expectedRevision, at: time)
+      #if DEBUG
+      $0.anatomyInspection.invalidate()
+      #endif
       $0.presentation.invalidate()
       programTimer(&$0, at: time)
       return $0.body.context(active: true, wristContact: wristContext($0))!

@@ -29,6 +29,10 @@ nonisolated enum PersonMaskError: Error { case unsupportedOutput }
 /// Full-frame revision-1 request, synchronous on CameraCopySink, never a new consumer.
 /// Native OneComponent8 is an explicit restrictive whitelist, NOT an SDK format guarantee.
 nonisolated final class PersonSegmenter: PersonMaskDetecting {
+  #if DEBUG
+  // Set and cleared synchronously by CameraCopySink for one explicitly requested frame.
+  var anatomyInspectionImages: AnatomyInspectionImageBuilder?
+  #endif
   static let maximumOutputBytes = 4 * 1024 * 1024
   private let onOwnedBytes: @Sendable (Int) -> Void
   init(onOwnedBytes: @escaping @Sendable (Int) -> Void = { _ in }) { self.onOwnedBytes = onOwnedBytes }
@@ -81,6 +85,10 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
         bounds: bounds, width: w, height: h) { x, y in
           base.advanced(by: y * stride).assumingMemoryBound(to: UInt8.self)[x]
         }
+      #if DEBUG
+      anatomyInspectionImages?.captureMask(source: pose.source, width: w, height: h,
+        stride: stride, format: CVPixelBufferGetPixelFormatType(mask), base: base)
+      #endif
       var anatomy: [PlayerID: AnatomicalPlayerCandidate] = [:]
       for (id, region) in result {
         if let candidate = pose.frame.candidates.first(where: { $0.candidateID == region.candidateID }) {
@@ -125,6 +133,8 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
         guard let p = candidate.joints[joint], (try? p.validate()) != nil,
           p.confidence >= 0.5, p.x > 0, p.x < 1, p.y > 0, p.y < 1 else { return [:] }
         let x = Int(p.x * Double(width)), y = Int((1 - p.y) * Double(height))
+        // Reject floating-point boundary rounding before accessing native mask memory.
+        guard (0..<width).contains(x), (0..<height).contains(y) else { return [:] }
         let label = labelAt(x, y)
         guard labels.contains(label), support == nil || support == label else { return [:] }
         support = label
@@ -140,3 +150,11 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
     return output
   }
 }
+
+#if DEBUG
+/// Optional same-worker hook, also injectable in focused worker fixtures. No request of its own.
+nonisolated protocol AnatomyInspectionMaskDetecting: PersonMaskDetecting {
+  var anatomyInspectionImages: AnatomyInspectionImageBuilder? { get set }
+}
+extension PersonSegmenter: AnatomyInspectionMaskDetecting {}
+#endif

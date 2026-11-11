@@ -225,6 +225,9 @@ nonisolated struct CalibrationSession: Sendable {
     time.isFinite && time >= source.capturedAt
       && time - source.capturedAt < StandingCollectionPolicyV1.sampleFreshness
   }
+  #if DEBUG
+  var inspectionRequestDeadline: Double? { admission == nil ? nil : deadline }
+  #endif
   var nextDeadline: Double? {
     guard admission != nil else { return nil }
     return candidate.map { min(deadline, $0.expiresAt) } ?? deadline
