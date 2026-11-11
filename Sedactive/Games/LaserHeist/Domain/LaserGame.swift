@@ -163,6 +163,11 @@ nonisolated struct LaserGame: Sendable {
         try requireLaserValue(arrivedAt.isFinite && arrivedAt >= gameTime && capturedGameTime.isFinite
                               && capturedGameTime >= 0 && capturedGameTime <= arrivedAt, "evidence timeline")
         guard !blocked && !exited && roundOutcome == nil else { return }
+        // Diamond Time ends on arrival deadline, before this packet can add active time or score.
+        if let bonusDeadline, arrivedAt >= bonusDeadline {
+            try advance(to: max(gameTime, bonusDeadline))
+            return
+        }
         // Earlier deadlines close before this delivery. Equal-time deliveries precede advance(to:).
         try finalize(at: arrivedAt, inclusive: false)
         guard roundOutcome == nil else { return }

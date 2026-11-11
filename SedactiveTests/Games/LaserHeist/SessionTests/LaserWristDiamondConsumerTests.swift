@@ -194,11 +194,22 @@ nonisolated struct LaserWristDiamondConsumerTests {
         try c.refresh(game:g,context:f.context,atHostTime:100.25)
         let outsideTime = 0.25+offset-0.125
         _ = try f.send(&c,&g,frame:3,capture:outsideTime,points:[WristGameplayFixture.left:WristGameplayFixture.outside])
-        let r = try f.send(&c,&g,frame:4,capture:0.25+offset,points:[WristGameplayFixture.left:WristGameplayFixture.inside])
+        // Use the same ordering as the live coordinator: ingest CP1 body evidence first,
+        // then evaluate the wrist attachment on that same packet.
+        let arrival = 0.25 + offset
+        let capture = min(arrival, deadline - 0.0005)
+        let packet = try f.packet(4, 100 + capture, points: [WristGameplayFixture.left: WristGameplayFixture.inside])
+        try g.receive(packet, capturedGameTime: capture, arrivedAt: arrival)
+        let r = try c.receive(packet, context: f.context, atHostTime: 100 + arrival,
+                              capturedGameTime: capture, arrivedGameTime: arrival, game: &g)
         #expect(r.count == (offset < 10 ? 1 : 0))
         #expect(g.teamScore == (offset < 10 ? 25 : 0))
         if offset < 10 { #expect(g.activeDiamonds.count == 4) }
-        else { #expect(g.roundOutcome == .completed && g.activeDiamonds.isEmpty) }
+        else {
+            #expect(g.roundOutcome == .completed && g.activeDiamonds.isEmpty)
+            #expect(g.summary?.gameDuration == deadline)
+            #expect(g.summary?.activityDuration == 10)
+        }
     }
     @Test func repeatedReplacementRetainsOnlyActiveTargetEntryHistory() throws {
         let f = try WristGameplayFixture();var g = try f.game()
