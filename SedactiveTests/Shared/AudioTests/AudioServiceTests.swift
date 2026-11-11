@@ -115,7 +115,7 @@ struct AudioServiceTests {
         audio.setMusic(.mission)
         let mission = try #require(harness.made.first { $0.name == "lh-music-silky-spy" })
         #expect(mission.plays == 1 && mission.numberOfLoops == -1)
-        #expect(menu.volume == 0 && mission.volume == audio.musicVolume)
+        #expect(menu.volume == 0 && mission.volume == audio.musicVolume * 0.5)
         #expect(mission.fades.last?.1 == 2.5)
         #expect(menu.fades.last?.1 == 0.8)
 
@@ -127,14 +127,14 @@ struct AudioServiceTests {
         #expect(menu.volume == 0 && mission.volume == 0)
     }
 
-    /// A sting dips the music under it.
-    @Test func stingsDuckTheMusic() throws {
+    @Test(arguments: [SoundCue.diamondTime, .cueDuck, .cueJump, .vaultWarning])
+    func priorityCuesDuckTheMusic(cue: SoundCue) throws {
         let harness = Harness()
         let audio = service(harness)
         audio.setMusic(.mission)
-        audio.play(.diamondTime)
+        audio.play(cue)
         let mission = try #require(harness.made.first { $0.name == "lh-music-silky-spy" })
-        #expect(abs(mission.volume - audio.musicVolume * AudioService.duckedShare) < 1e-6)
+        #expect(abs(mission.volume - audio.musicVolume * 0.5 * AudioService.duckedShare) < 1e-6)
     }
 
     @Test func stopEffectsSilencesEveryEffect() {

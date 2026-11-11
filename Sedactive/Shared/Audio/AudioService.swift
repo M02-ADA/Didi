@@ -45,14 +45,25 @@ enum SoundCue: String, CaseIterable {
     /// Simultaneous copies allowed (a small pool, never one player per play).
     var voices: Int { self == .vaultButton || self == .diamondCollect ? 3 : 1 }
 
-    /// Stings dip the music while they play.
-    var ducksMusic: Bool { self == .diamondTime || self == .roundSuccess || self == .roundFailure }
+    /// Keep the impact clear without making it louder than the movement instructions.
+    var gain: Float { self == .laserHit ? 0.71 : 1 }
+
+    /// Instructions, the vault timer and stings briefly lower the music.
+    var ducksMusic: Bool {
+        switch self {
+        case .cueDuck, .cueJump, .vaultWarning, .diamondTime, .roundSuccess, .roundFailure: true
+        default: false
+        }
+    }
 }
 
 /// The background track selected by the current screen or round.
 enum MusicMood: Hashable {
     case menu
     case mission
+
+    // Silky Spy is about 10 dB louder in RMS than the menu source.
+    var gain: Float { self == .mission ? 0.5 : 1 }
 
     var resource: String {
         switch self {
@@ -181,7 +192,7 @@ final class AudioService {
         lastPlayed[cue] = time
         activateSession()
         player.currentTime = 0
-        player.volume = effectsVolume
+        player.volume = effectsVolume * cue.gain
         let started = player.play()
         playCount[cue, default: 0] += 1
         Self.log.debug("play \(cue.rawValue, privacy: .public) started=\(started)")
@@ -269,7 +280,7 @@ final class AudioService {
     private func applyMusicVolume(fade: TimeInterval) {
         guard let wantedMusic, let player = musicPlayers[wantedMusic] else { return }
         let duck: Float = now() < duckedUntil ? Self.duckedShare : 1
-        player.setVolume(musicVolume * duck, fadeDuration: fade)
+        player.setVolume(musicVolume * wantedMusic.gain * duck, fadeDuration: fade)
     }
 
     private func resumeMusic() {
@@ -278,7 +289,10 @@ final class AudioService {
     }
 
     private func duck(for duration: TimeInterval) {
-        duckedUntil = now() + duration
+        let start = now()
+        let deadline = start + duration
+        guard deadline > duckedUntil else { return }
+        duckedUntil = deadline
         applyMusicVolume(fade: 0.12)
         duckTask?.cancel()
         duckTask = Task { [weak self] in
