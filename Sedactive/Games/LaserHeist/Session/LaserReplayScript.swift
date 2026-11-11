@@ -14,8 +14,22 @@ nonisolated struct LaserReplayScript: Sendable {
         self.input = input; self.encounters = encounters; self.configuration = configuration; self.fullRound = fullRound
     }
 
-    static func complete(seed: UInt64 = 1, bundle: Bundle = .main) throws -> Self {
-        try LaserFullReplayPlan.make(base: load(bundle: bundle).input, seed: seed)
+    enum Scenario: Hashable, Sendable {
+        case standard, healthDepleted, vaultTimeout
+
+        static var launchSelection: Self {
+            #if DEBUG
+            let arguments = ProcessInfo.processInfo.arguments
+            if arguments.contains("-replayAllHits") { return .healthDepleted }
+            if arguments.contains("-replayVaultTimeout") { return .vaultTimeout }
+            #endif
+            return .standard
+        }
+    }
+
+    static func complete(seed: UInt64 = 1, bundle: Bundle = .main,
+                         scenario: Scenario = .launchSelection) throws -> Self {
+        try LaserFullReplayPlan.make(base: load(bundle: bundle).input, seed: seed, scenario: scenario)
     }
     let vaultID = UUID(uuidString: "12000000-0000-4000-8000-000000000100")!
     /// Script-declared synthetic tracking coverage, not inferred physical movement between frames.

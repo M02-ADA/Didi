@@ -14,6 +14,9 @@ struct HomeView: View {
     /// store); without it the line is left out rather than showing a made-up value.
     var bestScore: Int?
     let onStart: () -> Void
+    #if DEBUG
+    @State private var showsSFXReplayLab = false
+    #endif
 
     var body: some View {
         SketchArtboard {
@@ -53,6 +56,19 @@ struct HomeView: View {
                     .accessibilityIdentifier("bestScore")
             }
         }
+        #if DEBUG
+        .overlay(alignment: .topTrailing) {
+            Button("SFX Replay Lab", systemImage: "waveform") {
+                AudioService.shared.play(.uiTap)
+                showsSFXReplayLab = true
+            }
+            .buttonStyle(.bordered)
+            .tint(LaserHeistDesign.cream)
+            .padding()
+            .accessibilityIdentifier("openSFXReplayLab")
+        }
+        .fullScreenCover(isPresented: $showsSFXReplayLab) { SFXReplayLabView() }
+        #endif
     }
 }
 
