@@ -39,9 +39,9 @@ nonisolated struct WristGameplayFixture {
             context:context,historyCapacityPerPlayer:20)
     }
     func packet(_ frame: UInt64, _ capture: Double, points: [LaserContactHand:WristPlanePoint],
-                bad: String? = nil) throws -> BodySnapshot {
+                bad: String? = nil, bodySamples: [PlayerID: PlayerBodySample]? = nil) throws -> BodySnapshot {
         let a = try #require(context.wristContact)
-        var samples = players, wrists: [PlayerID:PlayerWristContactV1] = [:]
+        var samples = bodySamples ?? players, wrists: [PlayerID:PlayerWristContactV1] = [:]
         for id in PlayerID.allCases {
             let unreliable = id == .player1 && (bad == "unbound" || bad == "rebind")
             let uncalibrated = id == .player1 && bad == "calibration"
@@ -230,6 +230,36 @@ nonisolated struct LaserWristDiamondConsumerTests {
         }
         #expect(g.diamondsCollected == 64 && g.teamScore == 1600)
     }
+    @Test(arguments: [true, false])
+    func bonusReplacementPrefersAZoneClearOfTheCollectingWrist(_ hasClearPosition: Bool) throws {
+        let fixture = try WristGameplayFixture()
+        var game = try fixture.game()
+        let vault = UUID()
+        try game.openVault(id: vault, at: 0)
+        try game.touchVaultBatch(id: vault, contacts: PlayerID.allCases.flatMap { player in
+            LaserVaultButton.allCases.map { .init(playerID: player, button: $0, calibrationRevision: 1) }
+        }, generation: fixture.context.sessionGeneration, at: 0.25)
+        let initial = try (1...4).map { try LaserDiamondTests.spawn($0, at: 0.25, entry: 0.25, exit: 10.25) }
+        try game.startDiamondTimeDiamonds(initial)
+        // At x=1.10 the wrist is inside the collected diamond and the free zone at x=1.16.
+        // Seed 2 would select the overlapping zone first without the clearance preference.
+        let placements = try ([1, 2, 3, 4, 1.16] + (hasClearPosition ? [6] : [])).map { x in
+            try LaserDiamondPlacement(position: .init(x: x, y: 1), eligiblePlayers: Set(PlayerID.allCases))
+        }
+        let plan = try LaserWristDiamondConfiguration(layout: fixture.input.playerPlaneLayout, radius: 0.125,
+            replacementPlanner: .init(seed: 2, placements: placements, approachLead: 0.5, passageDuration: 1))
+        var consumer = try LaserWristDiamondConsumer(configuration: plan, context: fixture.context,
+            lifetime: UUID(), afterCapturedAt: 100)
+        try consumer.refresh(game: game, context: fixture.context, atHostTime: 100.25)
+        try fixture.send(&consumer, &game, frame: 3, capture: 1, points: [WristGameplayFixture.left: WristGameplayFixture.outside])
+        let pickup = try fixture.send(&consumer, &game, frame: 4, capture: 1.125,
+            points: [WristGameplayFixture.left: .init(x: 1.1, y: 1)])
+        #expect(pickup.map(\.targetID) == [initial[0].id])
+        let replacement = try #require(game.activeDiamonds.first { !initial.contains($0) })
+        #expect(replacement.position.x == (hasClearPosition ? 6 : 1.16))
+        #expect(game.teamScore == 25 && game.activeDiamonds.count == 4)
+    }
+
     @Test func bonusReplacementCannotConsumeCurrentFrameOrFirstInside() throws {
         let f = try WristGameplayFixture();var g = try f.game()
         let vault = UUID();try g.openVault(id:vault,at:0)

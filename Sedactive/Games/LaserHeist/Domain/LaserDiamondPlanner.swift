@@ -38,10 +38,20 @@ nonisolated struct LaserDiamondPlanner: Sendable {
 
     /// IDs are monotonic within this round. The domain can reject retired IDs without retaining all of them.
     private mutating func makeSpawn(at time: Double, entry: Double, exit: Double,
-                                   excluding positions: [LaserDiamondPosition]) throws -> LaserDiamondSpawn {
+                                   excluding positions: [LaserDiamondPosition],
+                                   avoiding wrists: (points: [LaserDiamondPosition], radius: Double)? = nil) throws -> LaserDiamondSpawn {
         let available = placements.filter { !positions.contains($0.position) }
         try requireLaserValue(!available.isEmpty && sequence < 0xffffffffffff, "placement/identity exhausted")
-        let placement = available[Int(random() % UInt64(available.count))]
+        let preferred = wrists.map { wrists in
+            available.filter { placement in
+                wrists.points.allSatisfy {
+                    hypot($0.x - placement.position.x, $0.y - placement.position.y) > wrists.radius
+                }
+            }
+        } ?? available
+        // A replacement is still due when every legal zone overlaps a collecting wrist.
+        let candidates = preferred.isEmpty ? available : preferred
+        let placement = candidates[Int(random() % UInt64(candidates.count))]
         sequence += 1
         let id = UUID(uuidString: String(format: "D1A00000-0000-4000-8000-%012llX", sequence))!
         return try LaserDiamondSpawn(id: id, position: placement.position, eligiblePlayers: placement.eligiblePlayers,
@@ -78,13 +88,14 @@ nonisolated struct LaserDiamondPlanner: Sendable {
 
     /// Pair results in the caller's stable collection order; replacements exist immediately.
     mutating func bonusReplacements(collected: [LaserDiamondSpawn], surviving: [LaserDiamondSpawn],
-                                    at time: Double, deadline: Double) throws -> [LaserDiamondSpawn] {
+                                    at time: Double, deadline: Double,
+                                    avoiding wrists: (points: [LaserDiamondPosition], radius: Double)? = nil) throws -> [LaserDiamondSpawn] {
         try requireLaserValue(collected.count + surviving.count <= 4, "bonus replacement slots")
         var next = self
         var result: [LaserDiamondSpawn] = []
         for old in collected {
             result.append(try next.makeSpawn(at: time, entry: time, exit: deadline,
-                excluding: surviving.map(\.position) + result.map(\.position) + [old.position]))
+                excluding: surviving.map(\.position) + result.map(\.position) + [old.position], avoiding: wrists))
         }
         self = next
         return result

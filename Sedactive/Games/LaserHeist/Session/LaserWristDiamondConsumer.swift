@@ -180,8 +180,15 @@ nonisolated struct LaserWristDiamondConsumer: Sendable {
             let ids = Set(contacts.map(\.targetID)), active = nextGame.activeDiamonds
             let collected = active.filter { ids.contains($0.id) }
             if let deadline = collected.first.flatMap({ nextGame.diamonds[$0.id]?.interactionDeadline }) {
+                let wrists = try Set(contacts.map(\.hand)).compactMap { hand -> LaserDiamondPosition? in
+                    guard let player = snapshot.wristContact?.players[hand.playerID] else { return nil }
+                    let observation = hand.wrist == .left ? player.left : player.right
+                    guard let point = observation.playerPlane else { return nil }
+                    return try LaserDiamondPosition(x: point.x, y: point.y)
+                }
                 replacements = try next.planner.bonusReplacements(collected: collected,
-                    surviving: active.filter { !ids.contains($0.id) }, at: arrivedGameTime, deadline: deadline)
+                    surviving: active.filter { !ids.contains($0.id) }, at: arrivedGameTime, deadline: deadline,
+                    avoiding: (points: wrists, radius: configuration.radius))
             }
         }
         let accepted = try nextGame.collectDiamonds(contacts, generation: current.sessionGeneration,
