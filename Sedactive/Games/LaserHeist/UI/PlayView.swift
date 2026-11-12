@@ -45,6 +45,7 @@ private struct ReplayRoundView: View {
     let retry: () -> Void
     @State private var scene = LaserScene()
     @State private var presentation = LaserReplayPresentation()
+    @State private var diamondFlights = DiamondHUDFlightModel()
     @State private var session: GameSessionCoordinator?
     /// A live session mounted before its round plan exists (scene loaded during setup): starts the
     /// presentation on the first rendered frame after the plan is installed.
@@ -73,6 +74,7 @@ private struct ReplayRoundView: View {
     var body: some View {
         RealityView { content in
             content.camera = .virtual
+            presentation.diamondFlights = diamondFlights
             let authored = await LaserScene.loadAuthoredEnvironment()
             #if DEBUG
             // Launch with `-showEditorPreviews` to overlay the Reality Composer Pro
@@ -331,6 +333,10 @@ private struct ReplayRoundView: View {
         .overlay {
             if let final = session?.summary { ResultsView(summary: final, onRetry: retry, onHome: homeAction) }
         }
+        .overlayPreferenceValue(DiamondScoreAnchorKey.self) { anchor in
+            DiamondHUDFlightOverlay(model: diamondFlights, scoreAnchor: anchor)
+        }
+        .coordinateSpace(name: DiamondHUDFlightModel.space)
         .safeAreaInset(edge: .bottom) {
             // Results carry their own Back to Home (the same `leave`).
             if onExit != nil, session?.summary == nil {
@@ -398,6 +404,9 @@ private struct ReplayRoundView: View {
                     .padding()
                     .accessibilityIdentifier("endRound")
             }
+        }
+        .onChange(of: session?.phase) { _, phase in
+            if phase != .running { diamondFlights.clear() }
         }
         .onChange(of: session?.summary?.sessionGeneration) { _, final in
             if final != nil { presentation.stop() }

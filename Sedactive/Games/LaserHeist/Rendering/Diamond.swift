@@ -69,6 +69,8 @@ final class Diamond {
         loop(gem, to: rocked, duration: 1.2)
     }
 
+    var collectionWorldPosition: SIMD3<Float> { gem.visualBounds(relativeTo: nil).center }
+
     func collect(reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled) {
         guard phase == .ready || phase == .idle else { return }
         phase = .collected

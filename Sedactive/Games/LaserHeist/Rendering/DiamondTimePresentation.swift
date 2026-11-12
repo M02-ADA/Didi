@@ -37,6 +37,8 @@ final class DiamondTimePresentation {
     /// Diamonds shown being collected so far (for the pickup sound).
     private(set) var collections = 0
 
+    var onCollected: ((Int, SIMD3<Float>) -> Void)?
+
     private let scene: LaserScene
     private var shown: [Int: (diamond: Diamond, collected: Bool, until: Double?)] = [:]
     /// Collected diamonds still playing their pickup; removed once it has played.
@@ -75,6 +77,7 @@ final class DiamondTimePresentation {
         for diamond in wanted {
             if let item = shown[diamond.id] {
                 if diamond.collected, !item.collected {
+                    onCollected?(diamond.id, item.diamond.collectionWorldPosition)
                     item.diamond.collect()
                     collections += 1
                     shown[diamond.id]?.collected = true

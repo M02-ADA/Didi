@@ -55,6 +55,8 @@ final class NormalDiamondPresentation {
     /// Collections shown so far (for the pickup sound, once per collection).
     private(set) var collections = 0
 
+    var onCollected: ((UUID, SIMD3<Float>) -> Void)?
+
     private let scene: LaserScene
     private struct Shown {
         let diamond: Diamond
@@ -98,6 +100,7 @@ final class NormalDiamondPresentation {
                 if entry.outcome == .pending {
                     switch item.outcome {
                     case .collected:
+                        onCollected?(item.id, entry.diamond.collectionWorldPosition)
                         entry.diamond.collect()
                         collections += 1
                         entry.until = time + Diamond.effectLifetime
