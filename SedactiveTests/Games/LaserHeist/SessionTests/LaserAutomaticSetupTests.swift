@@ -75,14 +75,72 @@ import Testing
         let host = try session.attachLiveFrameHost(); session.advanceLive(frameHost: host)
         while session.phase != .countdown, time < 10 { try await rig.send(time); session.advanceSetupAutomatically(); time += 0.125 }
         #expect(session.phase == .countdown)
-        // P1's measurements become unusable (tracking uncertain) while frames keep arriving.
+        // One unusable frame (P1 uncertain) is a flicker: skipped, the countdown goes on
+        // (iPad, 12 November 2026: single-frame flickers kept aborting co-op countdowns).
         try await rig.send(time, bad: "unbound"); session.advanceSetupAutomatically(); time += 0.125
+        #expect(session.phase == .countdown, "a one-frame flicker does not cancel the countdown")
+        // P1's measurements stay unusable (tracking uncertain) while frames keep arriving.
+        for _ in 0..<6 where session.phase == .countdown {
+            try await rig.send(time, bad: "unbound"); session.advanceSetupAutomatically(); time += 0.125
+        }
         #expect(session.phase == .paused && session.state == nil, "countdown cancelled: no round, no clock")
         let copy = LaserAutomaticSetupCopy(.init(sessionPhase: session.phase, setupPhase: session.setup?.phase,
             presence: session.presence, hasRoundPlan: true, roundStarted: false))
         #expect(copy.title == "Get back in position" && copy.action == nil)
         while session.phase != .countdown, time < 20 { try await rig.send(time); session.advanceSetupAutomatically(); time += 0.125 }
         #expect(session.phase == .countdown, "fresh evidence restarts the countdown without a button")
+        await session.stop()
+    }
+
+    /// A running co-op round reached through the automatic flow; returns the next frame time.
+    private static func runningCoop(_ rig: J07SessionRig) async throws -> Double {
+        let session = rig.session
+        var time = try await Self.linkAndCalibrate(rig)
+        let host = try session.attachLiveFrameHost(); session.advanceLive(frameHost: host)
+        while session.phase != .running, time < 16 { try await rig.send(time); session.advanceSetupAutomatically(); time += 0.125 }
+        try #require(session.phase == .running && !session.isSoloPractice)
+        return time
+    }
+
+    /// DEBUG co-op test round (12 November 2026): "Skip to Next Gate" brings the gate a few game
+    /// seconds ahead once; repeated taps change nothing and no game time is spent.
+    @Test func coopSkipToNextGateBringsTheGateCloseOnce() async throws {
+        let rig = try Self.rig(), session = rig.session
+        var time = try await Self.runningCoop(rig)
+        try await rig.send(time); session.advanceSetupAutomatically(); time += 0.125
+        #expect(session.canDebugSkipToNextGate && session.canDebugSkipToDiamondTime)
+        let gameTime = try #require(session.state?.gameTime)
+        session.debugSkipToNextGate()
+        #expect(session.debugGateSkips.count == 1 && session.state?.gameTime == gameTime)
+        #expect(abs((session.liveVaultIn ?? 99) - LaserLiveRoundDirector.debugSkipLead) < 0.2)
+        session.debugSkipToNextGate()
+        #expect(session.debugGateSkips.count == 1 && !session.canDebugSkipToNextGate, "a repeated tap changes nothing")
+        for _ in 0..<80 where session.state?.phase != .vault { try await rig.send(time); session.advanceSetupAutomatically(); time += 0.125 }
+        #expect(session.state?.phase == .vault && !session.canDebugSkipToNextGate, "at the gate: no next-gate skip")
+        #expect(session.canDebugSkipToDiamondTime)
+        await session.stop()
+    }
+
+    /// While the round is paused for tracking, "Skip to Diamond Time" stays available, queues
+    /// once, and the real Diamond Time starts on resume. Nothing is scored by the skip.
+    @Test func coopSkipToDiamondTimeQueuesThroughATrackingPause() async throws {
+        let rig = try Self.rig(), session = rig.session
+        var time = try await Self.runningCoop(rig)
+        for _ in 0..<12 where session.phase == .running {
+            try await rig.send(time, bad: "unbound"); session.advanceSetupAutomatically(); time += 0.125
+        }
+        #expect(session.phase == .paused)
+        #expect(session.canDebugSkipToDiamondTime && !session.canDebugSkipToNextGate)
+        let score = session.state?.teamScore
+        session.debugSkipToDiamondTime()
+        session.debugSkipToDiamondTime()
+        #expect(session.debugPendingSkipToDiamondTime && !session.canDebugSkipToDiamondTime && session.debugSkips.isEmpty)
+        for _ in 0..<80 where session.state?.phase != .diamondTime {
+            try await rig.send(time); session.advanceSetupAutomatically(); time += 0.125
+        }
+        #expect(session.state?.phase == .diamondTime && session.debugSkips.count == 1 && !session.debugPendingSkipToDiamondTime)
+        #expect(session.state?.teamScore == score && session.state?.missionProgress == 0)
+        #expect(!session.canDebugSkipToDiamondTime && !session.canDebugSkipToNextGate, "Diamond Time: no destination left")
         await session.stop()
     }
 

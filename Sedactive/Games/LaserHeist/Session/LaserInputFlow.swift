@@ -56,7 +56,7 @@ final class LaserInputFlow {
         if arguments.contains("--camera-diagnostics") || arguments.contains("--camera-diagnostics-run") {
             return .diagnostics
         }
-        let previews = ["-robotDemo", "-directorLaserPreview", "-environmentPreview", "-syntheticCutouts",
+        let previews = ["-robotDemo", "-finalVaultPreview", "-directorLaserPreview", "-environmentPreview", "-syntheticCutouts",
                         "-laserArtworkPreview", "-laserGateState", "-avatarPackets", "-avatarFairness",
                         "-normalizedLasers", "-diamondFixture", "-hudPauseMenu", "-replayDebugHUD",
                         "-showEditorPreviews", "-showWorldGuides", "-hideDebugOverlay"]

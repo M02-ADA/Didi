@@ -72,8 +72,21 @@ import Testing
         let hand = LaserContactHand(playerID: player, wrist: .left)
         let score = try #require(rig.session.state?.teamScore)
 
+        // The final vault entry (Lemon, then Tangerine) plays on held game time: a reach
+        // during it collects nothing and Diamond Time's seconds have not started.
+        let entry = try #require(rig.session.finalVaultEntry)
+        #expect(entry.timeline.jumpers == [.player1, .player2] && !entry.isComplete)
+        let entryStart = hostTime
+        try await send(outside)
+        try await send([hand: .init(x: target.spawn.position.x, y: target.spawn.position.y)])
+        for _ in 0..<100 where rig.session.finalVaultEntry?.isComplete == false { try await send() }
+        #expect(rig.session.finalVaultEntry?.isComplete == true)
+        #expect(hostTime - entryStart >= entry.timeline.total)
+        #expect(rig.session.state?.gameTime == start && rig.session.diamondsCollected == 0)
+        #expect(rig.session.state?.phase == .diamondTime)
+
         // The initial target is still collectible near the end of the phase.
-        while hostTime - 0.625 < start + 8 { try await send() }
+        for _ in 0..<200 where (rig.session.state?.gameTime ?? 0) < start + 8 { try await send() }
         try await send(outside)
         try await send([hand: .init(x: target.spawn.position.x, y: target.spawn.position.y)])
         #expect(rig.session.diamondsCollected == 1 && rig.session.state?.teamScore == score + 25)

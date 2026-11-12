@@ -112,6 +112,15 @@ struct ContentView: View {
              let remaining = session.liveReadiness?.countdownRemaining {
             RoundCountdownOverlay(value: Int(remaining.rounded(.up)))
           }
+          #if DEBUG
+          // DEBUG test round controls (Kevin): from the round's start to its Results, above the
+          // setup stage too, so a tracking pause never hides them. Top right, under the HUD.
+          if let session = flow.session, session.hasLiveRoundPlan, session.state != nil, session.summary == nil {
+            DebugRoundControls(session: session)
+              .padding(.trailing, 16).padding(.top, 130)
+              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+          }
+          #endif
         }
   }
   /// Whether the camera setup stage is in front: always until a live round's game scene is

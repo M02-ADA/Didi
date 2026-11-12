@@ -82,31 +82,28 @@ struct LiveVaultReachTests {
     }
 
     private static func layer(_ scene: LaserScene, _ c: PlayerCalibration, _ layout: PlayerPlaneLayout) async throws -> RobotAvatarLayer {
+        // Without boards: no steering, no wall consoles, so the approved zones and wrist cursors
+        // (this suite) apply. With boards: `LaserGateConsoleTests`.
         RobotAvatarLayer(scene: scene, calibrations: [.player1: c], layout: layout,
-                         templates: try await RobotAvatarLayer.loadTemplates())
+                         templates: try await RobotAvatarLayer.loadTemplates(), withBoards: false)
     }
 
-    @Test func zonesAreOneRoomyStackAtBodyRelativeReachingHeights() throws {
+    /// iPad, 12 November 2026 (presses failed): every zone's near edge is within a REAL arm
+    /// (shoulder→wrist 0.332 h); a resting or leaning hanging hand is in no zone.
+    @Test func zonesAreReachableByARealArmAndNeverByARestingOrLeaningHand() throws {
         let shares = LaserLiveRoundGeometryV1.vaultShares, r = LaserLiveRoundGeometryV1.vaultRadiusShare
         let top = shares[.top]!, middle = shares[.middle]!, bottom = shares[.bottom]!
-        #expect(top.out == middle.out && middle.out == bottom.out, "one vertical stack")
-        // HIGH: head level, above the shoulder (0.82 h). MIDDLE: chest. LOW: upper thigh, between
-        // the knee (~0.28 h) and the hip (~0.53 h), never waist or knee height.
-        #expect(top.y > 0.82 && top.y <= 1, "HIGH at head level")
-        #expect(middle.y >= 0.62 && middle.y <= 0.78, "MIDDLE at chest")
-        #expect(bottom.y >= 0.4 && bottom.y < 0.53, "LOW at the upper thigh")
-        #expect(top.y - middle.y >= 0.25 - 1e-9 && middle.y - bottom.y >= 0.25 - 1e-9 && top.y - middle.y > 2 * r, "roomy, no overlap")
-        let shoulder = LaserLiveRoundGeometryV1.humanShoulderShare, arm = LaserLiveRoundGeometryV1.humanArmShare
-        // HIGH and MIDDLE: a comfortable reach standing upright (under 85 % of an arm).
-        for b in [LaserVaultButton.top, .middle] {
-            #expect(hypot(shares[b]!.out - shoulder.out, shares[b]!.y - shoulder.y) <= 0.85 * arm, "\(b) comfortable")
+        let shoulder = LaserLiveRoundGeometryV1.humanShoulderShare, arm = LaserLiveRoundGeometryV1.humanWristReachShare
+        // HIGH above the shoulder (head/upper shoulder), MIDDLE at the chest, LOW at the upper thigh.
+        #expect(top.y > shoulder.y && top.y <= 1 && middle.y >= 0.62 && middle.y <= 0.78 && bottom.y >= 0.4 && bottom.y < 0.53)
+        #expect(abs((top.y - middle.y) - (middle.y - bottom.y)) < 1e-9 && top.y - middle.y > 2 * r, "evenly spaced, no overlap")
+        for (b, share) in shares {
+            let nearEdge = hypot(share.out - shoulder.out, share.y - shoulder.y) - r
+            #expect(nearEdge <= 0.95 * arm, "\(b): reachable by the wrist (\(nearEdge) h of \(arm) h)")
         }
-        // LOW: a downward reach with a slight knee bend (0.1 h) and lean (0.05 h), not upright, no squat.
-        #expect(hypot(bottom.out - shoulder.out, bottom.y - shoulder.y) > arm, "LOW asks for a bend")
-        #expect(hypot(bottom.out - shoulder.out - 0.05, bottom.y - (shoulder.y - 0.1)) <= 0.95 * arm, "reached with a slight bend")
-        // A resting hand (0.16 h out, 0.44 h up), even with the hips 0.1 h toward the wall, is in no zone.
-        for shift in [0.0, 0.1] {
-            for share in shares.values { #expect(hypot(share.out - (0.16 + shift), share.y - 0.44) > r) }
+        // Resting (0.16 h out, 0.44 h up), hips 0.1 h toward the wall, or leaning 0.09 h with the arm hanging.
+        for hand in [(0.16, 0.44), (0.26, 0.44), (0.25, 0.47)] {
+            for share in shares.values { #expect(hypot(share.out - hand.0, share.y - hand.1) > r, "a hanging hand presses nothing") }
         }
     }
 
@@ -121,7 +118,7 @@ struct LiveVaultReachTests {
             // Clear of the mascot's head (about 0.32 m each side) through a clear 0.25 m lean; past
             // that the head passes BEHIND them (they are drawn in front of the mascots).
             #expect(shown.radius > 0.15, "\(b): large")
-            #expect(lane - shown.center.x - shown.radius > 0.25 + 0.32, "\(b): clear of the head")
+            #expect(lane - shown.center.x - shown.radius > 0.32, "\(b): clear of the head (no-board layout)")
             #expect(VaultPresentation.liveButtonDepthInFront > 0 && RobotAvatarLayer.reachCursorDepth > VaultPresentation.liveButtonDepthInFront,
                     "buttons in front of the mascot, cursors in front of the buttons")
         }

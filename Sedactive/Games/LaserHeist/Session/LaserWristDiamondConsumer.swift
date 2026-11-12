@@ -48,6 +48,25 @@ nonisolated struct LaserWristDiamondConsumer: Sendable {
     private var vault: (id: UUID, zones: [UUID: LaserVaultZone])?
     private var vaultActivation: Activation?
 
+    /// What the last packet's vault evaluation saw, per zone and wrist (diagnostics only, from the
+    /// same conditions the judge used): why a wrist was unavailable, its distance to the (shifted)
+    /// zone centre, and whether that zone's press was emitted.
+    struct VaultReadout: Sendable, Equatable {
+        let playerID: PlayerID
+        let button: LaserVaultButton
+        let wrist: LaserContactWrist
+        /// The wrist in the unmirrored plane, when it had one.
+        let point: WristPlanePoint?
+        /// The zone centre as judged (approved place + shift) and its radius.
+        let center: WristPlanePoint
+        let radius: Double
+        let distance: Double?
+        /// "inside", "outside", or the unavailable reason.
+        let status: String
+        var pressed = false
+    }
+    private(set) var lastVaultReadout: [VaultReadout] = []
+
     /// - Parameter planner: the round's current replacement planner, when it has moved on
     ///   from the configuration's (a recreated consumer must not reuse spent identities).
     init(configuration: LaserWristDiamondConfiguration, context: BodyInputContext,
@@ -121,10 +140,16 @@ nonisolated struct LaserWristDiamondConsumer: Sendable {
 
     var retainedTargetCount: Int { entries.retainedTargetIdentityCount }
 
+    /// - Parameter vaultZoneShifts: live rounds with mascots (`GameSessionCoordinator`): how far
+    ///   each player's vault zones sit from their approved place for THIS capture (unmirrored
+    ///   plane, game units, added to X): the player's own body centre and the mascot's distance from
+    ///   its button console. A non-finite shift means the zone cannot be placed for this capture:
+    ///   that player's wrists are UNAVAILABLE for it. Absent: the approved zones as they are.
     @discardableResult
     mutating func receive(_ snapshot: BodySnapshot, context current: BodyInputContext,
                           atHostTime hostTime: Double, capturedGameTime: Double,
-                          arrivedGameTime: Double, game: inout LaserGame) throws -> [LaserContactActivation] {
+                          arrivedGameTime: Double, game: inout LaserGame,
+                          vaultZoneShifts: [PlayerID: Double] = [:]) throws -> [LaserContactActivation] {
         // Invalid plans cannot consume entry or partially award score/replacements.
         var next = self, nextGame = game
         try next.refresh(game: nextGame, context: current, atHostTime: hostTime)
@@ -156,22 +181,36 @@ nonisolated struct LaserWristDiamondConsumer: Sendable {
             }
             locations[spawn.id] = hands
         }
+        var readout: [VaultReadout] = []
         if let open = next.vault, nextGame.roundPhase == .vault {
             for zone in open.zones.values {
                 var hands: [LaserContactHand: LaserContactLocation] = [:]
                 let admitted = current.acceptsWristContact(snapshot, playerID: zone.playerID, at: hostTime,
                     afterFrameID: next.lastFrame, afterCapturedAt: afterCapture)
+                let shift = vaultZoneShifts[zone.playerID] ?? 0
+                let center = WristPlanePoint(x: zone.position.x + (shift.isFinite ? shift : 0), y: zone.position.y)
                 for wrist in LaserContactWrist.allCases {
                     let hand = LaserContactHand(playerID: zone.playerID, wrist: wrist)
-                    guard admitted, let a = next.vaultActivation, snapshot.frameID > a.frame,
-                          snapshot.capturedAt > a.hostTime, let p = snapshot.wristContact?.players[zone.playerID] else {
-                        hands[hand] = .unavailable; continue
+                    func note(_ status: String, _ point: WristPlanePoint? = nil, _ distance: Double? = nil) {
+                        readout.append(VaultReadout(playerID: zone.playerID, button: zone.button, wrist: wrist, point: point,
+                                                    center: center, radius: zone.radius, distance: distance, status: status))
+                    }
+                    guard admitted else { hands[hand] = .unavailable; note("UNAVAILABLE: packet not admitted (stale, unbound, rebind or context)"); continue }
+                    guard let a = next.vaultActivation, snapshot.frameID > a.frame, snapshot.capturedAt > a.hostTime else {
+                        hands[hand] = .unavailable; note("UNAVAILABLE: before the gate's activation"); continue
+                    }
+                    guard let p = snapshot.wristContact?.players[zone.playerID] else {
+                        hands[hand] = .unavailable; note("UNAVAILABLE: no wrist evidence"); continue
                     }
                     let observation = wrist == .left ? p.left : p.right
-                    guard observation.observationRefusal == nil, observation.contactRefusal == nil,
-                          let xy = observation.playerPlane else { hands[hand] = .unavailable; continue }
-                    hands[hand] = hypot(xy.x - zone.position.x, xy.y - zone.position.y) <= zone.radius
-                        ? .inside : .outside
+                    if let refusal = observation.observationRefusal { hands[hand] = .unavailable; note("UNAVAILABLE: \(refusal)"); continue }
+                    if let refusal = observation.contactRefusal { hands[hand] = .unavailable; note("UNAVAILABLE: \(refusal)"); continue }
+                    guard shift.isFinite else { hands[hand] = .unavailable; note("UNAVAILABLE: zone unplaceable (no body centre or mascot position)"); continue }
+                    guard let xy = observation.playerPlane else { hands[hand] = .unavailable; note("UNAVAILABLE: no plane position"); continue }
+                    let distance = hypot(xy.x - center.x, xy.y - center.y)
+                    let inside = distance <= zone.radius
+                    hands[hand] = inside ? .inside : .outside
+                    note(inside ? "inside" : "outside", xy, distance)
                 }
                 locations[zone.targetID] = hands
             }
@@ -180,6 +219,13 @@ nonisolated struct LaserWristDiamondConsumer: Sendable {
         // Original host eligibility is separate from active GameClock eligibility below.
         let allContacts = try next.entries.evaluate(lifetime: lifetime, frameID: snapshot.frameID,
             capturedAt: capturedGameTime, arrivedAt: arrivedGameTime, locations: locations)
+        if let open = next.vault {
+            let pressedZones = Set(allContacts.compactMap { open.zones[$0.targetID].map { "\($0.playerID.rawValue).\($0.button.rawValue)" } })
+            for i in readout.indices where pressedZones.contains("\(readout[i].playerID.rawValue).\(readout[i].button.rawValue)") {
+                readout[i].pressed = true
+            }
+        }
+        next.lastVaultReadout = readout
         next.lastFrame = snapshot.frameID; next.lastCapture = snapshot.capturedAt
         if let open = next.vault {
             let presses = allContacts.compactMap { contact -> LaserVaultContact? in

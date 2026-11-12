@@ -39,6 +39,12 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
         if input.isStarting {
             (title, instruction, action) = ("Starting camera…", "Allow camera access if asked.", nil); return
         }
+        if input.roundStarted, input.sessionPhase == .paused, input.setupPhase == .restartRequired {
+            // The round is kept, paused: it resumes if the same players are confirmed again.
+            (title, instruction, action) = ("Player tracking lost — return to position",
+                "Your round is paused and your score is kept. If we can't tell who is who, restart.",
+                .restartSetup); return
+        }
         if input.sessionPhase == .restartRequired || input.setupPhase == .restartRequired {
             (title, instruction, action) = ("Let's start again",
                 "We lost track of who is who. Stand in your places; setup restarts by itself.", .restartSetup); return

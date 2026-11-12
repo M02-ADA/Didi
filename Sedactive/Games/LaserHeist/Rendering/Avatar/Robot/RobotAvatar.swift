@@ -90,6 +90,41 @@ struct RobotRetargeter {
     /// Hip-centre shifts smaller than this share of standing height are natural sway, not a lean
     /// or a step (presentation only; the measured value is unchanged).
     var swayDeadband: Float = 0.015
+    /// LEAN STEERS LIKE A RIVER RAFT (approved movement contract, owner, 12 November 2026). The
+    /// upper body's lean past the hips (shoulder centre − hip centre, as a share of standing
+    /// height, same mirrored player plane), filtered over `steerFilterTime`, beyond
+    /// `steerDeadbandShare` is a steering SPEED (`steerSpeed`). `RobotAvatarLayer` integrates it
+    /// across the whole corridor (`LateralSteering`: walls and the partner's board are the only
+    /// limits); upright it brakes and holds, the other way it reverses. Hip shifts still move the
+    /// mascot as before (`sway`). Presentation only: vault buttons are judged on the tracked wrist.
+    /// Only a mascot riding a board steers (`RobotAvatarLayer` sets `boardLeanSteerGain`): without
+    /// one, its feet are planted on the floor and a lean must not slide the body over them.
+    var leanSteerGain: Float = 0
+    static let boardLeanSteerGain: Float = 1
+    /// LEAN TUNING (owner, 12 November 2026, after the first physical test felt slow): deadband
+    /// 0.03 → 0.02, speed per share 12 → 20, filter 0.06 → 0.03 s; `LateralSteering.Tuning`
+    /// holds the board side. `LeanResponsivenessTests` measures both sets.
+    /// A lean below this share of standing height (shoulders past hips, about 4° of trunk, 3.4 cm
+    /// at the shoulders of a 1.7 m player) is posture, not steering.
+    var steerDeadbandShare: Float = 0.02
+    /// Steering speed (mascot m/s) per share of lean beyond the deadband (capped at
+    /// `LateralSteering.maximumSpeed`): the shoulders sit about 0.27 h above the hips, so 8° of
+    /// lean moves ~0.35 m/s, 12° ~0.7 m/s, 15° ~1 m/s, 20° ~1.45 m/s; a wall-button stop 0.45 m
+    /// away takes under a second at a comfortable lean; a strong ~25° lean reaches the 2 m/s cap.
+    var steerSpeedPerShare: Float = 20
+    /// Time constant of the lean filter (seconds): removes frame-to-frame pose jitter at 30 Hz
+    /// poses for about one frame of lag.
+    var steerFilterTime: Double = 0.03
+    /// Steering speed from the current lean (m/s, + to screen right); 0 upright, untracked or
+    /// uncalibrated.
+    private(set) var steerSpeed: Float = 0
+    /// When the last usable pose arrived (source time), for the steering telemetry's freshness.
+    var lastPoseTime: Double? { lastPresent }
+    /// The filtered lean share (nil without a shoulder and hip reading).
+    private var filteredLean: Float?
+    /// The last lateral reading, for diagnostics: hip and shoulder (game units from the lane
+    /// centre, mirrored like the display), raw and filtered lean share, and steering speed (m/s).
+    private(set) var lateralReading: (hip: Float?, shoulder: Float?, lean: Float?, filtered: Float?, speed: Float) = (nil, nil, nil, nil, 0)
     /// Visual joint confidence threshold: experimental presentation policy, not a tracker value.
     var minimumJointConfidence = 0.3
     /// Presence fades in fast and out slower: losing one frame never snaps
@@ -197,6 +232,9 @@ struct RobotRetargeter {
     mutating func resetCalibratedState() {
         measuredLift = 0
         measuredSway = 0
+        lateralReading = (nil, nil, nil, nil, 0)
+        steerSpeed = 0
+        filteredLean = nil
         measured.pelvisDrop = 0
         measured.footLift = [:]
         measured.footShift = [:]
@@ -242,12 +280,6 @@ struct RobotRetargeter {
                 liftSeen = time
             } else if time - (liftSeen ?? time) > Self.liftHold {
                 measuredLift *= Float(exp(-dt / Self.relaxTime))
-            }
-            // LATERAL: hip centre, mirrored once about the lane (as `GameWorldMapping.cutoutPoint`).
-            if let x = observation.centerX {
-                let standing = Float(reference.standingHeight), d = Float(reference.laneCenterX - x)
-                let step = Self.softZone(abs(d), swayDeadband * standing) * (d < 0 ? -1 : 1) * motionScale
-                measuredSway = min(maximumSway, max(-maximumSway, step))
             }
         }
 
@@ -298,6 +330,56 @@ struct RobotRetargeter {
         if let ls = p[.leftShoulder], let rs = p[.rightShoulder], let lh = p[.leftHip], let rh = p[.rightHip] {
             let d = (ls + rs) / 2 - (lh + rh) / 2
             measured.lean = min(maximumLean, max(-maximumLean, Float(atan2(-d.x, d.y))))
+        }
+        // LATERAL (calibrated): hip centre plus the steering lean of the shoulders past it, mirrored
+        // once about the lane (as `GameWorldMapping.cutoutPoint`). Calibrated joints are in game units.
+        if let reference {
+            let lane = reference.laneCenterX
+            let poseHipX = p[.leftHip].flatMap { l in p[.rightHip].map { (l.x + $0.x) / 2 } }
+            let shoulderX = p[.leftShoulder].flatMap { l in p[.rightShoulder].map { (l.x + $0.x) / 2 } }
+            let shoulderY = p[.leftShoulder].flatMap { l in p[.rightShoulder].map { (l.y + $0.y) / 2 } }
+            let poseHipY = p[.leftHip].flatMap { l in p[.rightHip].map { (l.y + $0.y) / 2 } }
+            // The head (nose, else the ears' centre), to tell a trunk lean from an arm reach.
+            let head: SIMD2<Double>? = p[.nose] ?? p[.leftEar].flatMap { l in p[.rightEar].map { (l + $0) / 2 } }
+            // Travel from the judge's hip centre when carried (else the pose's); the lean from ONE
+            // pose: its shoulders past its own hips.
+            let hip = (observation.centerX ?? poseHipX).map { Float(lane - $0) }
+            let shoulder = poseHipX.flatMap { ph in shoulderX.map { sx in hip.map { $0 + Float(ph - sx) } } } ?? nil
+            if let hip {
+                let zone = swayDeadband * Float(reference.standingHeight)
+                func soft(_ v: Float) -> Float { Self.softZone(abs(v), zone) * (v < 0 ? -1 : 1) * motionScale }
+                // Hips step the mascot as before; the lean is a steering speed the layer integrates.
+                measuredSway = min(maximumSway, max(-maximumSway, soft(hip)))
+                let lean = shoulder.map { ($0 - hip) / Float(reference.standingHeight) }
+                // TRUNK LEAN, NOT AN ARM REACH: a lean tilts the whole trunk, so the head moves past
+                // the hips with the shoulders (further, being higher); reaching for a button shifts
+                // the shoulder line a little while the head stays. The steering lean is the shoulders'
+                // lean only as far as the head confirms it (the head's offset scaled down to shoulder
+                // height, same direction), so an arm reach or a head tilt alone never steers.
+                let steerLean: Float? = lean.map { lean in
+                    guard let head, let ph = poseHipX, let hy = poseHipY, let sy = shoulderY, head.y - hy > 1e-6 else { return lean }
+                    let headShare = Float((ph - head.x) * (sy - hy) / (head.y - hy)) / Float(reference.standingHeight)
+                    guard headShare * lean > 0 else { return 0 }
+                    return abs(headShare) < abs(lean) ? headShare : lean
+                }
+                if let lean = steerLean, lean.isFinite {
+                    let k = Float(1 - exp(-dt / max(steerFilterTime, 1e-4)))
+                    filteredLean = filteredLean.map { $0 + (lean - $0) * k } ?? lean
+                } else {
+                    filteredLean = nil
+                }
+                var speed: Float = 0
+                if leanSteerGain > 0, motionScale > 0, let f = filteredLean, abs(f) > steerDeadbandShare {
+                    speed = min(LateralSteering.maximumSpeed, (abs(f) - steerDeadbandShare) * steerSpeedPerShare * leanSteerGain)
+                        * (f < 0 ? -1 : 1)
+                }
+                steerSpeed = speed
+                lateralReading = (hip, shoulder, lean, filteredLean, speed)
+            } else {
+                steerSpeed = 0
+            }
+        } else {
+            steerSpeed = 0
         }
         if let le = p[.leftEar], let re = p[.rightEar] {
             let roll = Float(atan2(re.y - le.y, -(re.x - le.x)))
@@ -440,6 +522,8 @@ struct RobotRetargeter {
         // A brief gap (one or two missed detections): hold the pose as it is.
         if isAvailable, let last = lastPresent, time - last <= Self.lossHold { return }
         isAvailable = false
+        steerSpeed = 0 // untracked: brake and hold where it is, never drift
+        filteredLean = nil
         measuredFootDelta = [:]
         ankleConfidence = [:]
         if !seen.isEmpty, seen.values.allSatisfy({ time - $0 > Self.jointGap }) { filters = [:] }
@@ -582,12 +666,48 @@ final class RobotAvatarLayer {
     /// the DEBUG `-judgedLaserBands` flag turns it off for A/B comparison.
     var normalizesLaserBands = false
     #if DEBUG
-    private var lastLeanLog: Double?
+    private var lastLeanLog: [PlayerID: Double] = [:]
     #endif
     /// Live vault: each tracked wrist as a reach cursor, through the same mapping as the buttons
     /// (`GameWorldMapping.mascotPoint`): the chibi's short arm cannot reach where a person's hand
     /// does, so the cursor shows the hand the game judges. Only while buttons wait to be pressed.
     var showsReachCursors = false { didSet { if !showsReachCursors { hideReachCursors() } } }
+
+    /// A scripted move of a whole mascot (the final vault entry, `FinalVaultPresentation`):
+    /// an offset from its tracked place (lane metres), a scale with squash, and fades
+    /// for the mascot and its board. Presentation only, never read by gameplay; the tracked
+    /// pose keeps moving the body.
+    struct ScriptedMove: Equatable {
+        var offset: SIMD3<Float> = .zero
+        var scale: Float = 1
+        /// Height over width: below 1 a crouch, above 1 a stretch, at about the same volume.
+        var squash: Float = 1
+        var opacity: Float = 1
+        var boardOpacity: Float = 1
+        static let none = ScriptedMove()
+    }
+    /// Scripted moves by player; a player without one is shown as tracked.
+    var scriptedMoves: [PlayerID: ScriptedMove] = [:] {
+        didSet { for player in robots.keys where oldValue[player] != scriptedMoves[player] { applyScripted(player) } }
+    }
+    #if DEBUG
+    /// Live pose frames each mascot received, and how many were calibrated, since the last log.
+    private var avatarFeed: [PlayerID: (frames: Int, calibrated: Int)] = [:]
+    private var avatarFeedLoggedAt: Double?
+    /// Once a second (iPad co-op diagnosis): whether each mascot is receiving live poses.
+    private func logAvatarFeed(now: Double) {
+        guard now - (avatarFeedLoggedAt ?? -1) >= 1 else { return }
+        avatarFeedLoggedAt = now
+        print("[LaserAvatar] " + robots.keys.sorted { $0.rawValue < $1.rawValue }.map { id in
+            let f = avatarFeed[id] ?? (0, 0), r = robots[id]?.retargeter
+            return "\(id.rawValue) frames \(f.frames) calibrated \(f.calibrated) · \(r?.isAvailable == true ? "tracked" : "relaxing")"
+                + " lift \(String(format: "%.2f", r?.lift ?? 0)) sway \(String(format: "%.2f", r?.sway ?? 0))"
+        }.joined(separator: " | "))
+        avatarFeed = [:]
+    }
+    #endif
+    /// Each mascot's tracked root (sway, lift) before any scripted move.
+    private var trackedRoot: [PlayerID: SIMD3<Float>] = [:]
     private var reachCursors: [PlayerID: [RobotPoseTargets.Side: ModelEntity]] = [:]
     /// Cursor size (radius, metres) and depth in front of the mascot (toward the camera): just in
     /// front of the live vault buttons (`VaultPresentation.liveButtonDepthInFront`).
@@ -616,7 +736,9 @@ final class RobotAvatarLayer {
     /// a wrist that is missing or weak hides its cursor (never a guessed position).
     private func updateReachCursors(_ player: PlayerID, joints: [PresentationJoint: PresentationPoint]?) {
         guard let cursors = reachCursors[player] else { return }
-        guard showsReachCursors, let joints, let reference = robots[player]?.retargeter.reference else {
+        // With wall consoles the judged reach is the mascot's own fist (`LaserGateConsole`); the
+        // linear wrist cursor would no longer show it, so it is not drawn.
+        guard showsReachCursors, consoles.isEmpty, let joints, let reference = robots[player]?.retargeter.reference else {
             for cursor in cursors.values { cursor.isEnabled = false }
             return
         }
@@ -812,7 +934,7 @@ final class RobotAvatarLayer {
             if let hoverboard {
                 // A sibling of the mascot and the lane's `ride`: it never moves either.
                 let board = PlayerHoverboard(template: hoverboard, player: player,
-                                             floorY: scene.layout.corridorFloorY - entity.position.y, laneX: entity.position.x)
+                                             floorY: scene.layout.corridorFloorY - entity.position.y)
                 entity.addChild(board.root)
                 hoverboards[player] = board
             }
@@ -823,12 +945,34 @@ final class RobotAvatarLayer {
                 ankleX[side] = skeleton(name).map { bindWorld[$0].x } ?? (side == .left ? -0.1 : 0.1)
             }
             makeReachCursors(player, on: entity)
+            var retargeter = RobotRetargeter(reference: reference, robotLegRest: legRest)
+            if hoverboards[player] != nil { retargeter.leanSteerGain = RobotRetargeter.boardLeanSteerGain }
             robots[player] = Robot(container: container, model: model, solver: solver,
-                                   retargeter: RobotRetargeter(reference: reference, robotLegRest: legRest),
+                                   retargeter: retargeter,
                                    planner: RobotFootPlanner(rest: ankleX.mapValues { $0 * Self.modelScale }),
                                    bindAnkleX: ankleX, bindAnkleY: skeleton("Foot_L").map { bindWorld[$0].y } ?? 0)
             apply(player, time: 0)
         }
+        if let robot = robots.values.first { arm = Self.arm(of: robot) }
+        // Consoles only where mascots ride boards and can steer to a dock; without boards the
+        // approved zones and the wrist cursors stay as they were.
+        consoles = hoverboards.isEmpty ? [:] : Self.makeConsoles(scene: scene, players: Set(robots.keys), arm: arm)
+        steering = Self.makeSteering(scene: scene, boards: hoverboards, consoles: consoles)
+        #if DEBUG
+        Self.debugSteering = [:] // a new round (Play Again) starts with fresh steering
+        // `-debugTestMove left|right [-debugTestMoveSeconds s]`: the round panel's Test Move from
+        // launch (Simulator captures); otherwise every round starts without one.
+        let arguments = ProcessInfo.processInfo.arguments
+        if let i = arguments.firstIndex(of: "-debugTestMove"), i + 1 < arguments.count {
+            Self.debugTestSteer = arguments[i + 1] == "left" ? -Self.debugTestSteerSpeed : Self.debugTestSteerSpeed
+            Self.debugTestSteerRemaining = arguments.firstIndex(of: "-debugTestMoveSeconds").flatMap {
+                $0 + 1 < arguments.count ? Double(arguments[$0 + 1]) : nil
+            }
+        } else {
+            Self.debugTestSteer = nil
+            Self.debugTestSteerRemaining = nil
+        }
+        #endif
         // The robot's materials are physically based: give it light.
         let key = DirectionalLight()
         key.light.intensity = 3000
@@ -872,6 +1016,9 @@ final class RobotAvatarLayer {
     /// then the newest frame; with no fresh frame, every avatar relaxes toward
     /// neutral at `now` (host time). Never reads CP1.
     func apply(_ drain: AvatarPoseDrain, now: Double) {
+        #if DEBUG
+        defer { logAvatarFeed(now: now) }
+        #endif
         if drain.reset.all {
             for player in Array(robots.keys) { resetPresentation(player, now: now) }
         }
@@ -908,8 +1055,17 @@ final class RobotAvatarLayer {
                 }
             }
             updateReachCursors(player, joints: observation?.calibrated == true ? observation?.joints : nil)
+            if let observation, observation.calibrated {
+                reachInput[player] = (observation.joints, observation.centerX, time)
+            } else {
+                reachInput[player] = nil
+            }
             robots[player]?.retargeter.update(observation, time: time)
             apply(player, time: time)
+            #if DEBUG
+            avatarFeed[player, default: (0, 0)].frames += observation == nil ? 0 : 1
+            avatarFeed[player, default: (0, 0)].calibrated += observation?.calibrated == true ? 1 : 0
+            #endif
         }
     }
 
@@ -932,6 +1088,10 @@ final class RobotAvatarLayer {
         guard var robot = robots[player] else { return }
         robot.retargeter = RobotRetargeter(reference: nil, robotLegRest: robot.retargeter.robotLegRest,
                                            robotHeight: robot.retargeter.robotHeight)
+        // iPad, 12 November 2026 (P0): every live round publishes a new source status, which resets
+        // the presentation here; the fresh retargeter had lost the board's steering gain, so a
+        // physical lean banked the board but never moved it. A mascot on a board keeps steering.
+        robot.retargeter.leanSteerGain = hoverboards[player] != nil ? RobotRetargeter.boardLeanSteerGain : 0
         robot.planner = RobotFootPlanner(rest: robot.planner.rest)
         robots[player] = robot
         shown[player] = nil
@@ -977,6 +1137,11 @@ final class RobotAvatarLayer {
                 $0.calibrationRevision == robot.retargeter.reference?.calibrationRevision ? $0 : nil
             }
             robot.retargeter.update(sample: snapshot.players[player], joints: sample, time: snapshot.capturedAt)
+            if let sample, let body = snapshot.players[player], body.geometry.centerX.validity == .valid {
+                reachInput[player] = (sample.joints, body.geometry.centerX.value, snapshot.capturedAt)
+            } else {
+                reachInput[player] = nil
+            }
             robots[player] = robot
             updateReachCursors(player, joints: sample?.joints)
             apply(player, time: snapshot.capturedAt)
@@ -985,7 +1150,9 @@ final class RobotAvatarLayer {
     #endif
 
     private func apply(_ player: PlayerID, time: Double) {
-        if smoothing == nil { present(player, k: 1, time: time) }
+        guard smoothing == nil else { return }
+        stepSteering(now: time, k: 1)
+        present(player, k: 1, time: time)
     }
 
     /// Re-plants every foot under its robot (after switching modes).
@@ -1002,8 +1169,342 @@ final class RobotAvatarLayer {
         let dt = lastRender.map { max(0, now - $0) } ?? smoothing * 10
         lastRender = now
         let k = Float(1 - exp(-dt / max(smoothing, 1e-4)))
+        stepSteering(now: now, k: k)
         for player in robots.keys { present(player, k: k, time: now) }
     }
+
+    // MARK: - Lean steering (`LateralSteering`)
+
+    /// The narrowest landscape iPad display (width ÷ height, 4:3): where the camera shows the
+    /// least of the players' plane, so a board kept inside it is on screen on every iPad.
+    nonisolated static let narrowestDisplayAspect: Float = 4 / 3
+
+    /// Steering for the mascots riding boards (none without boards: feet on the floor never slide).
+    /// Bounds from the scene: the corridor walls, or what the camera shows of the players' plane
+    /// where that is narrower; spacing from the loaded board's own width.
+    static func makeSteering(scene: LaserScene, boards: [PlayerID: PlayerHoverboard],
+                             consoles: [PlayerID: LaserGateConsole] = [:]) -> LateralSteering? {
+        guard !boards.isEmpty else { return nil }
+        var lanes: [PlayerID: Float] = [:]
+        for player in boards.keys { lanes[player] = scene.players[player]?.position.x ?? scene.mapping.laneCenterX[player, default: 0] }
+        let widths = boards.values.map { $0.model.visualBounds(relativeTo: $0.root).extents.x }.filter { $0.isFinite && $0 > 0.1 }
+        let halfWidth = (widths.max() ?? 2 * PlayerHoverboard.halfWidth) / 2
+        let layout = scene.layout
+        let visible = LateralSteering.visibleHalfWidth(depth: layout.cameraPosition.z - scene.mapping.interactionPlaneZ,
+                                                       verticalFieldOfViewDegrees: layout.cameraVerticalFieldOfView,
+                                                       aspect: narrowestDisplayAspect)
+        var bounds = LateralSteering.bounds(corridorWidth: layout.corridorWidth, visibleHalfWidth: visible, halfWidth: halfWidth)
+        // A wall's button console stops its mascot at the dock, where the hand lands on the buttons
+        // and the body, head and board stay clear of the console (`LaserGateConsole`).
+        if let left = consoles.values.first(where: { $0.side < 0 }) { bounds = max(bounds.lowerBound, left.dockX)...bounds.upperBound }
+        if let right = consoles.values.first(where: { $0.side > 0 }) { bounds = bounds.lowerBound...min(bounds.upperBound, right.dockX) }
+        return LateralSteering(lanes: lanes, bounds: bounds, halfWidth: halfWidth)
+    }
+
+    // MARK: - Vault button consoles (`LaserGateConsole`)
+
+    /// Whether the wall consoles are shown (a live gate's buttons, `VaultPresentation`): the fist
+    /// reaches for them and the dock assist runs.
+    var consolesActive = false
+    /// How near its dock a rider is taken onto it while consoles are shown, and how fast (m/s).
+    nonisolated static let dockCapture: Float = 0.5
+    nonisolated static let dockAssistSpeed: Float = 1.0
+
+    /// Each player's latest presentation wrists and body centre (unmirrored plane, game units), for
+    /// the console reach: the same values the mascot's arm follows.
+    private var reachInput: [PlayerID: (joints: [PresentationJoint: PresentationPoint], centerX: Double?, time: Double)] = [:]
+
+    /// The judged zones for this player now (the coordinator's `vaultZoneShifts` math: approved place
+    /// relative to the body centre, beyond by the mascot's distance from its dock), with the
+    /// console-side wrist: (button, distance ÷ radius) for each button.
+    func consoleZoneReadings(_ player: PlayerID, at time: Double) -> (wrist: SIMD2<Double>, readings: [LaserVaultButton: Double])? {
+        guard let input = reachInput[player], let reference = robots[player]?.retargeter.reference,
+              let center = input.centerX, let shift = vaultReachShift(player, capturedAt: time) else { return nil }
+        let joint: PresentationJoint = player == .player1 ? .leftWrist : .rightWrist
+        guard let w = input.joints[joint], w.confidence >= RobotRetargeter.minimumJointConfidenceForCursor else { return nil }
+        let h = reference.standingHeight, out = LaserLiveRoundGeometryV1.outward(player)
+        var readings: [LaserVaultButton: Double] = [:]
+        for (button, share) in LaserLiveRoundGeometryV1.vaultShares {
+            let zx = center + out * share.out * h + shift, zy = share.y * h
+            readings[button] = hypot(w.x - zx, w.y - zy) / (LaserLiveRoundGeometryV1.vaultRadiusShare * h)
+        }
+        return (SIMD2(w.x, w.y), readings)
+    }
+
+    /// The fist's pull onto a button from how deep the wrist is in its judged zone: none beyond 1.35
+    /// radii, all of it inside 0.9 (smoothstep), so the fist glides on as the wrist enters.
+    nonisolated static func reachPull(_ ratio: Double) -> Float {
+        let x = Float(max(0, min(1, (1.35 - ratio) / 0.45)))
+        return x * x * (3 - 2 * x)
+    }
+
+    #if DEBUG
+    private var lastHandLog: [PlayerID: Double] = [:]
+    #endif
+
+    /// The console-side fist (shown gates only): pulled onto the button whose judged zone holds the
+    /// tracked wrist, and never past the caps' front; the arm bends at the elbow (two fixed
+    /// segments, bending the way it already bends), never stretches. Presentation only: the judge
+    /// keeps the tracked wrist. Returns whether an arm changed.
+    private func reachConsole(_ t: inout RobotPoseTargets, solved local: [Transform], robot: Robot, player: PlayerID,
+                              console: LaserGateConsole, time: Double) -> Bool {
+        guard let tip = Self.cachedHandTip, let housing = console.blocks.first else { return false }
+        let sk = robot.solver.skeleton
+        let world = sk.world(local).position
+        let tipModel = tip / Self.modelScale
+        let inward = SIMD3<Float>(-console.side, 0, 0)
+        let front = robot.model.convert(position: SIMD3(console.faceX, housing.center.y, housing.center.z) + inward * LaserGateConsole.pressSurface, from: nil)
+        let low = robot.model.convert(position: [console.faceX, housing.center.y - housing.size.y / 2, 0], from: nil).y
+        let high = robot.model.convert(position: [console.faceX, housing.center.y + housing.size.y / 2, 0], from: nil).y
+        let zone = consoleZoneReadings(player, at: time)
+        let best = zone?.readings.min { $0.value < $1.value }
+        let pull = best.map { Self.reachPull($0.value) } ?? 0
+        var changed = false
+        for (side, names) in [(RobotPoseTargets.Side.left, ("UpperArm_L", "Forearm_L", "Hand_L")),
+                              (.right, ("UpperArm_R", "Forearm_R", "Hand_R"))] {
+            guard let ui = sk(names.0), let fi = sk(names.1), let hi = sk(names.2) else { continue }
+            let shoulder = world[ui], elbow = world[fi], hand = world[hi]
+            let fist = hand + simd_normalize(hand - elbow) * tipModel
+            let toward: Float = front.x > shoulder.x ? 1 : -1
+            // The console-side arm is the one whose shoulder is nearer the console.
+            let consoleSide = (shoulder.x - (world[sk(side == .left ? "UpperArm_R" : "UpperArm_L") ?? ui].x)) * toward > 0
+            var target = fist
+            if consoleSide, pull > 0, let best, let button = console.buttons[best.key] {
+                target = fist + (robot.model.convert(position: button.contact, from: nil) - fist) * pull
+            }
+            if (target.x - front.x) * toward > 0, target.y >= min(low, high), target.y <= max(low, high) {
+                target.x = front.x // a hand stops on the surface
+            }
+            guard simd_distance(target, fist) > 1e-4 else { continue }
+            let a = simd_distance(shoulder, elbow), b = simd_distance(elbow, hand) + tipModel
+            let span = target - shoulder, d = min(simd_length(span), a + b - 1e-4)
+            guard d > abs(a - b) + 1e-4 else { continue }
+            let dir = simd_normalize(span)
+            var bend = (elbow - shoulder) - simd_dot(elbow - shoulder, dir) * dir
+            if simd_length(bend) < 1e-4 { bend = SIMD3(0, -1, 0) - simd_dot(SIMD3(0, -1, 0), dir) * dir }
+            bend = simd_normalize(bend)
+            let along = (a * a - b * b + d * d) / (2 * d)
+            let newElbow = shoulder + dir * along + bend * max(0, a * a - along * along).squareRoot()
+            t.upperArm[side] = simd_normalize(newElbow - shoulder)
+            t.forearm[side] = simd_normalize(shoulder + dir * d - newElbow)
+            changed = true
+        }
+        #if DEBUG
+        if time - (lastHandLog[player] ?? -1) >= 0.5 {
+            lastHandLog[player] = time
+            let readings = zone?.readings.sorted { $0.key.rawValue < $1.key.rawValue }
+                .map { String(format: "%@ %.2f", $0.key.rawValue.uppercased(), $0.value) }.joined(separator: " ") ?? "no wrist/zone"
+            print("[LaserGateHand] \(player.rawValue) wrist/zone radii: \(readings) · pull \(String(format: "%.2f", pull)) toward \(best?.key.rawValue.uppercased() ?? "-")")
+        }
+        #endif
+        return changed
+    }
+
+    /// The mascots' arm (shoulder joint and shoulder→hand length, mascot metres), from the rig.
+    private(set) var arm: LaserGateConsole.Arm?
+    /// Each shown player's button console (one rig and size for every mascot).
+    private(set) var consoles: [PlayerID: LaserGateConsole] = [:]
+
+    /// The arm reaches from the upper-arm joint to the FIST'S TIP: the hand mesh (vertices skinned
+    /// mostly to `Hand_L`) extends this far past the wrist joint along the forearm (0.076 m on the
+    /// current mascots), so a button placed there is touched by the fist, not passed through.
+    static func arm(of robot: Robot) -> LaserGateConsole.Arm? {
+        let skeleton = robot.solver.skeleton
+        let world = skeleton.world(skeleton.bind).position, s = modelScale
+        guard let u = skeleton("UpperArm_L"), let f = skeleton("Forearm_L"), let h = skeleton("Hand_L") else { return nil }
+        let length = (simd_distance(world[u], world[f]) + simd_distance(world[f], world[h])) * s
+        return .init(shoulder: [abs(world[u].x) * s, world[u].y * s], length: length + handTip(of: robot, hand: world[h] * s,
+                                                                                               forearm: world[f] * s))
+    }
+
+    /// How far the hand mesh extends beyond the wrist joint along the forearm (mascot metres).
+    static func handTip(of robot: Robot, hand: SIMD3<Float>, forearm: SIMD3<Float>) -> Float {
+        if let cached = cachedHandTip { return cached }
+        let names = robot.model.jointNames, dir = simd_normalize(hand - forearm)
+        var tip: Float = 0
+        for model in robot.model.model?.mesh.contents.models ?? [] {
+            for part in model.parts {
+                guard let influences = part.jointInfluences?.influences else { continue }
+                let all = Array(influences), positions = Array(part.positions)
+                let n = max(1, all.count / max(1, positions.count))
+                for (v, p) in positions.enumerated() where v * n + n <= all.count {
+                    guard let best = all[(v * n)..<(v * n + n)].max(by: { $0.weight < $1.weight }), best.weight > 0.5,
+                          Int(best.jointIndex) < names.count, names[Int(best.jointIndex)].hasSuffix("Hand_L") else { continue }
+                    tip = max(tip, simd_dot(p * modelScale - hand, dir))
+                }
+            }
+        }
+        let value = tip > 0.01 ? tip : 0.07
+        cachedHandTip = value
+        return value
+    }
+    private static var cachedHandTip: Float?
+    /// The measured fist length (after the first layer was built), for tests and diagnostics.
+    static var handTipLength: Float? { cachedHandTip }
+
+    static func makeConsoles(scene: LaserScene, players: Set<PlayerID>, arm: LaserGateConsole.Arm?) -> [PlayerID: LaserGateConsole] {
+        guard let arm else { return [:] }
+        let layout = scene.layout
+        let visible = LateralSteering.visibleHalfWidth(depth: layout.cameraPosition.z - scene.mapping.interactionPlaneZ,
+                                                       verticalFieldOfViewDegrees: layout.cameraVerticalFieldOfView,
+                                                       aspect: narrowestDisplayAspect)
+        var consoles: [PlayerID: LaserGateConsole] = [:]
+        for player in players {
+            consoles[player] = LaserGateConsole(player: player, arm: arm, visibleHalfWidth: visible,
+                                                wallHalfWidth: layout.corridorWidth / 2, planeZ: scene.mapping.interactionPlaneZ)
+        }
+        return consoles
+    }
+
+    /// Where each mascot's board was (world X) at recent frame times: the judge asks for the one
+    /// matching a wrist sample's capture time (`vaultReachShift`).
+    private var rootHistory: [PlayerID: [(time: Double, x: Float)]] = [:]
+    static let rootHistoryLength = 90
+
+    /// How far, in the player's own unmirrored plane (game units, + the plane's +X), the player's
+    /// wrist must reach beyond the approved zone because the mascot is not at its dock at
+    /// `capturedAt`: (mascot X − dock X) ÷ the mascot's scale. 0 when docked; nil without a console,
+    /// a steering position or a calibrated scale (the judge then keeps its own zones).
+    func vaultReachShift(_ player: PlayerID, capturedAt: Double) -> Double? {
+        guard let console = consoles[player], let history = rootHistory[player], !history.isEmpty,
+              let k = robots[player]?.retargeter.motionScale, k > 0,
+              robots[player]?.retargeter.reference != nil else { return nil }
+        let sample = history.last { $0.time <= capturedAt + 1e-6 } ?? history.first!
+        return Double((sample.x - console.dockX) / k)
+    }
+
+    /// Advances the steering to `now` (frame time) from each rider's lean speed and the hip shift
+    /// it will show this frame (`k`: this frame's render smoothing). A scripted move (the final
+    /// vault entry) holds its rider still.
+    private func stepSteering(now: Double, k: Float) {
+        guard var steering else { return }
+        let dt = Float(lastSteer.map { max(0, now - $0) } ?? 0)
+        lastSteer = now
+        lastSteerDT = dt
+        var inputs: [PlayerID: LateralSteering.Input] = [:]
+        #if DEBUG
+        if let remaining = Self.debugTestSteerRemaining {
+            Self.debugTestSteerRemaining = remaining - Double(dt)
+            if remaining - Double(dt) <= 0 { Self.debugTestSteer = nil; Self.debugTestSteerRemaining = nil }
+        }
+        #endif
+        for (player, robot) in robots {
+            let r = robot.retargeter
+            let sway = shown[player].map { $0.sway + (r.sway - $0.sway) * k } ?? r.sway
+            var speed = r.steerSpeed
+            #if DEBUG
+            // DEBUG "Test Move" (round panel): Lemon's speed without Vision, through this same step.
+            if player == .player1, let test = Self.debugTestSteer { speed = test }
+            #endif
+            // DOCK ASSIST (iPad, 12 November 2026: a mascot stopped a few centimetres short of its dock
+            // needed the same few centimetres more human reach, so presses failed): while a gate's
+            // consoles are shown, a rider within `dockCapture` of its dock that is not leaning away
+            // glides onto it. Elsewhere the lean steers exactly as before.
+            if consolesActive, let console = consoles[player], let x = steering.boardX(player) {
+                let gap = console.dockX - x
+                // Leaning away from the console (any speed past 0.05 m/s that way) always wins.
+                let toward: Float = console.side
+                let away = speed * toward < -0.05
+                if abs(gap) < Self.dockCapture, abs(gap) > 0.001, !away {
+                    let assist = min(Self.dockAssistSpeed, abs(gap) * 6)
+                    speed = (gap > 0 ? 1 : -1) * max(assist, speed * (gap > 0 ? 1 : -1))
+                }
+            }
+            inputs[player] = .init(targetSpeed: scriptedMoves[player] == nil ? speed : 0, sway: sway)
+            steerTargets[player] = inputs[player]?.targetSpeed ?? 0
+        }
+        steering.step(dt: dt, inputs: inputs)
+        self.steering = steering
+        for player in robots.keys {
+            guard let x = steering.boardX(player) else { continue }
+            var h = rootHistory[player] ?? []
+            if let last = h.last, last.time >= now { h.removeLast() }
+            h.append((now, x))
+            if h.count > Self.rootHistoryLength { h.removeFirst(h.count - Self.rootHistoryLength) }
+            rootHistory[player] = h
+        }
+    }
+    /// The last steering step's frame time and each rider's target speed (telemetry).
+    private var lastSteerDT: Float = 0
+    private var steerTargets: [PlayerID: Float] = [:]
+    #if DEBUG
+    /// DEBUG-only steering diagnostic (`DebugRoundControls` Test Move): a sustained lateral speed for
+    /// Lemon (m/s, + to screen right) used INSTEAD of the lean, through the same controller and the
+    /// same entity update. Nil: the lean steers. Never in Release; judges nothing.
+    static var debugTestSteer: Float?
+    static let debugTestSteerSpeed: Float = 0.8
+    /// Seconds left of a timed test move (launch `-debugTestMoveSeconds`); nil: until stopped.
+    static var debugTestSteerRemaining: Double?
+    #endif
+
+    /// Lean steering: the riders' travel, velocity and limits (nil without boards).
+    private(set) var steering: LateralSteering?
+    private var lastSteer: Double?
+
+    /// A mascot's tracked root X on its lane (metres from the lane centre), before any scripted move.
+    func trackedRootX(_ player: PlayerID) -> Float? { trackedRoot[player]?.x }
+
+    /// A mascot's current world X as drawn (its lane plus its tracked root and any scripted move).
+    func mascotWorldX(_ player: PlayerID) -> Float? {
+        guard let robot = robots[player], let lane = robot.container.parent else { return nil }
+        return lane.position.x + robot.container.position.x
+    }
+
+    /// One player's steering numbers this frame (DEBUG telemetry and tests).
+    struct SteeringReading: Equatable {
+        /// Solo (one mascot) or co-op.
+        var solo: Bool
+        var rawLean: Float?
+        var filteredLean: Float?
+        /// The lean's speed (`RobotRetargeter.steerSpeed`) and the speed the controller was given
+        /// (the lean's, a DEBUG test move's, or 0 during a scripted move).
+        var leanSpeed: Float
+        var targetSpeed: Float
+        var velocity: Float
+        var travel: Float
+        /// The board's world X the steering placed, and the mascot's world X read back from its entity.
+        var targetX: Float
+        var appliedX: Float
+        var constraint: LateralSteering.Constraint
+        var leftWallDistance: Float
+        var rightWallDistance: Float
+        /// Edge-to-edge distance to the partner's board (co-op).
+        var partnerDistance: Float?
+        /// The board's world X read back from its entity.
+        var boardWorldX: Float?
+        /// Where the mascot shows across the screen (0 left edge … 1 right edge) on a 4:3 iPad.
+        var screenX: Float?
+        /// The last steering step's frame time (s), and how old the last usable pose is (s; nil: none yet).
+        var frameDT: Float
+        var poseAge: Double?
+        var tracked: Bool
+    }
+
+    func steeringReading(_ player: PlayerID) -> SteeringReading? {
+        guard let steering, let rider = steering.riders[player], let x = steering.boardX(player),
+              let r = robots[player]?.retargeter, let applied = mascotWorldX(player) else { return nil }
+        let wall = scene?.layout.corridorWidth ?? 0
+        let partner: PlayerID = player == .player1 ? .player2 : .player1
+        let boardX = hoverboards[player].map { $0.model.position(relativeTo: nil).x }
+        let mascot = robots[player]?.container.position(relativeTo: nil)
+        return SteeringReading(solo: robots.count == 1, rawLean: r.lateralReading.lean, filteredLean: r.lateralReading.filtered,
+                               leanSpeed: r.steerSpeed, targetSpeed: steerTargets[player] ?? 0,
+                               velocity: rider.velocity, travel: rider.travel,
+                               targetX: x, appliedX: applied, constraint: rider.constraint,
+                               leftWallDistance: x - steering.halfWidth + wall / 2,
+                               rightWallDistance: wall / 2 - (x + steering.halfWidth),
+                               partnerDistance: steering.boardX(partner).map { abs($0 - x) - 2 * steering.halfWidth },
+                               boardWorldX: boardX,
+                               screenX: mascot.flatMap { scene?.screenFraction(of: $0, aspect: Self.narrowestDisplayAspect) },
+                               frameDT: lastSteerDT, poseAge: r.lastPoseTime.map { (lastSteer ?? $0) - $0 },
+                               tracked: r.isAvailable)
+    }
+    #if DEBUG
+    /// The latest steering reading per player, for the DEBUG round panel.
+    static var debugSteering: [PlayerID: SteeringReading] = [:]
+    /// Where each mascot was placed last frame (world X), to catch anything moving it afterwards.
+    private var placedWorldX: [PlayerID: Float] = [:]
+    #endif
 
     /// Shows one robot: the render-smoothed pose, with its feet from the
     /// planner. Pelvis and feet read the same smoothed values in the same
@@ -1022,14 +1523,22 @@ final class RobotAvatarLayer {
 
         var t = s.targets
         let scale = Self.modelScale
-        var rootX = s.sway
-        // The board carries the mascot sideways with its body, within its glide limits; the feet
-        // are planted ON the board (board space), so a lean moves both together, no sliding.
-        let ride = footPlanting
-            ? hoverboards[player].map { PlayerHoverboard.Motion.rideOffset(s.sway, inward: $0.motion.inward) } ?? 0 : 0
+        #if DEBUG
+        // Anything that moved the mascot after it was placed last frame (would undo the steering).
+        if let placed = placedWorldX[player], let now = mascotWorldX(player), scriptedMoves[player] == nil,
+           abs(now - placed) > 0.001 {
+            print(String(format: "[LaserLean] %@ OVERWRITTEN: placed world x %+.3f, found %+.3f", player.rawValue, placed, now))
+        }
+        #endif
+        // The hip shift plus the lean steering travel (`LateralSteering`), across the corridor.
+        let travel = steering?.riders[player]?.travel ?? 0
+        var rootX = s.sway + travel
+        // The board carries the mascot sideways, the feet planted ON the board (board space), so
+        // a lean or a step moves both together, no sliding.
+        let ride = footPlanting && hoverboards[player] != nil ? s.sway + travel : 0
         var plan: RobotFootPlanner.Output?
         if footPlanting {
-            var input = RobotFootPlanner.Input(pelvisX: s.sway - ride, rootLift: s.lift, time: time)
+            var input = RobotFootPlanner.Input(pelvisX: rootX - ride, rootLift: s.lift, time: time)
             // While a board carries the mascot, its feet stay planted ON the board: sideways body
             // motion is the board's ride, and only the hips moving past the ride limit step a foot
             // on the deck (the planner's balance rule). Knee raises still show (`footLift`).
@@ -1048,7 +1557,7 @@ final class RobotAvatarLayer {
             t.pelvisDrop += out.pelvisDip / scale
             plan = out
         }
-        robot.container.position = [rootX, s.lift, 0]
+        trackedRoot[player] = [rootX, s.lift, 0]
         // After smoothing and foot planning, just before the solve: presentation targets only.
         if Self.headClearance { MascotPoseEnvelope.apply(to: &t) }
         // The board follows what is shown: lean, root and lift (cosmetic; `PlayerHoverboard`).
@@ -1057,26 +1566,66 @@ final class RobotAvatarLayer {
         let stanceX = feet.count == 2 ? (feet[0] + feet[1]) / 2 : rootX
         hoverboards[player]?.input = .init(lean: t.lean, centerX: rootX, stanceX: stanceX, lift: s.lift,
                                            available: r.isAvailable, ride: footPlanting ? ride : nil)
-        #if DEBUG
-        // Once a second for P1: what the lean shows (device check; numbers only).
-        if player == .player1, time - (lastLeanLog ?? -1) >= 1 {
-            lastLeanLog = time
-            print(String(format: "[LaserLean] P1 trunk %.0f° · sway %.3f m · board ride %.3f m bank %.1f° · tracked %@",
-                         t.lean * 180 / .pi, s.sway, ride, (hoverboards[player]?.motion.bank ?? 0) * 180 / .pi,
-                         r.isAvailable ? "yes" : "no"))
+        var solved = robot.solver.solveDetailed(t)
+        if consolesActive, let console = consoles[player],
+           reachConsole(&t, solved: solved.local, robot: robot, player: player, console: console, time: time) {
+            solved = robot.solver.solveDetailed(t)
         }
-        #endif
-        let solved = robot.solver.solveDetailed(t)
         robot.model.jointTransforms = solved.local
         if diagnosticsEnabled { recordFeet(player, robot, solved, rootX: rootX, ride: ride, lift: s.lift, plan: plan, trackedLift: t.footLift) }
         #if DEBUG
         if showsFairnessMarkers { updateFairnessMarkers(player) }
         #endif
+        applyScripted(player)
+        #if DEBUG
+        logSteering(player, time: time, trunk: t.lean, bank: hoverboards[player]?.motion.bank ?? 0, tracked: r.isAvailable)
+        #endif
+    }
+
+    #if DEBUG
+    /// Once a second per player (device check; numbers only): the lean chain from the pose to the
+    /// mascot's world X read back from its entity, and what limited it.
+    private func logSteering(_ player: PlayerID, time: Double, trunk: Float, bank: Float, tracked: Bool) {
+        guard let reading = steeringReading(player) else { return }
+        Self.debugSteering[player] = reading
+        guard time - (lastLeanLog[player] ?? -1) >= 1 else { return }
+        lastLeanLog[player] = time
+        func g(_ v: Float?) -> String { v.map { String(format: "%+.3f", $0) } ?? "-" }
+        let deadband = (reading.filteredLean.map { abs($0) > robots[player]!.retargeter.steerDeadbandShare } ?? false) ? "past deadband" : "in deadband"
+        print(String(format: "[LaserLean] %@ %@ · trunk %.0f° · lean raw %@ filtered %@ h (%@) → lean speed %+.2f · target %+.2f%@ m/s · velocity %+.2f m/s · travel %+.3f m · target x %+.3f · applied mascot x %+.3f board x %@ · screen x %@ · %@ · walls L %.2f R %.2f m · partner %@ m · bank %.1f° · dt %.3f s · pose age %@ s · tracked %@",
+                     player.rawValue, reading.solo ? "SOLO" : "CO-OP", trunk * 180 / .pi, g(reading.rawLean), g(reading.filteredLean),
+                     deadband, reading.leanSpeed, reading.targetSpeed, Self.debugTestSteer != nil && player == .player1 ? " (TEST MOVE)" : "",
+                     reading.velocity, reading.travel, reading.targetX, reading.appliedX, g(reading.boardWorldX), g(reading.screenX),
+                     reading.constraint.rawValue, reading.leftWallDistance, reading.rightWallDistance, g(reading.partnerDistance),
+                     bank * 180 / .pi, reading.frameDT, reading.poseAge.map { String(format: "%.2f", $0) } ?? "-",
+                     tracked ? "yes" : "no"))
+    }
+    #endif
+
+    /// Places a mascot at its tracked root plus its scripted move, and sets its fades.
+    private func applyScripted(_ player: PlayerID) {
+        guard let robot = robots[player] else { return }
+        let move = scriptedMoves[player] ?? .none
+        robot.container.position = (trackedRoot[player] ?? .zero) + move.offset
+        let squash = max(0.05, move.squash).squareRoot()
+        robot.container.scale = SIMD3(move.scale / squash, move.scale * squash, move.scale / squash) * Self.modelScale
         // Dimmed exactly while the player is not tracked (the pose itself fades separately).
-        let opacity = r.isAvailable ? 1 : Self.unavailableOpacity
+        let opacity = (robot.retargeter.isAvailable ? 1 : Self.unavailableOpacity) * max(0, min(1, move.opacity))
         if robot.container.components[OpacityComponent.self]?.opacity != opacity {
             robot.container.components.set(OpacityComponent(opacity: opacity))
         }
+        robot.container.isEnabled = opacity > 0.001
+        if let board = hoverboards[player] {
+            let shown = max(0, min(1, move.boardOpacity))
+            board.root.isEnabled = shown > 0.001
+            if shown >= 1 { board.root.components.remove(OpacityComponent.self) }
+            else if board.root.components[OpacityComponent.self]?.opacity != shown {
+                board.root.components.set(OpacityComponent(opacity: shown))
+            }
+        }
+        #if DEBUG
+        placedWorldX[player] = mascotWorldX(player)
+        #endif
     }
 
     private func recordFeet(_ player: PlayerID, _ robot: Robot, _ solved: (local: [Transform], reachShortfall: [RobotPoseTargets.Side: Float]),

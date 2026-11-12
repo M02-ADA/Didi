@@ -344,6 +344,30 @@ nonisolated struct LaserGame: Sendable {
         return activated
     }
 
+    #if DEBUG
+    /// DEBUG only, Solo Test or co-op test round ("Skip to Diamond Time"): enters the REAL Diamond Time now, with its
+    /// own deadline, so its diamonds, collection, scoring, end and summary run as in a round.
+    /// Lasers still in flight are withdrawn (never judged: no CLEAR, score or damage), normal
+    /// diamonds on screen close, and an open vault closes unopened. `missionProgress` (vaults
+    /// opened) is not raised: no skipped vault is credited. Nil, changing nothing, outside a
+    /// round's activity or vault (so repeated taps are harmless).
+    @discardableResult
+    mutating func debugSkipToDiamondTime(at time: Double) throws -> (withdrawnTargets: Int, closedDiamonds: Int)? {
+        guard diamondPoints != nil, !blocked, !exited, roundOutcome == nil,
+              roundPhase == .activity || roundPhase == .vault else { return nil }
+        try advance(to: time)
+        guard roundOutcome == nil, roundPhase == .activity || roundPhase == .vault else { return nil }
+        let withdrawn = pendingCrossingCount, closed = activeDiamonds.count
+        withdraw()
+        diamondField.close()
+        if let open = vault, !open.opened { consumedVaults.insert(open.id); vault = nil }
+        roundPhase = .diamondTime
+        bonusDeadline = gameTime + bonusDuration
+        emit(.phaseChanged(.diamondTime), at: gameTime)
+        return (withdrawn, closed)
+    }
+    #endif
+
     /// Explicit synthetic/domain plans now; live placement/reach and E08 admission are pending.
     mutating func spawnNormalDiamonds(_ spawns: [LaserDiamondSpawn], beforeVaultAt boundary: Double) throws {
         try requireLaserValue(!blocked && !exited && roundOutcome == nil && roundPhase == .activity

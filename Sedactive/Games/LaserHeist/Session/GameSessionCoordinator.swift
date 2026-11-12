@@ -28,6 +28,12 @@ final class GameSessionCoordinator {
     /// Read-only domain state for the separately reviewed K06 rendering handoff.
     var diamondStates: [UUID: LaserDiamondState] { game?.diamonds ?? [:] }
     var diamondsCollected: Int { game?.diamondsCollected ?? 0 }
+    /// The scripted entry into the final vault (live rounds), from the moment Diamond Time is
+    /// unlocked until the team stands inside; `nil` before it and in replay. While it is
+    /// incomplete the session holds `GameClock`, so Diamond Time has not started counting.
+    private(set) var finalVaultEntry: LaserFinalVaultEntry?
+    /// Host time the entry last advanced to while the clock was held.
+    private var finalVaultStamp: Double?
     var activityDuration: Double { replayDriver?.script.activityDuration ?? configuration?.activityDuration ?? 0 }
     private(set) var phase: SessionState = .idle {
         didSet {
@@ -97,30 +103,54 @@ final class GameSessionCoordinator {
         guard let slot = setup?.diagnosticControls.tracking.latest?[.player1] else { return false }
         return slot.state == .tracking && !slot.requiresRebind
     }
-    /// One DEBUG skip record per use: which vault it led to and what it dropped (never scored).
-    struct DebugSkip: Equatable { let vault: Int; let droppedLasers: Int; let droppedDiamonds: Int; let vaultAt: Double }
+    /// One DEBUG skip record: when it entered Diamond Time and what it withdrew (never scored).
+    struct DebugSkip: Equatable { let gameTime: Double; let withdrawnTargets: Int; let closedDiamonds: Int }
     private(set) var debugSkips: [DebugSkip] = []
+    /// One DEBUG skip to the next gate: which vault it led to, when, and what it dropped (never scored).
+    struct DebugGateSkip: Equatable { let vault: Int; let droppedLasers: Int; let droppedDiamonds: Int; let vaultAt: Double }
+    private(set) var debugGateSkips: [DebugGateSkip] = []
     private(set) var debugSoloTrackingLost = false
     private var debugPendingVaultPress: LaserVaultButton?
+    /// A "Skip to Diamond Time" waiting for the next running frame (a paused round applies it on resume).
+    private(set) var debugPendingSkipToDiamondTime = false
 
-    /// "Skip to Next Gate" is available: a running Solo Test round in its activity, with a
-    /// vault still ahead that is more than the skip lead away.
+    /// "Skip to Diamond Time" is available: a live test round (Solo or co-op) before Diamond Time,
+    /// running or paused for tracking (then it applies on resume). Tracking is not required.
+    var canDebugSkipToDiamondTime: Bool {
+        guard !isReplay, phase == .running || phase == .paused, summary == nil, !debugPendingSkipToDiamondTime,
+              let roundPhase = game?.roundPhase else { return false }
+        return roundPhase == .activity || roundPhase == .vault
+    }
+
+    /// DEBUG: enters the real Diamond Time on the next running frame (`LaserGame.debugSkipToDiamondTime`),
+    /// where its diamonds are placed exactly as after a final vault. Logged; nothing skipped is scored.
+    /// Repeated taps queue one skip.
+    func debugSkipToDiamondTime() {
+        guard canDebugSkipToDiamondTime else { return }
+        debugPendingSkipToDiamondTime = true
+        advanceLive()
+    }
+
+    /// "Skip to Next Gate" is available: a running live test round in its activity, with a vault
+    /// still ahead more than the skip lead away. Not while paused: a resume may still need to plan
+    /// its replacement lasers before that vault.
     var canDebugSkipToNextGate: Bool {
-        guard inputConfiguration.soloPlayer != nil, phase == .running, var director = liveDirector,
+        guard !isReplay, phase == .running, summary == nil, var director = liveDirector,
               let game, game.roundPhase == .activity else { return false }
         return director.debugSkipToVault(game: game) != nil
     }
 
-    /// DEBUG Solo Test: ends the current minute early so its vault arrives in
-    /// `LaserLiveRoundDirector.debugSkipLead` game seconds. Logged; nothing is judged or scored.
+    /// DEBUG: ends the current minute early so its vault arrives in
+    /// `LaserLiveRoundDirector.debugSkipLead` game seconds. No clock moves; nothing dropped is
+    /// judged or scored; a vault already that close makes a repeated tap do nothing.
     func debugSkipToNextGate() {
         advanceLive()
-        guard inputConfiguration.soloPlayer != nil, phase == .running, var director = liveDirector,
-              let game, let skipped = director.debugSkipToVault(game: game) else { return }
+        guard canDebugSkipToNextGate, var director = liveDirector, let game,
+              let skipped = director.debugSkipToVault(game: game) else { return }
         liveDirector = director
-        let record = DebugSkip(vault: director.currentVaultIndex + 1, droppedLasers: skipped.droppedLasers,
-                               droppedDiamonds: skipped.droppedDiamonds, vaultAt: skipped.vaultAt)
-        debugSkips.append(record)
+        let record = DebugGateSkip(vault: director.currentVaultIndex + 1, droppedLasers: skipped.droppedLasers,
+                                   droppedDiamonds: skipped.droppedDiamonds, vaultAt: skipped.vaultAt)
+        debugGateSkips.append(record)
         print(String(format: "[LaserSkip] to vault %d at game %.2f s (now %.2f) · dropped %d unregistered lasers, %d diamonds (not judged, not scored)",
                      record.vault, record.vaultAt, game.gameTime, record.droppedLasers, record.droppedDiamonds))
     }
@@ -170,6 +200,62 @@ final class GameSessionCoordinator {
     private var liveVault: (id: UUID, zones: [LaserVaultZone])?
     /// The open live vault's contact zones (presentation draws the buttons on them).
     var liveVaultZones: [LaserVaultZone]? { liveVault?.zones }
+    /// Live rounds with mascots (set by the play view): how far each player's mascot is from its
+    /// vault button console at a capture time, as a reach in the player's unmirrored plane (game
+    /// units; 0 docked; `RobotAvatarLayer.vaultReachShift`). With it, a vault zone is judged where
+    /// the mascot's hand reaches: relative to the player's own body centre, beyond by that shift.
+    /// Nil (replay, tests, no mascots): the approved lane-relative zones.
+    var vaultMascotReach: ((PlayerID, _ capturedAt: Double) -> Double?)?
+
+    #if DEBUG
+    /// The DEBUG round panel's gate-contact line per player (latest packet at an open gate).
+    static var debugVaultContact: [PlayerID: String] = [:]
+    private var lastVaultContactLog: Double = -1
+
+    /// Per player: each wrist's nearest judged button, its distance to that (shifted) zone and the
+    /// judge's own status, the shift, and which buttons the game has. Numbers only.
+    private func logVaultContact(_ readout: [LaserWristDiamondConsumer.VaultReadout], shifts: [PlayerID: Double],
+                                 pressed: [PlayerID: Set<LaserVaultButton>], at time: Double) {
+        var lines: [PlayerID: String] = [:]
+        for player in inputConfiguration.roster {
+            var parts: [String] = []
+            for wrist in LaserContactWrist.allCases {
+                let rows = readout.filter { $0.playerID == player && $0.wrist == wrist }
+                guard let first = rows.first else { continue }
+                let w = wrist == .left ? "L" : "R"
+                if first.distance == nil { parts.append("\(w) \(first.status)"); continue }
+                let near = rows.min { ($0.distance ?? .infinity) < ($1.distance ?? .infinity) }!
+                let p = near.point.map { String(format: "(%.2f, %.2f)", $0.x, $0.y) } ?? "-"
+                parts.append(String(format: "%@ wrist %@ → %@ d %.3f (r %.3f) %@%@", w, p, near.button.rawValue.uppercased(),
+                                    near.distance ?? 0, near.radius, near.status, near.pressed ? " PRESS" : ""))
+            }
+            let shift = shifts[player].map { $0.isFinite ? String(format: "%.3f", $0) : "unplaceable" } ?? "none"
+            let has = (pressed[player] ?? []).map { $0.rawValue }.sorted().joined(separator: ",")
+            lines[player] = "\(parts.joined(separator: " · ")) · zone shift \(shift) · lit [\(has)]"
+        }
+        Self.debugVaultContact = lines
+        let anyPress = readout.contains(where: \.pressed)
+        guard anyPress || time - lastVaultContactLog >= 0.5 else { return }
+        lastVaultContactLog = time
+        for (player, line) in lines.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+            print("[LaserGateContact] \(player.rawValue) \(line)")
+        }
+    }
+    #endif
+
+    /// This capture's vault zone shifts (see `vaultMascotReach`): empty without mascots; a
+    /// non-finite shift when the zone cannot be placed (no valid body centre or mascot position).
+    func vaultZoneShifts(for snapshot: BodySnapshot) -> [PlayerID: Double] {
+        guard let reach = vaultMascotReach else { return [:] } // only vault zones read it
+        var shifts: [PlayerID: Double] = [:]
+        for player in inputConfiguration.roster {
+            let center = snapshot.players[player]?.geometry.centerX
+            guard let mascot = reach(player, snapshot.capturedAt), mascot.isFinite,
+                  let center, center.validity == .valid, let x = center.value else { shifts[player] = .infinity; continue }
+            shifts[player] = x - inputConfiguration.playerPlaneLayout.centerX(for: player) + mascot
+        }
+        return shifts
+    }
     /// Builds the live round plan from the producer's ACCEPTED context once setup is complete.
     private let liveRoundPlanner: (@MainActor (BodyInputContext, [PlayerID: PlayerCalibration]) throws -> LaserLiveWristRoundPlan)?
     private var installingLivePlan = false
@@ -182,6 +268,12 @@ final class GameSessionCoordinator {
     private(set) var presence = LaserSetupPresence()
     /// DEBUG Solo Test: one player (P1) practises; results are diagnostic, not a co-op round.
     var isSoloPractice: Bool { inputConfiguration.soloPlayer != nil }
+    /// A begun round paused because the tracker can no longer vouch for a player's identity
+    /// (setup needs a rebind). The round is kept; it resumes if the tracker confirms the same pair
+    /// again, otherwise the players restart explicitly.
+    var awaitsIdentityRecovery: Bool {
+        game != nil && summary == nil && phase == .paused && setup?.phase == .restartRequired
+    }
     private var setupTask: Task<Void, Never>?
     private var uprightPromptStart: Double?
     private var retryAt: Double?
@@ -190,6 +282,8 @@ final class GameSessionCoordinator {
     private var lastLoggedIssue: [PlayerID: String] = [:]
     private var lastLoggedJump: [PlayerID: String] = [:]
     private var lastLoggedReadiness: String?
+    /// DEBUG: each player's last logged tracker slot (state/reason/rebind), for bystander diagnosis.
+    private var lastLoggedSlot: [PlayerID: String] = [:]
     private var lastSearchLog = -Double.infinity
     private var lastLoggedFrame: [PlayerID: UInt64] = [:]
     #endif
@@ -503,12 +597,53 @@ final class GameSessionCoordinator {
             }
         }
         catch { debugRestart("status read threw: \(error)"); liveReadiness?.requireRestart() }
+        #if DEBUG
+        // Every P1/P2 tracker change, with the people Vision sees (iPad bystander diagnosis: which
+        // slot went uncertain, lost or identity-ambiguous, and why).
+        if let setup, let latest = setup.diagnosticControls.tracking.latest {
+            for player in inputConfiguration.roster {
+                let slot = latest[player]
+                let text = "\(slot.state.rawValue)/\(slot.reason.rawValue)\(slot.requiresRebind ? " REBIND" : "")"
+                if lastLoggedSlot[player] != text {
+                    print("[LaserTrackPair] \(player.rawValue) \(lastLoggedSlot[player] ?? "-") → \(text) · people \(setup.diagnosticControls.peopleInView ?? -1) · session \(phase)")
+                    lastLoggedSlot[player] = text
+                }
+            }
+        }
+        #endif
         if setup?.phase == .restartRequired {
             // DEBUG Solo Test: losing P1 (same camera source and context) neither pauses nor ends
             // the round; P1's evidence stays UNAVAILABLE until B2 tracks them again.
             if soloRoundToleratesTrackingLoss, context != nil, context == installedLiveWristContext {
                 // DEBUG Solo Test round: kept running (P1's evidence is UNAVAILABLE meanwhile).
-            } else { debugRestart("setup restartRequired"); liveReadiness?.requireRestart() }
+            } else if game != nil, summary == nil, let context, context.isActive,
+                      context.sessionGeneration == inputConfiguration.sessionGeneration {
+                // (A changed context still restarts: above, and in readiness once its clock runs.)
+                // A begun round on the same camera source whose identity the tracker can no longer
+                // vouch for (iPad, 12 November 2026: a bystander or a long occlusion): PAUSE and keep
+                // the round (clock, hearts, score, encounters, calibrations), never guess who is who.
+                // If the tracker confirms the same pair again, the round resumes by itself; if it
+                // cannot (a latched identity needs a new binding), the players choose Restart.
+                #if DEBUG
+                if !awaitsIdentityRecovery {
+                    print("[LaserInterrupt] co-op identity lost mid-round → PAUSED (round kept) · " + inputConfiguration.roster.map {
+                        "\($0.rawValue) \(lastLoggedSlot[$0] ?? "-")" }.joined(separator: ", ")
+                        + " · people \(setup?.diagnosticControls.peopleInView ?? -1)")
+                }
+                #endif
+                do { try liveReadiness?.requireIdentityRecovery(at: hostNow()) }
+                catch { debugRestart("identity pause threw: \(error)"); liveReadiness?.requireRestart() }
+            } else {
+                #if DEBUG
+                if game != nil, summary == nil {
+                    // Only a changed or lost camera source / input context still ends a begun round.
+                    print("[LaserInterrupt] round ended: input source/context changed · " + inputConfiguration.roster.map {
+                        "\($0.rawValue) \(lastLoggedSlot[$0] ?? "-")" }.joined(separator: ", ")
+                        + " · people \(setup?.diagnosticControls.peopleInView ?? -1)")
+                }
+                #endif
+                debugRestart("setup restartRequired"); liveReadiness?.requireRestart()
+            }
         }
         #if DEBUG
         if inputConfiguration.soloPlayer != nil, let slot = setup?.diagnosticControls.tracking.latest?[.player1] {
@@ -665,7 +800,12 @@ final class GameSessionCoordinator {
             for player in inputConfiguration.roster {
                 let s = latestSnapshot?.players[player]
                 func v(_ e: EstimatedScalar?) -> String { e.map { $0.validity == .valid ? String(format: "%.2f", $0.value ?? 0) : "\($0.validity)" } ?? "-" }
-                print("[LaserLive] \(phase) readiness \(String(describing: liveReadiness?.phase)) · \(player.rawValue) head \(v(s?.geometry.crownY)) wrists \(v(s?.geometry.leftWristY))/\(v(s?.geometry.rightWristY)) soles \(v(s?.geometry.leftSoleY))/\(v(s?.geometry.rightSoleY)) jump \(s.map { "\($0.jumpState.phase)" } ?? "-") · health \(state?.teamHealth ?? -1) score \(state?.teamScore ?? -1)")
+                // Per stage (iPad co-op diagnosis): tracker slot, packet age and status, readiness.
+                let slot = setup.diagnosticControls.tracking.latest?[player]
+                let age = latestSnapshot.map { String(format: "%.0f ms", (now - $0.capturedAt) * 1000) } ?? "-"
+                print("[LaserLive] \(phase) readiness \(String(describing: liveReadiness?.phase)) · \(player.rawValue) head \(v(s?.geometry.crownY)) wrists \(v(s?.geometry.leftWristY))/\(v(s?.geometry.rightWristY)) soles \(v(s?.geometry.leftSoleY))/\(v(s?.geometry.rightSoleY)) jump \(s.map { "\($0.jumpState.phase)" } ?? "-") · health \(state?.teamHealth ?? -1) score \(state?.teamScore ?? -1)"
+                    + " · track \(slot.map { "\($0.state.rawValue)/\($0.reason.rawValue)\($0.requiresRebind ? " REBIND" : "")" } ?? "-")"
+                    + " · sample \(s.map { "\($0.trackingStatus)" } ?? "-") age \(age) · blocker \(liveReadiness?.blocker.map { "\($0)" } ?? "none") skipped \(liveReadiness?.skippedFrames ?? 0)")
             }
         }
         if hasLiveRoundPlan { setupTimeline.mark("round planned", at: now) }
@@ -917,6 +1057,7 @@ final class GameSessionCoordinator {
                     #endif
                     for encounter in encounters { try initial.register(encounter) }
                     game = initial
+                    finalVaultEntry = nil; finalVaultStamp = nil
                     withdrawnLiveEncounters = []; approvedRecovery = nil; recoveryAttempted = false
                 } else if phase != .running {
                     var resumed = game!
@@ -971,8 +1112,15 @@ final class GameSessionCoordinator {
                 // Receive before inclusive advance: equal-deadline arrivals remain eligible.
                 if let packet, let captured = liveReadiness?.capturedGameTime(for: packet) {
                     try stagedGame.receive(packet, capturedGameTime: captured, arrivedAt: readiness.gameTime)
+                    let shifts = vaultZoneShifts(for: packet)
                     try stagedWrist?.receive(packet, context: context, atHostTime: hostNow(),
-                        capturedGameTime: captured, arrivedGameTime: readiness.gameTime, game: &stagedGame)
+                        capturedGameTime: captured, arrivedGameTime: readiness.gameTime, game: &stagedGame,
+                        vaultZoneShifts: shifts)
+                    #if DEBUG
+                    if let readout = stagedWrist?.lastVaultReadout, !readout.isEmpty {
+                        logVaultContact(readout, shifts: shifts, pressed: stagedGame.vault?.buttons ?? [:], at: packet.capturedAt)
+                    }
+                    #endif
                 }
                 #if DEBUG
                 // DEBUG Solo Test tap fallback: P1's own vault button, at this frame's game time,
@@ -986,6 +1134,17 @@ final class GameSessionCoordinator {
                             playerID: .player1, button: button, calibrationRevision: revision)],
                             generation: context.sessionGeneration, at: readiness.gameTime)
                         print("[LaserSolo] DEBUG tap · vault \(vault.id.uuidString.suffix(2)) \(button.rawValue) → \(added > 0 ? "pressed" : "no change")")
+                    }
+                }
+                // DEBUG Solo Test "Skip to Diamond Time", at this frame's game time, so the Diamond
+                // Time diamonds below are placed in this same frame, as after a final vault.
+                if debugPendingSkipToDiamondTime {
+                    debugPendingSkipToDiamondTime = false
+                    if let skipped = try stagedGame.debugSkipToDiamondTime(at: readiness.gameTime) {
+                        debugSkips.append(DebugSkip(gameTime: stagedGame.gameTime, withdrawnTargets: skipped.withdrawnTargets,
+                                                    closedDiamonds: skipped.closedDiamonds))
+                        print(String(format: "[LaserSkip] to Diamond Time at game %.2f s · withdrew %d laser targets (not judged, not scored), closed %d diamonds",
+                                     stagedGame.gameTime, skipped.withdrawnTargets, skipped.closedDiamonds))
                     }
                 }
                 #endif
@@ -1007,6 +1166,7 @@ final class GameSessionCoordinator {
                 encounters.append(contentsOf: stagedRegistered); liveVault = stagedVault
                 collectLiveState()
                 if summary != nil { phase = .finished; finishLiveInput(); return }
+                try advanceFinalVaultEntry()
                 if !soloRoundToleratesTrackingLoss, encounters.contains(where: { encounter in
                     encounter.targets.contains { target in
                         if case .unavailable = game?.judgement(for: LaserTargetKey(encounterID: encounter.id,
@@ -1030,6 +1190,35 @@ final class GameSessionCoordinator {
             phase = .restartRequired
             finishLiveInput()
         }
+    }
+
+    /// The final vault entry plays on held game time, from the frame Diamond Time is unlocked
+    /// (final vault or DEBUG skip): Diamond Time's active seconds start once the team is inside,
+    /// and no wrist evidence from before the release can collect a diamond. Only running host
+    /// time advances the script; after a pause it holds the clock again where it stopped.
+    private func advanceFinalVaultEntry() throws {
+        guard let game, game.roundPhase == .diamondTime, game.roundOutcome == nil else { return }
+        let now = hostNow()
+        if finalVaultEntry == nil {
+            finalVaultEntry = LaserFinalVaultEntry(roster: inputConfiguration.roster)
+            print(String(format: "[LaserFinalVault] entry starts at game %.2f s · %d mascot(s), %.2f s held",
+                         game.gameTime, finalVaultEntry!.timeline.jumpers.count, finalVaultEntry!.timeline.total))
+        }
+        guard var entry = finalVaultEntry, !entry.isComplete else { return }
+        guard liveReadiness?.isClockHeld == true else {
+            try liveReadiness?.holdClock()
+            wristDiamonds?.invalidate(atHostTime: now)
+            finalVaultStamp = now
+            return
+        }
+        entry.advance(by: now - (finalVaultStamp ?? now))
+        finalVaultStamp = now
+        finalVaultEntry = entry
+        guard entry.isComplete else { return }
+        try liveReadiness?.releaseClock(at: now)
+        // Fresh outside→inside entries only: the wrists' baseline restarts at the release.
+        wristDiamonds?.invalidate(atHostTime: now)
+        print(String(format: "[LaserFinalVault] inside · Diamond Time starts at game %.2f s", game.gameTime))
     }
 
     private func pauseLiveGame(at time: Double) throws {

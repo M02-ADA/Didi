@@ -22,6 +22,16 @@ final class LaserReplayPresentation {
 
     /// DEBUG `-liveButtonLayout`: the synthetic replay shows the live vault-button layout and
     /// reach cursors (Simulator layout check without a camera). Never in Release.
+    /// DEBUG `-showReachCursors`: draws each tracked wrist as a reach cursor at open vaults.
+    /// Off by default; never in Release.
+    static var showsReachCursors: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-showReachCursors")
+        #else
+        false
+        #endif
+    }
+
     static var previewsLiveButtons: Bool {
         #if DEBUG
         ProcessInfo.processInfo.arguments.contains("-liveButtonLayout")
@@ -72,6 +82,8 @@ final class LaserReplayPresentation {
                     laneCenter: layout.centerX(for: player), standingHeight: zone.standing)
                 return (shown.center, Float(zone.radius) * shown.scale)
             }
+            // With mascots: the buttons on each wall's console, where the mascot's hand lands.
+            presenter?.vault.liveConsoles = { [weak scene] player in scene?.robotAvatars?.consoles[player] }
         }
         // Sound follows what the presenter shows; the round's music joins in.
         presenter?.onSound = { AudioService.shared.play($0) }
@@ -135,6 +147,33 @@ final class LaserReplayPresentation {
         }
     }
 
+    #if DEBUG
+    private var reachLoggedAt: Double?
+    /// Once a second while a live vault waits (iPad lean/reach check): per player, each button's
+    /// distance from the nearer tracked wrist to its contact zone (player plane, game units) against
+    /// its radius, whether a wrist is inside, the buttons the game registered, and the mascot's
+    /// applied lateral travel. Read-only; the consumer alone decides a press.
+    private func logReach(state: LaserGameState, session: GameSessionCoordinator, scene: LaserScene) {
+        guard !session.isReplay, state.phase == .vault, let vault = state.vault, !vault.opened,
+              let zones = session.liveVaultZones else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - (reachLoggedAt ?? -1) >= 1 else { return }
+        reachLoggedAt = now
+        for player in session.inputConfiguration.roster {
+            let wrists = session.latestSnapshot?.wristContact?.players[player]
+            let points = [wrists?.left.playerPlane, wrists?.right.playerPlane].compactMap { $0 }
+            let buttons = zones.filter { $0.playerID == player }.sorted { $0.position.y > $1.position.y }.map { zone -> String in
+                let d = points.map { hypot($0.x - zone.position.x, $0.y - zone.position.y) }.min()
+                return "\(zone.button.rawValue) " + (d.map { String(format: "%.2f/%.2f%@", $0, zone.radius, $0 <= zone.radius ? " IN" : "") } ?? "no wrist")
+            }
+            let pressed = (vault.buttons[player] ?? []).map(\.rawValue).sorted().joined(separator: ",")
+            let travel = scene.robotAvatars?.robots[player].map { String(format: "%.2f m", $0.retargeter.sway) } ?? "-"
+            print("[LaserReach] \(player.rawValue) wrists \(points.count) · " + buttons.joined(separator: " · ")
+                  + " · pressed {\(pressed)} · mascot travel \(travel)")
+        }
+    }
+    #endif
+
     func stop() {
         subscription?.cancel()
         subscription = nil
@@ -153,10 +192,16 @@ final class LaserReplayPresentation {
         presenter?.apply(state: state, events: session.events, snapshot: session.latestSnapshot,
                          upcomingVaultIn: session.isCompleteReplay
                             ? Self.upcomingVaultIn(state: state, activityDuration: session.activityDuration)
-                            : session.liveVaultIn)
-        // The wrists' reach cursors show while a vault's buttons are waiting to be pressed.
-        scene.robotAvatars?.showsReachCursors = state.phase == .vault && state.vault?.opened != true
-            && (!session.isReplay || Self.previewsLiveButtons)
+                            : session.liveVaultIn,
+                         finalVault: session.finalVaultEntry)
+        // The wrists' reach cursors (the tracked wrist the gate judges) are an engineering view only
+        // (owner, 12 November 2026: players see the mascots and the buttons, no helper circles):
+        // DEBUG `-showReachCursors`, while a vault's buttons wait. Contact is judged either way.
+        scene.robotAvatars?.showsReachCursors = Self.showsReachCursors && state.phase == .vault
+            && state.vault?.opened != true && (!session.isReplay || Self.previewsLiveButtons)
+        #if DEBUG
+        logReach(state: state, session: session, scene: scene)
+        #endif
         #if DEBUG
         if let presenter {
             debugDiamondReadout?.record(normal:presenter.normalDiamonds.shownIDs,

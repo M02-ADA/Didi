@@ -44,6 +44,14 @@ final class LiveAvatarPresenter {
     /// The feed ended while the scene stays up: the mascots remain, dimmed and neutral.
     private(set) var feedEnded = false
 
+    /// Attaches the pose feed later than the avatars (a live round: once its camera input has
+    /// started, so the input start cannot retire the feed's lease). Ignored if one is attached or
+    /// the feed has ended.
+    func attachPump(_ pump: any AvatarPosePump) {
+        guard self.pump == nil, !feedEnded, !mailbox.isRevoked else { pump.stop(); return }
+        self.pump = pump
+    }
+
     init(avatars: RobotAvatarLayer, mailbox: AvatarPoseMailbox, pump: (any AvatarPosePump)? = nil) {
         self.avatars = avatars
         self.mailbox = mailbox

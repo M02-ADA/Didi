@@ -77,7 +77,7 @@ import Testing
     private var host: LaserLiveFrameAttachment?
     init(controls existing:GateSetupControls? = nil, configured:Bool = true, deferredPlan:Bool = false,
          liveRoundPlanner:(@MainActor (BodyInputContext,[PlayerID:PlayerCalibration]) throws -> LaserLiveWristRoundPlan)? = nil,
-         automaticSetup:Bool = false) throws {
+         automaticSetup:Bool = false, trackingGrace:Double = 0) throws {
         self.deferredPlan = deferredPlan
         let controls = try existing ?? GateSetupControls();self.controls = controls
         fixture = try WristGameplayFixture(generation:controls.fixture.context.generation)
@@ -90,7 +90,8 @@ import Testing
         roundConfiguration = configuration; plannedEncounters = [encounter]
         session = try GameSessionCoordinator(provider:controls.input,inputConfiguration:fixture.input,
             configuration:deferredPlan ? nil : configuration,encounters:deferredPlan ? [] : [encounter],setupControls:controls,
-            liveTimingPolicy:deferredPlan ? nil : .init(settlingDuration:0.125,maximumEvidenceAge:0.5,countdownDuration:0.25),
+            liveTimingPolicy:deferredPlan ? nil : .init(settlingDuration:0.125,maximumEvidenceAge:0.5,countdownDuration:0.25,
+                                                        trackingGrace:trackingGrace),
             wristDiamondConfiguration:configured && !deferredPlan ? fixture.plan() : nil,
             hostNow:{ controls.fixture.clock.time },recoveryPlanner:{ request in
                 try request.withdrawn.map { old in
@@ -140,9 +141,12 @@ import Testing
         try await send(0.75) // activation tick records the original host watermark
     }
     @discardableResult func send(_ time:Double,points:[LaserContactHand:WristPlanePoint] = [:],
-                                 bad:String? = nil, bodySamples: [PlayerID: PlayerBodySample]? = nil) async throws -> BodySnapshot {
+                                 bad:String? = nil, bodySamples: [PlayerID: PlayerBodySample]? = nil,
+                                 people: [PoseCandidate] = LiveVisionFixtures.standingPair) async throws -> BodySnapshot {
         let id = frame;frame += 1
-        try #require(try controls.fixture.finish(controls.fixture.result(id,time,LiveVisionFixtures.standingPair)))
+        if people == LiveVisionFixtures.standingPair {
+            try #require(try controls.fixture.finish(controls.fixture.result(id,time,people)))
+        } else { _ = try? controls.fixture.finish(controls.fixture.result(id,time,people)) } // nobody in view
         let s = try fixture.packet(id,time,points:points,bad:bad,bodySamples:bodySamples)
         await controls.input.sendAndWaitForContextRead(s)
         return s

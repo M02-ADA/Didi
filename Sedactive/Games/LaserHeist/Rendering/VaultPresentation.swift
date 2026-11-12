@@ -125,6 +125,13 @@ final class VaultPresentation {
     /// through the mascot mapping (`GameWorldMapping.mascotPoint`), the same as the wrists' reach
     /// cursors: a cursor on a button is a wrist in its zone. Nil (replay, or no zone): Theo's walls.
     var liveButtons: ((PlayerID, LaserVaultButton) -> (center: SIMD2<Float>, radius: Float)?)?
+    /// Live rounds with mascots: each player's wall-mounted button console (`LaserGateConsole`).
+    /// When every shown player has one, the buttons are mounted on it, facing into the corridor,
+    /// where the mascot's hand lands from its dock; `liveButtons` is then not used.
+    var liveConsoles: ((PlayerID) -> LaserGateConsole?)?
+    /// The drawn consoles (housing and physical buttons), built once per console geometry.
+    private(set) var consoleViews: [PlayerID: GateConsoleView] = [:]
+    private var consoleMode = false
     /// Live buttons stand IN FRONT of the mascots (toward the camera), so a leaning mascot's
     /// large head never covers them (iPad screenshot, 11 November 2026); the reach cursors are
     /// drawn just in front of the buttons.
@@ -290,6 +297,7 @@ final class VaultPresentation {
         failed = []
         shownButtons = [:]
         completedSides = []
+        for view in consoleViews.values { view.reset() }
         hasApplied = false
     }
 
@@ -326,7 +334,26 @@ final class VaultPresentation {
             diagnostics.approaches += 1
         }
         scene.setVaultDoorDepth(scene.layout.vaultDoorStopZ - distance)
+        // The wall consoles appear (all red) a few seconds before the gate, so the players can steer
+        // to their docks before its time starts; nothing is judged until the gate opens.
+        if lead <= Self.consoleLead { revealConsolesEarly() }
         return true
+    }
+
+    /// How long before a live gate its wall consoles appear (seconds of activity time).
+    static let consoleLead: Double = 4
+
+    private func revealConsolesEarly() {
+        guard !consoleMode else { return }
+        let shown = PlayerID.allCases.filter { visiblePlayers.contains($0) }
+        let consoles = Dictionary(uniqueKeysWithValues: shown.compactMap { p in liveConsoles?(p).map { (p, $0) } })
+        guard !shown.isEmpty, consoles.count == shown.count else { return }
+        buttons.stopAllAnimations()
+        buttons.components.set(OpacityComponent(opacity: 1))
+        buttons.isEnabled = true
+        shownButtons = [:]
+        layoutConsoles(consoles)
+        for view in consoleViews.values { view.reset() }
     }
 
     private func begin(_ vault: LaserVaultState, travelDistance: Float) {
@@ -339,6 +366,7 @@ final class VaultPresentation {
         hidden = false
         shownButtons = [:]
         completedSides = []
+        for view in consoleViews.values { view.reset() }
         anchor = travelDistance + (scene.mapping.interactionPlaneZ - scene.layout.vaultDoorStopZ)
         scene.resetVaultDoor()
         scene.setVaultDoorDepth(scene.layout.vaultDoorStopZ)
@@ -406,6 +434,12 @@ final class VaultPresentation {
                 guard let parts = indicators[player]?[button] else { continue }
                 parts.idle.isEnabled = false
                 parts.active.isEnabled = true
+                if consoleMode, let view = consoleViews[player] {
+                    // The physical button: press, pulse, RED → GREEN (once).
+                    view.complete(button, reduceMotion: reducesMotion())
+                    diagnostics.activations += 1
+                    continue
+                }
                 if !reducesMotion() {
                     Self.pop(parts.part, to: 1.35)
                     diagnostics.pops += 1
@@ -413,7 +447,11 @@ final class VaultPresentation {
                 diagnostics.activations += 1
             }
             shownButtons[player] = now
-            if now.count == LaserVaultButton.allCases.count, visiblePlayers.contains(player),
+            if consoleMode, now.count == LaserVaultButton.allCases.count, visiblePlayers.contains(player),
+               completedSides.insert(player).inserted {
+                consoleViews[player]?.setSideComplete(true)
+                diagnostics.sideCompletions += 1
+            } else if !consoleMode, now.count == LaserVaultButton.allCases.count, visiblePlayers.contains(player),
                completedSides.insert(player).inserted,
                let outline = outlines[player] {
                 outline.isEnabled = true
@@ -498,6 +536,16 @@ final class VaultPresentation {
     /// the wall columns. Each button's art then spans its zone's diameter.
     private func layoutButtons() {
         let shown = PlayerID.allCases.filter { visiblePlayers.contains($0) }
+        let consoles = Dictionary(uniqueKeysWithValues: shown.compactMap { p in liveConsoles?(p).map { (p, $0) } })
+        if !shown.isEmpty, consoles.count == shown.count {
+            layoutConsoles(consoles)
+            return
+        }
+        consoleMode = false
+        scene.robotAvatars?.consolesActive = false
+        for view in consoleViews.values { view.root.isEnabled = false }
+        for parts in indicators.values { for p in parts.values { p.part.orientation = simd_quatf() } }
+        for outline in outlines.values { outline.orientation = simd_quatf() }
         var live: [PlayerID: [LaserVaultButton: (center: SIMD2<Float>, radius: Float)]] = [:]
         for player in shown {
             for button in LaserVaultButton.allCases {
@@ -537,6 +585,35 @@ final class VaultPresentation {
         }
     }
 
+    /// The unified wall consoles (`GateConsoleView`): the 2D indicator art and outlines step aside;
+    /// the buttons' parent stands at depth 0 so the consoles keep their world positions.
+    private func layoutConsoles(_ consoles: [PlayerID: LaserGateConsole]) {
+        liveLayout = true
+        consoleMode = true
+        buttonsBaseZ = 0
+        buttons.position.z = 0
+        scene.robotAvatars?.consolesActive = true
+        for (player, parts) in indicators {
+            for p in parts.values { p.part.isEnabled = false }
+            outlines[player]?.isEnabled = false
+            guard let console = consoles[player] else { consoleViews[player]?.root.isEnabled = false; continue }
+            let view: GateConsoleView
+            if let existing = consoleViews[player], existing.console == console {
+                view = existing
+            } else {
+                consoleViews[player]?.root.removeFromParent()
+                view = GateConsoleView(console: console)
+                buttons.addChild(view.root)
+                consoleViews[player] = view
+            }
+            view.root.isEnabled = true
+            // The game's current activations, at once (a console shown mid-gate is never replayed).
+            for button in LaserVaultButton.allCases {
+                if shownButtons[player, default: []].contains(button) { view.complete(button, reduceMotion: true) }
+            }
+        }
+    }
+
     /// Where one button is drawn now (world X/height), for tests and diagnostics.
     func buttonPosition(_ player: PlayerID, _ button: LaserVaultButton) -> SIMD3<Float>? {
         guard let part = indicators[player]?[button]?.part else { return nil }
@@ -557,12 +634,17 @@ final class VaultPresentation {
         root.isEnabled = false
         buttons.stopAllAnimations()
         buttons.isEnabled = false
+        scene.robotAvatars?.consolesActive = false
         indicatorsShown = false
     }
 
     // MARK: - Look (placeholder until Theo's art)
 
     private static let trackColor: UInt32 = 0x1C1944
+    /// The wall consoles: the corridor's indigo, a lighter mounting face, the LOW ledge between.
+    private static let consoleColor: UInt32 = 0x2A2560
+    private static let consoleLedgeColor: UInt32 = 0x332D72
+    private static let consoleFaceColor: UInt32 = 0x4A438F
     private static let fillColor: UInt32 = 0xFFE3B3
     private static let urgentColor: UInt32 = 0xFF9A3C
     private static let failedColor: UInt32 = 0xE5484D
@@ -667,7 +749,7 @@ final class VaultPresentation {
     }
 
     /// A white check with a dark rim, readable on the green button.
-    private static func checkArt() -> CGImage? {
+    static func checkArt() -> CGImage? {
         let size = CGSize(width: 128, height: 128)
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1

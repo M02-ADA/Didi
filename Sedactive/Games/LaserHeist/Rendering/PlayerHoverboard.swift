@@ -25,13 +25,12 @@ import RealityKitContent
 /// - Bank: the board tilts toward the mascot's shown trunk lean (K03), at most
 ///   `maximumBank`, smoothed over `bankTime`. The deck drops by the bank's rise
 ///   under the stance, so the higher side stays under the raised foot.
-/// - Ride (live lean, 11 November 2026): the board CARRIES the mascot sideways
-///   with its body (`Input.ride`, the shown hip shift clamped to the glide limits),
-///   and the mascot's feet are planted on the board, so a lean moves avatar and
-///   board together with no foot sliding; beyond the limit the feet step on the deck.
+/// - Ride (live lean): the board CARRIES the mascot sideways (`Input.ride`: the shown hip
+///   shift plus the lean steering travel, `LateralSteering`, which alone keeps the boards off
+///   the walls and apart), and the mascot's feet are planted on the board, so avatar and board
+///   move together with no foot sliding.
 /// - Glide (no ride given): the board stays under the mascot's stance, so a side
-///   step or dodge carries it along the lane: up to `maximumGlide` outward, and only
-///   `maximumInwardGlide` toward the partner's lane, so the boards never meet.
+///   step or dodge carries it along.
 /// - A jump push-off sinks the board slightly, and the contact shadow under
 ///   the mascot fades while it is airborne.
 /// - Tracking loss: no stale input is kept. The mascot's shown pose relaxes,
@@ -68,12 +67,13 @@ final class PlayerHoverboard {
     nonisolated static let recoilPerLift: Float = 0.05
     nonisolated static let maximumRecoil: Float = 0.008 * scale
     nonisolated static let recoilTime: Float = 0.1
-    /// How far the board glides from its lane centre with the stance, and how
-    /// quickly it follows. Toward the partner it glides much less: lanes are
-    /// 1.4 m apart and the boards 1.16 m wide, so both fully inward still leave 0.12 m.
-    nonisolated static let maximumGlide: Float = 0.35
-    nonisolated static let maximumInwardGlide: Float = 0.06
+    /// How quickly the board follows the stance when it glides (no ride given). Where it may go is
+    /// `LateralSteering`'s: the walls and the partner's board, never a lane limit (owner, 12 November
+    /// 2026: the earlier ±0.45 m outward / 0.06 m inward lane limits kept the mascots nearly still).
     nonisolated static let glideTime: Float = 0.08
+    /// Half the board's width in the asset (1.16 m at 1.6 m mascots), for the steering's spacing
+    /// when the loaded model reports no bounds.
+    nonisolated static let halfWidth: Float = 0.58 * scale
     /// Lift at which the contact shadow is gone.
     nonisolated static let shadowFadeLift: Float = 0.25
 
@@ -95,8 +95,9 @@ final class PlayerHoverboard {
         var lift: Float = 0
         /// Whether the player is tracked. Unavailable: the board levels out.
         var available = false
-        /// The board's ride offset (metres from the lane centre, already clamped and
-        /// render-smoothed): the board sits exactly here, carrying the planted feet.
+        /// The board's ride offset (metres from the lane centre, render-smoothed, kept off the
+        /// walls and the partner by `LateralSteering`): the board sits exactly here, carrying the
+        /// planted feet.
         /// Nil: glide under the stance instead.
         var ride: Float?
     }
@@ -106,17 +107,14 @@ final class PlayerHoverboard {
     struct Motion: Equatable {
         var bank: Float = 0
         var recoil: Float = 0
-        /// The board's glide along the lane (metres from the lane centre).
+        /// The board's offset from the lane centre (metres).
         var offsetX: Float = 0
-        /// Which way the partner's lane is (+1: +X, −1: −X, 0: none), where the glide is short.
-        var inward: Float = 0
         var hoverPhase: Float = 0
         var pitchPhase: Float = 0
 
-        init(hoverPhase: Float = 0, pitchPhase: Float = 0, inward: Float = 0) {
+        init(hoverPhase: Float = 0, pitchPhase: Float = 0) {
             self.hoverPhase = hoverPhase
             self.pitchPhase = pitchPhase
-            self.inward = inward
         }
 
         static func bankTarget(for input: Input) -> Float {
@@ -130,20 +128,13 @@ final class PlayerHoverboard {
             let push = input.available && input.lift.isFinite ? min(maximumRecoil, recoilPerLift * max(0, input.lift)) : 0
             recoil += (push - recoil) * (1 - exp(-dt / recoilTime))
             if let ride = input.ride, ride.isFinite {
-                offsetX = Self.rideOffset(ride, inward: inward) // the feet are planted on it: no lag
+                offsetX = ride // the feet are planted on it: no lag
             } else {
-                let glide = input.stanceX.isFinite ? Self.rideOffset(input.stanceX, inward: inward) : 0
+                let glide = input.stanceX.isFinite ? input.stanceX : 0
                 offsetX += (glide - offsetX) * (1 - exp(-dt / glideTime))
             }
             hoverPhase = (hoverPhase + 2 * .pi * dt / hoverPeriod).truncatingRemainder(dividingBy: 2 * .pi)
             pitchPhase = (pitchPhase + 2 * .pi * dt / pitchPeriod).truncatingRemainder(dividingBy: 2 * .pi)
-        }
-
-        /// A lateral offset within the glide limits (short toward the partner's lane).
-        static func rideOffset(_ x: Float, inward: Float) -> Float {
-            let upper = inward > 0 ? maximumInwardGlide : maximumGlide
-            let lower = inward < 0 ? -maximumInwardGlide : -maximumGlide
-            return min(upper, max(lower, x))
         }
 
         /// Roll about the board's long axis: a lean to screen right dips the right side.
@@ -173,8 +164,7 @@ final class PlayerHoverboard {
     ///   - template: the loaded board; it is cloned, never shown.
     ///   - floorY: the corridor floor's height relative to the lane (the
     ///     players' feet), where the thrusters' light lands.
-    ///   - laneX: the lane centre's world X; the partner's lane lies toward 0.
-    init(template: Entity, player: PlayerID, floorY: Float, laneX: Float = 0) {
+    init(template: Entity, player: PlayerID, floorY: Float) {
         _ = Self.registration
         self.player = player
         root.name = "player.\(player.rawValue).hoverboard"
@@ -182,8 +172,7 @@ final class PlayerHoverboard {
         model.name = "hoverboard.model"
         root.addChild(model)
         // Each board starts its hover at its own phase, so the two never breathe in unison.
-        motion = Motion(hoverPhase: player == .player1 ? 0 : 2.2, pitchPhase: player == .player1 ? 1.1 : 0,
-                        inward: laneX < 0 ? 1 : laneX > 0 ? -1 : 0)
+        motion = Motion(hoverPhase: player == .player1 ? 0 : 2.2, pitchPhase: player == .player1 ? 1.1 : 0)
         if let accent = model.findEntity(named: "Accent"), let color = Self.accentColor[player] {
             Self.tint(accent, color)
         }

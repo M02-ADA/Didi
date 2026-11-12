@@ -5,14 +5,24 @@ nonisolated struct LaserLiveTimingPolicy: Equatable, Sendable {
     let settlingDuration: Double
     let maximumEvidenceAge: Double
     let countdownDuration: Double
+    /// How long admitted evidence may be missing (a pose dropout during a jump, one landmark
+    /// below confidence, a player briefly unconfirmed) before readiness blocks: while RUNNING,
+    /// this grace; while settling, ready or counting down, `maximumEvidenceAge`. Such a frame is
+    /// simply not admitted (the judge sees no sample, so a crossing then is UNAVAILABLE, never
+    /// CLEAR); it no longer resets settling or aborts the countdown. 0: the strict rule (any such
+    /// frame blocks at once).
+    let trackingGrace: Double
 
-    init(settlingDuration: Double, maximumEvidenceAge: Double, countdownDuration: Double) throws {
+    init(settlingDuration: Double, maximumEvidenceAge: Double, countdownDuration: Double,
+         trackingGrace: Double = 0) throws {
         try requireLaserValue(settlingDuration.isFinite && settlingDuration >= 0
             && maximumEvidenceAge.isFinite && maximumEvidenceAge > 0
-            && countdownDuration.isFinite && countdownDuration > 0, "live timing policy")
+            && countdownDuration.isFinite && countdownDuration > 0
+            && trackingGrace.isFinite && trackingGrace >= 0, "live timing policy")
         self.settlingDuration = settlingDuration
         self.maximumEvidenceAge = maximumEvidenceAge
         self.countdownDuration = countdownDuration
+        self.trackingGrace = trackingGrace
     }
 }
 
@@ -39,6 +49,11 @@ nonisolated struct LaserLiveReadiness: Sendable {
     private var lastEvaluation = 0.0
     private var manualPause = false
     private var evidenceCutover: Double?
+    /// The session holds the clock still while RUNNING for a scripted scene (the final vault
+    /// entry). Any block or pause ends the hold; the session holds again once running.
+    private(set) var isClockHeld = false
+    /// Frames not admitted but tolerated (a flicker), not a blocker (diagnostics).
+    private(set) var skippedFrames = 0
     var gameTime: Double { clock?.gameTime ?? 0 }
     var countdownRemaining: Double? {
         guard phase == .countdown, let countdownDeadline else { return nil }
@@ -54,12 +69,22 @@ nonisolated struct LaserLiveReadiness: Sendable {
     /// the countdown and a manual pause keep the normal rules.
     var continuesWithoutEvidence = false
     #endif
-    private var toleratesMissingEvidence: Bool {
+    /// Whether a frame that cannot be admitted (missing or invalid measurement, unconfirmed pair)
+    /// is skipped rather than blocking at `time`: within the tracking grace of the last admitted
+    /// capture while RUNNING, within `maximumEvidenceAge` while settling, ready or counting down
+    /// (iPad, 12 November 2026: in co-op twelve measurements must all be valid in one frame, and
+    /// single-frame flickers kept restarting settling and aborting the countdown). Sustained loss
+    /// still blocks, as stale evidence. DEBUG Solo Test: always while RUNNING.
+    private func toleratesMissingEvidence(at time: Double) -> Bool {
         #if DEBUG
-        continuesWithoutEvidence && phase == .running
-        #else
-        false
+        if continuesWithoutEvidence && phase == .running { return true }
         #endif
+        guard let policy, policy.trackingGrace > 0, let lastCapture else { return false }
+        switch phase {
+        case .running: return time - lastCapture < policy.trackingGrace
+        case .settling, .ready, .countdown: return time - lastCapture < policy.maximumEvidenceAge
+        default: return false
+        }
     }
 
     init(policy: LaserLiveTimingPolicy? = nil, roster: [PlayerID] = PlayerID.allCases) {
@@ -86,7 +111,10 @@ nonisolated struct LaserLiveReadiness: Sendable {
         try updateContext(value, at: time)
         guard phase != .restartRequired else { return }
         guard value.isActive else { try block(.source, at: time); return }
-        guard bindingConfirmed else { if !toleratesMissingEvidence { try block(.binding, at: time) }; return }
+        guard bindingConfirmed else {
+            if toleratesMissingEvidence(at: time) { skippedFrames += 1 } else { try block(.binding, at: time) }
+            return
+        }
         guard roster.allSatisfy({ value.calibrationRevisions[$0] != nil }), value.accepts(packet) else {
             try block(.calibration, at: time); return
         }
@@ -101,14 +129,17 @@ nonisolated struct LaserLiveReadiness: Sendable {
                 && [sample.geometry.crownY, sample.geometry.leftWristY, sample.geometry.rightWristY,
                     sample.geometry.leftSoleY, sample.geometry.rightSoleY].allSatisfy { $0.validity == .valid }
                 && sample.jumpState.validity == .valid
-        }) else { if !toleratesMissingEvidence { try block(.measurements, at: time) }; return }
+        }) else {
+            if toleratesMissingEvidence(at: time) { skippedFrames += 1 } else { try block(.measurements, at: time) }
+            return
+        }
         guard let policy else { try block(.timingPolicy, at: time); return }
         guard packet.capturedAt <= time, time - packet.capturedAt < policy.maximumEvidenceAge else {
-            if !toleratesMissingEvidence { try block(.staleEvidence, at: time) }; return
+            if !toleratesMissingEvidence(at: time) { try block(.staleEvidence, at: time) }; return
         }
         if let evidenceCutover, packet.capturedAt <= evidenceCutover { return }
         if manualPause { try block(.manualPause, at: time); return }
-        if let lastCapture, packet.capturedAt - lastCapture >= policy.maximumEvidenceAge, !toleratesMissingEvidence {
+        if let lastCapture, packet.capturedAt - lastCapture >= policy.maximumEvidenceAge, !toleratesMissingEvidence(at: time) {
             try block(.staleEvidence, at: time)
         }
         lastFrame = packet.frameID
@@ -127,7 +158,7 @@ nonisolated struct LaserLiveReadiness: Sendable {
         guard phase != .restartRequired else { return }
         if manualPause { try block(.manualPause, at: time); return }
         guard let policy, let lastCapture else { return }
-        guard time >= lastCapture, time - lastCapture < policy.maximumEvidenceAge || toleratesMissingEvidence else {
+        guard time >= lastCapture, time - lastCapture < policy.maximumEvidenceAge || toleratesMissingEvidence(at: time) else {
             try block(.staleEvidence, at: time); return
         }
         if phase == .countdown, let deadline = countdownDeadline, time >= deadline {
@@ -161,7 +192,17 @@ nonisolated struct LaserLiveReadiness: Sendable {
         }
     }
 
+    /// The pair is not confirmed now. A RUNNING round keeps running through the tracking grace
+    /// (nothing is admitted meanwhile; the grace then runs out as stale evidence).
     mutating func invalidateBinding(at time: Double) throws {
+        try validateTime(time)
+        guard phase != .restartRequired, !toleratesMissingEvidence(at: time) else { return }
+        try block(.binding, at: time)
+    }
+
+    /// The tracker can no longer vouch for a player's identity: pause at once (no grace), keeping
+    /// the round. Resumes only through fresh confirmed evidence, settling and the countdown.
+    mutating func requireIdentityRecovery(at time: Double) throws {
         try validateTime(time)
         guard phase != .restartRequired else { return }
         try block(.binding, at: time)
@@ -179,6 +220,22 @@ nonisolated struct LaserLiveReadiness: Sendable {
         try block(.presentation, at: time)
     }
 
+    /// Stops game time at the last evaluated host time while staying RUNNING: evidence rules
+    /// still apply, but no capture maps to game time until `releaseClock` starts a new epoch.
+    mutating func holdClock() throws {
+        guard phase == .running, !isClockHeld, clock?.isRunning == true else { return }
+        try clock?.pause(at: lastEvaluation)
+        isClockHeld = true
+    }
+
+    /// Ends a hold: game time continues from where it stopped; captures from before `time` never count.
+    mutating func releaseClock(at time: Double) throws {
+        try validateTime(time)
+        guard phase == .running, isClockHeld else { return }
+        try clock?.resume(at: time)
+        isClockHeld = false
+    }
+
     func capturedGameTime(for packet: BodySnapshot) -> Double? {
         guard phase == .running, context?.accepts(packet) == true else { return nil }
         return clock?.gameTime(forCaptureTime: packet.capturedAt)
@@ -186,6 +243,7 @@ nonisolated struct LaserLiveReadiness: Sendable {
 
     mutating func requireRestart() {
         phase = .restartRequired
+        isClockHeld = false
         blocker = .source
         countdownDeadline = nil
         resetEvidence()
@@ -193,6 +251,7 @@ nonisolated struct LaserLiveReadiness: Sendable {
 
     private mutating func block(_ reason: LaserLiveReadinessBlocker, at time: Double) throws {
         if clock?.isRunning == true { try clock?.pause(at: time) }
+        isClockHeld = false
         evidenceCutover = max(evidenceCutover ?? time, time)
         resetEvidence()
         countdownDeadline = nil

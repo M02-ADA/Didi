@@ -59,26 +59,19 @@ struct PlayerHoverboardTests {
         #expect(lowest > -0.035)
     }
 
-    @Test("The board glides under the stance, never far enough to meet the other lane's board")
+    /// The board itself has no lane limit (12 November 2026): where it may go is
+    /// `LateralSteering`'s (walls, partner), tested in `LeanSteeringTests`.
+    @Test("The board glides under the stance and sits exactly on a given ride")
     func boardGlidesWithTheStance() throws {
         var motion = Motion()
         Self.run(&motion, Input(stanceX: 0.1, available: true), seconds: 1)
         #expect(abs(motion.offsetX - 0.1) < 1e-3)
-        Self.run(&motion, Input(stanceX: 5, available: true), seconds: 1)
-        #expect(abs(motion.offsetX - PlayerHoverboard.maximumGlide) < 1e-3)
+        Self.run(&motion, Input(stanceX: 1.8, available: true), seconds: 1)
+        #expect(abs(motion.offsetX - 1.8) < 1e-3, "no lane limit")
         Self.run(&motion, Input(stanceX: .nan, available: true), seconds: 1)
         #expect(abs(motion.offsetX) < 1e-3)
-        // Toward the partner's lane (P1's partner is at +X) the glide stops short...
-        var p1 = Motion(inward: 1)
-        Self.run(&p1, Input(stanceX: 5, available: true), seconds: 1)
-        #expect(abs(p1.offsetX - PlayerHoverboard.maximumInwardGlide) < 1e-3)
-        Self.run(&p1, Input(stanceX: -5, available: true), seconds: 1)
-        #expect(abs(p1.offsetX + PlayerHoverboard.maximumGlide) < 1e-3, "outward it glides fully")
-        // ...so both boards gliding fully toward each other stay apart.
-        let halfWidth: Float = 0.58 * PlayerHoverboard.scale
-        let lanes = GameWorldMapping().laneCenterX
-        let distance = abs(try #require(lanes[.player2]) - (try #require(lanes[.player1])))
-        #expect(distance - 2 * (PlayerHoverboard.maximumInwardGlide + halfWidth) > 0.1)
+        motion.step(dt: 1 / 60, input: Input(available: true, ride: -2.1))
+        #expect(motion.offsetX == -2.1, "a ride is followed at once (the feet are planted on it)")
     }
 
     @Test("The same inputs give the same motion")
@@ -122,11 +115,14 @@ struct PlayerHoverboardTests {
         return (scene, layer)
     }
 
-    @Test("Each board glides short toward its partner's lane")
+    @Test("The boards' steering knows both lanes, the corridor and the loaded board's width")
     func boardsKnowWhereTheirPartnerIs() async throws {
-        let (_, layer) = try await Self.sceneWithBoards()
-        #expect(layer.hoverboards[.player1]?.motion.inward == 1)
-        #expect(layer.hoverboards[.player2]?.motion.inward == -1)
+        let (scene, layer) = try await Self.sceneWithBoards()
+        let steering = try #require(layer.steering)
+        #expect(steering.riders[.player1]?.laneX == scene.players[.player1]?.position.x)
+        #expect(steering.riders[.player2]?.laneX == scene.players[.player2]?.position.x)
+        #expect(abs(steering.halfWidth - 0.58 * PlayerHoverboard.scale) < 0.02, "from the asset: \(steering.halfWidth)")
+        #expect(steering.bounds.upperBound + steering.halfWidth < scene.layout.corridorWidth / 2, "inside the walls")
         layer.remove()
     }
 
@@ -195,9 +191,8 @@ struct PlayerHoverboardTests {
         layer.remove()
     }
 
-    /// Live lean (11 November 2026): the board carries the mascot sideways with its hips, the
-    /// feet stay planted ON the board (no sliding), the board banks toward the lean, and toward
-    /// the partner the ride stops at its short limit and the rest is stepped on the deck.
+    /// Live lean: the board carries the mascot sideways with its hips and its lean steering, the
+    /// feet stay planted ON the board (no sliding), and the board banks toward the lean.
     @Test(arguments: [RobotDemoScenario.leanLeft, .leanRight, .stepLeft, .stepRight])
     func theBoardCarriesTheMascotWithItsLean(_ scenario: RobotDemoScenario) async throws {
         let scene = LaserScene()
@@ -240,11 +235,13 @@ struct PlayerHoverboardTests {
             for side in RobotPoseTargets.Side.allCases where d.contact[side] != .planted { anchors[side] = nil }
         }
         let toward: Float = scenario == .leanLeft || scenario == .stepLeft ? -1 : 1
-        // P1's lane is screen-left: its partner (and the short ride limit) is to screen right.
-        let limit = toward > 0 ? PlayerHoverboard.maximumInwardGlide : PlayerHoverboard.maximumGlide
-        print(String(format: "BOARD-RIDE %@ ride %.3f m (limit %.2f) bank %.1f° gap %.4f steps %d drift %.4f",
-                     scenario.key, maxRide, limit, maxBank * 180 / .pi, maxGap, steps, drift))
-        #expect(maxRide * toward > 0.05 && abs(maxRide) <= limit + 1e-4, "the board rides the body, bounded")
+        let steering = try #require(layer.steering)
+        let lane = try #require(steering.riders[.player1]).laneX
+        print(String(format: "BOARD-RIDE %@ ride %.3f m bank %.1f° gap %.4f steps %d drift %.4f",
+                     scenario.key, maxRide, maxBank * 180 / .pi, maxGap, steps, drift))
+        #expect(maxRide * toward > 0.05, "the board rides the body")
+        #expect(lane + maxRide >= steering.bounds.lowerBound - 1e-3 && lane + maxRide <= steering.bounds.upperBound + 1e-3,
+                "within the corridor (float rounding at the limit)")
         #expect(maxGap < 1e-4, "board and planted feet move together")
         #expect(drift < 0.003, "planted feet never slide on the board")
         if scenario == .leanLeft || scenario == .leanRight {

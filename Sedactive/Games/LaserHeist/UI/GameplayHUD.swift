@@ -83,8 +83,11 @@ struct GameplayHUDModel: Equatable {
     ///   - activityDuration: the round's planned activity length (seconds of game
     ///     time), for the continuous part of the progress fill.
     ///   - diamondsCollected: J05's committed count when it exists; until then `nil`.
+    ///   - enteringFinalVault: the team is still entering the final vault (the session's
+    ///     `finalVaultEntry`, on held game time): Diamond Time's title and seconds wait for it.
     init(state: LaserGameState?, events: [GameEvent], configuration: LaserRoundConfiguration,
-         activityDuration: Double, diamondsCollected: Int? = nil, diamondsAreFixture: Bool = false) {
+         activityDuration: Double, diamondsCollected: Int? = nil, diamondsAreFixture: Bool = false,
+         enteringFinalVault: Bool = false) {
         maxHealth = configuration.initialTeamHealth
         health = state?.teamHealth ?? configuration.initialTeamHealth
         score = state?.teamScore ?? 0
@@ -118,10 +121,10 @@ struct GameplayHUDModel: Equatable {
         }
         switch state.phase {
         case .vault where state.vault?.opened != true: banner = .pressButtons
-        case .diamondTime: banner = .retrieveDiamonds
+        case .diamondTime: banner = enteringFinalVault ? .none : .retrieveDiamonds
         default: banner = .none
         }
-        if inDiamondTime, let start = events.last(where: {
+        if inDiamondTime, !enteringFinalVault, let start = events.last(where: {
             $0.sessionGeneration == state.sessionGeneration && $0.kind == .phaseChanged(.diamondTime)
         })?.gameTime {
             let left = start + configuration.diamondTimeDuration - state.gameTime
