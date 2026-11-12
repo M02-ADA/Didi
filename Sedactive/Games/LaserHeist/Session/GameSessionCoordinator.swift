@@ -921,6 +921,24 @@ final class GameSessionCoordinator {
         advanceLive()
     }
 
+    func collectAvatarDiamondContacts(_ contacts: [UUID: Set<PlayerID>], frameHost token: LaserLiveFrameAttachment) {
+        guard !contacts.isEmpty, lifetime != nil, liveFrameAttachment == token, phase == .running,
+              liveReadiness?.isClockHeld == false, let context = inputContext,
+              context == provider.currentContext, context.isActive,
+              var stagedGame = game, !stagedGame.isPaused, stagedGame.roundOutcome == nil,
+              stagedGame.roundPhase == .activity || stagedGame.roundPhase == .diamondTime,
+              var stagedWrist = wristDiamonds else { return }
+        do {
+            try stagedWrist.receiveBodyContacts(contacts, context: context, atHostTime: hostNow(), game: &stagedGame)
+            guard stagedGame.diamondsCollected != game?.diamondsCollected else { return }
+            game = stagedGame
+            wristDiamonds = stagedWrist
+            collectLiveState()
+        } catch {
+            debugRestart("avatar diamond contact rejected: \(error)")
+        }
+    }
+
     func detachLiveFrameHost(_ token: LaserLiveFrameAttachment) {
         guard liveFrameAttachment == token else { return }
         liveFrameAttachment = nil

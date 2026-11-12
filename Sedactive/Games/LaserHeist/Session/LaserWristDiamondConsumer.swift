@@ -140,6 +140,32 @@ nonisolated struct LaserWristDiamondConsumer: Sendable {
 
     var retainedTargetCount: Int { entries.retainedTargetIdentityCount }
 
+    /// Body overlaps are sampled by the attached scene after steering. The game still owns
+    /// phase admission, target eligibility, scoring and replacement.
+    mutating func receiveBodyContacts(_ contacts: [UUID: Set<PlayerID>], context: BodyInputContext,
+                                      atHostTime: Double, game: inout LaserGame) throws {
+        let time = game.gameTime
+        let active = game.activeDiamonds
+        let collected = active.filter { spawn in
+            guard let deadline = game.diamonds[spawn.id]?.interactionDeadline,
+                  time >= spawn.entry, time < deadline, let players = contacts[spawn.id] else { return false }
+            return spawn.eligiblePlayers.contains { player in
+                players.contains(player) && (context.calibrationRevisions[player] ?? 0) > 0
+            }
+        }
+        guard !collected.isEmpty else { return }
+        let ids = Set(collected.map(\.id))
+        var replacements: [LaserDiamondSpawn] = []
+        if game.roundPhase == .diamondTime,
+           let deadline = game.diamonds[collected[0].id]?.interactionDeadline {
+            replacements = try planner.bonusReplacements(collected: collected,
+                surviving: active.filter { !ids.contains($0.id) }, at: time, deadline: deadline)
+        }
+        try game.collectDiamonds([], generation: context.sessionGeneration, calibrationRevisions: context.calibrationRevisions,
+            capturedAt: time, arrivedAt: time, replacements: replacements, bodyContacts: contacts)
+        try refresh(game: game, context: context, atHostTime: atHostTime)
+    }
+
     /// - Parameter vaultZoneShifts: live rounds with mascots (`GameSessionCoordinator`): how far
     ///   each player's vault zones sit from their approved place for THIS capture (unmirrored
     ///   plane, game units, added to X): the player's own body centre and the mascot's distance from

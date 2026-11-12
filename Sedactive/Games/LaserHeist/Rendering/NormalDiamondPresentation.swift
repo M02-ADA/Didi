@@ -77,6 +77,11 @@ final class NormalDiamondPresentation {
     /// Diamond ids with an entity in the scene (tests and debugging).
     var shownIDs: Set<UUID> { Set(shown.keys) }
 
+    func bodyContactSphere(id: UUID) -> (center: SIMD3<Float>, radius: Float)? {
+        guard let entry = shown[id], entry.outcome == .pending else { return nil }
+        return entry.diamond.bodyContactSphere
+    }
+
     /// World depth of a diamond at a game time (same rule as laser gates).
     func depth(of diamond: NormalDiamond, at time: Double) -> Float {
         scene.mapping.interactionPlaneZ - scene.layout.travelSpeed * Float(diamond.crossingTime - time)

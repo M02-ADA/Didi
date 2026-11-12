@@ -16,9 +16,10 @@ import Testing
         renderer.update(state:try #require(session.state))
         #expect(renderer.shownIDs == [DebugWristDiamondFixture.normalID])
         let entity = try #require(scene.root.findEntity(named:"diamond"))
-        let lane = scene.mapping.playerPosition(.player1,heightAboveFloor:1.2)
-        // Mirrored about the lane like the players (plane x 0 is to the lane's right in the plane).
-        let expectedX = lane.x + Float(fixture.plan.layout.centerX(for:.player1)-0)*scene.mapping.metersPerGameUnit
+        let position = try #require(session.diamondStates[DebugWristDiamondFixture.normalID]).spawn.position
+        let lane = scene.mapping.playerPosition(.player1, heightAboveFloor: Float(position.y))
+        // Placement comes from the approved catalog and is still mirrored about the lane.
+        let expectedX = lane.x + Float(fixture.plan.layout.centerX(for: .player1) - position.x) * scene.mapping.metersPerGameUnit
         #expect(abs(entity.position.x-expectedX) < 1e-5)
         try await session.advance(to:0.875)
         #expect(session.state?.teamScore == 0 && session.diamondsCollected == 0)

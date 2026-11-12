@@ -239,7 +239,7 @@ private final class SFXReplayLab {
                       let id = Int(state.spawn.id.uuidString.suffix(12), radix: 16) else { return nil }
                 let collected: Bool
                 switch state.outcome {
-                case .collected: collected = true
+                case .collected, .collectedByBody: collected = true
                 case nil: collected = false
                 default: return nil
                 }

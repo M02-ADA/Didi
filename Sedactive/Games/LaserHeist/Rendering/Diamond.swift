@@ -71,6 +71,12 @@ final class Diamond {
 
     var collectionWorldPosition: SIMD3<Float> { gem.visualBounds(relativeTo: nil).center }
 
+    /// Use the visible gem, excluding sparkles and the HUD flight.
+    var bodyContactSphere: (center: SIMD3<Float>, radius: Float) {
+        let bounds = gem.visualBounds(relativeTo: nil)
+        return (bounds.center, max(bounds.extents.x, bounds.extents.y, bounds.extents.z) / 2)
+    }
+
     func collect(reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled) {
         guard phase == .ready || phase == .idle else { return }
         phase = .collected

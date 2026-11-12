@@ -57,6 +57,11 @@ final class DiamondTimePresentation {
     /// Diamond ids currently floating (not collected), for tests and debugging.
     var floatingIDs: Set<Int> { Set(shown.filter { !$0.value.collected }.keys) }
 
+    func bodyContactSphere(id: Int) -> (center: SIMD3<Float>, radius: Float)? {
+        guard let entry = shown[id], !entry.collected else { return nil }
+        return entry.diamond.bodyContactSphere
+    }
+
     /// - Parameter hidden: shows none yet (the final vault entry still plays).
     func update(state: LaserGameState, diamondTimeStartedAt start: Double?, hidden: Bool = false) {
         let time = state.gameTime

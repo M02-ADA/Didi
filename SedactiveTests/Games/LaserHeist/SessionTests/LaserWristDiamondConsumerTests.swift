@@ -90,6 +90,50 @@ nonisolated struct WristGameplayFixture {
 }
 
 nonisolated struct LaserWristDiamondConsumerTests {
+    @Test func bodyPickupHonorsPassageAndAwardsOnlyOnce() throws {
+        let fixture = try WristGameplayFixture()
+        var game = try fixture.game()
+        let spawn = try LaserDiamondTests.spawn(1, entry: 1, exit: 2, players: [.player1])
+        try game.spawnNormalDiamonds([spawn], beforeVaultAt: 3)
+        var consumer = try LaserWristDiamondConsumer(configuration: fixture.plan(), context: fixture.context,
+                                                      lifetime: UUID(), afterCapturedAt: 100)
+        try game.advance(to: 0.5)
+        try consumer.receiveBodyContacts([spawn.id: [.player1]], context: fixture.context, atHostTime: 100.5, game: &game)
+        #expect(game.teamScore == 0)
+        try game.advance(to: 1.25)
+        try consumer.receiveBodyContacts([spawn.id: [.player2]], context: fixture.context, atHostTime: 101.25, game: &game)
+        #expect(game.teamScore == 0)
+        try consumer.receiveBodyContacts([spawn.id: [.player1]], context: fixture.context, atHostTime: 101.25, game: &game)
+        #expect(game.diamonds[spawn.id]?.outcome == .collectedByBody(player: .player1, at: 1.25))
+        let wrist = LaserContactActivation(targetID: spawn.id, hand: WristGameplayFixture.left)
+        try game.collectDiamonds([wrist], generation: fixture.context.sessionGeneration,
+            calibrationRevisions: fixture.context.calibrationRevisions, capturedAt: 1.5, arrivedAt: 1.5,
+            bodyContacts: [spawn.id: [.player1]])
+        #expect(game.teamScore == 25 && game.diamondsCollected == 1)
+    }
+
+    @Test func bonusBodyPickupReplacesOneDiamondAndStopsAtDeadline() throws {
+        let fixture = try WristGameplayFixture()
+        var game = try fixture.game()
+        let vault = UUID()
+        try game.openVault(id: vault, at: 0)
+        try game.touchVaultBatch(id: vault, contacts: PlayerID.allCases.flatMap { player in
+            LaserVaultButton.allCases.map { .init(playerID: player, button: $0, calibrationRevision: 1) }
+        }, generation: fixture.context.sessionGeneration, at: 0.25)
+        let initial = try (1...4).map { try LaserDiamondTests.spawn($0, at: 0.25, entry: 0.25, exit: 10.25) }
+        try game.startDiamondTimeDiamonds(initial)
+        var consumer = try LaserWristDiamondConsumer(configuration: fixture.plan(), context: fixture.context,
+                                                      lifetime: UUID(), afterCapturedAt: 100)
+        try game.advance(to: 1)
+        try consumer.receiveBodyContacts([initial[0].id: [.player1, .player2]], context: fixture.context,
+                                         atHostTime: 101, game: &game)
+        #expect(game.activeDiamonds.count == 4 && game.teamScore == 25)
+        try game.advance(to: 10.25)
+        try consumer.receiveBodyContacts([initial[1].id: [.player1]], context: fixture.context,
+                                         atHostTime: 110.25, game: &game)
+        #expect(game.summary?.diamondsCollected == 1 && game.summary?.teamScore == 25)
+    }
+
     @Test func randomDiamondCatalogIncludesReachableCornersSidesAndOverhead() throws {
         let fixture = try WristGameplayFixture()
         let layout = fixture.input.playerPlaneLayout
