@@ -38,7 +38,7 @@ final class DiamondTimePresentation {
     private(set) var collections = 0
 
     private let scene: LaserScene
-    private var shown: [Int: (diamond: Diamond, collected: Bool)] = [:]
+    private var shown: [Int: (diamond: Diamond, collected: Bool, until: Double?)] = [:]
     /// Collected diamonds still playing their pickup; removed once it has played.
     private var leaving: [(diamond: Diamond, until: Double)] = []
 
@@ -58,14 +58,18 @@ final class DiamondTimePresentation {
     /// - Parameter hidden: shows none yet (the final vault entry still plays).
     func update(state: LaserGameState, diamondTimeStartedAt start: Double?, hidden: Bool = false) {
         let time = state.gameTime
-        for item in leaving where time >= item.until { item.diamond.root.removeFromParent() }
+        for item in leaving where time >= item.until { item.diamond.retire() }
         leaving.removeAll { time >= $0.until }
         guard state.phase == .diamondTime, !hidden, let start, let source else { return clear() }
+        for (id, item) in shown where item.until.map({ time >= $0 }) == true {
+            item.diamond.retire()
+            shown[id] = nil
+        }
         let wanted = source(max(0, time - start))
         let ids = Set(wanted.map(\.id))
         for (id, item) in shown where !ids.contains(id) {
             if !item.collected { item.diamond.remove() }
-            leaving.append((item.diamond, time + 0.3))
+            leaving.append((item.diamond, time + Diamond.effectLifetime))
             shown[id] = nil
         }
         for diamond in wanted {
@@ -74,6 +78,7 @@ final class DiamondTimePresentation {
                     item.diamond.collect()
                     collections += 1
                     shown[diamond.id]?.collected = true
+                    shown[diamond.id]?.until = time + Diamond.effectLifetime
                 }
                 continue
             }
@@ -84,14 +89,14 @@ final class DiamondTimePresentation {
             entity.root.position = position
             entity.root.name = "diamondTime.diamond.\(diamond.id)"
             entity.showIdle()
-            shown[diamond.id] = (entity, false)
+            shown[diamond.id] = (entity, false, nil)
         }
     }
 
     /// Removes every diamond at once (phase over, round ended, presenter stopped).
     func clear() {
-        for item in shown.values { item.diamond.root.removeFromParent() }
-        for item in leaving { item.diamond.root.removeFromParent() }
+        for item in shown.values { item.diamond.retire() }
+        for item in leaving { item.diamond.retire() }
         shown = [:]
         leaving = []
     }

@@ -106,25 +106,11 @@ def Xform "Root" (
         float3 xformOp:translate = (0, 0, 0)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-        def Mesh "Gem" (
-            prepend apiSchemas = ["MaterialBindingAPI"]
+        def Xform "Gem" (
+            prepend references = @Diamond3D.usdz@</root>
+            doc = "Approved Diamond v1: closed blue faceted mesh, original K06 width/height. Sparkle below stays unchanged."
         )
         {
-            int[] faceVertexCounts = [4]
-            int[] faceVertexIndices = [0, 1, 2, 3]
-            rel material:binding = </Root/Materials/GemArt>
-            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
-                interpolation = "vertex"
-            )
-            point3f[] points = [(-0.15, -0.12715, 0), (0.15, -0.12715, 0), (0.15, 0.12715, 0), (-0.15, 0.12715, 0)]
-            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
-                interpolation = "vertex"
-            )
-            uniform token subdivisionScheme = "none"
-            quatf xformOp:orient = (1, 0, 0, 0)
-            float3 xformOp:scale = (1, 1, 1)
-            float3 xformOp:translate = (0, 0, 0)
-            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
 
         def Mesh "Sparkle" (
