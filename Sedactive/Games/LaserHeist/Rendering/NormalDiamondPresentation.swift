@@ -100,7 +100,7 @@ final class NormalDiamondPresentation {
                     case .collected:
                         entry.diamond.collect()
                         collections += 1
-                        entry.until = time + Diamond.collectDuration + 0.15
+                        entry.until = time + Diamond.effectLifetime
                     case .closed:
                         entry.diamond.remove()
                         entry.until = time + 0.25
@@ -142,7 +142,7 @@ final class NormalDiamondPresentation {
     }
 
     private func remove(_ id: UUID) {
-        shown[id]?.diamond.root.removeFromParent()
+        shown[id]?.diamond.retire()
         shown[id] = nil
     }
 }
