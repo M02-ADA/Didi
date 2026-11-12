@@ -82,6 +82,10 @@ struct LiveGameLoopTests {
         rig.controls.fixture.clock.time = 1.25
         rig.session.advanceLive()
         #expect(rig.session.phase == .paused)
+        #expect(ContentView.showsSetupStage(rig.session))
+        let copy = LaserAutomaticSetupCopy(.init(sessionPhase: rig.session.phase, setupPhase: rig.session.setup?.phase,
+            hasRoundPlan: true, roundStarted: true, readinessBlocker: rig.session.liveReadiness?.blocker))
+        #expect(copy.title == "Tracking paused" && copy.action == nil)
         #expect(rig.session.state?.teamScore == 0 && rig.session.state?.teamHealth == 5)
         #expect(rig.session.results.isEmpty)
         let time = rig.session.state?.gameTime

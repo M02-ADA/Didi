@@ -41,8 +41,8 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
         }
         if input.roundStarted, input.sessionPhase == .paused, input.setupPhase == .restartRequired {
             // The round is kept, paused: it resumes if the same players are confirmed again.
-            (title, instruction, action) = ("Player tracking lost — return to position",
-                "Your round is paused and your score is kept. If we can't tell who is who, restart.",
+            (title, instruction, action) = ("Tracking paused",
+                "Return to your places to continue. Your score is kept. If tracking doesn't recover, restart setup.",
                 .restartSetup); return
         }
         if input.sessionPhase == .restartRequired || input.setupPhase == .restartRequired {
@@ -53,8 +53,12 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
             if input.manualPause {
                 (title, instruction, action) = ("Round paused", "Get back to your places when you're ready.", .continueRound)
             } else if input.roundStarted {
-                (title, instruction, action) = ("Get back in position",
-                    "Stand in your places, upright and still. The round continues by itself.", nil)
+                if input.readinessBlocker == .presentation {
+                    (title, instruction, action) = ("Round paused", "The round will continue when the game is ready.", nil)
+                } else {
+                    (title, instruction, action) = ("Tracking paused",
+                        "Stand in your places with your whole body in view. The round continues automatically.", nil)
+                }
             } else {
                 (title, instruction, action) = ("Get back in position",
                     "Stand in your places, upright and still. The countdown restarts by itself.", nil)

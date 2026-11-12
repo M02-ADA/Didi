@@ -21,12 +21,12 @@ nonisolated struct LaserLiveReadinessTests {
         return BodySnapshot(sessionGeneration: generation, frameID: frame, capturedAt: time,
                             cameraGeometryRevision: 1, players: players)
     }
-    private func runtime() throws -> LaserLiveReadiness {
+    private func runtime(roster: [PlayerID] = PlayerID.allCases) throws -> LaserLiveReadiness {
         LaserLiveReadiness(policy: try LaserLiveTimingPolicy(settlingDuration: 0.125,
-            maximumEvidenceAge: 0.5, countdownDuration: 0.25)) // Controlled fixture values only.
+            maximumEvidenceAge: 0.5, countdownDuration: 0.25), roster: roster) // Controlled fixture values only.
     }
-    private func running() throws -> LaserLiveReadiness {
-        var value = try runtime()
+    private func running(roster: [PlayerID] = PlayerID.allCases) throws -> LaserLiveReadiness {
+        var value = try runtime(roster: roster)
         try value.observe(packet(1, 1000), context: context, bindingConfirmed: true, at: 1000)
         try value.observe(packet(2, 1000.125), context: context, bindingConfirmed: true, at: 1000.125)
         try value.beginCountdown(at: 1000.125)
@@ -77,31 +77,21 @@ nonisolated struct LaserLiveReadinessTests {
         #expect(value.capturedGameTime(for: try packet(3, 1000.25)) == nil)
     }
 
-    #if DEBUG
-    /// DEBUG Solo Test: once running, missing/stale evidence and a lost binding keep the clock
-    /// running (the tester walks to the iPad); the default (co-op) still pauses. Before the
-    /// round runs, and on a manual pause, the normal rules hold.
     @Test(arguments: [true, false])
-    func soloKeepsRunningWithoutEvidenceOnlyWhenEnabled(solo: Bool) throws {
-        var value = try running()
-        value.continuesWithoutEvidence = solo
-        try value.observe(packet(5, 1000.5, valid: false), context: context, bindingConfirmed: true, at: 1000.5)
-        try value.observe(packet(6, 1000.6), context: context, bindingConfirmed: false, at: 1000.6)
+    func missingBodyPausesSoloAndCoopUntilFreshEvidenceReturns(_ solo: Bool) throws {
+        var value = try running(roster: solo ? [.player1] : PlayerID.allCases)
+        try value.observe(packet(5, 1000.5), context: context, bindingConfirmed: false, at: 1000.5)
+        #expect(value.phase == .paused && value.blocker == .binding)
+        let frozen = value.gameTime
         try value.evaluate(at: 1003)
-        if solo {
-            #expect(value.phase == .running && value.gameTime > 2.5, "clock keeps running with no evidence")
-            // Tracking returns after a long gap: admitted again, never a pause.
-            try value.observe(packet(7, 1003.1), context: context, bindingConfirmed: true, at: 1003.1)
-            #expect(value.phase == .running)
-            try value.evaluate(at: 1003.25)
-            #expect(value.capturedGameTime(for: try packet(8, 1003.2)) != nil, "its frames are evidence again")
-            try value.setManualPause(true, at: 1003.3)
-            #expect(value.phase == .paused, "the pause button still pauses")
-        } else {
-            #expect(value.phase == .paused)
-        }
+        #expect(value.gameTime == frozen)
+        try value.observe(packet(6, 1003.125), context: context, bindingConfirmed: true, at: 1003.125)
+        try value.observe(packet(7, 1003.25), context: context, bindingConfirmed: true, at: 1003.25)
+        #expect(value.phase == .ready && value.gameTime == frozen)
+        try value.beginCountdown(at: 1003.25)
+        try value.observe(packet(8, 1003.5), context: context, bindingConfirmed: true, at: 1003.5)
+        #expect(value.phase == .running && value.gameTime == frozen)
     }
-    #endif
 
     @Test func noFrameExpiryPausesAndManualBlockerSurvivesTrackingRecovery() throws {
         var value = try running()

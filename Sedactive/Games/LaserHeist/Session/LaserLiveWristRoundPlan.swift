@@ -57,13 +57,11 @@ nonisolated struct LaserLiveWristRoundPlan: Sendable {
     /// Live readiness timing for device rounds (owner-approved 11 November 2026, pending
     /// device measurement): 1 s of steady, valid tracking before Start, evidence older than
     /// 0.5 s pauses the round, and a 3 s countdown.
-    /// Running grace (Kevin, 12 November 2026, pending device measurement): a co-op round no
-    /// longer pauses for under 1 s without admitted evidence (a jump's pose dropout, a player
-    /// briefly unconfirmed); the tracker's own observation-gap limit, below its 2 s recovery
-    /// window. Crossings then are UNAVAILABLE. Longer losses pause as before.
+    /// During play, a missing or unusable body observation pauses the round. Before play,
+    /// brief flickers still have the normal evidence-age allowance during the countdown.
     static var liveTiming: LaserLiveTimingPolicy {
         try! LaserLiveTimingPolicy(settlingDuration: 1, maximumEvidenceAge: 0.5, countdownDuration: 3,
-                                   trackingGrace: B2bExperimentalPolicyV1.value.maximumObservationGap)
+                                   preservesCountdownOnTrackingFlicker: true)
     }
 }
 

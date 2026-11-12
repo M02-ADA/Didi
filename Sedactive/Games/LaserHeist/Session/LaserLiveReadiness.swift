@@ -12,9 +12,10 @@ nonisolated struct LaserLiveTimingPolicy: Equatable, Sendable {
     /// CLEAR); it no longer resets settling or aborts the countdown. 0: the strict rule (any such
     /// frame blocks at once).
     let trackingGrace: Double
+    let preservesCountdownOnTrackingFlicker: Bool
 
     init(settlingDuration: Double, maximumEvidenceAge: Double, countdownDuration: Double,
-         trackingGrace: Double = 0) throws {
+         trackingGrace: Double = 0, preservesCountdownOnTrackingFlicker: Bool? = nil) throws {
         try requireLaserValue(settlingDuration.isFinite && settlingDuration >= 0
             && maximumEvidenceAge.isFinite && maximumEvidenceAge > 0
             && countdownDuration.isFinite && countdownDuration > 0
@@ -23,6 +24,7 @@ nonisolated struct LaserLiveTimingPolicy: Equatable, Sendable {
         self.maximumEvidenceAge = maximumEvidenceAge
         self.countdownDuration = countdownDuration
         self.trackingGrace = trackingGrace
+        self.preservesCountdownOnTrackingFlicker = preservesCountdownOnTrackingFlicker ?? (trackingGrace > 0)
     }
 }
 
@@ -62,27 +64,18 @@ nonisolated struct LaserLiveReadiness: Sendable {
 
     /// The players whose evidence admits the round: both, or P1 alone in a DEBUG Solo Test.
     let roster: [PlayerID]
-    #if DEBUG
-    /// DEBUG Solo Test only: once RUNNING, missing, invalid or stale body evidence (or a lost
-    /// binding) no longer pauses the clock, so the tester can walk to the iPad. The evidence is
-    /// still not admitted: the judge sees no sample and the lasers are UNAVAILABLE. Starting,
-    /// the countdown and a manual pause keep the normal rules.
-    var continuesWithoutEvidence = false
-    #endif
     /// Whether a frame that cannot be admitted (missing or invalid measurement, unconfirmed pair)
     /// is skipped rather than blocking at `time`: within the tracking grace of the last admitted
     /// capture while RUNNING, within `maximumEvidenceAge` while settling, ready or counting down
     /// (iPad, 12 November 2026: in co-op twelve measurements must all be valid in one frame, and
     /// single-frame flickers kept restarting settling and aborting the countdown). Sustained loss
-    /// still blocks, as stale evidence. DEBUG Solo Test: always while RUNNING.
+    /// still blocks, as stale evidence.
     private func toleratesMissingEvidence(at time: Double) -> Bool {
-        #if DEBUG
-        if continuesWithoutEvidence && phase == .running { return true }
-        #endif
-        guard let policy, policy.trackingGrace > 0, let lastCapture else { return false }
+        guard let policy, let lastCapture else { return false }
         switch phase {
         case .running: return time - lastCapture < policy.trackingGrace
-        case .settling, .ready, .countdown: return time - lastCapture < policy.maximumEvidenceAge
+        case .settling, .ready, .countdown:
+            return policy.preservesCountdownOnTrackingFlicker && time - lastCapture < policy.maximumEvidenceAge
         default: return false
         }
     }
