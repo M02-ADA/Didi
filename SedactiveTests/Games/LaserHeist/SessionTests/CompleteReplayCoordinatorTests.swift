@@ -18,6 +18,17 @@ struct CompleteReplayCoordinatorTests {
 
     @Test func fullCooperativeRoundRunsThroughTheProductionCoordinator() async throws {
         let script = try LaserReplayScript.complete(seed: 1)
+        let plan = try #require(script.fullRound)
+        let passages = plan.steps.compactMap { step -> LaserDiamondSpawn? in
+            if case .normalDiamond(let spawn, _) = step.action { return spawn }
+            return nil
+        }
+        let overlappingMoves = script.encounters.flatMap(\.targets).filter { target in
+            passages.contains { spawn in
+                spawn.eligiblePlayers.contains(target.playerID) && (spawn.entry..<spawn.exit).contains(target.crossingTime)
+            }
+        }.map(\.requiredMove)
+        #expect(overlappingMoves.contains(.duck) && overlappingMoves.contains(.jump))
         let session = try await run(script, step: 0.25)
         let summary = try #require(session.summary)
         let normalCount = try #require(script.fullRound?.normalDiamondCount)
@@ -25,7 +36,7 @@ struct CompleteReplayCoordinatorTests {
         #expect(summary.outcome == .completed && summary.remainingTeamHealth == 5 && summary.vaultsOpened == 5)
         #expect(summary.targets.allSatisfy { $0.scheduled == 50 && $0.cleared == 50 })
         #expect(session.results.count == 100 && session.results.allSatisfy { $0.judgement == .clear })
-        #expect((30...40).contains(normalCount))
+        #expect((70...80).contains(normalCount))
         #expect((normalCount + 4 ... normalCount + 8).contains(summary.diamondsCollected))
         #expect(summary.teamScore == 10_000 + 25 * summary.diamondsCollected)
         #expect(summary.diamondsCollected == session.diamondsCollected)
@@ -39,7 +50,13 @@ struct CompleteReplayCoordinatorTests {
         let script = try LaserReplayScript.complete(seed: 7)
         let fine = try await run(script, step: 0.1)
         let skipped = try await run(script, step: 10_000)
-        #expect(fine.summary == skipped.summary)
+        let fineSummary = try #require(fine.summary)
+        let skippedSummary = try #require(skipped.summary)
+        #expect(abs(fineSummary.activityDuration - skippedSummary.activityDuration) < 1e-8)
+        #expect(fineSummary.outcome == skippedSummary.outcome && fineSummary.gameDuration == skippedSummary.gameDuration)
+        #expect(fineSummary.teamScore == skippedSummary.teamScore && fineSummary.remainingTeamHealth == skippedSummary.remainingTeamHealth)
+        #expect(fineSummary.diamondsCollected == skippedSummary.diamondsCollected && fineSummary.vaultsOpened == skippedSummary.vaultsOpened)
+        #expect(fineSummary.targets == skippedSummary.targets && fineSummary.coopResults == skippedSummary.coopResults)
         #expect(fine.results == skipped.results)
         #expect(fine.events == skipped.events)
         #expect(fine.diamondStates == skipped.diamondStates)

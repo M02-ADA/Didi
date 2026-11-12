@@ -18,18 +18,18 @@ Each row's squat/jump target applies to **each player**, not the combined team. 
 
 | Activity progress | High / squat targets per player | Low / jump targets per player | Random diamond spawns | Obstacle targets / player |
 |---|---:|---:|---:|---:|
-| 0:00–1:00 | 5 | 3 | 2–4 | 8 |
-| 1:00–2:00 | 6 | 3 | 4–6 | 9 |
-| 2:00–3:00 | 6 | 4 | 6–8 | 10 |
-| 3:00–4:00 | 7 | 4 | 8–10 | 11 |
-| 4:00–5:00 | 8 | 4 | 10–12 | 12 |
+| 0:00–1:00 | 5 | 3 | 8–10 | 8 |
+| 1:00–2:00 | 6 | 3 | 11–13 | 9 |
+| 2:00–3:00 | 6 | 4 | 14–16 | 10 |
+| 3:00–4:00 | 7 | 4 | 17–19 | 11 |
+| 4:00–5:00 | 8 | 4 | 20–22 | 12 |
 | 5:00–5:10 Diamond Time | 0 | 0 | No fixed total; at most 4 active for the team | 0 |
-| **Total / player** | **32** | **18** | **30–40 normal; finale collection count uncapped** | **50** |
+| **Total / player** | **32** | **18** | **70–80 normal per team; finale collection count uncapped** | **50** |
 
 - At each minute boundary (1:00, 2:00, 3:00, 4:00 and 5:00), enter a Dual Key Vault. Its opening opportunity lasts **5 seconds**; failure to open ends the round regardless of remaining health.
 - Each side has **three virtual buttons**, located at the top, middle and bottom of its own side. Players may use either hand and activate them in any order; both sides must finish before timeout, without requiring simultaneous completion. Contact measurement details remain TBD in B4.
 - The activity progress bar **stops during vaults**. After the fifth vault opens, enter **10 seconds of Diamond Time**. Activity progression totals 300 + 10 = **310 seconds**; elapsed session time may be longer because vaults, setup, countdowns and pauses are separate.
-- Normal diamonds approach the player like lasers and spawn randomly within each minute's count range. They have **no fixed lifetime**: a valid wrist contact while a diamond crosses its interaction area collects it; once it has passed, it cannot be collected again. All normal diamonds finish before vault entry.
+- Normal diamonds approach the player like lasers and spawn within each minute's seeded count range. A pickup window can overlap a laser crossing so players may choose whether to reach, duck, or jump. A valid wrist contact during the passage collects the diamond. Once it has passed, it cannot be collected again. All normal diamonds finish before vault entry.
 - During Diamond Time, at most **4 diamonds are active simultaneously across the team**, at different positions. Each collected diamond triggers a new diamond at another position while the phase remains active. There is no fixed total collection/spawn quota: faster collection creates more replacement opportunities. No additional squat/jump quota is added during this phase.
 - Shared health is **5**. Each player's HIT removes one health, so two HITs in one encounter remove two. Five health is a team damage budget, not five guaranteed failed encounters or five failures for each player. **Confirmed — task owner:** all points accumulate in one shared team score; each CLEAR laser target contributes 100, so two CLEAR players contribute 200 for one encounter. A CLEAR player still contributes 100 when the partner is HIT. Diamond value remains proposed in B3/G14.
 
@@ -224,7 +224,7 @@ Task-owner product values are labeled **Confirmed — task owner**. Other number
 | Obstacle grid / player | **32 high/squat + 18 low/jump — Confirmed, task owner** | 50 scheduled targets; successful count may be lower; no catch-up extension |
 | Vault opportunity | **5 seconds, five vaults — Confirmed, task owner** | Three buttons per side; timeout ends round |
 | Diamond availability | **No fixed lifetime — Confirmed, task owner** | Wrist collection only during approach's interaction-area crossing; cannot collect after passing; passage bounds/speed TBD |
-| Normal diamond spawns | **2–4 / 4–6 / 6–8 / 8–10 / 10–12 — Confirmed, task owner** | Total team; random per minute; all collected or passed before vault |
+| Normal diamond spawns | **8–10 / 11–13 / 14–16 / 17–19 / 20–22** | Total team; seeded count and position; pickup windows may overlap lasers; all collected or passed before vault |
 | Diamond Time duration | **10 active seconds after the final vault — Confirmed, task owner** | No fixed total diamond spawn/collection quota |
 | Active Diamond Time cap | **4 total-team diamonds — Confirmed, task owner** | Distinct positions; includes approaching/currently collectible diamonds |
 | Initial Diamond Time population | **4 diamonds — Confirmed, task owner, 10 Nov** | Exactly four in the initial reviewed plan; targets remain until collected or phase end |

@@ -62,7 +62,8 @@ nonisolated struct LaserDiamondPlanner: Sendable {
         try requireLaserValue((0..<5).contains(minute) && start.isFinite && boundary.isFinite && start >= 0
             && boundary - start > approachLead + passageDuration, "normal diamond segment")
         var next = self
-        let minimum = 2 + minute * 2
+        // Diamond passages may overlap laser crossings, giving players a choice of action.
+        let minimum = 8 + minute * 3
         let count = minimum + Int(next.random() % 3)
         let available = boundary - start - approachLead - passageDuration
         var result: [LaserDiamondSpawn] = []
