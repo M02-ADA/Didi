@@ -118,7 +118,7 @@ final class LaserReplayPresentation {
                           let id = Int(state.spawn.id.uuidString.suffix(12), radix: 16) else { return nil }
                     let collected: Bool
                     switch state.outcome {
-                    case .collected: collected = true
+                    case .collected, .collectedByBody: collected = true
                     case nil: collected = false
                     default: return nil
                     }
@@ -140,6 +140,8 @@ final class LaserReplayPresentation {
                 guard let attachment = self.liveAttachment else { return }
                 session.advanceLive(frameHost: attachment)
                 self.render(scene: scene, session: session)
+                session.collectAvatarDiamondContacts(self.avatarDiamondContacts(scene: scene, session: session),
+                                                     frameHost: attachment)
                 return
             }
             guard session.phase == .running else { return }
@@ -205,6 +207,38 @@ final class LaserReplayPresentation {
         #endif
     }
 
+    private func avatarDiamondContacts(scene: LaserScene, session: GameSessionCoordinator) -> [UUID: Set<PlayerID>] {
+        guard let presenter, let avatars = scene.robotAvatars, let state = session.state,
+              let snapshot = session.latestSnapshot, session.phase == .running,
+              state.phase == .activity || state.phase == .diamondTime else { return [:] }
+        let active = session.diamondStates.values.filter {
+            $0.outcome == nil && state.gameTime >= $0.spawn.entry && state.gameTime < $0.interactionDeadline
+        }
+        guard !active.isEmpty else { return [:] }
+        let bodies = Dictionary(uniqueKeysWithValues: session.inputConfiguration.roster.compactMap { player in
+            guard snapshot.players[player]?.trackingStatus == .reliable else { return nil as (PlayerID, [AvatarDiamondContactCapsule])? }
+            return (player, avatars.diamondContactBody(player))
+        })
+        var contacts: [UUID: Set<PlayerID>] = [:]
+        for target in active {
+            let id = target.spawn.id
+            let sphere: (center: SIMD3<Float>, radius: Float)?
+            switch target.lifetime {
+            case .passage:
+                sphere = presenter.normalDiamonds.bodyContactSphere(id: id)
+            case .diamondTime:
+                sphere = Int(id.uuidString.suffix(12), radix: 16).flatMap { presenter.diamondTime.bodyContactSphere(id: $0) }
+            }
+            guard let sphere, sphere.radius > 0 else { continue }
+            for player in target.spawn.eligiblePlayers where bodies[player]?.contains(where: {
+                $0.overlaps(center: sphere.center, radius: sphere.radius)
+            }) == true {
+                contacts[id, default: []].insert(player)
+            }
+        }
+        return contacts
+    }
+
     private func render(scene: LaserScene, session: GameSessionCoordinator) {
         guard let state = session.state else { return }
         if flightScenePhase != state.phase { diamondFlights?.clear(); flightScenePhase = state.phase }
@@ -256,7 +290,7 @@ final class LaserReplayPresentation {
                   let lane = PlayerID.allCases.first(where: { state.spawn.eligiblePlayers.contains($0) }) else { return nil }
             let outcome: NormalDiamond.Outcome = switch state.outcome {
             case nil: .pending
-            case .collected: .collected
+            case .collected, .collectedByBody: .collected
             case .missed: .missed
             case .closed: .closed
             }

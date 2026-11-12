@@ -20,6 +20,62 @@ import Testing
         return try #require(DiamondArt(artwork: artwork))
     }
     @Test func approvedResourceLoadsWithDepthAndSparkle() async throws { _ = try await art() }
+
+    @Test func actualGemOverlapsPosedMascotBodyAfterLateralMovement() async throws {
+        let scene = LaserScene()
+        let input = try LaserReplayScript.load().input.configuration
+        let avatars = RobotAvatarLayer(scene: scene, calibrations: input.calibrations,
+            layout: input.playerPlaneLayout, templates: try await RobotAvatarLayer.loadTemplates())
+        let robot = try #require(avatars.robots[.player1])
+        let skeleton = robot.solver.skeleton
+        let gem = try await art().makeDiamond()
+        let joints = skeleton.world(robot.model.jointTransforms).position
+        for name in ["Head", "Chest", "Forearm_L", "Hand_R", "Shin_L", "Foot_R"] {
+            let joint = try #require(skeleton(name))
+            gem.root.position = robot.model.convert(position: joints[joint], to: nil)
+            let sphere = gem.bodyContactSphere
+            #expect(avatars.diamondContactBody(.player1).contains {
+                $0.overlaps(center: sphere.center, radius: sphere.radius)
+            }, "Expected the gem to touch \(name)")
+        }
+        let before = gem.bodyContactSphere
+        robot.container.position.x += 3
+        #expect(!avatars.diamondContactBody(.player1).contains {
+            $0.overlaps(center: before.center, radius: before.radius)
+        })
+        gem.root.position = robot.model.convert(position: joints[try #require(skeleton("Chest"))], to: nil)
+        let shifted = gem.bodyContactSphere
+        #expect(avatars.diamondContactBody(.player1).contains {
+            $0.overlaps(center: shifted.center, radius: shifted.radius)
+        })
+    }
+
+    @Test func diamondTimeSpawnCatalogClearsStandingMascotsAndStillAllowsHeadPickup() async throws {
+        let scene = LaserScene()
+        let input = try LaserReplayScript.load().input.configuration
+        let layout = input.playerPlaneLayout
+        let avatars = RobotAvatarLayer(scene: scene, calibrations: input.calibrations,
+            layout: layout, templates: try await RobotAvatarLayer.loadTemplates())
+        let gem = try await art().makeDiamond()
+        let bodies = PlayerID.allCases.flatMap { avatars.diamondContactBody($0) }
+        for player in PlayerID.allCases {
+            let calibration = try #require(input.calibrations[player])
+            let height = LaserLiveRoundGeometryV1.standingHeight(calibration, layout: layout)
+            let lane = layout.centerX(for: player)
+            let placements = try LaserLiveRoundGeometryV1.diamondPlacements(player: player, lane: lane, height: height)
+            for target in placements {
+                let shown = scene.mapping.mascotPoint(x: target.position.x, y: target.position.y,
+                    player: player, laneCenter: lane, standingHeight: height)
+                gem.root.position = [shown.center.x, shown.center.y, scene.mapping.interactionPlaneZ + 0.15]
+                let sphere = gem.bodyContactSphere
+                #expect(!bodies.contains { $0.overlaps(center: sphere.center, radius: sphere.radius) },
+                        "Spawn overlaps a standing mascot: \(player) \(target.position)")
+            }
+        }
+        gem.root.position = try #require(avatars.extremityPoints(of: .player1)).headTop
+        let head = gem.bodyContactSphere
+        #expect(avatars.diamondContactBody(.player1).contains { $0.overlaps(center: head.center, radius: head.radius) })
+    }
     @Test func collectionIsOnceAndFourClonesAreIndependent() async throws {
         let art = try await art()
         let diamonds = (0..<4).map { _ in art.makeDiamond() }

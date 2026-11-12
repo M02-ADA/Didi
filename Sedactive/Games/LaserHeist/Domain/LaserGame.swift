@@ -391,7 +391,8 @@ nonisolated struct LaserGame: Sendable {
     @discardableResult
     mutating func collectDiamonds(_ contacts: [LaserContactActivation], generation: UUID,
                                   calibrationRevisions: [PlayerID: UInt64], capturedAt: Double,
-                                  arrivedAt: Double, replacements: [LaserDiamondSpawn] = []) throws
+                                  arrivedAt: Double, replacements: [LaserDiamondSpawn] = [],
+                                  bodyContacts: [UUID: Set<PlayerID>] = [:]) throws
         -> [LaserContactActivation] {
         guard !blocked && !exited && roundOutcome == nil && context.isActive,
               generation == context.sessionGeneration, let diamondPoints else { return [] }
@@ -407,9 +408,14 @@ nonisolated struct LaserGame: Sendable {
             }
             return false
         }
+        let eligibleBodies = bodyContacts.mapValues { players in players.filter {
+            guard let revision = calibrationRevisions[$0], revision > 0 else { return false }
+            return revision == context.calibrationRevisions[$0]
+        } }
         let accepted = try next.diamondField.collect(eligible, capturedAt: capturedAt, arrivedAt: arrivedAt,
-            replacements: replacements, bonusDeadline: next.roundPhase == .diamondTime ? next.bonusDeadline : nil)
-        let (points, multipliedOverflow) = diamondPoints.multipliedReportingOverflow(by: accepted.count)
+            replacements: replacements, bonusDeadline: next.roundPhase == .diamondTime ? next.bonusDeadline : nil,
+            bodyContacts: eligibleBodies)
+        let (points, multipliedOverflow) = diamondPoints.multipliedReportingOverflow(by: next.diamondsCollected - diamondsCollected)
         let (score, scoreOverflow) = next.teamScore.addingReportingOverflow(points)
         try requireLaserValue(!multipliedOverflow && !scoreOverflow, "diamond score overflow")
         next.teamScore = score

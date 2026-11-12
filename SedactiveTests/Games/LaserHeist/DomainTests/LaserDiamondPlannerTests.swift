@@ -18,7 +18,7 @@ nonisolated struct LaserDiamondPlannerTests {
             let plan = try first.normalMinute(minute, from: start, until: start + 60)
             let repeated = try second.normalMinute(minute, from: start, until: start + 60)
             #expect(plan == repeated)
-            #expect((2 + minute * 2 ... 4 + minute * 2).contains(plan.count))
+            #expect((8 + minute * 3 ... 10 + minute * 3).contains(plan.count))
             #expect(plan.allSatisfy { $0.spawnedAt > start && $0.entry > $0.spawnedAt && $0.exit < start + 60 })
             #expect(Set(plan.map(\.id)).count == plan.count)
         }

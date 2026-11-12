@@ -38,8 +38,10 @@ nonisolated struct LaserDiamondSpawn: Equatable, Sendable {
 
 nonisolated enum LaserDiamondOutcome: Equatable, Sendable {
     case collected(hand: LaserContactHand, at: Double)
+    case collectedByBody(player: PlayerID, at: Double)
     case missed(at: Double)
     case closed
+
 }
 
 nonisolated enum LaserDiamondLifetime: Equatable, Sendable {
@@ -119,11 +121,13 @@ nonisolated struct LaserDiamondField: Sendable {
     /// Verified entry commands only. Exact capture/arrival eligibility is checked again.
     /// Build on a value copy so a rejected replacement plan cannot partially award.
     mutating func collect(_ contacts: [LaserContactActivation], capturedAt: Double, arrivedAt: Double,
-                          replacements: [LaserDiamondSpawn], bonusDeadline: Double?) throws
+                          replacements: [LaserDiamondSpawn], bonusDeadline: Double?,
+                          bodyContacts: [UUID: Set<PlayerID>] = [:]) throws
         -> [LaserContactActivation] {
         var next = self
         next.advance(to: arrivedAt)
         var accepted: [LaserContactActivation] = []
+        var collectedIDs: [UUID] = []
         for spawn in next.active {
             guard let deadline = next.states[spawn.id]?.interactionDeadline,
                   capturedAt >= spawn.entry, capturedAt < deadline, arrivedAt < deadline else { continue }
@@ -132,22 +136,26 @@ nonisolated struct LaserDiamondField: Sendable {
                     && contacts.contains { $0.targetID == spawn.id && $0.hand == hand }
             }) {
                 accepted.append(LaserContactActivation(targetID: spawn.id, hand: hand))
+                next.states[spawn.id]?.outcome = .collected(hand: hand, at: arrivedAt)
+                collectedIDs.append(spawn.id)
+            } else if let player = PlayerID.allCases.first(where: {
+                spawn.eligiblePlayers.contains($0) && bodyContacts[spawn.id]?.contains($0) == true
+            }) {
+                next.states[spawn.id]?.outcome = .collectedByBody(player: player, at: arrivedAt)
+                collectedIDs.append(spawn.id)
             }
         }
         if let bonusDeadline {
-            try requireLaserValue(replacements.count == accepted.count && arrivedAt < bonusDeadline,
+            try requireLaserValue(replacements.count == collectedIDs.count && arrivedAt < bonusDeadline,
                                   "one replacement per bonus collection")
-            for (contact, replacement) in zip(accepted, replacements) {
-                try requireLaserValue(replacement.position != next.states[contact.targetID]?.spawn.position,
+            for (id, replacement) in zip(collectedIDs, replacements) {
+                try requireLaserValue(replacement.position != next.states[id]?.spawn.position,
                                       "replacement must move position")
             }
         } else {
             try requireLaserValue(replacements.isEmpty, "no normal collection replacement")
         }
-        for contact in accepted {
-            next.states[contact.targetID]?.outcome = .collected(hand: contact.hand, at: arrivedAt)
-        }
-        let (count, overflow) = next.collectedCount.addingReportingOverflow(accepted.count)
+        let (count, overflow) = next.collectedCount.addingReportingOverflow(collectedIDs.count)
         try requireLaserValue(!overflow, "diamond count overflow")
         next.collectedCount = count
         if let bonusDeadline, !replacements.isEmpty {

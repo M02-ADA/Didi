@@ -17,11 +17,18 @@ nonisolated struct DebugWristDiamondFixture {
         let authority = WristContactContextV1(sourceEpoch: UUID(), controlRevision: 2,
             bindingRequestID: UUID(), bindingFrameID: 1, bindingCapturedAt: 0,
             acceptedContextRevision: 1, freshness: B2bExperimentalPolicyV1.value.freshness)
-        let normal = try LaserDiamondSpawn(id: normalID, position: .init(x: 0, y: 1.2),
-            eligiblePlayers: [.player1], spawnedAt: 0, entry: 0.25, exit: 1.75)
-        let placements = try [(-0.35,0.7),(0.15,0.7),(-0.35,1.15),(0.15,1.15),(-0.35,1.55),(0.15,1.55)].map {
-            LaserDiamondPlacement(position: try .init(x: $0.0, y: $0.1), eligiblePlayers: [.player1])
+        let p1 = config.calibrations[.player1]!
+        let lane = layout.centerX(for: .player1)
+        let height = LaserLiveRoundGeometryV1.standingHeight(p1, layout: layout)
+        // Use the same body-relative catalog as live play. The old debug-only points
+        // put the high diamonds close to Lemon's head.
+        let maxCameraY = p1.mapping.gameY(imageY: 0.995, layout: layout)
+        let placements = try LaserLiveRoundGeometryV1.diamondPlacements(player: .player1, lane: lane, height: height).map {
+            try LaserDiamondPlacement(position: .init(x: $0.position.x, y: min($0.position.y, maxCameraY)),
+                                      eligiblePlayers: $0.eligiblePlayers)
         }
+        let normal = try LaserDiamondSpawn(id: normalID, position: placements[2].position,
+            eligiblePlayers: [.player1], spawnedAt: 0, entry: 0.25, exit: 1.75)
         let planner = try LaserDiamondPlanner(seed: 7, placements: placements, approachLead: 0.5, passageDuration: 1)
         var afterInitial = planner
         let bonus = try afterInitial.bonusInitial(at: bonusStart, deadline: deadline)
