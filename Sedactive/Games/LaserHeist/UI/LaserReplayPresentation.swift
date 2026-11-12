@@ -12,6 +12,8 @@ final class LaserReplayPresentation {
     private var subscription: EventSubscription?
     private var session: GameSessionCoordinator?
     /// The replay's frame-update signal (TEAM_ALIGNMENT §C), one per generation.
+    private var flightScenePhase: LaserRoundPhase?
+    var diamondFlights: DiamondHUDFlightModel?
     private var frameClock = ReplayFrameClock()
     private var busy = false
     private var presenter: GameplayScenePresenter?
@@ -59,6 +61,21 @@ final class LaserReplayPresentation {
         #endif
         presenter = GameplayScenePresenter(scene: scene, configuration: configuration,
                                            encounters: session.plannedEncounters, showsDebugMarkers: markers)
+        // Capture the real visual position synchronously before the native collection effect.
+        presenter?.normalDiamonds.onCollected = { [weak self, weak session] id, world in
+            guard let generation = session?.state?.sessionGeneration else { return }
+            self?.diamondFlights?.collect(.normal(id), generation: generation, world: world,
+                reduceMotion: UIAccessibility.isReduceMotionEnabled) {
+                    content.project(point: $0, to: .named(DiamondHUDFlightModel.space))
+                }
+        }
+        presenter?.diamondTime.onCollected = { [weak self, weak session] id, world in
+            guard let generation = session?.state?.sessionGeneration else { return }
+            self?.diamondFlights?.collect(.bonus(id), generation: generation, world: world,
+                reduceMotion: UIAccessibility.isReduceMotionEnabled) {
+                    content.project(point: $0, to: .named(DiamondHUDFlightModel.space))
+                }
+        }
         // A DEBUG Solo Test vault shows P1's buttons only (its roster); co-op shows both.
         presenter?.vault.visiblePlayers = Set(session.inputConfiguration.roster)
         if !session.isReplay || Self.previewsLiveButtons {
@@ -175,6 +192,7 @@ final class LaserReplayPresentation {
     #endif
 
     func stop() {
+        diamondFlights?.clear()
         subscription?.cancel()
         subscription = nil
         if let liveAttachment { session?.detachLiveFrameHost(liveAttachment) }
@@ -189,6 +207,8 @@ final class LaserReplayPresentation {
 
     private func render(scene: LaserScene, session: GameSessionCoordinator) {
         guard let state = session.state else { return }
+        if flightScenePhase != state.phase { diamondFlights?.clear(); flightScenePhase = state.phase }
+        diamondFlights?.session(state.sessionGeneration, running: session.phase == .running && session.summary == nil)
         presenter?.apply(state: state, events: session.events, snapshot: session.latestSnapshot,
                          upcomingVaultIn: session.isCompleteReplay
                             ? Self.upcomingVaultIn(state: state, activityDuration: session.activityDuration)

@@ -256,6 +256,7 @@ struct GameplayHUD: View {
         HStack(spacing: 8 * k) {
             Image(systemName: "star.fill")
                 .foregroundStyle(Self.sun)
+                .anchorPreference(key: DiamondScoreAnchorKey.self, value: .bounds) { $0 }
             Text(model.score, format: .number)
                 .contentTransition(.numericText(value: Double(model.score)))
                 .monospacedDigit()
