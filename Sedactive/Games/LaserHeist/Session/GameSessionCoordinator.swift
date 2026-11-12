@@ -89,15 +89,6 @@ final class GameSessionCoordinator {
         return result
     }
     var canPauseLiveRound: Bool { !isReplay && (phase == .running || phase == .countdown) }
-    /// DEBUG Solo Test only: once the round has begun, losing P1 neither pauses nor restarts it.
-    /// Always false in co-op and in Release.
-    var soloRoundToleratesTrackingLoss: Bool {
-        #if DEBUG
-        inputConfiguration.soloPlayer != nil && game != nil && summary == nil
-        #else
-        false
-        #endif
-    }
     #if DEBUG
     private func controls(trackingP1IsLive setup: LaserSessionSetup?) -> Bool {
         guard let slot = setup?.diagnosticControls.tracking.latest?[.player1] else { return false }
@@ -593,7 +584,7 @@ final class GameSessionCoordinator {
             try liveReadiness?.updateContext(context, at: time)
             if setup != nil, setup?.hasConfirmedReliablePair != true {
                 latestSnapshot = nil
-                if !soloRoundToleratesTrackingLoss { try liveReadiness?.invalidateBinding(at: time) }
+                try liveReadiness?.invalidateBinding(at: time)
             }
         }
         catch { debugRestart("status read threw: \(error)"); liveReadiness?.requireRestart() }
@@ -612,11 +603,7 @@ final class GameSessionCoordinator {
         }
         #endif
         if setup?.phase == .restartRequired {
-            // DEBUG Solo Test: losing P1 (same camera source and context) neither pauses nor ends
-            // the round; P1's evidence stays UNAVAILABLE until B2 tracks them again.
-            if soloRoundToleratesTrackingLoss, context != nil, context == installedLiveWristContext {
-                // DEBUG Solo Test round: kept running (P1's evidence is UNAVAILABLE meanwhile).
-            } else if game != nil, summary == nil, let context, context.isActive,
+            if game != nil, summary == nil, let context, context.isActive,
                       context.sessionGeneration == inputConfiguration.sessionGeneration {
                 // (A changed context still restarts: above, and in readiness once its clock runs.)
                 // A begun round on the same camera source whose identity the tracker can no longer
@@ -626,7 +613,7 @@ final class GameSessionCoordinator {
                 // cannot (a latched identity needs a new binding), the players choose Restart.
                 #if DEBUG
                 if !awaitsIdentityRecovery {
-                    print("[LaserInterrupt] co-op identity lost mid-round → PAUSED (round kept) · " + inputConfiguration.roster.map {
+                    print("[LaserInterrupt] player identity lost mid-round → PAUSED (round kept) · " + inputConfiguration.roster.map {
                         "\($0.rawValue) \(lastLoggedSlot[$0] ?? "-")" }.joined(separator: ", ")
                         + " · people \(setup?.diagnosticControls.peopleInView ?? -1)")
                 }
@@ -649,7 +636,7 @@ final class GameSessionCoordinator {
         if inputConfiguration.soloPlayer != nil, let slot = setup?.diagnosticControls.tracking.latest?[.player1] {
             if slot.requiresRebind, !debugSoloTrackingLost {
                 debugSoloTrackingLost = true
-                print("[LaserSolo] P1 tracking lost: no restart; evidence UNAVAILABLE until re-linked")
+                print("[LaserSolo] P1 tracking lost: round pauses until re-linked")
             } else if debugSoloTrackingLost, controls(trackingP1IsLive: setup) {
                 debugSoloTrackingLost = false
                 print("[LaserSolo] P1 re-linked (only person in view): tracking resumed with the same calibration")
@@ -893,9 +880,6 @@ final class GameSessionCoordinator {
         liveDirector = plan.director
         wristDiamondConfiguration = plan.diamonds; installedLiveWristContext = context
         liveReadiness = LaserLiveReadiness(policy:plan.timing, roster: inputConfiguration.roster)
-        #if DEBUG
-        liveReadiness?.continuesWithoutEvidence = inputConfiguration.soloPlayer != nil
-        #endif
         readInputStatus() // new fresh settling/scene attachment/countdown remain mandatory
     }
 
@@ -1067,7 +1051,7 @@ final class GameSessionCoordinator {
                 // invalidate immediately, but only the stream/frame path finalizes evidence.
                 guard allowAdvance, liveFrameHostReady else { return }
                 guard let configuration, let context = inputContext, provider.currentContext == context,
-                      setup?.hasConfirmedReliablePair == true || soloRoundToleratesTrackingLoss else { return }
+                      setup?.hasConfirmedReliablePair == true else { return }
                 if game == nil {
                     var initial = try LaserGame(configuration: configuration, context: context, historyCapacityPerPlayer: 120)
                     #if DEBUG
@@ -1185,7 +1169,7 @@ final class GameSessionCoordinator {
                 collectLiveState()
                 if summary != nil { phase = .finished; finishLiveInput(); return }
                 try advanceFinalVaultEntry()
-                if !soloRoundToleratesTrackingLoss, encounters.contains(where: { encounter in
+                if encounters.contains(where: { encounter in
                     encounter.targets.contains { target in
                         if case .unavailable = game?.judgement(for: LaserTargetKey(encounterID: encounter.id,
                             attemptID: encounter.attemptID, playerID: target.playerID)) { return true }

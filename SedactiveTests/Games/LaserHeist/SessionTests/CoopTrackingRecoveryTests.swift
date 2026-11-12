@@ -153,14 +153,15 @@ import Testing
         #expect(session.inputContext?.calibrationRevisions == calibrations, "calibrations kept")
         let copy = LaserAutomaticSetupCopy(.init(sessionPhase: session.phase, setupPhase: session.setup?.phase,
                                                  hasRoundPlan: true, roundStarted: true))
-        #expect(copy.title == "Player tracking lost — return to position" && copy.action == .restartSetup)
+        #expect(ContentView.showsSetupStage(session))
+        #expect(copy.title == "Tracking paused" && copy.action == .restartSetup)
         await session.stop()
     }
 
-    @Test func liveTimingHasAGraceShorterThanTheTrackersRecoveryWindow() {
-        let grace = LaserLiveWristRoundPlan.liveTiming.trackingGrace
-        #expect(grace > LaserLiveWristRoundPlan.liveTiming.maximumEvidenceAge)
-        #expect(grace < B2bExperimentalPolicyV1.value.recoveryWindow)
+    @Test func liveTimingPausesDuringPlayButPreservesTheInitialCountdownOnBriefFlickers() {
+        let timing = LaserLiveWristRoundPlan.liveTiming
+        #expect(timing.trackingGrace == 0)
+        #expect(timing.preservesCountdownOnTrackingFlicker)
     }
 }
 
