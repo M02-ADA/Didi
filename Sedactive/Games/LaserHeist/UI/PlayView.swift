@@ -49,6 +49,8 @@ private struct ReplayRoundView: View {
     /// A live session mounted before its round plan exists (scene loaded during setup): starts the
     /// presentation on the first rendered frame after the plan is installed.
     @State private var pendingLiveStart: EventSubscription?
+    /// The live avatars' pose feed, attached with the round plan (see the avatar setup).
+    @State private var deferredAvatarFeed: (() throws -> any AvatarPosePump)?
     @State private var startupError: String?
     @State private var leaving = false
     /// The per-frame host-clock tick: live cutout expiry and live avatars.
@@ -58,6 +60,8 @@ private struct ReplayRoundView: View {
     @State private var preview = LaserApproachPreview()
     @State private var environmentPreview = EnvironmentPreview()
     @State private var hoverboardPreview = HoverboardPreview()
+    @State private var finalVaultPreview = FinalVaultPreview()
+    @State private var gateConsolePreview = GateConsolePreview()
     @State private var cutoutFeed: SyntheticCutoutFeed?
     @State private var directorPreview = DirectorLaserPreview()
     @State private var robotDemo = RobotDemoDriver()
@@ -80,6 +84,7 @@ private struct ReplayRoundView: View {
             scene.installLaserArtwork(await LaserScene.loadLaserGateArtwork())
             scene.installVaultDoor(await LaserScene.loadVaultDoorArtwork())
             scene.installDiamondArt(await LaserScene.loadDiamondArtwork())
+            scene.installFinalVaultArt(await FinalVaultArt.load())
             content.add(scene.root)
             // Live cutouts and avatars update on the render loop, on the host clock their capture
             // times use, so stale input falls back or relaxes without waiting for a newer frame.
@@ -93,7 +98,15 @@ private struct ReplayRoundView: View {
                     let templates = try await RobotAvatarLayer.sharedTemplates()
                     guard !Task.isCancelled else { return }
                     let mailbox = AvatarPoseMailbox(maxAge: LiveAvatarPresenter.maximumPoseAge)
-                    let pump = try avatarSource(mailbox)
+                    // Play Again (iPad, 12 November 2026): a live session mounted before its camera
+                    // input starts must not take the pose lease yet. Starting the input retires any
+                    // current lease (`CameraTrackingGate.reserveBodySession`); with the scene
+                    // assets cached, the second round attached first and its mascots never moved.
+                    // The mascots load now (warm-up behind the setup screen); their feed attaches
+                    // with the round plan, always after the input has started.
+                    let defersFeed = suppliedSession.map { !$0.hasLiveRoundPlan } ?? false
+                    let pump = defersFeed ? nil : try avatarSource(mailbox)
+                    if defersFeed { deferredAvatarFeed = { try avatarSource(mailbox) } }
                     // A DEBUG Solo Test tracks P1 only: Tangerine's lane is hidden, not shown untracked.
                     scene.attachLiveAvatars(mailbox: mailbox, templates: templates, pump: pump,
                         players: Set(suppliedSession?.inputConfiguration.roster ?? PlayerID.allCases),
@@ -108,6 +121,15 @@ private struct ReplayRoundView: View {
                                 airborne: sample.jumpState.validity == .valid && sample.jumpState.phase == .airborne,
                                 centerX: g.centerX.validity == .valid ? g.centerX.value : nil)
                         } })
+                    // Vault buttons are judged where the mascot's hand reaches (its console dock), when
+                    // the mascots have consoles (they ride boards); otherwise the approved zones.
+                    if scene.robotAvatars?.consoles.isEmpty == false {
+                        suppliedSession?.vaultMascotReach = { [weak scene] player, capturedAt in
+                            scene?.robotAvatars?.vaultReachShift(player, capturedAt: capturedAt)
+                        }
+                    } else {
+                        suppliedSession?.vaultMascotReach = nil
+                    }
                 } catch {
                     startupError = String(describing: error)
                     return
@@ -135,6 +157,11 @@ private struct ReplayRoundView: View {
                         guard let suppliedSession, suppliedSession.hasLiveRoundPlan, session == nil else { return }
                         session = suppliedSession
                         pendingLiveStart?.cancel(); pendingLiveStart = nil
+                        if let attach = deferredAvatarFeed {
+                            deferredAvatarFeed = nil
+                            do { scene.attachLiveAvatarPump(try attach()) }
+                            catch { print("PlayView: live avatar feed unavailable: \(error)") }
+                        }
                         presentation.start(on: liveContent, scene: scene, session: suppliedSession)
                     }
                 }
@@ -167,6 +194,35 @@ private struct ReplayRoundView: View {
                 await hoverboardPreview.start(on: content, scene: scene, mode: mode)
                 return
             }
+            // Launch with `-replay -gateConsolePreview [solo] [seconds]` to review the gates' wall consoles.
+            if GateConsolePreview.isRequested {
+                do {
+                    let input = try LaserReplayScript.load().input
+                    let (solo, heldAt) = GateConsolePreview.requested
+                    let calibrations = input.configuration.calibrations.filter { !solo || $0.key == .player1 }
+                    guard let robots = try await installAvatars(calibrations: calibrations,
+                                                                layout: input.configuration.playerPlaneLayout) else { return }
+                    if solo { scene.players[.player2]?.isEnabled = false }
+                    scene.isLaserVisible = false
+                    try gateConsolePreview.start(on: content, scene: scene, robots: robots,
+                                                 configuration: input.configuration, heldAt: heldAt)
+                } catch { startupError = String(describing: error) }
+                return
+            }
+            // Launch with `-replay -finalVaultPreview [solo] [seconds]` to review the final vault entry.
+            if FinalVaultPreview.isRequested {
+                do {
+                    let input = try LaserReplayScript.load().input
+                    let (solo, heldAt) = FinalVaultPreview.requested
+                    let calibrations = input.configuration.calibrations.filter { !solo || $0.key == .player1 }
+                    guard try await installAvatars(calibrations: calibrations,
+                                                   layout: input.configuration.playerPlaneLayout) != nil else { return }
+                    // Solo: Tangerine's lane is hidden, as in a live Solo Test.
+                    if solo { scene.players[.player2]?.isEnabled = false }
+                    finalVaultPreview.start(on: content, scene: scene, solo: solo, heldAt: heldAt)
+                } catch { startupError = String(describing: error) }
+                return
+            }
             // Launch with `-directorLaserPreview` to drive the gameplay presenter from
             // real LaserWaveDirector output (per-player bands, offsets, overlap).
             if DirectorLaserPreview.isRequested {
@@ -179,7 +235,10 @@ private struct ReplayRoundView: View {
                 scene.isLaserVisible = false
                 do {
                     let input = try LaserReplayScript.load().input
-                    guard let robots = try await installAvatars(calibrations: input.configuration.calibrations,
+                    // `-robotDemoSolo`: Lemon alone, as in a Solo round (no P2 mascot, no partner limit).
+                    let demoCalibrations = arguments.contains("-robotDemoSolo")
+                        ? input.configuration.calibrations.filter { $0.key == .player1 } : input.configuration.calibrations
+                    guard let robots = try await installAvatars(calibrations: demoCalibrations,
                                                                 layout: input.configuration.playerPlaneLayout) else { return }
                     // 30 Hz poses shown at render rate, feet diagnostics on.
                     robots.smoothing = 0.03
@@ -189,9 +248,17 @@ private struct ReplayRoundView: View {
                     if arguments.contains("-avatarPackets") {
                         // K03 path: the demo's frames as labelled SYNTHETIC D06 packets through the
                         // bounded latest-only mailbox, drained once per render tick.
-                        let source = SyntheticAvatarSource(configuration: input.configuration,
-                                                           cameraGeometryRevision: input.cameraGeometryRevision)
+                        var lifecycle = SyntheticAvatarSource(configuration: input.configuration,
+                                                              cameraGeometryRevision: input.cameraGeometryRevision)
                         let mailbox = AvatarPoseMailbox(maxAge: LiveAvatarPresenter.maximumPoseAge)
+                        if arguments.contains("-avatarLifecycle") {
+                            // As a live round: a later status (binding, calibration) replaces the
+                            // first, which resets every mascot's presentation (iPad steering P0).
+                            mailbox.publish(lifecycle.status)
+                            lifecycle.statusRevision += 1
+                            lifecycle.controlRevision += 1
+                        }
+                        let source = lifecycle
                         mailbox.publish(source.status)
                         // The production presenter, ticked on the demo's own timeline.
                         let live = LiveAvatarPresenter(avatars: robots, mailbox: mailbox)
@@ -314,15 +381,6 @@ private struct ReplayRoundView: View {
             }
             #endif
         }
-        .overlay(alignment: .topTrailing) {
-            #if DEBUG
-            // DEBUG Solo Test only (never co-op, never Release): skip and P1 gate taps. Top right,
-            // over the empty P2 side, clear of P1's buttons on the left wall.
-            if let session, session.isSoloPractice, session.summary == nil, session.state != nil {
-                DebugSoloTestControls(session: session).padding(.trailing, 16).padding(.top, 130)
-            }
-            #endif
-        }
         .overlay(alignment: .bottom) {
             #if DEBUG
             if let session, session.isDebugWristPreview, session.summary == nil {
@@ -424,7 +482,8 @@ private struct ReplayRoundView: View {
         #endif
         return GameplayHUDModel(state: session.state, events: session.events, configuration: configuration,
                                 activityDuration: session.activityDuration,
-                                diamondsCollected: collected, diamondsAreFixture: fixture)
+                                diamondsCollected: collected, diamondsAreFixture: fixture,
+                                enteringFinalVault: session.finalVaultEntry.map { !$0.isComplete } ?? false)
     }
 
     #if DEBUG

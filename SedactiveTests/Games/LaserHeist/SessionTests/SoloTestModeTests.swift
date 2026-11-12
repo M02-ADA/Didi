@@ -197,12 +197,13 @@ import Testing
     /// gate after every minute (three P1 presses open it), Diamond Time after the fifth, then
     /// the round completes with a summary for Results. No body evidence is given, so no laser
     /// is CLEAR and nothing is scored from movement.
-    @Test func soloRoundPlaysEveryGateThroughDiamondTimeToResults() throws {
-        var (director, game, context, revision) = try Self.soloRound()
+    @Test(arguments: [15.0, 60.0])
+    func soloRoundPlaysEveryGateThroughDiamondTimeToResults(segment: Double) throws {
+        var (director, game, context, revision) = try Self.soloRound(segment: segment)
         #expect(director.isSolo && director.baseEncounters.allSatisfy { $0.targets.map(\.playerID) == [.player1] })
         var registered = 0, gates: [Double] = [], diamonds: [LaserDiamondSpawn] = []
         var time = 0.0
-        while time < 200, game.roundOutcome == nil {
+        while time < segment * 5 + 60, game.roundOutcome == nil {
             time += 0.05
             while let due = try director.nextDue(through: time, game: game) {
                 try game.advance(to: max(game.gameTime, due.time))
@@ -231,6 +232,12 @@ import Testing
             try game.advance(to: max(time, game.gameTime))
         }
         #expect(gates.count == 5 && game.missionProgress == 5 && registered == director.baseEncounters.count)
+        // Each gate at its minute's boundary: the previous gate's opening (or 0) + the segment.
+        for (i, at) in gates.enumerated() {
+            let begun = i == 0 ? 0 : gates[i - 1] + 0.5
+            #expect(at >= begun + segment - 0.06 && at < begun + segment + 2, "gate \(i + 1) at \(at)")
+        }
+        print("SOLO E2E segment \(segment) gates at " + gates.map { String(format: "%.2f", $0) }.joined(separator: "/"))
         #expect(game.roundOutcome == .completed)
         let summary = try #require(game.summary, "Results has a summary")
         #expect(summary.vaultsOpened == 5 && summary.teamScore == 0)
@@ -259,9 +266,86 @@ import Testing
         #expect(game.vault?.opened == true && game.missionProgress == 1)
     }
 
+    /// Plays the solo round until `end` game seconds (or until a vault opens, when asked).
+    private static func play(_ director: inout LaserLiveRoundDirector, _ game: inout LaserGame,
+                             from start: Double, until end: Double, stopAtVault: Bool = false) throws -> Double {
+        var time = start
+        while time < end {
+            time += 0.05
+            while let due = try director.nextDue(through: time, game: game) {
+                try game.advance(to: max(game.gameTime, due.time))
+                switch due.action {
+                case .register(let e): try game.register(e)
+                case .normalDiamond(let s, let b): try game.spawnNormalDiamonds([s], beforeVaultAt: b)
+                case .openVault(let id, _): try game.openVault(id: id, at: game.gameTime); if stopAtVault { return time }
+                }
+            }
+            try game.advance(to: time)
+        }
+        return time
+    }
+
+    /// DEBUG "Skip to Diamond Time": the REAL Diamond Time of the same game. Lasers in flight are
+    /// withdrawn (never judged: no CLEAR, score or damage), no vault is credited, nothing more is
+    /// scheduled, repeated taps change nothing; its diamonds are collected by P1's genuine
+    /// contact for the approved points, and it ends into the round summary (Results).
+    @Test func skipToDiamondTimeRunsTheRealDiamondTimeIntoResults() throws {
+        var (director, game, context, revision) = try Self.soloRound(segment: 60)
+        let time = try Self.play(&director, &game, from: 0, until: 12)
+        let health = game.teamHealth, score = game.teamScore, pending = game.pendingCrossingCount
+        #expect(pending > 0, "a laser is in flight when the tester skips")
+        let skip = try #require(try game.debugSkipToDiamondTime(at: time + 0.05))
+        #expect(skip.withdrawnTargets == pending && game.pendingCrossingCount == 0)
+        #expect(game.roundPhase == .diamondTime && game.missionProgress == 0, "no vault credited")
+        #expect(game.teamHealth == health && game.teamScore == score, "nothing skipped is scored or damages")
+        let again = try game.debugSkipToDiamondTime(at: time + 0.1)
+        #expect(again == nil, "repeated taps change nothing")
+        let later = try director.nextDue(through: time + 30, game: game)
+        #expect(later == nil, "no laser, diamond or vault is scheduled after the skip")
+        // Diamond Time as after a final vault: four diamonds, a P1 collection, the real end.
+        let start = game.gameTime, deadline = start + LaserRoundConfiguration.defaultDiamondTimeDuration
+        let spawns = try director.diamondTimeSpawns(at: start, deadline: deadline)
+        try game.startDiamondTimeDiamonds(spawns)
+        var planner = director.planner
+        let replacement = try planner.bonusReplacements(collected: [spawns[0]], surviving: Array(spawns.dropFirst()),
+                                                        at: start + 1, deadline: deadline)
+        let collected = try game.collectDiamonds(
+            [LaserContactActivation(targetID: spawns[0].id, hand: LaserContactHand(playerID: .player1, wrist: .left))],
+            generation: context.sessionGeneration, calibrationRevisions: [.player1: revision],
+            capturedAt: start + 1, arrivedAt: start + 1, replacements: replacement)
+        #expect(collected.count == 1 && game.teamScore == score + LaserRoundConfiguration.approvedDiamondPoints)
+        try game.advance(to: deadline + 0.1)
+        #expect(game.roundOutcome == .completed)
+        let summary = try #require(game.summary)
+        #expect(summary.teamScore == score + LaserRoundConfiguration.approvedDiamondPoints)
+        #expect(summary.vaultsOpened == 0 && summary.diamondsCollected == game.diamondsCollected)
+    }
+
+    /// Skipping while a vault waits closes it unopened (no credit); co-op games never skip.
+    @Test func skipDuringAVaultClosesItAndCoopTestRoundsSkipToo() throws {
+        var (director, game, _, _) = try Self.soloRound(segment: 15)
+        let time = try Self.play(&director, &game, from: 0, until: 40, stopAtVault: true)
+        #expect(game.roundPhase == .vault)
+        let skip = try game.debugSkipToDiamondTime(at: time)
+        #expect(skip != nil && game.roundPhase == .diamondTime && game.vault == nil && game.missionProgress == 0)
+        let script = try LaserReplayScript.load()
+        let input = script.input.configuration
+        var coop = try LaserGame(configuration: try LaserFullReplayPlan.roundConfiguration(),
+            context: BodyInputContext(sessionGeneration: input.sessionGeneration,
+                cameraGeometryRevision: script.input.cameraGeometryRevision,
+                calibrationRevisions: [.player1: 1, .player2: 1], cutovers: [:], isActive: true, wristContact: nil),
+            historyCapacityPerPlayer: 120)
+        // DEBUG co-op test rounds skip too (12 November 2026), with the same rules: no vault credited.
+        let coopSkip = try coop.debugSkipToDiamondTime(at: 1)
+        #expect(coopSkip != nil && coop.roundPhase == .diamondTime && coop.missionProgress == 0)
+        let again = try coop.debugSkipToDiamondTime(at: 1.5)
+        #expect(again == nil, "a second tap changes nothing")
+    }
+
     /// "Skip to Next Gate" shortens the current minute only: unregistered lasers and diamonds
     /// are dropped (never judged or scored), registered ones are still judged, the gate comes
-    /// due five game seconds later, and repeated taps, an open gate or a co-op round change nothing.
+    /// due five game seconds later, and repeated taps or an open gate change nothing. (DEBUG,
+    /// Solo Test and co-op test rounds alike, 12 November 2026.)
     @Test func skipToNextGateShortensTheMinuteWithoutScoring() throws {
         var (director, game, _, _) = try Self.soloRound(segment: 60)
         var time = 0.0, registered = 0
@@ -294,14 +378,6 @@ import Testing
         #expect(game.teamScore == 0 && game.playerStats[.player1]?.cleared ?? 0 == 0, "nothing scored by skipping")
         let during = director.debugSkipToVault(game: game)
         #expect(during == nil, "no skip while the gate is open")
-        // Co-op directors never skip.
-        let script = try LaserReplayScript.load()
-        let input = script.input.configuration
-        let coop = try LaserLiveRoundDirector(calibrations: input.calibrations, layout: input.playerPlaneLayout,
-            configuration: try LaserFullReplayPlan.roundConfiguration(), seed: 3)
-        var coopDirector = coop
-        let coopSkip = coopDirector.debugSkipToVault(game: game)
-        #expect(coopSkip == nil)
     }
 
     @Test func aSoloLaserHitCostsHealthFromP1Alone() throws {

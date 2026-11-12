@@ -123,6 +123,9 @@ final class LaserScene {
     /// templates (idle red, active green, per wall side), or `nil` without them.
     private(set) var vaultButtonArt: [VaultButtonArtKey: Entity]?
     private var diamondArt: DiamondArt?
+    /// Theo's Ending Vault art for the final vault entry (`FinalVaultPresentation`), if loaded.
+    private(set) var finalVaultArt: FinalVaultArt?
+    private var environment: Entity?
     private let diamonds = Entity()
     /// Unmodified gate artwork; every laser is built from its own clone.
     private var laserArtwork: Entity?
@@ -241,6 +244,7 @@ final class LaserScene {
         }
         environment.name = "environment"
         root.addChild(environment)
+        self.environment = environment
         let depth = CorridorDepth(layout: layout)
         root.addChild(depth.root)
         corridorDepth = depth
@@ -326,9 +330,34 @@ final class LaserScene {
         return hazard
     }
 
-    /// One player's half of the corridor between the wall mounts. P1 is the
-    /// left lane; the boundary is midway between the two lane centres.
+    /// Where a world point shows across the screen (0 left edge … 1 right edge) through the scene
+    /// camera, for a display of `aspect` (width ÷ height); nil behind the camera. Diagnostics.
+    func screenFraction(of point: SIMD3<Float>, aspect: Float) -> Float? {
+        guard let camera = root.findEntity(named: "camera") as? PerspectiveCamera else { return nil }
+        let t = camera.transformMatrix(relativeTo: nil)
+        let right = simd_normalize(SIMD3(t.columns.0.x, t.columns.0.y, t.columns.0.z))
+        let forward = -simd_normalize(SIMD3(t.columns.2.x, t.columns.2.y, t.columns.2.z))
+        let d = point - SIMD3(t.columns.3.x, t.columns.3.y, t.columns.3.z)
+        let depth = simd_dot(d, forward)
+        guard depth > 0 else { return nil }
+        let halfWidth = tan(camera.camera.fieldOfViewInDegrees * .pi / 360) * aspect
+        return (simd_dot(d, right) / depth / halfWidth + 1) / 2
+    }
+
+    /// Where one player's beam is drawn between the wall mounts. P1 is the left one. Display only:
+    /// heights, verdicts and the judged bands are unchanged.
+    /// - With mascots steering across the corridor (`LateralSteering`), the boundary is midway
+    ///   between the two mascots as drawn, so each beam always crosses its own mascot; a Solo
+    ///   round's single mascot gets the whole beam, wherever it rides.
+    /// - Otherwise it is midway between the two lane centres.
     func laneSpan(for player: PlayerID) -> ClosedRange<Float> {
+        if let avatars = robotAvatars, avatars.steering != nil {
+            if avatars.robots.count == 1, avatars.robots[player] != nil { return laserSpan }
+            if let a = avatars.mascotWorldX(.player1), let b = avatars.mascotWorldX(.player2) {
+                let boundary = min(laserSpan.upperBound, max(laserSpan.lowerBound, (a + b) / 2))
+                return player == .player1 ? laserSpan.lowerBound...boundary : boundary...laserSpan.upperBound
+            }
+        }
         let boundary = ((mapping.laneCenterX[.player1] ?? 0) + (mapping.laneCenterX[.player2] ?? 0)) / 2
         return player == .player1 ? laserSpan.lowerBound...boundary : boundary...laserSpan.upperBound
     }
@@ -421,8 +450,22 @@ final class LaserScene {
         for (id, lane) in players { lane.isEnabled = tracked.contains(id) }
         let avatars = RobotAvatarLayer(scene: self, players: tracked, templates: templates)
         avatars.liveEvidence = liveEvidence
+        // One shared laser at the mascots' canonical size (D07): each player's judged band is
+        // drawn in their normalized avatar space, as in replay. Without this the live lanes drew
+        // physical-height bands: too low on the 1.6 m mascots, and stepped between a parent and
+        // a child (iPad, 12 November 2026). Display only. DEBUG `-judgedLaserBands` compares.
+        #if DEBUG
+        avatars.normalizesLaserBands = !ProcessInfo.processInfo.arguments.contains("-judgedLaserBands")
+        #else
+        avatars.normalizesLaserBands = true
+        #endif
         robotAvatars = avatars
         liveAvatars = LiveAvatarPresenter(avatars: avatars, mailbox: mailbox, pump: pump)
+    }
+
+    /// Attaches the live avatars' pose feed after the avatars themselves (see `PlayView`).
+    func attachLiveAvatarPump(_ pump: any AvatarPosePump) {
+        liveAvatars?.attachPump(pump)
     }
 
     /// One render tick for the live avatars. Call once per rendered frame with
@@ -465,6 +508,22 @@ final class LaserScene {
         }
         return templates
     }
+
+    func installFinalVaultArt(_ art: FinalVaultArt?) {
+        guard finalVaultArt == nil else { return }
+        finalVaultArt = art
+    }
+
+    /// Hides the corridor (environment, depth haze, checkpoint door) while the team is inside
+    /// the final vault, or shows it again. Players, avatars, diamonds and feedback stay.
+    func setCorridorShown(_ shown: Bool) {
+        environment?.isEnabled = shown
+        corridorDepth?.root.isEnabled = shown
+        vaultHaze.isEnabled = shown
+    }
+
+    /// Whether the corridor is shown (tests and debugging).
+    var isCorridorShown: Bool { environment?.isEnabled ?? vaultHaze.isEnabled }
 
     func installDiamondArt(_ artwork: Entity?) {
         guard diamondArt == nil, let artwork else { return }
@@ -602,8 +661,11 @@ final class LaserScene {
     private func presentOutcome(_ outcome: LaserFeedback.Outcome, for id: PlayerID, bandCenter: Float) {
         guard let player = players[id] else { return }
         var impact = mapping.laserPosition(heightAboveFloor: bandCenter, worldZ: mapping.interactionPlaneZ + 0.06)
-        impact.x = player.position.x
+        // Where the mascot rides now (lean steering moves it off its lane), else the lane.
+        let x = robotAvatars?.mascotWorldX(id) ?? player.position.x
+        impact.x = x
         var badge = player.position + [0, player.visibleTop + 0.25, 0.08]
+        badge.x = x
         // K04: with a mascot shown, the pictogram is hidden but still fitted to the
         // player's own crown, so a short player's verdict sat inside the 1.6 m
         // mascot's head. Anchor it above the head as posed instead.

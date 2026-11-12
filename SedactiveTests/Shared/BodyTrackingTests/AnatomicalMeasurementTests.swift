@@ -224,25 +224,27 @@ nonisolated struct AnatomicalMeasurementTests {
     #expect(step.players[.player1]?.samples == 4 && step.players[.player1]?.rejected[.moving] == 2)
     #expect(step.candidate == nil)
   }
-  /// The 3 px candidate is never finer than one row of the mask the estimate was read from.
-  @Test func stabilityToleranceIsNeverBelowOneMaskRow() throws {
+  /// The 3 px candidate is never finer than two rows of the mask the estimate was read from
+  /// (iPad, 12 November 2026: ±1 row of segmentation noise on a still player is not movement).
+  @Test func stabilityToleranceIsNeverBelowTwoMaskRows() throws {
     let (f,initial,stamp) = try LiveVisionFixtures.sessionFixture();var session = initial
     for i in 0..<10 {
       let pose = try f.result(UInt64(i+3),Double(i)*0.25+0.25,LiveVisionFixtures.standingPair)
       let started = session.beginSample(stamp,source:pose.source,at:pose.source.capturedAt); try #require(started)
       var mask = LiveVisionFixtures.withAnatomy(LiveVisionFixtures.mask(pose), pose: pose, revision: stamp.bindingRevision)
       mask.maskHeight = 180 // one mask row = 4 image pixels at 720p
-      // Head-top alternates by exactly one mask row (quantization), within no 3 px window.
+      // Head-top dithers ±1 mask row around a still edge (two rows in all), within no 3 px window.
       for id in PlayerID.allCases {
         let a = mask.anatomy[id]!
         mask.anatomy[id] = .init(source:a.source,controlRevision:a.controlRevision,candidateID:a.candidateID,
-          crown:.init(imageY:0.9 - Double(i % 2) / 180,status:.experimental),leftSole:a.leftSole,rightSole:a.rightSole)
+          crown:.init(imageY:0.9 - Double(i % 3) / 180,status:.experimental),leftSole:a.leftSole,rightSole:a.rightSole)
       }
       session.observe(mask,pose:pose,association:LiveVisionFixtures.association(pose,revision:stamp.bindingRevision),
         stamp:stamp,at:pose.source.capturedAt+0.01)
     }
     #expect(session.candidate != nil)
-    // Two rows of movement is real movement, not quantization.
+    #expect((session.players[.player1]?.rejected[.moving] ?? 0) == 0)
+    // Three rows of movement is real movement, not quantization.
     var strict = initial
     for i in 0..<10 {
       let pose = try f.result(UInt64(i+30),Double(i)*0.25+5,LiveVisionFixtures.standingPair)
@@ -252,7 +254,7 @@ nonisolated struct AnatomicalMeasurementTests {
       for id in PlayerID.allCases {
         let a = mask.anatomy[id]!
         mask.anatomy[id] = .init(source:a.source,controlRevision:a.controlRevision,candidateID:a.candidateID,
-          crown:.init(imageY:0.9 - Double(i % 3) / 180,status:.experimental),leftSole:a.leftSole,rightSole:a.rightSole)
+          crown:.init(imageY:0.9 - Double(i % 4) / 180,status:.experimental),leftSole:a.leftSole,rightSole:a.rightSole)
       }
       strict.observe(mask,pose:pose,association:LiveVisionFixtures.association(pose,revision:stamp.bindingRevision),
         stamp:stamp,at:pose.source.capturedAt+0.01)

@@ -55,11 +55,12 @@ final class DiamondTimePresentation {
     /// Diamond ids currently floating (not collected), for tests and debugging.
     var floatingIDs: Set<Int> { Set(shown.filter { !$0.value.collected }.keys) }
 
-    func update(state: LaserGameState, diamondTimeStartedAt start: Double?) {
+    /// - Parameter hidden: shows none yet (the final vault entry still plays).
+    func update(state: LaserGameState, diamondTimeStartedAt start: Double?, hidden: Bool = false) {
         let time = state.gameTime
         for item in leaving where time >= item.until { item.diamond.root.removeFromParent() }
         leaving.removeAll { time >= $0.until }
-        guard state.phase == .diamondTime, let start, let source else { return clear() }
+        guard state.phase == .diamondTime, !hidden, let start, let source else { return clear() }
         let wanted = source(max(0, time - start))
         let ids = Set(wanted.map(\.id))
         for (id, item) in shown where !ids.contains(id) {

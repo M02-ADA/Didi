@@ -37,23 +37,24 @@ nonisolated enum LaserLiveRoundGeometryV1 {
                                       eligiblePlayers: [player])
         }
     }
-    /// Vault buttons, outward from the lane centre: (outward, height) shares of each player's
-    /// own standing height, so shorter players get lower, closer buttons. One vertical stack
-    /// beside the player at body-relative reaching heights (owner request 11 November 2026):
-    /// HIGH at head level (0.95 h), MIDDLE at chest (0.70 h), LOW at the upper thigh (0.45 h,
-    /// above the knee ~0.28 h, below the hip ~0.53 h). Neighbours are 0.25 h apart (the gap
-    /// between buttons doubled; more than two radii: no overlap). HIGH and MIDDLE are about 83 %
-    /// of an arm (0.44 h) from the outer shoulder standing upright; LOW asks for a downward reach
-    /// with a slight knee bend and lean (0.1 h and 0.05 h: 90 % of an arm), never a deep squat.
-    /// The column (0.47 h out) stays clear of the leaning mascot's head, and a resting hand
-    /// (~0.16 h out, ~0.44 h up) is outside every zone even with the hips 0.1 h toward the wall.
+    /// Vault buttons, outward from the player's own body centre: (outward, height) shares of their
+    /// standing height. One stack on the player's outer side, at HIGH (head/upper shoulder), MIDDLE
+    /// (chest) and LOW (upper thigh) reaches, 0.215 h apart (more than two radii: no overlap).
+    /// REACHABLE BY A REAL ARM (iPad, 12 November 2026: presses failed): the shoulder→wrist reach is
+    /// about 0.33 h (`humanWristReachShare`), so each zone's near edge now lies within 0.31 h of the
+    /// shoulder: HIGH and MIDDLE at 75–80 % of the arm, LOW at 91 % (a little downward stretch).
+    /// Before, LOW's near edge was 0.40 h away (unreachable without an 11 cm bend) and HIGH/MIDDLE's
+    /// centres were beyond a straight arm. A leaning player's hanging wrist (about 0.25 h out at
+    /// 0.47 h) stays 0.13 h from LOW: a lean alone is never a press.
     static let vaultShares: [LaserVaultButton: (out: Double, y: Double)] = [
-        .top: (0.47, 0.95), .middle: (0.47, 0.70), .bottom: (0.47, 0.45)]
+        .top: (0.40, 0.93), .middle: (0.42, 0.715), .bottom: (0.38, 0.50)]
     static let vaultRadiusShare = 0.105
     /// The human reference these shares assume (anthropometric averages): the shoulder joint
-    /// (outward, height) and the shoulder→wrist arm length, as shares of standing height.
+    /// (outward, height) and the shoulder→fingertip arm (`humanArmShare`) and shoulder→wrist reach
+    /// (`humanWristReachShare`, upper arm 0.186 h + forearm 0.146 h), as shares of standing height.
     static let humanShoulderShare: (out: Double, y: Double) = (0.13, 0.82)
     static let humanArmShare = 0.44
+    static let humanWristReachShare = 0.332
 
     /// The standing height a vault zone was sized from (its radius is `vaultRadiusShare` of it).
     static func standingHeight(fromVaultRadius radius: Double) -> Double { radius / vaultRadiusShare }
@@ -235,18 +236,19 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
         }
     }
 
+
     #if DEBUG
-    /// DEBUG Solo Test "Skip to Next Gate": game seconds between the skip and the vault.
+    /// DEBUG "Skip to Next Gate": game seconds between the skip and the vault.
     static let debugSkipLead = 5.0
 
-    /// DEBUG Solo Test only: ends the current minute early so its vault comes due
-    /// `debugSkipLead` game seconds from now. No clock moves: the minute is shortened. Its
-    /// not-yet-registered lasers and diamonds are dropped (never registered, judged or scored);
-    /// lasers already registered are still judged before the vault opens, as always.
-    /// Nil (nothing changed) outside the activity of a begun minute, or when its vault is
-    /// already that close, so repeated taps are harmless.
+    /// DEBUG only (Solo Test and co-op test rounds): ends the current minute early so its vault
+    /// comes due `debugSkipLead` game seconds from now. No clock moves: the minute is shortened.
+    /// Its not-yet-registered lasers and diamonds are dropped (never registered, judged or scored);
+    /// lasers already registered are still judged before the vault opens, as always. Nil (nothing
+    /// changed) outside the activity of a begun minute, or when its vault is already that close,
+    /// so repeated taps are harmless.
     mutating func debugSkipToVault(game: LaserGame) -> (droppedLasers: Int, droppedDiamonds: Int, vaultAt: Double)? {
-        guard isSolo, game.roundOutcome == nil, game.roundPhase == .activity, !isFinishedPlanning,
+        guard game.roundOutcome == nil, game.roundPhase == .activity, !isFinishedPlanning,
               !vaultOpened, minuteStart != nil, let boundary = vaultBoundary else { return nil }
         let target = game.gameTime + Self.debugSkipLead
         guard boundary > target else { return nil }

@@ -90,6 +90,8 @@ final class GameplayScenePresenter {
     let diamondTime: DiamondTimePresentation
     /// K06: the activity's normal (passage) diamonds, from the domain's states.
     let normalDiamonds: NormalDiamondPresentation
+    /// The final vault at the end of the corridor, the scripted entry and the room inside.
+    let finalVault: FinalVaultPresentation
     /// Game time of the authoritative `phaseChanged(.diamondTime)` event, if seen.
     private(set) var diamondTimeStartedAt: Double?
 
@@ -118,6 +120,7 @@ final class GameplayScenePresenter {
         vault = VaultPresentation(scene: scene, configuration: configuration)
         diamondTime = DiamondTimePresentation(scene: scene)
         normalDiamonds = NormalDiamondPresentation(scene: scene)
+        finalVault = FinalVaultPresentation(scene: scene)
         debug.name = "gameplay.debug"
         debug.isEnabled = showsDebugMarkers
         scene.isLaserVisible = false
@@ -168,7 +171,10 @@ final class GameplayScenePresenter {
     /// ordered `events` (the full list so far; already handled ones are skipped).
     /// - Parameter upcomingVaultIn: activity seconds until the next vault
     ///   begins, from the session's schedule (see `VaultPresentation.update`).
-    func apply(state: LaserGameState, events: [GameEvent], snapshot: BodySnapshot?, upcomingVaultIn: Double? = nil) {
+    /// - Parameter finalVault: the live session's final vault entry; `nil` before it and in
+    ///   replay, where Diamond Time shows the vault room at once.
+    func apply(state: LaserGameState, events: [GameEvent], snapshot: BodySnapshot?, upcomingVaultIn: Double? = nil,
+               finalVault entry: LaserFinalVaultEntry? = nil) {
         if generation != state.sessionGeneration {
             reset()
             generation = state.sessionGeneration
@@ -176,10 +182,15 @@ final class GameplayScenePresenter {
         handle(events, state: state)
         let time = state.gameTime
         if case .ended = state.phase, endedAt == nil { endedAt = time }
-        travel(state: state, to: time)
-        vault.update(state: state, travelDistance: travelDistance, upcomingVaultIn: upcomingVaultIn)
+        let stage = finalVaultStage(state: state, entry: entry)
+        // The approach to the final vault moves the corridor (cosmetic, while game time is held).
+        let approach = finalVault.update(stage)
+        travel(state: state, to: time, plus: approach)
+        vault.update(state: state, travelDistance: travelDistance + approach, upcomingVaultIn: upcomingVaultIn)
         soundVault(state)
-        diamondTime.update(state: state, diamondTimeStartedAt: diamondTimeStartedAt)
+        // Diamond Time's diamonds appear once the team is inside the vault.
+        diamondTime.update(state: state, diamondTimeStartedAt: diamondTimeStartedAt,
+                           hidden: { if case .entry = stage { true } else { false } }())
         normalDiamonds.update(state: state)
         // One pickup sound per collection shown, normal or Diamond Time.
         let collected = diamondTime.collections + normalDiamonds.collections
@@ -199,6 +210,7 @@ final class GameplayScenePresenter {
         vault.stop()
         diamondTime.clear()
         normalDiamonds.clear()
+        finalVault.remove()
         debug.removeFromParent()
     }
 
@@ -212,6 +224,8 @@ final class GameplayScenePresenter {
         vault.reset()
         diamondTime.clear()
         normalDiamonds.clear()
+        finalVault.stop()
+        bandScales = [:]
         diamondTimeStartedAt = nil
         judgedAt = [:]
         withdrawnAt = [:]
@@ -304,14 +318,24 @@ final class GameplayScenePresenter {
     /// activity and Diamond Time, not while the team stands at a vault or
     /// after the round ends. Gates don't use this distance: each is placed
     /// from its own crossing time, at the same speed, so the two always agree.
-    private func travel(state: LaserGameState, to time: Double) {
+    /// - Parameter extra: cosmetic distance on top (the final vault approach, on held game time).
+    private func travel(state: LaserGameState, to time: Double, plus extra: Float = 0) {
         let moving = (state.phase == .activity || state.phase == .diamondTime) && endedAt == nil
         isTravelling = moving
         if let last = travelledUntil, time > last, moving {
             travelDistance += scene.layout.travelSpeed * Float(time - last)
         }
         travelledUntil = max(travelledUntil ?? time, time)
-        scene.setTravelDistance(travelDistance)
+        scene.setTravelDistance(travelDistance + extra)
+    }
+
+    /// The final vault from game state: nothing before Diamond Time; the scripted entry while
+    /// the live session holds game time for it; then (and in replay) the room inside, kept
+    /// after the round ends from Diamond Time.
+    private func finalVaultStage(state: LaserGameState, entry: LaserFinalVaultEntry?) -> FinalVaultPresentation.Stage {
+        guard state.phase == .diamondTime || (endedAt != nil && diamondTimeStartedAt != nil) else { return .hidden }
+        if let entry, !entry.isComplete, state.phase == .diamondTime { return .entry(entry.timeline, elapsed: entry.elapsed) }
+        return .inside(entry?.timeline)
     }
 
     // MARK: - Lasers
@@ -418,17 +442,24 @@ final class GameplayScenePresenter {
         y * (normalizationScale(for: player) ?? 1)
     }
 
-    /// One drawing scale for every player or for none. If any player has no
-    /// avatar scale (no compatible accepted calibration), every lane falls back
-    /// to its judged band: a shared beam drawn at two unrelated scales would
-    /// look aligned while meaning nothing. The judged fallback may step between
-    /// lanes, and that step is true.
+    /// One drawing scale for every mascot shown or for none. If any shown mascot
+    /// has no avatar scale yet (no compatible accepted calibration), every lane
+    /// falls back to its judged band: a shared beam drawn at two unrelated scales
+    /// would look aligned while meaning nothing. The judged fallback may step
+    /// between lanes, and that step is true. Only the mascots in the round count
+    /// (a Solo Test shows Lemon alone), and each keeps its last scale while its
+    /// pose briefly carries no reference (until a new calibration replaces it),
+    /// so a beam never jumps height mid-approach.
     private func normalizationScale(for player: PlayerID) -> Float? {
-        guard let avatars = scene.robotAvatars,
-              PlayerID.allCases.allSatisfy({ avatars.laserBandScale(for: $0, mapping: scene.mapping) != nil })
-        else { return nil }
-        return avatars.laserBandScale(for: player, mapping: scene.mapping)
+        guard let avatars = scene.robotAvatars, !avatars.robots.isEmpty else { return nil }
+        for shown in avatars.robots.keys {
+            if let scale = avatars.laserBandScale(for: shown, mapping: scene.mapping) { bandScales[shown] = scale }
+        }
+        guard avatars.robots.keys.allSatisfy({ bandScales[$0] != nil }) else { return nil }
+        return bandScales[player]
     }
+    /// The last avatar scale of each shown mascot (see `normalizationScale`).
+    private var bandScales: [PlayerID: Float] = [:]
 
     private func show(_ hazard: LaserHazard, target: LaserTarget, status: Status, depth: Float, at time: Double,
                       look shared: (state: LaserGate.VisualState, warningProgress: Float?)? = nil) {
@@ -478,6 +509,11 @@ final class GameplayScenePresenter {
                   let p1 = members.first(where: { $0.key.playerID == .player1 }),
                   let p2 = members.first(where: { $0.key.playerID == .player2 }),
                   abs(p1.target.crossingTime - p2.target.crossingTime) < 0.02 else { return nil }
+            // In the mascots' normalized space a shared attempt is always one beam: its bands
+            // are the same shares of each player's height (rounding of the judge's margin aside).
+            if normalizationScale(for: .player1) != nil, normalizationScale(for: .player2) != nil {
+                return (p1, p2, true)
+            }
             let a = displayedBand(p1.target), b = displayedBand(p2.target)
             let coincide = abs(a.lowerBound - b.lowerBound) <= Self.sharedBeamTolerance
                 && abs(a.upperBound - b.upperBound) <= Self.sharedBeamTolerance

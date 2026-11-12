@@ -14,6 +14,12 @@ nonisolated enum StandingCollectionPolicyV1 {
   static let maximumWindowSpan = 10.0
   static let serviceTripwire = 0.1, sampleFreshness = 0.5
   static let sampleCount = 10
+  /// The stability limit is never below this many rows of the person mask an estimate comes
+  /// from. Was 1 (V1.1). iPad, 11–12 November 2026: of 749 still-standing samples, only 50 %
+  /// kept every head/sole edge within one mask row and 78 % within two, so ±1 row of
+  /// segmentation noise on a motionless player was refused as "moving" (174 of 368 samples;
+  /// calibration took up to 41 s for one player). Two rows ≈ 7.5 px at 384 mask rows.
+  static let minimumStabilityMaskRows = 2.0
 }
 nonisolated struct CalibrationRequest: Equatable, Sendable {
   let id: UUID
@@ -364,7 +370,7 @@ nonisolated struct CalibrationSession: Sendable {
     }
     let imageHeight = Double(max(1, pose.frame.imageHeight))
     let tolerance = max(AnatomicalCandidatePolicyV1.standingSpreadPixels / imageHeight,
-      mask.maskHeight.map { 1 / Double(max(1, $0)) } ?? 0)
+      mask.maskHeight.map { StandingCollectionPolicyV1.minimumStabilityMaskRows / Double(max(1, $0)) } ?? 0)
     for id in stamp.roster {
       // Identity first: a slot that is not tracking (or needs rebind) restarts this player only.
       guard association[id].state == .tracking, !association[id].requiresRebind else {
