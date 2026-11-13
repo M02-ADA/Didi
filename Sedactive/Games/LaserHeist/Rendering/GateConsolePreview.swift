@@ -43,6 +43,8 @@ final class GateConsolePreview {
     private let generation = UUID()
     /// When every shown button was green: the gate opens a second later (so the greens can be seen).
     private var allPressedAt: Double?
+    /// When the opened door was clear and travel resumed.
+    private var travelFrom: Double?
     private let vaultID = UUID()
 
     func start(on content: RealityViewCameraContent, scene: LaserScene, robots: RobotAvatarLayer,
@@ -87,11 +89,24 @@ final class GateConsolePreview {
             let all = roster.allSatisfy { pressed[$0, default: []].count == LaserVaultButton.allCases.count }
             if all, allPressedAt == nil { allPressedAt = t }
             let opens = allPressedAt.map { t >= $0 + 1 } ?? false
+            // The gate comes down the corridor (door and consoles together) while the players lean to
+            // their walls, then the gate opens for presses at `leanUntil`.
+            if t < Self.leanUntil {
+                let activity = LaserGameState(sessionGeneration: generation, phase: .activity, gameTime: t, activityProgress: 0.2,
+                                              teamHealth: 5, teamScore: 0, encounters: [], missionProgress: 0)
+                vault.update(state: activity, travelDistance: 0, upcomingVaultIn: Self.leanUntil - t)
+                return
+            }
             let state = LaserGameState(sessionGeneration: generation, phase: .vault, gameTime: t, activityProgress: 0, teamHealth: 5,
                                        teamScore: 0, encounters: [], missionProgress: 0,
-                                       vault: LaserVaultState(id: vaultID, deadline: Self.dockedUntil + round.vaultDuration + 1,
+                                       vault: LaserVaultState(id: vaultID, deadline: Self.leanUntil + round.vaultDuration + 1,
                                                               buttons: pressed, opened: opens))
-            vault.update(state: state, travelDistance: 0)
+            // Once open, the team waits for the passage (the same signal a round uses), then travels
+            // on at cruise and passes the gate.
+            if opens, travelFrom == nil, !vault.holdsTravel(for: state) { travelFrom = t }
+            let travel = travelFrom.map { LaserWorldLayout().travelSpeed * Float(t - $0) } ?? 0
+            vault.update(state: state, travelDistance: travel)
+            scene.setTravelDistance(travel)
         }
         if let heldAt {
             var t = 0.0
@@ -101,7 +116,7 @@ final class GateConsolePreview {
         subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self] event in
             guard let self else { return }
             elapsed += event.deltaTime
-            if elapsed > Self.loop { elapsed = 0; pressed = [:]; previousInside = [:]; allPressedAt = nil; vault.reset() }
+            if elapsed > Self.loop { elapsed = 0; pressed = [:]; previousInside = [:]; allPressedAt = nil; travelFrom = nil; vault.reset() }
             step(to: elapsed + Double(frame) * 1e-6)
         }
     }

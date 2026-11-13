@@ -691,6 +691,8 @@ final class RobotAvatarLayer {
         didSet { for player in robots.keys where oldValue[player] != scriptedMoves[player] { applyScripted(player) } }
     }
     #if DEBUG
+    /// DEBUG `[LaserJumpTiming]`: the capture time (camera host clock) of the pose each mascot shows.
+    private(set) var shownCapture: [PlayerID: Double] = [:]
     /// Live pose frames each mascot received, and how many were calibrated, since the last log.
     private var avatarFeed: [PlayerID: (frames: Int, calibrated: Int)] = [:]
     private var avatarFeedLoggedAt: Double?
@@ -1063,6 +1065,7 @@ final class RobotAvatarLayer {
             robots[player]?.retargeter.update(observation, time: time)
             apply(player, time: time)
             #if DEBUG
+            if observation != nil { shownCapture[player] = time }
             avatarFeed[player, default: (0, 0)].frames += observation == nil ? 0 : 1
             avatarFeed[player, default: (0, 0)].calibrated += observation?.calibrated == true ? 1 : 0
             #endif
@@ -1137,6 +1140,7 @@ final class RobotAvatarLayer {
                 $0.calibrationRevision == robot.retargeter.reference?.calibrationRevision ? $0 : nil
             }
             robot.retargeter.update(sample: snapshot.players[player], joints: sample, time: snapshot.capturedAt)
+            if snapshot.players[player] != nil { shownCapture[player] = snapshot.capturedAt }
             if let sample, let body = snapshot.players[player], body.geometry.centerX.validity == .valid {
                 reachInput[player] = (sample.joints, body.geometry.centerX.value, snapshot.capturedAt)
             } else {
@@ -1206,6 +1210,10 @@ final class RobotAvatarLayer {
     /// Whether the wall consoles are shown (a live gate's buttons, `VaultPresentation`): the fist
     /// reaches for them and the dock assist runs.
     var consolesActive = false
+    /// Whether the dock assist runs: from shortly before a gate (`VaultPresentation.dockLead`), through
+    /// it, until its door is clear. Separate from `consolesActive` (the reach), which starts only once
+    /// the consoles have arrived and stops when the gate opens.
+    var docksActive = false
     /// How near its dock a rider is taken onto it while consoles are shown, and how fast (m/s).
     nonisolated static let dockCapture: Float = 0.5
     nonisolated static let dockAssistSpeed: Float = 1.0
@@ -1400,7 +1408,7 @@ final class RobotAvatarLayer {
             // needed the same few centimetres more human reach, so presses failed): while a gate's
             // consoles are shown, a rider within `dockCapture` of its dock that is not leaning away
             // glides onto it. Elsewhere the lean steers exactly as before.
-            if consolesActive, let console = consoles[player], let x = steering.boardX(player) {
+            if docksActive, let console = consoles[player], let x = steering.boardX(player) {
                 let gap = console.dockX - x
                 // Leaning away from the console (any speed past 0.05 m/s that way) always wins.
                 let toward: Float = console.side
