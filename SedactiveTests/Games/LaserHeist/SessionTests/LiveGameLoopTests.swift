@@ -82,7 +82,10 @@ struct LiveGameLoopTests {
         rig.controls.fixture.clock.time = 1.25
         rig.session.advanceLive()
         #expect(rig.session.phase == .paused)
-        #expect(ContentView.showsSetupStage(rig.session))
+        // A started round's pause stays over the game (Kevin, 13 November 2026): the tracking
+        // warning, not the camera setup stage.
+        #expect(!ContentView.showsSetupStage(rig.session))
+        #expect(LaserTrackingWarningLatch().peek(.init(session: rig.session)) != nil)
         let copy = LaserAutomaticSetupCopy(.init(sessionPhase: rig.session.phase, setupPhase: rig.session.setup?.phase,
             hasRoundPlan: true, roundStarted: true, readinessBlocker: rig.session.liveReadiness?.blocker))
         #expect(copy.title == "Tracking paused" && copy.action == nil)

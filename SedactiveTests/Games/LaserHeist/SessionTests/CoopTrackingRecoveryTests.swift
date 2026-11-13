@@ -153,7 +153,10 @@ import Testing
         #expect(session.inputContext?.calibrationRevisions == calibrations, "calibrations kept")
         let copy = LaserAutomaticSetupCopy(.init(sessionPhase: session.phase, setupPhase: session.setup?.phase,
                                                  hasRoundPlan: true, roundStarted: true))
-        #expect(ContentView.showsSetupStage(session))
+        // Over the held round: the tracking warning with Recalibrate, never the setup stage first
+        // (Kevin, 13 November 2026).
+        #expect(!ContentView.showsSetupStage(session))
+        #expect(LaserTrackingWarningLatch().peek(.init(session: session))?.primary == .recalibrate)
         #expect(copy.title == "Tracking paused" && copy.action == .restartSetup)
         await session.stop()
     }

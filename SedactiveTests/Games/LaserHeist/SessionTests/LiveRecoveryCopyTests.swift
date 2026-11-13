@@ -27,8 +27,8 @@ nonisolated struct LiveRecoveryCopyTests {
         #expect(LiveEvidenceAttention.players(nil, roster: PlayerID.allCases).isEmpty, "no packet: nothing claimed")
         #expect(LiveEvidenceAttention.line([.player2: .feet], solo: false) == "P2: keep both feet in view.")
         #expect(LiveEvidenceAttention.line([.player1: .head, .player2: .tracking], solo: false)
-                == "P1: keep your head in view. P2: stay in your place.")
-        #expect(LiveEvidenceAttention.line([.player1: .tracking], solo: true) == "Stay in the middle.")
+                == "P1: keep your head in view. P2: step back into your place.")
+        #expect(LiveEvidenceAttention.line([.player1: .tracking], solo: true) == "Step back into the middle.")
     }
 
     @Test func aRoundWaitingForOnePlayerNamesThem() {
@@ -77,9 +77,22 @@ nonisolated struct LiveRecoveryCopyTests {
             lines += probe.observe(try packet(UInt64(i + 1), Double(i) / 30, p2Feet: ok), roster: PlayerID.allCases, phase: "running")
         }
         #expect(lines.count == 1)
-        #expect(lines.first?.hasPrefix("[LaserDropout] player2 unusable 3 frames · 0.100 s · missing feet · during running") == true,
+        #expect(lines.first?.hasPrefix("[LaserDropout] player2 unusable 3 frames · 0.100 s · missing feet(missingLandmarks) · during running") == true,
                 "\(lines)")
         #expect(probe.observe(nil, roster: PlayerID.allCases, phase: "running").isEmpty)
+    }
+
+    /// The probe names the moment the tracker demands a re-bind, with each player's unusable time.
+    @Test func theDropoutProbeReportsARebindOnce() throws {
+        let fixture = try WristGameplayFixture()
+        var probe = LiveEvidenceDropoutProbe()
+        var lines: [String] = []
+        for frame in UInt64(1)...4 {
+            let packet = try fixture.packet(frame, 100 + Double(frame) * 0.1, points: [:], bad: frame >= 3 ? "rebind" : nil)
+            lines += probe.observe(packet, roster: PlayerID.allCases, phase: "running")
+        }
+        let rebinds = lines.filter { $0.contains("re-bind required") }
+        #expect(rebinds.count == 1 && rebinds[0].hasPrefix("[LaserDropout] player1 re-bind required (identity latched)"), "\(lines)")
     }
     #endif
 }
