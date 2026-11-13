@@ -118,6 +118,38 @@ struct RobotAvatarTests {
         #expect(simd_distance(try world(s, lifted, "Foot_R"), try world(s, s.bind, "Foot_R")) < 0.002)
     }
 
+    @Test(arguments: [PlayerID.player1, .player2])
+    func deepDuckArticulationKeepsRigAndFeet(player: PlayerID) async throws {
+        let model = try #require(RobotAvatarLayer.skinnedModel(in: try await RobotAvatarLayer.loadTemplate(for: player)))
+        let s = RobotSkeleton(paths: model.jointNames, bind: model.jointTransforms)
+        let solver = RobotPoseSolver(skeleton: s)
+        let rest = solver.solve(.rest)
+        for fraction: Float in [0, 0.3, 0.55, 0.70] {
+            var t = RobotPoseTargets(); t.pelvisDrop = solver.legLength * fraction
+            let pose = solver.solve(t)
+            let hip = try world(s, pose, "Pelvis"), head = try world(s, pose, "Head")
+            #expect(abs(hip.y - (try world(s, rest, "Pelvis")).y + t.pelvisDrop) < 0.002)
+            #expect(head.y <= (try world(s, rest, "Head")).y + 0.001)
+            for side in ["L", "R"] {
+                #expect(simd_distance(try world(s, pose, "Foot_\(side)"), try world(s, rest, "Foot_\(side)")) < 0.002)
+            }
+            for (a,b) in zip(pose, s.bind) {
+                #expect(simd_distance(a.scale,b.scale) < 0.0001)
+                #expect(a.rotation.vector.x.isFinite && a.rotation.vector.w.isFinite)
+            }
+            let bind = s.world(s.bind), posed = s.world(pose)
+            let headIndex = try #require(s("Head"))
+            let offset = bind.rotation[headIndex].inverse.act(SIMD3<Float>(bind.position[headIndex].x, RobotSkeleton.modelHeight, bind.position[headIndex].z) - bind.position[headIndex])
+            let crown = posed.position[headIndex] + posed.rotation[headIndex].act(offset)
+            let thigh = try world(s, pose, "Thigh_L"), knee = try world(s, pose, "Shin_L"), foot = try world(s, pose, "Foot_L")
+            let flex = Float.pi - acos(max(-1, min(1, simd_dot(simd_normalize(thigh-knee),simd_normalize(foot-knee)))))
+            #expect(flex * 180 / .pi < 150)
+            print("DEEP_DUCK", player, "fraction", fraction, "crownProxy", crown, "kneeFlexDegrees", flex * 180 / .pi, "pelvis", hip, "head", head,
+                  "knee", try world(s, pose, "Shin_L"), "foot", try world(s, pose, "Foot_L"))
+        }
+        #expect(solver.solve(.rest) == rest)
+    }
+
     // MARK: - Human → robot retargeting
 
     private func calibration() throws -> (PlayerCalibration, PlayerPlaneLayout) {
@@ -182,6 +214,15 @@ struct RobotAvatarTests {
         t = feed(&r, try sample(c), joints(c), from: t, frames: 30)
         #expect(r.targets.pelvisDrop < 0.005)
         _ = t
+    }
+
+    @Test func missingCurrentCrouchEvidenceReleasesOldTarget() throws {
+        let (c, layout) = try calibration()
+        var r = RobotRetargeter(calibration: c, layout: layout, robotLegRest: 0.574)
+        let t = feed(&r, try sample(c), joints(c, hipDrop: 0.3), from: 0, frames: 30)
+        #expect(r.targets.pelvisDrop > 0.1)
+        r.update(RobotRetargeter.Observation(joints: [:], calibrated: true), time: t)
+        #expect(r.targets.pelvisDrop == 0)
     }
 
     @Test func crouchLeanAndJumpRetarget() throws {

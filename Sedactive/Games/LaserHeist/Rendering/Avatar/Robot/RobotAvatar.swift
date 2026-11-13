@@ -224,7 +224,15 @@ struct RobotRetargeter {
         #endif
         return 1.6
     }
-    static let maximumCrouchShare: Float = 0.55
+    // Keep at least 30% of the bind leg reach: loaded-rig tests verify planted
+    // feet and knee flexion below 150 degrees at this presentation limit.
+    static var maximumCrouchShare: Float {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-robotDemo"), args.contains("-duckLaserComparison"), args.contains("-deepDuckBaselineComparison") { return 0.55 }
+        #endif
+        return 0.70
+    }
 
     /// Switches to another compatible reference, or to none (direction only).
     /// Any change drops every calibrated value first: no root lift, floor
@@ -418,6 +426,10 @@ struct RobotRetargeter {
 
         guard let reference else { return }
         let standing = Float(reference.standingHeight)
+        // A fresh observation without eligible lower-body/crown evidence must not
+        // keep an older crouch target. Render smoothing eases the released pose.
+        measured.pelvisDrop = 0
+        measured.footLift = [:]
         // DUCK and knee raise: each leg's hip-to-ankle height as a share of standing, onto the robot's leg.
         var legsMeasured = false
         if let lh = p[.leftHip], let rh = p[.rightHip] {
