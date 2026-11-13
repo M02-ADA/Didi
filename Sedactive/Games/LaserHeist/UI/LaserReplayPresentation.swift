@@ -19,6 +19,9 @@ final class LaserReplayPresentation {
     private var presenter: GameplayScenePresenter?
     private var liveAttachment: LaserLiveFrameAttachment?
     #if DEBUG
+    private var dropoutProbe = LiveEvidenceDropoutProbe()
+    #endif
+    #if DEBUG
     var debugDiamondReadout: DebugDiamondVisualReadout?
     #endif
 
@@ -47,7 +50,13 @@ final class LaserReplayPresentation {
         guard subscription == nil, let configuration = session.configuration,
               session.isReplay || session.hasLiveRoundPlan else { return }
         if !session.isReplay {
-            guard let attachment = try? session.attachLiveFrameHost() else { return }
+            let attachment: LaserLiveFrameAttachment
+            do { attachment = try session.attachLiveFrameHost() } catch {
+                #if DEBUG
+                print("[LaserLive] live frame host not attached: \(error)")
+                #endif
+                return
+            }
             liveAttachment = attachment
         }
         self.session = session
@@ -139,6 +148,10 @@ final class LaserReplayPresentation {
             if !session.isReplay {
                 guard let attachment = self.liveAttachment else { return }
                 session.advanceLive(frameHost: attachment)
+                #if DEBUG
+                for line in self.dropoutProbe.observe(session.latestSnapshot, roster: session.inputConfiguration.roster,
+                                                      phase: "\(session.phase)") { print(line) }
+                #endif
                 self.render(scene: scene, session: session)
                 session.collectAvatarDiamondContacts(self.avatarDiamondContacts(scene: scene, session: session),
                                                      frameHost: attachment)

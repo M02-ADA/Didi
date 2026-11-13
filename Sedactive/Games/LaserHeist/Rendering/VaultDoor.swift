@@ -58,6 +58,7 @@ final class VaultDoor {
         guard animated else { return show(newState) }
         state = newState
         let opening = newState == .open
+        openingAnimations = []
         unlockedLight.stopAllAnimations()
         unlockedLight.isEnabled = true
         fade(unlockedLight, from: opening ? 0 : 1, to: opening ? 1 : 0, duration: Self.lightDuration)
@@ -65,14 +66,16 @@ final class VaultDoor {
             panel.part.stopAllAnimations()
             let from = opening ? panel.closed : panel.open
             let to = opening ? panel.open : panel.closed
+            let controller: AnimationPlaybackController?
             if reduceMotion {
                 panel.part.transform = panel.closed
-                fade(panel.part, from: opening ? 1 : 0, to: opening ? 0 : 1, duration: Self.closeDuration)
+                controller = fade(panel.part, from: opening ? 1 : 0, to: opening ? 0 : 1, duration: Self.closeDuration)
             } else {
                 panel.part.components.remove(OpacityComponent.self)
-                slide(panel.part, from: from, to: to, duration: opening ? Self.openDuration : Self.closeDuration,
-                      delay: opening ? Self.lightDuration : 0)
+                controller = slide(panel.part, from: from, to: to, duration: opening ? Self.openDuration : Self.closeDuration,
+                                   delay: opening ? Self.lightDuration : 0)
             }
+            if opening, let controller { openingAnimations.append(controller) }
         }
     }
 
@@ -117,9 +120,21 @@ final class VaultDoor {
         }
     }
 
+    /// The panels' opening animations (slides, or fades with Reduce Motion), while the door opens.
+    private var openingAnimations: [AnimationPlaybackController] = []
+    /// How long opening takes from the unlock: the light, then the slide (or the fade).
+    static func openingDuration(reduceMotion: Bool) -> TimeInterval {
+        reduceMotion ? closeDuration : lightDuration + openDuration
+    }
+
+    /// The door is open AND its panels have finished moving out of the doorway: the passage is
+    /// clear (`VaultPresentation` holds the corridor's travel until then).
+    var isOpenAndClear: Bool { state == .open && openingAnimations.allSatisfy(\.isComplete) }
+
     /// Leaves the panel at `to`; until `delay` has passed it holds at `from`.
     /// The hold is its own step: an animation `delay` would show `to` meanwhile.
-    private func slide(_ part: Entity, from: Transform, to: Transform, duration: TimeInterval, delay: TimeInterval) {
+    @discardableResult
+    private func slide(_ part: Entity, from: Transform, to: Transform, duration: TimeInterval, delay: TimeInterval) -> AnimationPlaybackController? {
         part.transform = to
         var steps = [FromToByAnimation(from: from, to: to, duration: duration, timing: .easeInOut, bindTarget: .transform)]
         if delay > 0 {
@@ -127,15 +142,15 @@ final class VaultDoor {
         }
         guard let resources = try? steps.map({ try AnimationResource.generate(with: $0) }),
               let sequence = try? AnimationResource.sequence(with: resources)
-        else { return }
-        part.playAnimation(sequence)
+        else { return nil }
+        return part.playAnimation(sequence)
     }
 
-    private func fade(_ part: Entity, from: Float, to: Float, duration: TimeInterval) {
+    @discardableResult
+    private func fade(_ part: Entity, from: Float, to: Float, duration: TimeInterval) -> AnimationPlaybackController? {
         part.components.set(OpacityComponent(opacity: to))
         let animation = FromToByAnimation<Float>(from: from, to: to, duration: duration, timing: .easeInOut, bindTarget: .opacity)
-        if let resource = try? AnimationResource.generate(with: animation) {
-            part.playAnimation(resource, handoffType: .compose)
-        }
+        guard let resource = try? AnimationResource.generate(with: animation) else { return nil }
+        return part.playAnimation(resource, handoffType: .compose)
     }
 }

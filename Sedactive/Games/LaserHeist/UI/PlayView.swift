@@ -346,6 +346,13 @@ private struct ReplayRoundView: View {
                 .padding(.bottom, 8)
             }
         }
+        #if DEBUG
+        // A scene that failed to start never attaches the live frame host, so the setup stage (in
+        // front of this view) waits on "Get ready!" with no visible reason: say why in the log.
+        .onChange(of: startupError) { _, error in
+            if let error { print("[LaserLive] scene startup failed, no live frame host: \(error)") }
+        }
+        #endif
         .overlay(alignment: .topLeading) {
             if let session, session.summary == nil, Self.showsReplayDebugHUD { ReplaySliceHUD(session: session) }
             if let startupError { Text("Replay could not start: \(startupError)").padding().background(.black).foregroundStyle(.white) }

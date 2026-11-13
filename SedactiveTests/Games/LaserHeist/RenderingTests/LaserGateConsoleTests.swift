@@ -306,8 +306,8 @@ struct LaserGateConsoleTests {
         let short = try #require(layer.steering?.boardX(.player1))
         #expect(short > c.dockX + 0.05, "stopped short: \(short) vs dock \(c.dockX)")
         try send(0, 30)
-        #expect(layer.steering?.boardX(.player1) == short, "no consoles: it stays where it stopped")
-        layer.consolesActive = true
+        #expect(layer.steering?.boardX(.player1) == short, "no gate near: it stays where it stopped")
+        layer.docksActive = true // a gate is near (or open): the dock assist runs
         #expect(short - c.dockX < RobotAvatarLayer.dockCapture, "within the capture distance")
         do {
             try send(0, 30)

@@ -275,7 +275,7 @@ final class VaultPresentation {
         guard !hidden else { return }
         showActivations(vault)
         if !isOpen, opens {
-            open(vault)
+            open(vault, at: state.gameTime)
         }
         updateCountdown(vault, at: state.gameTime, failed: ended == .vaultFailed || failed.contains(vault.id))
         place(travelDistance: travelDistance)
@@ -292,6 +292,7 @@ final class VaultPresentation {
         vaultID = nil
         anchor = nil
         openedID = nil
+        passedID = nil
         failedID = nil
         succeeded = []
         failed = []
@@ -306,8 +307,74 @@ final class VaultPresentation {
     /// in front of the players.
     var approachHorizonZ: Float { scene.layout.corridorFarZ + 2 }
 
+    /// When the current door opened (game time), for `holdsTravel`.
+    private var openedAt: Double?
+
+    /// PASSAGE CLEAR BEFORE TRAVEL (iPad, 12 November 2026: the mascots moved on while the door
+    /// was still opening and passed through its panels). The next minute starts at the gate's
+    /// success (Jevon's rule, unchanged), but the corridor's PRESENTED travel holds while this
+    /// state's opened door is still opening: until its panels' opening animations have finished
+    /// (`LaserScene.vaultDoorIsClear`). Lasers in flight are placed from their crossing times
+    /// either way; new ones arm when travel resumes, as after any stop.
+    ///
+    /// Once a vault's passage has been clear, that vault never holds travel again (iPad, 12 November
+    /// 2026: the corridor froze a moment after the team passed the gate). The opened vault stays in
+    /// game state through the next minute, while the one door is reset (closed) and sent down the
+    /// corridor as the next gate: asking it again would read the next gate's closed door as this
+    /// vault's unopened passage.
+    func holdsTravel(for state: LaserGameState) -> Bool {
+        guard let vault = state.vault, vault.opened, passedID != vault.id else { return false }
+        guard openedID == vault.id, let openedAt else { return true } // opening this very frame
+        guard scene.vaultDoorIsClear(openFor: state.gameTime - openedAt, reduceMotion: reducesMotion()) else {
+            // While held, the mascots keep to their docks.
+            scene.robotAvatars?.docksActive = consoleMode
+            return true
+        }
+        // Clear: released for good, and the mascots steer freely again (until the next gate's dock lead).
+        passedID = vault.id
+        if consoleMode { scene.robotAvatars?.docksActive = false }
+        return false
+    }
+
+    /// The vault whose opened passage has been clear (`holdsTravel`).
+    private var passedID: UUID?
+
+    /// How long before a gate the mascots are drawn onto their docks (the dock assist), so they
+    /// are docked when the gate's time starts: the press zones follow the mascot's distance from
+    /// its dock, so a mascot still gliding in needs more reach for the first button.
+    static let dockLead: Double = 4
+
     /// How far ahead of its stop the door stands at the horizon.
-    var approachDistance: Float { max(0, scene.layout.vaultDoorStopZ - approachHorizonZ) }
+    var approachDistance: Float { max(0, doorStopZ - approachHorizonZ) }
+
+    /// GATE AS ONE STRUCTURE (iPad, 12 November 2026: the wall consoles popped up beside the mascots
+    /// while the door still stood 7.5 m down the corridor). With wall consoles, the door stops
+    /// `consoleDoorGap` beyond the players' plane, and the consoles ride in with it (`consoleRide`),
+    /// on the corridor walls just in front of it: they come down the corridor together and arrive
+    /// together, the consoles beside the docked mascots, the door right ahead of them. Without
+    /// consoles the door keeps its authored stop.
+    static let consoleDoorGap: Float = 1.6
+    var doorStopZ: Float {
+        consolesInUse ? max(scene.layout.vaultDoorStopZ, scene.mapping.interactionPlaneZ - Self.consoleDoorGap)
+            : scene.layout.vaultDoorStopZ
+    }
+    /// Whether every shown player has a wall console (live rounds with mascots).
+    private var consolesInUse: Bool {
+        let shown = PlayerID.allCases.filter { visiblePlayers.contains($0) }
+        return !shown.isEmpty && shown.allSatisfy { liveConsoles?($0) != nil }
+    }
+
+    /// The consoles' offset along the corridor while they ride in with the door (0 at the stop), and
+    /// their haze with distance (the door's own rule).
+    private func consoleRide(_ offset: Float) {
+        guard consoleMode else { return }
+        buttons.position.z = offset
+        let haze = CorridorDepth.haze(atDistance: scene.layout.cameraPosition.z - (scene.mapping.interactionPlaneZ + offset))
+            * LaserScene.vaultHazeShare
+        buttons.components.set(OpacityComponent(opacity: max(0, 1 - haze)))
+        // The mascots reach for the buttons and the dock assist runs once the consoles are beside them.
+        scene.robotAvatars?.consolesActive = offset > -0.01
+    }
 
     /// Shows the next vault's locked door in the corridor while the team still
     /// travels: standing at the far end until the vault is within the
@@ -319,7 +386,8 @@ final class VaultPresentation {
     /// Returns whether the door is approaching (and the rest of `update` is skipped).
     private func approach(state: LaserGameState, upcomingVaultIn lead: Double?) -> Bool {
         guard state.phase == .activity, let lead, lead > 0 else { return false }
-        let distance = min(scene.layout.travelSpeed * Float(lead), approachDistance)
+        // Eased like the corridor's own travel (`GateTravelEase`): it slows to a stop at the gate.
+        let distance = min(GateTravelEase.distance(lead: lead, speed: scene.layout.travelSpeed), approachDistance)
         // The previous vault's opened door must have passed out of view first:
         // there is one door.
         if let vault = state.vault, !(vault.id == vaultID && openedID == vaultID && (approaching || scene.vaultDoorDepth == nil)) {
@@ -333,15 +401,14 @@ final class VaultPresentation {
             scene.showVaultDoorOpaque()
             diagnostics.approaches += 1
         }
-        scene.setVaultDoorDepth(scene.layout.vaultDoorStopZ - distance)
-        // The wall consoles appear (all red) a few seconds before the gate, so the players can steer
-        // to their docks before its time starts; nothing is judged until the gate opens.
-        if lead <= Self.consoleLead { revealConsolesEarly() }
+        scene.setVaultDoorDepth(doorStopZ - distance)
+        // The wall consoles (all red) come in with the door, a fixed distance in front of it; nothing
+        // is judged until the gate opens.
+        revealConsolesEarly()
+        consoleRide(-distance)
+        if consoleMode { scene.robotAvatars?.docksActive = lead <= Self.dockLead }
         return true
     }
-
-    /// How long before a live gate its wall consoles appear (seconds of activity time).
-    static let consoleLead: Double = 4
 
     private func revealConsolesEarly() {
         guard !consoleMode else { return }
@@ -367,9 +434,9 @@ final class VaultPresentation {
         shownButtons = [:]
         completedSides = []
         for view in consoleViews.values { view.reset() }
-        anchor = travelDistance + (scene.mapping.interactionPlaneZ - scene.layout.vaultDoorStopZ)
+        anchor = travelDistance + (scene.mapping.interactionPlaneZ - doorStopZ)
         scene.resetVaultDoor()
-        scene.setVaultDoorDepth(scene.layout.vaultDoorStopZ)
+        scene.setVaultDoorDepth(doorStopZ)
         // An approaching door is already in view: it arrives, it doesn't fade in again.
         if !arrived { scene.revealVaultDoor() }
         if attachedToDoor == nil {
@@ -377,7 +444,7 @@ final class VaultPresentation {
             // they stand where the door would be.
             attachedToDoor = scene.attachToVaultDoor(root)
             if attachedToDoor == false {
-                root.position = [0, 0, scene.layout.vaultDoorStopZ]
+                root.position = [0, 0, doorStopZ]
                 scene.root.addChild(root)
             }
         }
@@ -464,16 +531,23 @@ final class VaultPresentation {
         }
     }
 
-    private func open(_ vault: LaserVaultState) {
+    private func open(_ vault: LaserVaultState, at time: Double) {
         openedID = vault.id
+        openedAt = time
         scene.setVaultDoorState(.open, animated: true, reduceMotion: reducesMotion())
         countdown.isEnabled = false
         digitsRoot.isEnabled = false
         countdownFraction = nil
         countdownDigit = nil
-        // Let the last activation read, then fade the indicators out (cosmetic).
+        // Let the last activation read, then fade the indicators out (cosmetic). The wall consoles
+        // are corridor structure, not indicators: they stay, green, and the team passes them
+        // (`place`); the mascots stop reaching for them but stay docked until the door is clear.
         Self.fadeOut(root, after: 0.3, duration: 0.5)
-        Self.fadeOut(buttons, after: 0.3, duration: 0.5)
+        if consoleMode {
+            scene.robotAvatars?.consolesActive = false
+        } else {
+            Self.fadeOut(buttons, after: 0.3, duration: 0.5)
+        }
         indicatorsShown = false
         diagnostics.opens += 1
     }
@@ -525,10 +599,17 @@ final class VaultPresentation {
     private func place(travelDistance: Float) {
         guard let anchor else { return }
         let depth = scene.mapping.interactionPlaneZ - (anchor - travelDistance)
-        // The wall columns travel with the door once it opens.
-        // Wall columns ride with the door; live buttons beside the players stay put (they fade).
-        buttons.position.z = liveLayout ? buttonsBaseZ : buttonsBaseZ + (depth - scene.layout.vaultDoorStopZ)
+        // Wall columns and wall consoles ride with the door: one structure fixed in the corridor, so
+        // once it opens and travel resumes the team passes it (iPad, 12 November 2026: the consoles
+        // had stayed beside the mascots and dissolved). The live zone buttons stay put (they fade).
         let nearCamera = scene.layout.cameraPosition.z - GameplayScenePresenter.cameraClearance
+        if consoleMode {
+            buttons.position.z = depth - doorStopZ
+            // Cleaned up with the door, once both are past the camera (long out of view).
+            if depth >= nearCamera { buttons.isEnabled = false }
+        } else {
+            buttons.position.z = liveLayout ? buttonsBaseZ : buttonsBaseZ + (depth - doorStopZ)
+        }
         scene.setVaultDoorDepth(depth < nearCamera ? depth : nil)
     }
 
@@ -593,6 +674,7 @@ final class VaultPresentation {
         buttonsBaseZ = 0
         buttons.position.z = 0
         scene.robotAvatars?.consolesActive = true
+        scene.robotAvatars?.docksActive = true
         for (player, parts) in indicators {
             for p in parts.values { p.part.isEnabled = false }
             outlines[player]?.isEnabled = false
@@ -635,6 +717,8 @@ final class VaultPresentation {
         buttons.stopAllAnimations()
         buttons.isEnabled = false
         scene.robotAvatars?.consolesActive = false
+        scene.robotAvatars?.docksActive = false
+        consoleMode = false // the next gate's consoles come in with its door again
         indicatorsShown = false
     }
 
