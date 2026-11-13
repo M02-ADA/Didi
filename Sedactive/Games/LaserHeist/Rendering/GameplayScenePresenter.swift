@@ -102,6 +102,10 @@ final class GameplayScenePresenter {
     var onSound: ((SoundCue) -> Void)?
     /// Attempts whose action cue has sounded, by attempt and move.
     private var cuedAttempts: Set<String> = []
+    #if DEBUG
+    /// `[LaserJumpTiming]`: targets whose drawn crossing was logged.
+    private var tracedCrossings: Set<LaserTargetKey> = []
+    #endif
     /// Active vault buttons last seen, per vault.
     private var vaultButtonsSeen: (id: UUID, count: Int)?
     private var lastVaultTick: (id: UUID, second: Int)?
@@ -185,7 +189,7 @@ final class GameplayScenePresenter {
         let stage = finalVaultStage(state: state, entry: entry)
         // The approach to the final vault moves the corridor (cosmetic, while game time is held).
         let approach = finalVault.update(stage)
-        travel(state: state, to: time, plus: approach)
+        travel(state: state, to: time, plus: approach, upcomingVaultIn: upcomingVaultIn, holding: vault.holdsTravel(for: state))
         vault.update(state: state, travelDistance: travelDistance + approach, upcomingVaultIn: upcomingVaultIn)
         soundVault(state)
         // Diamond Time's diamonds appear once the team is inside the vault.
@@ -233,6 +237,9 @@ final class GameplayScenePresenter {
         nextEvent = 0
         lastSequence = nil
         cuedAttempts = []
+        #if DEBUG
+        tracedCrossings = []
+        #endif
         vaultButtonsSeen = nil
         lastVaultTick = nil
         diamondsHeard = diamondTime.collections + normalDiamonds.collections
@@ -272,6 +279,10 @@ final class GameplayScenePresenter {
                 // from its old attempt predate the new crossing and must not badge the new hazard.
                 guard event.gameTime >= target.crossingTime else { break }
                 judgedAt[key] = judgedAt[key] ?? event.gameTime
+                #if DEBUG
+                print(String(format: "[LaserJumpTiming] %@ %@ crossing %.3f · verdict %@ at %+.3f s", player.rawValue,
+                             target.requiredMove.rawValue, target.crossingTime, "\(judgement)", event.gameTime - target.crossingTime))
+                #endif
                 let outcome: LaserFeedback.Outcome? = switch judgement {
                 case .clear: .clear
                 case .hit: .hit
@@ -319,11 +330,14 @@ final class GameplayScenePresenter {
     /// after the round ends. Gates don't use this distance: each is placed
     /// from its own crossing time, at the same speed, so the two always agree.
     /// - Parameter extra: cosmetic distance on top (the final vault approach, on held game time).
-    private func travel(state: LaserGameState, to time: Double, plus extra: Float = 0) {
-        let moving = (state.phase == .activity || state.phase == .diamondTime) && endedAt == nil
+    private func travel(state: LaserGameState, to time: Double, plus extra: Float = 0, upcomingVaultIn: Double? = nil,
+                        holding: Bool = false) {
+        // `holding`: an opened gate's door is still opening; the team waits until it is clear.
+        let moving = (state.phase == .activity || state.phase == .diamondTime) && endedAt == nil && !holding
         isTravelling = moving
         if let last = travelledUntil, time > last, moving {
-            travelDistance += scene.layout.travelSpeed * Float(time - last)
+            // Eased into a gate's stop (`GateTravelEase`); cruising otherwise.
+            travelDistance += scene.layout.travelSpeed * Float(time - last) * GateTravelEase.speedFactor(lead: upcomingVaultIn)
         }
         travelledUntil = max(travelledUntil ?? time, time)
         scene.setTravelDistance(travelDistance + extra)
@@ -399,8 +413,11 @@ final class GameplayScenePresenter {
         }
         for (key, target, status) in kept {
             let hazard = slots[key]?.hazard ?? acquire(key, target)
-            show(hazard, target: target, status: status, depth: depth(key, target, status, at: time), at: time,
-                 look: sharedLooks[key])
+            let drawn = depth(key, target, status, at: time)
+            show(hazard, target: target, status: status, depth: drawn, at: time, look: sharedLooks[key])
+            #if DEBUG
+            if Self.isPending(status), drawn >= scene.mapping.interactionPlaneZ { traceCrossing(key, target, at: time) }
+            #endif
         }
         joinSharedBeams(pairs)
         // Invariant check: every pending hazard got a gate.
@@ -681,6 +698,23 @@ final class GameplayScenePresenter {
             }
         }
     }
+
+    #if DEBUG
+    /// TIMING TRACE (iPad, 13 November 2026, JUMP timing): the frame a pending laser is first drawn
+    /// on the players' plane, with how late that is against its authoritative crossing (GameClock),
+    /// how old the pose the mascot shows is (camera host clock: capture → this frame) and the
+    /// mascot's lift. One line per target; the verdict follows in its own line.
+    private func traceCrossing(_ key: LaserTargetKey, _ target: LaserTarget, at time: Double) {
+        guard tracedCrossings.insert(key).inserted else { return }
+        let age = scene.robotAvatars?.shownCapture[key.playerID].map { CameraHostClock.now() - $0 }
+        let lift = scene.robotAvatars?.robots[key.playerID]?.retargeter.lift
+        print(String(format: "[LaserJumpTiming] %@ %@ crossing %.3f · drawn on the plane %+.3f s · mascot pose age %@ · lift %@",
+                     key.playerID.rawValue, target.requiredMove.rawValue, target.crossingTime, time - target.crossingTime,
+                     // Replay and synthetic poses are not stamped with camera time: no age.
+                     age.flatMap { (0...5).contains($0) ? String(format: "%.3f s", $0) : nil } ?? "n/a",
+                     lift.map { String(format: "%.3f", $0) } ?? "-"))
+    }
+    #endif
 
     private func buildMarkers() {
         let colors: [UIColor] = [.cyan, .purple, .purple, .green, .green]

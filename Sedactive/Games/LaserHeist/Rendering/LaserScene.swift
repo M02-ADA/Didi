@@ -564,6 +564,15 @@ final class LaserScene {
     /// The door's presented state, or `nil` without door artwork.
     var vaultDoorState: VaultDoor.State? { vaultDoor?.state }
 
+    /// Whether the opened door's passage is clear: its opening animations have finished, or (where
+    /// RealityKit isn't running them, e.g. an offscreen scene) its own opening time has passed since
+    /// it unlocked. Without door artwork there is nothing in the way.
+    func vaultDoorIsClear(openFor elapsed: Double, reduceMotion: Bool) -> Bool {
+        guard let door = vaultDoor else { return true }
+        guard door.state == .open else { return false }
+        return door.isOpenAndClear || elapsed >= VaultDoor.openingDuration(reduceMotion: reduceMotion)
+    }
+
     /// Fades the door in, e.g. on entering a vault.
     func revealVaultDoor() {
         vaultDoor?.reveal()

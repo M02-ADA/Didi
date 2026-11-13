@@ -83,7 +83,8 @@ struct VaultPresentationTests {
         for lead in stride(from: far - tick, to: 0, by: -tick) {
             presenter.apply(state: state(17 - lead, .activity), events: [], snapshot: nil, upcomingVaultIn: lead)
             let depth = try #require(scene.vaultDoorDepth)
-            #expect(abs(depth - max(horizon, stop - speed * Float(lead))) < 1e-4)
+            // Eased into its stop like the corridor's travel (`GateTravelEase`).
+            #expect(abs(depth - max(horizon, stop - GateTravelEase.distance(lead: lead, speed: speed))) < 1e-4)
             #expect(scene.vaultDoorOpacity == 1, "never faded")
             depths.append(depth)
         }
@@ -579,10 +580,14 @@ extension VaultPresentationTests {
         apply(presenter, round)
         try round.advance(to: 2)
         apply(presenter, round)
+        #expect(abs((scene.vaultDoorDepth ?? .nan) - scene.layout.vaultDoorStopZ) < 1e-4, "the team waits while the door opens")
+        // Once the passage is clear (the door's own opening time), the team travels on.
+        try round.advance(to: 3.2)
+        apply(presenter, round)
         let passing = try #require(scene.vaultDoorDepth)
         #expect(passing > scene.layout.vaultDoorStopZ + 0.1)  // moved toward the players
 
-        try round.open(id(2), at: 2)
+        try round.open(id(2), at: 3.2)
         apply(presenter, round)
         let exiting = try #require(presenter.vault.exitingDoor)
         #expect(abs(exiting.position(relativeTo: nil).z - passing) < 1e-4)  // left where it was
@@ -593,10 +598,10 @@ extension VaultPresentationTests {
         #expect(presenter.vault.diagnostics.handoffs == 1 && presenter.vault.diagnostics.reveals == 2)
 
         // A third quick vault replaces the copy: never more than one.
-        try round.completeBothSides(id(2), from: 2.2)
-        try round.advance(to: 3)
+        try round.completeBothSides(id(2), from: 3.4)
+        try round.advance(to: 4.2)
         apply(presenter, round)
-        try round.open(id(3), at: 3)
+        try round.open(id(3), at: 4.2)
         apply(presenter, round)
         #expect(presenter.vault.diagnostics.handoffs == 2)
         #expect(doorEntities(in: scene).count <= 2)

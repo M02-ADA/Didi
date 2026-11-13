@@ -41,7 +41,11 @@ struct PlayerSetupView: View {
             roundStarted: session?.state != nil,
             manualPause: session?.liveReadiness?.blocker == .manualPause,
             solo: session?.isSoloPractice == true,
-            readinessBlocker: session?.liveReadiness?.blocker))
+            readinessBlocker: session?.liveReadiness?.blocker,
+            attention: session.map { LiveEvidenceAttention.players($0.latestSnapshot, roster: $0.inputConfiguration.roster) } ?? [:],
+            restartsAutomatically: flow.automaticRestarts < LaserInputFlow.maximumAutomaticRestarts
+                && session?.state == nil && session?.summary == nil,
+            recoveryNeedsContinue: session?.recoveryNeedsPlan == true))
     }
 
     private var automaticControls: some View {
