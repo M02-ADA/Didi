@@ -36,7 +36,7 @@ nonisolated enum MascotPoseEnvelope {
         var adjusted = vector
         adjusted.x = sideSign * max(sideSign * vector.x, vector.y * outwardPerRise)
         let direction = simd_normalize(adjusted)
-        // Fade the additional clearance in as the tracked limb rises.
+        // Fade the additional clearance in as the tracked limb rises.ooke
         let angle = tilt * min(1, max(0, vector.y * 3))
         let c = cos(angle), s = sin(angle) * sideSign
         let safe = SIMD3(c * direction.x + s * direction.y,

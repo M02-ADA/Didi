@@ -57,7 +57,7 @@ import Testing
         print(String(format: "[RobustnessEvidence] one dropped P2 foot frame at game %.3f → session %@, setup stage shown %@ · running again after %.2f s of steady evidence · game time advanced %.3f s meanwhile",
                      before, "\(pausedPhase)", "\(stage)", recovered, after - before))
         #expect(pausedPhase == .paused, "PR #46 policy: a single unusable running frame pauses the round")
-        #expect(stage, "the paused round is covered by the setup stage (camera preview)")
+        #expect(!stage, "the paused round stays over the game, never under the setup stage")
         #expect(session.phase == .running && session.state?.teamHealth != nil, "it recovers by itself, round kept")
         await session.stop()
     }
