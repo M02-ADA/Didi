@@ -217,6 +217,18 @@ nonisolated struct RobotPoseSolver: Sendable {
 
     var legLength: Float { thigh + shin }
 
+    /// Visual articulation only, derived from the already admitted/smoothed pelvis target.
+    /// No new evidence, root lift or whole-mesh scaling. Zero at rest/loss recovery.
+    private func duckArticulation(_ t: RobotPoseTargets) -> (pitch: Float, back: Float) {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-robotDemo"), args.contains("-duckLaserComparison"), args.contains("-deepDuckBaselineComparison") { return (0, 0) }
+        #endif
+        let share = min(1, max(0, t.pelvisDrop / max(legLength * RobotRetargeter.maximumCrouchShare, 0.001)))
+        let eased = share * share * (3 - 2 * share)
+        return (eased * .pi / 7, eased * legLength * 0.12)
+    }
+
     func solve(_ t: RobotPoseTargets) -> [Transform] { solveDetailed(t).local }
 
     /// The solve plus, per leg, how far (metres) the requested ankle lies
@@ -225,6 +237,7 @@ nonisolated struct RobotPoseSolver: Sendable {
         let s = skeleton
         var shortfall: [RobotPoseTargets.Side: Float] = [:]
         var local = s.bind
+        let duck = duckArticulation(t)
         var rotation = [simd_quatf](repeating: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1), count: local.count)
         var position = [SIMD3<Float>](repeating: .zero, count: local.count)
         // Planned knee/ankle per leg, filled when the thigh is reached (after the pelvis is posed).
@@ -260,15 +273,18 @@ nonisolated struct RobotPoseSolver: Sendable {
             switch n {
             case "Pelvis":
                 local[i].translation.y -= t.pelvisDrop + reachDrop(t)
+                local[i].translation.z += duck.back
             case "Spine", "Chest":
                 let tilt = t.lean / 2 * (n == "Spine" ? 1 : 2)
-                if let c = childOf[i] { aim(i, toward: c, [sin(tilt), cos(tilt), 0]) }
+                let pitch = duck.pitch * (n == "Spine" ? 0.5 : 1)
+                if let c = childOf[i] { aim(i, toward: c, [sin(tilt) * cos(pitch), cos(tilt) * cos(pitch), -sin(pitch)]) }
             case "Head":
                 let world = -t.lean + t.headRoll  // absolute roll on screen
                 // The head is a leaf: set its model-space turn, then roll, directly over the
                 // bind orientation. The robot faces −Z, so turning toward +X is −Y rotation.
                 let turn = simd_quatf(angle: -t.headYaw, axis: [0, 1, 0])
-                local[i].rotation = parentWorld(i).inverse * (simd_quatf(angle: world, axis: [0, 0, 1]) * turn * bindWorld.rotation[i])
+                let nod = simd_quatf(angle: -duck.pitch * 0.4, axis: [1, 0, 0])
+                local[i].rotation = parentWorld(i).inverse * (simd_quatf(angle: world, axis: [0, 0, 1]) * turn * nod * bindWorld.rotation[i])
             case "Shoulder_L", "Shoulder_R":
                 // SHRUG: only the raised side's collarbone lifts (in the chest's own
                 // plane, about its root); the arm is aimed afterwards, so its

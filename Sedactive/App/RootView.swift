@@ -107,6 +107,11 @@ struct ContentView: View {
             .opacity(stageShown ? 1 : 0)
             .allowsHitTesting(stageShown)
             .accessibilityHidden(!stageShown)
+          // In-round tracking warning (Kevin, 13 November 2026): over the still-mounted stage while a
+          // started round is paused for tracking, from the session's own state (LaserTrackingWarning).
+          if let session = flow.session, session.hasLiveRoundPlan {
+            LaserTrackingWarningOverlay(flow: flow, session: session).id(ObjectIdentifier(session))
+          }
           // The countdown shows only the session's own remaining time (no second clock).
           if let session = flow.session, session.phase == .countdown,
              let remaining = session.liveReadiness?.countdownRemaining {
@@ -127,6 +132,11 @@ struct ContentView: View {
   /// mounted, then except while counting down, playing or showing results.
   static func showsSetupStage(_ session: GameSessionCoordinator?) -> Bool {
     guard let session, session.hasLiveRoundPlan || session.automaticSetup else { return true }
+    // A started round is never covered by the camera setup stage, paused or not (Kevin, 13 November
+    // 2026: in a squat the calibration stage showed before the tracking warning). Its pauses show
+    // over the frozen game: the tracking warning, a pause notice or the HUD's pause menu
+    // (`LaserTrackingWarningOverlay`). The stage returns only with a new setup (Recalibrate).
+    if session.state != nil && session.summary == nil { return false }
     return session.phase != .countdown && session.phase != .running && session.summary == nil
   }
   /// The live camera image for the setup stage: the pipeline's one retained

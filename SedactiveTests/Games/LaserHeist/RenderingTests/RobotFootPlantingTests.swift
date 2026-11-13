@@ -109,6 +109,48 @@ struct RobotFootPlantingTests {
 
     // MARK: - Standing, leaning, ducking: feet stay planted
 
+    @Test(arguments: [RobotDemoScenario.stepRight, .stepLeft, .leanRight])
+    func diamondTimeWalksWithTrackedStepsAndDropsBoardSteering(_ scenario: RobotDemoScenario) async throws {
+        let input = try LaserReplayScript.load().input
+        let scene = LaserScene()
+        scene.installEnvironment(authored: await LaserScene.loadAuthoredEnvironment())
+        let layer = RobotAvatarLayer(scene: scene, calibrations: input.configuration.calibrations,
+                                     layout: input.configuration.playerPlaneLayout, templates: try await templates())
+        scene.robotAvatars = layer
+        let board = try #require(layer.hoverboards[.player1])
+        layer.smoothing = 0.03
+        layer.diagnosticsEnabled = true
+        let vault = FinalVaultPresentation(scene: scene)
+        vault.update(.inside(nil))
+        #expect(layer.walksInVault)
+        #expect(!board.root.isEnabled)
+
+        let sequence = RobotDemoSequence(configuration: input.configuration,
+                                         cameraGeometryRevision: input.cameraGeometryRevision, only: scenario)
+        let steering = layer.steering
+        for index in 1...66 {
+            let frame = try sequence.frame(UInt64(index))
+            layer.apply(frame.snapshot, joints: frame.joints)
+            layer.render(now: frame.snapshot.capturedAt)
+        }
+
+        let feet = try #require(layer.footDiagnostics[.player1])
+        #expect(layer.steering == steering)
+        #expect(feet.rideX == 0)
+        if scenario == .leanRight {
+            #expect(abs(feet.pelvisX) < 0.10)
+            #expect(feet.steps.values.reduce(0, +) == 0)
+        } else {
+            let direction: Float = scenario == .stepRight ? 1 : -1
+            #expect(feet.pelvisX * direction > 0.10)
+            #expect(feet.steps[.left, default: 0] > 0)
+            #expect(feet.steps[.right, default: 0] > 0)
+        }
+        vault.stop()
+        #expect(!layer.walksInVault)
+        #expect(board.root.isEnabled)
+    }
+
     @Test func standingStillNeverSteps() async throws {
         let ticks = try await play(.idle, planting: true)
         report(.idle, ticks, planting: true, players: [.player1, .player2])

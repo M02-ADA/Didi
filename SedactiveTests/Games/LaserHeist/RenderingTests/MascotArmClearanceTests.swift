@@ -181,6 +181,28 @@ struct MascotArmClearanceTests {
         #expect(abs((ys.max()! - ys.min()!) - RobotSkeleton.modelHeight) < 0.005 && abs(ys.min()!) < 0.005)
     }
 
+    @Test(arguments: PlayerID.allCases)
+    func deepDuckMeshCrownAndArmClearance(player: PlayerID) async throws {
+        let (s, solver, mesh) = try await load(player)
+        for fraction: Float in [0, 0.3, 0.70] {
+            var t = RobotPoseTargets(); t.pelvisDrop = solver.legLength * fraction
+            let pose = solver.solve(t)
+            let points = skin(s, mesh, pose, mesh.head)
+            let crown = try #require(points.values.map(\.y).max())
+            let standing = RobotSkeleton.modelHeight
+            print("DEEP_MESH", player, "fraction", fraction, "crownModel", crown,
+                  "crownWorldAboveLane", crown * RobotAvatarLayer.modelScale,
+                  "standingWorldAboveLane", standing * RobotAvatarLayer.modelScale,
+                  "highPreviewLowerEdge", LaserApproachPreview.encounters[0].band.lowerBound)
+            #expect(crown <= standing + 0.001)
+            #expect(clearance(s, mesh, pose, firstOnly: true).inside == 0)
+            t.upperArm = [.left: [0,1,0], .right: [0,1,0]]
+            t.forearm = t.upperArm
+            MascotPoseEnvelope.apply(to: &t)
+            #expect(clearance(s, mesh, solver.solve(t), firstOnly: true).inside == 0)
+        }
+    }
+
     /// Without the envelope a raised arm goes through the head; with it, no
     /// arm vertex enters the head in any tested pose.
     @Test(arguments: PlayerID.allCases)

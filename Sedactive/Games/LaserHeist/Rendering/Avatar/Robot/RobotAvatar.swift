@@ -146,6 +146,8 @@ struct RobotRetargeter {
     private(set) var targets = RobotPoseTargets.rest
     private(set) var lift: Float = 0
     private(set) var sway: Float = 0
+    /// Calibrated hip position for walking, using the same pose as the ankles.
+    private(set) var walkingHipX: Float?
     /// Each tracked ankle's sideways offset from the player's own standing
     /// stance (relative to the hip centre, mirrored once, robot metres); absent
     /// when that ankle gave no evidence this frame. The foot planner steps a
@@ -215,7 +217,24 @@ struct RobotRetargeter {
     }
 
     /// Deepest pelvis drop the legs can show, as a share of the rest leg.
-    static let maximumCrouchShare: Float = 0.55
+    // Presentation gain only: the short-legged mascot needs a more readable silhouette.
+    // Evidence gates, dead zone and existing IK reach cap remain unchanged.
+    static var duckPresentationGain: Float {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-robotDemo"), args.contains("-duckLaserComparison"), args.contains("-duckBaselineComparison") { return 1 }
+        #endif
+        return 1.6
+    }
+    // Keep at least 30% of the bind leg reach: loaded-rig tests verify planted
+    // feet and knee flexion below 150 degrees at this presentation limit.
+    static var maximumCrouchShare: Float {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-robotDemo"), args.contains("-duckLaserComparison"), args.contains("-deepDuckBaselineComparison") { return 0.55 }
+        #endif
+        return 0.70
+    }
 
     /// Switches to another compatible reference, or to none (direction only).
     /// Any change drops every calibrated value first: no root lift, floor
@@ -234,6 +253,7 @@ struct RobotRetargeter {
         measuredSway = 0
         lateralReading = (nil, nil, nil, nil, 0)
         steerSpeed = 0
+        walkingHipX = nil
         filteredLean = nil
         measured.pelvisDrop = 0
         measured.footLift = [:]
@@ -344,6 +364,7 @@ struct RobotRetargeter {
             // Travel from the judge's hip centre when carried (else the pose's); the lean from ONE
             // pose: its shoulders past its own hips.
             let hip = (observation.centerX ?? poseHipX).map { Float(lane - $0) }
+            walkingHipX = poseHipX.map { Float(lane - $0) * motionScale }
             let shoulder = poseHipX.flatMap { ph in shoulderX.map { sx in hip.map { $0 + Float(ph - sx) } } } ?? nil
             if let hip {
                 let zone = swayDeadband * Float(reference.standingHeight)
@@ -409,6 +430,10 @@ struct RobotRetargeter {
 
         guard let reference else { return }
         let standing = Float(reference.standingHeight)
+        // A fresh observation without eligible lower-body/crown evidence must not
+        // keep an older crouch target. Render smoothing eases the released pose.
+        measured.pelvisDrop = 0
+        measured.footLift = [:]
         // DUCK and knee raise: each leg's hip-to-ankle height as a share of standing, onto the robot's leg.
         var legsMeasured = false
         if let lh = p[.leftHip], let rh = p[.rightHip] {
@@ -421,7 +446,7 @@ struct RobotRetargeter {
                 guard legStanding > 0 else { continue }
                 let share = Float((hipY - a.y) / legStanding)
                 let bend = Self.softZone(max(0, 1 - share), crouchDeadband)
-                reach[side] = robotLegRest * min(1, max(1 - Self.maximumCrouchShare, 1 - bend))
+                reach[side] = robotLegRest * min(1, max(1 - Self.maximumCrouchShare, 1 - bend * Self.duckPresentationGain))
             }
             if let longest = reach.values.max() {
                 legsMeasured = true
@@ -437,7 +462,7 @@ struct RobotRetargeter {
             // evidence still shapes the legs; the deeper of the two is shown. A
             // presentation estimate: a head-only duck also lowers the avatar.
             let share = Self.softZone(max(0, 1 - Float(crown) / standing), crouchDeadband)
-            let drop = min(robotLegRest * Self.maximumCrouchShare, share * RobotSkeleton.modelHeight)
+            let drop = min(robotLegRest * Self.maximumCrouchShare, share * RobotSkeleton.modelHeight * Self.duckPresentationGain)
             if !legsMeasured {
                 measured.pelvisDrop = drop
                 for side in RobotPoseTargets.Side.allCases { measured.footLift[side] = 0 }
@@ -710,6 +735,20 @@ final class RobotAvatarLayer {
     #endif
     /// Each mascot's tracked root (sway, lift) before any scripted move.
     private var trackedRoot: [PlayerID: SIMD3<Float>] = [:]
+    private(set) var walksInVault = false
+    private struct WalkingPosition {
+        let entryHipX: Float
+        let entryRootX: Float
+        var rootX: Float
+    }
+    private var walkingPositions: [PlayerID: WalkingPosition] = [:]
+
+    func setVaultWalking(_ active: Bool) {
+        guard active != walksInVault else { return }
+        walksInVault = active
+        walkingPositions.removeAll()
+        resetFeet()
+    }
     private var reachCursors: [PlayerID: [RobotPoseTargets.Side: ModelEntity]] = [:]
     /// Cursor size (radius, metres) and depth in front of the mascot (toward the camera): just in
     /// front of the live vault buttons (`VaultPresentation.liveButtonDepthInFront`).
@@ -1080,6 +1119,7 @@ final class RobotAvatarLayer {
         robot.planner = RobotFootPlanner(rest: robot.planner.rest)
         robots[player] = robot
         shown[player] = nil
+        walkingPositions[player] = nil
         plantAnchor[player] = nil
         footDiagnostics[player] = nil
     }
@@ -1098,6 +1138,7 @@ final class RobotAvatarLayer {
         robot.planner = RobotFootPlanner(rest: robot.planner.rest)
         robots[player] = robot
         shown[player] = nil
+        walkingPositions[player] = nil
         plantAnchor[player] = nil
         footDiagnostics[player] = nil
         present(player, k: 1, time: now)
@@ -1388,6 +1429,7 @@ final class RobotAvatarLayer {
         guard var steering else { return }
         let dt = Float(lastSteer.map { max(0, now - $0) } ?? 0)
         lastSteer = now
+        guard !walksInVault else { return }
         lastSteerDT = dt
         var inputs: [PlayerID: LateralSteering.Input] = [:]
         #if DEBUG
@@ -1541,16 +1583,28 @@ final class RobotAvatarLayer {
         // The hip shift plus the lean steering travel (`LateralSteering`), across the corridor.
         let travel = steering?.riders[player]?.travel ?? 0
         var rootX = s.sway + travel
+        if walksInVault {
+            rootX = walkingPositions[player]?.rootX ?? trackedRoot[player]?.x ?? rootX
+            if r.isAvailable, let hip = r.walkingHipX {
+                var position = walkingPositions[player] ?? WalkingPosition(entryHipX: hip, entryRootX: rootX, rootX: rootX)
+                let target = position.entryRootX + hip - position.entryHipX
+                rootX += (target - rootX) * k
+                position.rootX = rootX
+                walkingPositions[player] = position
+            }
+        }
         // The board carries the mascot sideways, the feet planted ON the board (board space), so
         // a lean or a step moves both together, no sliding.
-        let ride = footPlanting && hoverboards[player] != nil ? s.sway + travel : 0
+        let plantsFeet = walksInVault || footPlanting
+        let ridesBoard = !walksInVault && hoverboards[player] != nil
+        let ride = plantsFeet && ridesBoard ? rootX : 0
         var plan: RobotFootPlanner.Output?
-        if footPlanting {
+        if plantsFeet {
             var input = RobotFootPlanner.Input(pelvisX: rootX - ride, rootLift: s.lift, time: time)
             // While a board carries the mascot, its feet stay planted ON the board: sideways body
             // motion is the board's ride, and only the hips moving past the ride limit step a foot
             // on the deck (the planner's balance rule). Knee raises still show (`footLift`).
-            input.footDelta = hoverboards[player] != nil ? [:] : s.footDelta
+            input.footDelta = ridesBoard ? [:] : s.footDelta
             input.trackedLift = t.footLift.mapValues { $0 * scale }
             input.available = r.isAvailable
             let out = robot.planner.update(input)
@@ -1572,10 +1626,12 @@ final class RobotAvatarLayer {
         // It glides under the stance (both feet's centre), so a side step carries it along.
         let feet = plan.map { out in RobotPoseTargets.Side.allCases.compactMap { out.footX[$0].map { $0 + ride } } } ?? []
         let stanceX = feet.count == 2 ? (feet[0] + feet[1]) / 2 : rootX
-        hoverboards[player]?.input = .init(lean: t.lean, centerX: rootX, stanceX: stanceX, lift: s.lift,
-                                           available: r.isAvailable, ride: footPlanting ? ride : nil)
+        if !walksInVault {
+            hoverboards[player]?.input = .init(lean: t.lean, centerX: rootX, stanceX: stanceX, lift: s.lift,
+                                               available: r.isAvailable, ride: footPlanting ? ride : nil)
+        }
         var solved = robot.solver.solveDetailed(t)
-        if consolesActive, let console = consoles[player],
+        if !walksInVault, consolesActive, let console = consoles[player],
            reachConsole(&t, solved: solved.local, robot: robot, player: player, console: console, time: time) {
             solved = robot.solver.solveDetailed(t)
         }
@@ -1641,6 +1697,7 @@ final class RobotAvatarLayer {
         let scale = Self.modelScale
         let world = robot.solver.skeleton.world(solved.local).position
         var d = footDiagnostics[player] ?? FootDiagnostics()
+        let footPlanting = walksInVault || self.footPlanting
         let previous = d.contact
         d.pelvisX = rootX
         d.rideX = ride
