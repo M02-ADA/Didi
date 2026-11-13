@@ -168,6 +168,22 @@ struct RobotAvatarTests {
         return time + Double(frames) / 30
     }
 
+    @Test(arguments: [0.0, 0.15, 0.8])
+    func readableDuckRemainsBoundedAndRecovers(hipDrop: Double) throws {
+        let (c, layout) = try calibration()
+        var r = RobotRetargeter(calibration: c, layout: layout, robotLegRest: 0.574)
+        var t = feed(&r, try sample(c), joints(c, hipDrop: hipDrop), from: 0, frames: 30)
+        #expect(r.targets.pelvisDrop >= 0)
+        #expect(r.targets.pelvisDrop <= r.robotLegRest * RobotRetargeter.maximumCrouchShare + 0.001)
+        #expect(r.lift < 0.001)
+        if hipDrop == 0.15 {
+            #expect(r.targets.pelvisDrop > Float(hipDrop / 0.868) * r.robotLegRest * 1.4)
+        }
+        t = feed(&r, try sample(c), joints(c), from: t, frames: 30)
+        #expect(r.targets.pelvisDrop < 0.005)
+        _ = t
+    }
+
     @Test func crouchLeanAndJumpRetarget() throws {
         let (c, layout) = try calibration()
         var r = RobotRetargeter(calibration: c, layout: layout, robotLegRest: 0.574)
@@ -178,7 +194,7 @@ struct RobotAvatarTests {
         #expect(r.presence > 0.95 && r.targets.pelvisDrop < 0.01 && r.lift < 0.005)
         // Hips 0.25 lower: within 100 ms (3 frames of the 1€ filter) the pelvis follows most of the way.
         t = feed(&r, try sample(c), joints(c, hipDrop: 0.25), from: t, frames: 3)
-        let expected = Float(0.25 / 0.868) * 0.574  // above the soft noise zone the share passes unchanged (K04)
+        let expected = min(Float(0.25 / 0.868) * 0.574 * RobotRetargeter.duckPresentationGain, 0.574 * RobotRetargeter.maximumCrouchShare)  // visual gain, unchanged IK cap
         #expect(r.targets.pelvisDrop > 0.85 * expected && r.targets.pelvisDrop <= expected + 1e-3)
         // Shoulders shifted toward the player's right (−X unmirrored): lean toward screen right (+).
         t = feed(&r, try sample(c), joints(c, shoulderShift: -0.15), from: t, frames: 3)

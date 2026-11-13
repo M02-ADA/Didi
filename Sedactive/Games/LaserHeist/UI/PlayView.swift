@@ -235,6 +235,16 @@ private struct ReplayRoundView: View {
             // time-varying body and joint data (no camera, no session, no lasers); see `RobotDemo`.
             if let only = RobotDemoDriver.requested() {
                 scene.isLaserVisible = false
+                // Opt-in synthetic posture comparison, using the existing HIGH preview band
+                // at the crossing plane. This never creates a round or judges a contact.
+                if arguments.contains("-duckLaserComparison") {
+                    let band = LaserApproachPreview.encounters[0].band
+                    scene.setLaserBand(lowerEdge: band.lowerBound, upperEdge: band.upperBound)
+                    scene.setLaserDepth(scene.mapping.interactionPlaneZ)
+                    scene.setLaserDangerSide(.above)
+                    scene.setLaserVisualState(.active)
+                    scene.isLaserVisible = true
+                }
                 do {
                     let input = try LaserReplayScript.load().input
                     // `-robotDemoSolo`: Lemon alone, as in a Solo round (no P2 mascot, no partner limit).
