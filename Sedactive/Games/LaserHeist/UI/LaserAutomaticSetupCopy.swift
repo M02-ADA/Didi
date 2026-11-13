@@ -29,6 +29,12 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
         var solo = false
         /// Why the round is not yet ready after calibration (from the live readiness gate).
         var readinessBlocker: LaserLiveReadinessBlocker?
+        /// Which player the readiness gate is waiting for, and for what (`LiveEvidenceAttention`).
+        var attention: [PlayerID: LiveEvidenceAttention] = [:]
+        /// Whether the flow will restart setup by itself (before a round, within its bounded budget).
+        var restartsAutomatically = true
+        /// The paused round could not plan its recovery: it continues only when the players tap Continue.
+        var recoveryNeedsContinue = false
     }
 
     init(_ input: Input) {
@@ -40,28 +46,39 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
             (title, instruction, action) = ("Starting camera…", "Allow camera access if asked.", nil); return
         }
         if input.roundStarted, input.sessionPhase == .paused, input.setupPhase == .restartRequired {
-            // The round is kept, paused: it resumes if the same players are confirmed again.
-            (title, instruction, action) = ("Tracking paused",
-                "Return to your places to continue. Your score is kept. If tracking doesn't recover, restart setup.",
-                .restartSetup); return
+            // The round is kept, paused. Solo re-links its one player; in co-op the tracker cannot
+            // re-confirm who is who in this session (it needs a new binding), so the screen says so
+            // instead of promising a resume (iPad, 13 November 2026).
+            (title, instruction, action) = input.solo
+                ? ("Tracking paused",
+                   "Return to the middle to continue. Your score is kept. If tracking doesn't recover, restart setup.", .restartSetup)
+                : ("Tracking paused",
+                   "We can't tell who is who anymore. Restart setup to calibrate again; this round will end.", .restartSetup)
+            return
         }
         if input.sessionPhase == .restartRequired || input.setupPhase == .restartRequired {
-            (title, instruction, action) = ("Let's start again",
-                "We lost track of who is who. Stand in your places; setup restarts by itself.", .restartSetup); return
+            // Only promise an automatic restart the flow will actually make.
+            (title, instruction, action) = ("Let's start again", input.restartsAutomatically
+                ? "We lost track of who is who. Stand in your places; setup restarts by itself."
+                : "We lost track of who is who. Tap Restart setup, then stand in your places.", .restartSetup); return
         }
         if input.sessionPhase == .paused {
             if input.manualPause {
                 (title, instruction, action) = ("Round paused", "Get back to your places when you're ready.", .continueRound)
             } else if input.roundStarted {
-                if input.readinessBlocker == .presentation {
+                if input.recoveryNeedsContinue {
+                    (title, instruction, action) = ("Round paused", "Stand in your places, then tap Continue. Your score is kept.",
+                                                    .continueRound)
+                } else if input.readinessBlocker == .presentation {
                     (title, instruction, action) = ("Round paused", "The round will continue when the game is ready.", nil)
                 } else {
-                    (title, instruction, action) = ("Tracking paused",
-                        "Stand in your places with your whole body in view. The round continues automatically.", nil)
+                    let who = LiveEvidenceAttention.line(input.attention, solo: input.solo)
+                        ?? "Stand in your places with your whole body in view."
+                    (title, instruction, action) = ("Tracking paused", "\(who) The round continues by itself; your score is kept.", nil)
                 }
             } else {
-                (title, instruction, action) = ("Get back in position",
-                    "Stand in your places, upright and still. The countdown restarts by itself.", nil)
+                let who = LiveEvidenceAttention.line(input.attention, solo: input.solo) ?? "Stand in your places, upright and still."
+                (title, instruction, action) = ("Get back in position", "\(who) The countdown restarts by itself.", nil)
             }
             return
         }
@@ -86,7 +103,8 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
             guard input.hasRoundPlan else { (title, instruction, action) = ("Calibrated!", "Preparing the round…", nil); return }
             // Name what readiness is waiting for, so the screen never looks stuck.
             let waiting: String = switch input.readinessBlocker {
-            case .measurements: "Stay in view from head to toe, facing the iPad, hands visible."
+            case .measurements: LiveEvidenceAttention.line(input.attention, solo: input.solo)
+                ?? "Stay in view from head to toe, facing the iPad, hands visible."
             case .staleEvidence, .source: "Stay in view; the camera lost you for a moment."
             case .binding: input.solo ? "Stay in the middle." : "Stay in your own places."
             default: "Hold your places, the round starts in a moment."
