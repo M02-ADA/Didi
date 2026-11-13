@@ -33,10 +33,17 @@ extension RobotAvatarLayer {
         add("Pelvis", "Chest", radius: 0.20)
         add("Chest", "Head", radius: 0.11)
         if let head = skeleton("Head") {
-            let bindHead = skeleton.world(skeleton.bind).position[head]
-            let height = max(0, RobotSkeleton.modelHeight - bindHead.y)
-            let center = pose.position[head] + pose.rotation[head].act([0, height / 2, 0])
-            volumes.append(.init(start: world(center), end: world(center), radius: max(0.16, height / 2) * scale))
+            // Both color variants use the same head mesh. Its cheeks are widest
+            // below the midpoint, and the two lobes extend up from different Xs.
+            // Offsets are from the head joint in its neutral axes, in model metres.
+            func addHeadSphere(_ offset: SIMD3<Float>, radius: Float) {
+                let center = world(pose.position[head] + pose.rotation[head].act(offset))
+                volumes.append(.init(start: center, end: center, radius: radius * scale))
+            }
+            addHeadSphere([-0.105, 0.243, 0], radius: 0.28)
+            addHeadSphere([0.075, 0.243, 0], radius: 0.273)
+            addHeadSphere([-0.09, 0.408, 0], radius: 0.265)
+            addHeadSphere([0.055, 0.428, 0], radius: 0.262)
         }
         for side in ["L", "R"] {
             add("Chest", "UpperArm_\(side)", radius: 0.10)

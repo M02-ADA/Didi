@@ -143,6 +143,8 @@ final class FinalVaultPresentation {
     @discardableResult
     func update(_ stage: Stage) -> Float {
         self.stage = stage
+        let inside = if case .inside = stage { true } else { false }
+        scene.robotAvatars?.setVaultWalking(inside)
         switch stage {
         case .hidden:
             hide()
