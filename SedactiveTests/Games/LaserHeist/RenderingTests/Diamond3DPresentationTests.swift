@@ -76,6 +76,27 @@ import Testing
         let head = gem.bodyContactSphere
         #expect(avatars.diamondContactBody(.player1).contains { $0.overlaps(center: head.center, radius: head.radius) })
     }
+
+    @Test func sidewaysMovementBringsTheCheekIntoContactWithAGem() async throws {
+        let scene = LaserScene()
+        let avatars = RobotAvatarLayer(scene: scene, players: [.player1],
+                                      templates: try await RobotAvatarLayer.loadTemplates(), withBoards: false)
+        let robot = try #require(avatars.robots[.player1])
+        let gem = try await art().makeDiamond()
+        gem.root.position = robot.model.convert(position: [-0.62, 0.90, 0.08], to: nil)
+        let sphere = gem.bodyContactSphere
+        func touchesGem() -> Bool {
+            avatars.diamondContactBody(.player1).contains {
+                $0.overlaps(center: sphere.center, radius: sphere.radius)
+            }
+        }
+        #expect(!touchesGem())
+        robot.container.position.x -= 0.13 * RobotAvatarLayer.modelScale
+        #expect(touchesGem())
+        robot.container.position.x += 0.13 * RobotAvatarLayer.modelScale
+        #expect(!touchesGem())
+    }
+
     @Test func collectionIsOnceAndFourClonesAreIndependent() async throws {
         let art = try await art()
         let diamonds = (0..<4).map { _ in art.makeDiamond() }
