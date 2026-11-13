@@ -23,7 +23,10 @@ final class LaserHeistJourneyUITests: XCTestCase {
 
         // Home › Set Up and back, one step at a time.
         start.tap()
-        XCTAssertTrue(next.waitForExistence(timeout: timeout), "START MISSION did not open Set Up")
+        let skipVideo = app.buttons["skipIntroVideo"]
+        XCTAssertTrue(skipVideo.waitForExistence(timeout: timeout), "START MISSION did not open the intro video")
+        skipVideo.tap()
+        XCTAssertTrue(next.waitForExistence(timeout: timeout), "Skipping the intro video did not open Set Up")
         XCTAssertTrue(app.staticTexts["Put your iPad on the Floor"].exists)
         next.tap()
         XCTAssertTrue(next.waitForExistence(timeout: timeout))
