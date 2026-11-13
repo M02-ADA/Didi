@@ -17,13 +17,14 @@ enum RobotDemoScenario: Int, CaseIterable {
     case armsOverhead
     // K03 head turn (nose between the ears), with arm and lean, both players at once.
     case headTurn
+    case deepDuckCompare
 
     static let duration = 4.0
 
     var key: String {
         ["idle", "p1-jump", "p2-duck", "both-jump", "p1-arm", "arms", "duck-jump", "tracking-loss",
          "lean-right", "lean-left", "step-right", "step-left", "two-steps", "step-stop", "duck-planted", "step-jump",
-         "loss-step", "p1-step-p2-idle", "arms-up", "head-turn"][rawValue]
+         "loss-step", "p1-step-p2-idle", "arms-up", "head-turn", "deep-duck"][rawValue]
     }
 
     var title: String {
@@ -35,7 +36,8 @@ enum RobotDemoScenario: Int, CaseIterable {
          "P1 ducks, feet planted", "P1 steps right, jumps, steps back", "P1 tracking lost mid-step",
          "P1 side-steps; P2 idle with body sway",
          "P1 both arms up, ducks, stands, lowers; P2 steps with right arm up",
-         "P1 turns head right (right shoulder up) then left; P2 turns head left and leans with its arm out"][rawValue]
+         "P1 turns head right (right shoulder up) then left; P2 turns head left and leans with its arm out",
+         "SYNTHETIC both: stand, moderate duck, deep duck, recover"][rawValue]
     }
 }
 
@@ -159,6 +161,9 @@ struct RobotDemoSequence {
                 b.leftArm = 6 + 140 * b.lift
                 b.rightArm = 6 + 140 * b.lift
             }
+        case .deepDuckCompare:
+            b.drop = standing * (0.12 * Self.plateau(t, 0.4, 0.8, 2.7, 3.3)
+                + 0.20 * Self.plateau(t, 1.2, 1.7, 2.4, 2.9))
         case .p2DuckStand:
             if !p1 {
                 b.drop = 0.16 * standing * Self.plateau(t, 0.5, 1.2, 2.5, 3.3)

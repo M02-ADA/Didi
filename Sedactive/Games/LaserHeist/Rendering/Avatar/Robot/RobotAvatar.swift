@@ -215,7 +215,24 @@ struct RobotRetargeter {
     }
 
     /// Deepest pelvis drop the legs can show, as a share of the rest leg.
-    static let maximumCrouchShare: Float = 0.55
+    // Presentation gain only: the short-legged mascot needs a more readable silhouette.
+    // Evidence gates, dead zone and existing IK reach cap remain unchanged.
+    static var duckPresentationGain: Float {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-robotDemo"), args.contains("-duckLaserComparison"), args.contains("-duckBaselineComparison") { return 1 }
+        #endif
+        return 1.6
+    }
+    // Keep at least 30% of the bind leg reach: loaded-rig tests verify planted
+    // feet and knee flexion below 150 degrees at this presentation limit.
+    static var maximumCrouchShare: Float {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-robotDemo"), args.contains("-duckLaserComparison"), args.contains("-deepDuckBaselineComparison") { return 0.55 }
+        #endif
+        return 0.70
+    }
 
     /// Switches to another compatible reference, or to none (direction only).
     /// Any change drops every calibrated value first: no root lift, floor
@@ -409,6 +426,10 @@ struct RobotRetargeter {
 
         guard let reference else { return }
         let standing = Float(reference.standingHeight)
+        // A fresh observation without eligible lower-body/crown evidence must not
+        // keep an older crouch target. Render smoothing eases the released pose.
+        measured.pelvisDrop = 0
+        measured.footLift = [:]
         // DUCK and knee raise: each leg's hip-to-ankle height as a share of standing, onto the robot's leg.
         var legsMeasured = false
         if let lh = p[.leftHip], let rh = p[.rightHip] {
@@ -421,7 +442,7 @@ struct RobotRetargeter {
                 guard legStanding > 0 else { continue }
                 let share = Float((hipY - a.y) / legStanding)
                 let bend = Self.softZone(max(0, 1 - share), crouchDeadband)
-                reach[side] = robotLegRest * min(1, max(1 - Self.maximumCrouchShare, 1 - bend))
+                reach[side] = robotLegRest * min(1, max(1 - Self.maximumCrouchShare, 1 - bend * Self.duckPresentationGain))
             }
             if let longest = reach.values.max() {
                 legsMeasured = true
@@ -437,7 +458,7 @@ struct RobotRetargeter {
             // evidence still shapes the legs; the deeper of the two is shown. A
             // presentation estimate: a head-only duck also lowers the avatar.
             let share = Self.softZone(max(0, 1 - Float(crown) / standing), crouchDeadband)
-            let drop = min(robotLegRest * Self.maximumCrouchShare, share * RobotSkeleton.modelHeight)
+            let drop = min(robotLegRest * Self.maximumCrouchShare, share * RobotSkeleton.modelHeight * Self.duckPresentationGain)
             if !legsMeasured {
                 measured.pelvisDrop = drop
                 for side in RobotPoseTargets.Side.allCases { measured.footLift[side] = 0 }
