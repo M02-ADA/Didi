@@ -3,6 +3,7 @@
 //  Sedactive
 //
 
+import Metal
 import RealityKit
 import UIKit
 
@@ -11,10 +12,11 @@ import UIKit
 /// Asset 43 (the same wall with its round door swung open; the doorway is
 /// transparent) and Inside Vault (the room). 42 and 43 share one pixel scale and
 /// are both centred on the frame, so placed at the same scale they line up.
+/// The door's moving parts are cut out of them (`FinalVaultDoorArt`).
 struct FinalVaultArt {
     let closed: TextureResource
-    let open: TextureResource
     let inside: TextureResource
+    let door: FinalVaultDoorArt
 
     /// Asset 42, width over height (6636 × 3476 source).
     static let closedAspect: Float = 6636.0 / 3476.0
@@ -29,18 +31,23 @@ struct FinalVaultArt {
 
     private static var loading: Task<FinalVaultArt?, Never>?
 
-    /// Loads the three textures once per app run; `nil` if any is missing (the round then
+    /// Loads the textures once per app run; `nil` if any is missing (the round then
     /// enters Diamond Time in the corridor, as before).
     static func load() async -> FinalVaultArt? {
         let task = loading ?? Task { @MainActor in
-            async let closed = texture("final-vault-closed")
-            async let open = texture("final-vault-open")
-            async let inside = texture("final-vault-inside")
-            guard let closed = await closed, let open = await open, let inside = await inside else {
+            guard let closedImage = image("final-vault-closed"), let openImage = image("final-vault-open"),
+                  let insideImage = image("final-vault-inside") else {
                 print("FinalVaultArt: Ending Vault art missing, the final vault is not shown")
                 return nil
             }
-            return FinalVaultArt(closed: closed, open: open, inside: inside)
+            async let closed = texture(closedImage, "final-vault-closed")
+            async let inside = texture(insideImage, "final-vault-inside")
+            async let door = FinalVaultDoorArt.load(closed: closedImage, open: openImage)
+            guard let closed = await closed, let inside = await inside, let door = await door else {
+                print("FinalVaultArt: Ending Vault textures could not be made, the final vault is not shown")
+                return nil
+            }
+            return FinalVaultArt(closed: closed, inside: inside, door: door)
         }
         loading = task
         let art = await task.value
@@ -48,9 +55,12 @@ struct FinalVaultArt {
         return art
     }
 
-    private static func texture(_ name: String) async -> TextureResource? {
-        guard let image = UIImage(named: "LaserHeistVault/\(name)")?.cgImage else { return nil }
-        return try? await TextureResource(image: image, withName: "finalVault.\(name)", options: .init(semantic: .color))
+    private static func image(_ name: String) -> CGImage? {
+        UIImage(named: "LaserHeistVault/\(name)")?.cgImage
+    }
+
+    private static func texture(_ image: CGImage, _ name: String) async -> TextureResource? {
+        try? await TextureResource(image: image, withName: "finalVault.\(name)", options: .init(semantic: .color))
     }
 }
 
@@ -81,25 +91,32 @@ final class FinalVaultPresentation {
     static let stopZ: Float = -1.2
     /// How far the vault comes up the corridor (it starts in the corridor's haze).
     static let approachDistance: Float = 11
-    /// How far beyond the mascots' landing the room's backdrop stands while the doorway shows it.
-    static let backdropMargin: Float = 0.6
-    /// The wall's last place in the push through the doorway, just before the camera:
-    /// the doorway then covers the whole screen.
-    static let pushEndDistance: Float = 0.35
+    /// How far beyond the wall the camera's push through the doorway ends, inside the room.
+    static let pushEndBeyondWall: Float = 0.35
     /// The room's backdrop distance from the camera once inside, behind the mascots.
     static let insideDistance: Float = 8
+    /// The height (world y) of the room's floor as the sleeve carries it: just under the game
+    /// floor the mascots stand on, so the painted floor keeps its place under their feet while
+    /// the camera moves.
+    static let roomFloorY: Float = -0.05
     /// The backdrop is a little larger than the screen, so no edge shows.
     static let backdropOverscan: Float = 1.04
+    /// The sleeve samples the room art no nearer its edge than this (texture coordinates).
+    static let artEdge: Float = 0.012
 
     private(set) var stage: Stage = .hidden
     private let scene: LaserScene
     private let wall = Entity()
+    /// Asset 42 whole, while the vault comes up the corridor (in its haze).
     private var closed: ModelEntity?
-    private var open: ModelEntity?
+    /// From the unlock: the door as a mechanism (frame, hinged door, wheel, bolt) …
+    private var mechanism: FinalVaultDoorRig?
+    /// … over the jamb: Asset 43's empty doorway and the bolt's seat.
+    private var jamb: ModelEntity?
     private var backdrop: ModelEntity?
-    /// The room's sleeve, between the wall and the backdrop (see `placeSleeve`).
+    /// The room's sleeve, between its camera and the backdrop (see `placeSleeve`).
     private var sleeve: ModelEntity?
-    private var sleeveShape: SIMD3<Float>?
+    private var sleeveBuilt = false
     private let wallWidth: Float
     private let wallHeight: Float
     /// The wall's centre height: the corridor's centre.
@@ -111,9 +128,17 @@ final class FinalVaultPresentation {
     private var anchors: [PlayerID: SIMD3<Float>] = [:]
 
     // MARK: Continuous entry (13 November 2026: the mascots used to vanish in the doorway and
-    // drop in from 1.3 m above in the room). The push moves the wall `pushDistance` toward the
-    // still camera; the mascots land that far BEYOND their places, inside the vault, and move with
-    // the push: at its end they stand exactly on their places. One jump, one landing.
+    // drop in from 1.3 m above in the room). The mascots land `pushDistance` BEYOND their places,
+    // inside the vault; the push is the camera itself moving that far forward, through the doorway
+    // (14 November 2026). At its end the camera stands to them exactly as in gameplay, and the room
+    // (camera, mascots, backdrop) is moved back by the same distance in one frame: nothing on
+    // screen changes. One jump, one landing, one camera move.
+    //
+    // 14 November 2026: the push used to move the WALL toward a still camera while the room behind
+    // the doorway was a backdrop locked to the screen and the corridor stood still. The doorway grew
+    // tenfold around a room that never grew (a dolly zoom: the inside seemed to fall away), and the
+    // still corridor said the wall was moving, not the viewer. Now the wall, the corridor and the
+    // room stand still in the world and the camera moves; everything grows by its own distance.
 
     /// From the doorway to touchdown on the vault floor, continuing the jump's own velocity.
     static let continueDuration = 0.55
@@ -126,18 +151,29 @@ final class FinalVaultPresentation {
     /// Vertical speed at touchdown (m/s): still falling, as a jump ends.
     static let touchdownSpeed: Float = 1.2
 
-    /// How far the push carries the wall (and everything inside) toward the camera.
-    var pushDistance: Float { scene.layout.cameraPosition.z - Self.pushEndDistance - Self.stopZ }
-    /// The push's progress at `t` (0 before it, 1 after), with the wall's own easing: it
-    /// accelerates, so the wall rushes past the camera.
+    /// How far the camera moves forward in the push: from its gameplay pose, through the doorway,
+    /// to `pushEndBeyondWall` inside the room.
+    var pushDistance: Float { scene.layout.cameraPosition.z - Self.stopZ + Self.pushEndBeyondWall }
+
+    /// The camera's push at `t`: 0 before it, 1 at the end of the entry. It leaves with the last
+    /// jumper (`push`) and comes to rest as the mascots settle (`land`), when Diamond Time starts:
+    /// an ease in and out over both, so it leaves and lands without a jolt. The doorway fills the
+    /// screen about two thirds of the way in, and the camera passes the wall plane soon after.
     static func pushProgress(at t: Double, timeline: LaserFinalVaultTimeline) -> Float {
-        let p = linearPush(at: t, timeline: timeline)
-        return p * p
+        let start = timeline.push.lowerBound, end = timeline.total
+        return smooth(Float((t - start) / (end - start)))
     }
 
-    private static func linearPush(at t: Double, timeline: LaserFinalVaultTimeline) -> Float {
-        let push = timeline.push
-        return Float(min(1, max(0, (t - push.lowerBound) / (push.upperBound - push.lowerBound))))
+    /// The camera's offset from its gameplay pose at `t` (straight ahead, keeping its aim).
+    func cameraDolly(at t: Double, timeline: LaserFinalVaultTimeline) -> SIMD3<Float> {
+        [0, 0, -pushDistance * Self.pushProgress(at: t, timeline: timeline)]
+    }
+
+    /// The camera the room is laid out for during the entry: where the push ends. Inside, the room
+    /// is laid out for the gameplay camera (the same room, `pushDistance` nearer).
+    private var roomEye: SIMD3<Float> {
+        guard case .entry(let timeline, let elapsed) = stage, elapsed < timeline.total else { return scene.layout.cameraPosition }
+        return scene.layout.cameraPosition + [0, 0, -pushDistance]
     }
 
     init(scene: LaserScene) {
@@ -152,15 +188,29 @@ final class FinalVaultPresentation {
         let closed = Self.plane(art.closed, width: wallWidth, height: wallHeight, blended: true)
         closed.name = "finalVault.closed"
         closed.position.z = 0.005
-        let open = Self.plane(art.open, width: wallWidth * FinalVaultArt.openWidthShare, height: wallHeight, blended: true)
-        open.name = "finalVault.open"
-        wall.addChild(open)
+        let jamb = Self.plane(art.door.jamb, width: wallWidth * FinalVaultArt.openWidthShare, height: wallHeight, blended: true)
+        jamb.name = "finalVault.open"
+        jamb.position.z = FinalVaultDoorRig.jambZ
+        jamb.isEnabled = false
+        let mechanism = FinalVaultDoorRig(art: art.door, closed: art.closed, width: wallWidth, height: wallHeight)
+        mechanism.root.isEnabled = false
+        wall.addChild(jamb)
+        wall.addChild(mechanism.root)
         wall.addChild(closed)
         let backdrop = Self.plane(art.inside, width: FinalVaultArt.insideAspect, height: 1, blended: false)
         backdrop.name = "finalVault.inside"
         backdrop.isEnabled = false
         var sleeveMaterial = UnlitMaterial(applyPostProcessToneMap: false)
-        sleeveMaterial.color = .init(tint: .white, texture: .init(art.inside))
+        // Clamped: parts of the sleeve the room's camera does not see (only seen on the way in)
+        // carry on the art's own edge (its floor, ceiling and walls) instead of repeating it.
+        let sampler = MTLSamplerDescriptor()
+        sampler.sAddressMode = .clampToEdge
+        sampler.tAddressMode = .clampToEdge
+        sampler.minFilter = .linear
+        sampler.magFilter = .linear
+        sampler.mipFilter = .linear
+        sampler.maxAnisotropy = 8
+        sleeveMaterial.color = .init(tint: .white, texture: .init(art.inside, sampler: .init(sampler)))
         sleeveMaterial.faceCulling = .none
         let sleeve = ModelEntity(mesh: .generatePlane(width: 0.01, height: 0.01), materials: [sleeveMaterial])
         sleeve.name = "finalVault.sleeve"
@@ -170,7 +220,8 @@ final class FinalVaultPresentation {
         scene.root.addChild(sleeve)
         self.sleeve = sleeve
         self.closed = closed
-        self.open = open
+        self.jamb = jamb
+        self.mechanism = mechanism
         self.backdrop = backdrop
     }
 
@@ -225,11 +276,13 @@ final class FinalVaultPresentation {
 
     private func present(_ timeline: LaserFinalVaultTimeline, at t: Double) -> Float {
         let travelled = Self.approachTravel(at: t, speed: scene.layout.travelSpeed)
-        if t >= timeline.push.upperBound {
+        if t >= timeline.total {
+            // The push has ended: the same picture as inside (camera and room moved back together).
             showInside()
         } else {
             scene.setCorridorShown(true)
             wall.isEnabled = hasArt
+            scene.setCameraDolly(cameraDolly(at: t, timeline: timeline))
             placeWall(at: t, timeline: timeline, travelled: travelled)
         }
         setMoves(Dictionary(uniqueKeysWithValues: timeline.jumpers.map { ($0, move($0, timeline: timeline, at: t)) }))
@@ -247,48 +300,29 @@ final class FinalVaultPresentation {
         return approachDistance * h01 + duration * speed * h10
     }
 
+    /// The wall comes up the corridor with it (the approach) and then stands still at its stop: the
+    /// push moves the camera, never the wall.
     private func placeWall(at t: Double, timeline: LaserFinalVaultTimeline, travelled: Float) {
-        guard let closed, let open, let backdrop else { return }
-        var z = Self.stopZ - Self.approachDistance + travelled
-        var y = wallY
-        let push = timeline.push
-        if t > push.lowerBound {
-            let e = Self.pushProgress(at: t, timeline: timeline)
-            z += pushDistance * e
-            // The doorway's centre moves onto the camera's line of sight.
-            y += (cameraAxisY(atZ: z) - doorwayY) * e
-        }
-        wall.position = [0, y, z]
+        guard let closed, let jamb, let backdrop else { return }
+        let z = Self.stopZ - Self.approachDistance + travelled
+        wall.position = [0, wallY, z]
         // The same haze as the checkpoint door while the vault is far down the corridor.
-        let haze = CorridorDepth.haze(atDistance: scene.layout.cameraPosition.z - z) * LaserScene.vaultHazeShare
+        let haze = CorridorDepth.haze(atDistance: scene.cameraWorldPosition.z - z) * LaserScene.vaultHazeShare
         if haze < 0.001 { wall.components.remove(OpacityComponent.self) }
         else { wall.components.set(OpacityComponent(opacity: 1 - haze)) }
 
-        // Unlock: the closed door shakes; then it gives way to the open art.
-        let unlock = LaserFinalVaultTimeline.unlock, opening = LaserFinalVaultTimeline.open
-        var shake: Float = 0
-        if unlock.contains(t) {
-            let a = Float((t - unlock.lowerBound) / (unlock.upperBound - unlock.lowerBound))
-            shake = 0.025 * sin(a * 8 * .pi) * (1 - a)
-        }
-        let p = Float(min(1, max(0, (t - opening.lowerBound) / (opening.upperBound - opening.lowerBound))))
-        let reveal = p * p * (3 - 2 * p)
-        closed.position.x = shake
-        closed.scale = SIMD3(repeating: 1 + 0.04 * reveal)
-        closed.isEnabled = reveal < 1
-        if reveal > 0, reveal < 1 { closed.components.set(OpacityComponent(opacity: 1 - reveal)) }
-        else { closed.components.remove(OpacityComponent.self) }
-        open.isEnabled = t >= opening.lowerBound
-        // The room shows through the doorway: a screen-sized backdrop just behind the wall.
-        backdrop.isEnabled = open.isEnabled
-        // Beyond where the mascots land inside (they move with the push, as the wall does).
-        let gap = pushDistance - (scene.mapping.interactionPlaneZ - Self.stopZ) + Self.backdropMargin
-        if backdrop.isEnabled {
-            placeBackdrop(atDistance: scene.layout.cameraPosition.z - (z - gap))
-            placeSleeve(near: z - 0.01, far: z - gap - 0.1, top: y + wallHeight / 2)
-        } else {
-            sleeve?.isEnabled = false
-        }
+        // From the unlock (the vault at rest, out of the haze) the door is its mechanism: it looks
+        // exactly like Asset 42 until its parts move. The wheel turns, the bolt slides home, the
+        // door sinks and swings in on its hinges; the frame around it never moves.
+        let mechanized = t >= FinalVaultDoorMotion.start
+        closed.isEnabled = !mechanized
+        jamb.isEnabled = mechanized
+        mechanism?.root.isEnabled = mechanized
+        if mechanized { mechanism?.pose(FinalVaultDoorMotion.at(t)) }
+        // The room is there behind the door from the unlock's end (the door still covers it),
+        // standing still in the world where the push ends.
+        backdrop.isEnabled = t >= LaserFinalVaultTimeline.open.lowerBound
+        if backdrop.isEnabled { placeRoom() } else { sleeve?.isEnabled = false }
     }
 
     /// One mascot's scripted move at `t` (the mascots already face the vault, as in Home Copy 31),
@@ -318,12 +352,10 @@ final class FinalVaultPresentation {
             return move
         }
         let flight = LaserFinalVaultTimeline.jumpDuration - crouch
-        // Carried EXACTLY like the wall (same distance, same easing): everything moves with the one
-        // "camera", so whatever is beyond the doorway always grows more slowly than the doorway
-        // itself, as through a real forward move (14 November 2026: an independently eased carry made
-        // the mascots outgrow the doorway early in the push, which read as the gate moving away).
+        // The mascots stay where they land; the camera comes to them. From the end of the entry
+        // the room is moved back by the push (`showInside`), with the camera.
         let push = Self.pushProgress(at: t, timeline: timeline)
-        let carried = SIMD3<Float>(0, 0, pushDistance * push)
+        let carried = SIMD3<Float>(0, 0, t >= timeline.total ? pushDistance : 0)
         let touchdown = jump.upperBound + Self.continueDuration
         if tau < LaserFinalVaultTimeline.jumpDuration {
             let f = Float((tau - crouch) / flight)
@@ -345,7 +377,7 @@ final class FinalVaultPresentation {
     }
 
     /// Where the jump comes down (lane-local): on the mascot's own place, `pushDistance` inside
-    /// the vault, so the push carries it exactly onto that place.
+    /// the vault, where the camera's push ends at the gameplay distance from it.
     private var landing: SIMD3<Float> { [0, 0, -pushDistance] }
 
     /// The arc from the mascot's place to the doorway and just through it (lane-local
@@ -389,17 +421,21 @@ final class FinalVaultPresentation {
 
     // MARK: - Inside
 
+    /// The gameplay camera in the room: the end of the push, with the camera and the room moved
+    /// back by `pushDistance` together (the same picture). The sleeve stays, so not even a texture
+    /// sample changes on screen.
     private func showInside() {
         wall.isEnabled = false
-        sleeve?.isEnabled = false
+        scene.setCameraDolly(.zero)
         scene.setCorridorShown(false)
         guard let backdrop else { return }
         backdrop.isEnabled = true
-        placeBackdrop(atDistance: Self.insideDistance)
+        placeRoom()
     }
 
     private func hide() {
         anchors = [:]
+        scene.setCameraDolly(.zero)
         wall.isEnabled = false
         backdrop?.isEnabled = false
         sleeve?.isEnabled = false
@@ -416,58 +452,74 @@ final class FinalVaultPresentation {
         moved = Set(moves.keys)
     }
 
-    /// Fills the screen with the room at `distance` along the camera's line of sight.
-    private func placeBackdrop(atDistance distance: Float) {
+    /// The room: the backdrop filling the screen of a camera at `roomEye`, `insideDistance` along
+    /// its line of sight, lined by the sleeve. Both are placed as one rigid piece relative to that
+    /// camera, so moving the room back at the end of the push changes nothing on screen.
+    private func placeRoom() {
         guard let backdrop else { return }
-        let layout = scene.layout
+        let layout = scene.layout, eye = roomEye
         let forward = simd_normalize(layout.cameraTarget - layout.cameraPosition)
-        let height = 2 * tan(layout.cameraVerticalFieldOfView / 2 * .pi / 180) * distance * Self.backdropOverscan
-        backdrop.position = layout.cameraPosition + forward * distance
+        let height = 2 * tan(layout.cameraVerticalFieldOfView / 2 * .pi / 180) * Self.insideDistance * Self.backdropOverscan
+        backdrop.position = eye + forward * Self.insideDistance
         backdrop.orientation = simd_quatf(angle: asin(forward.y), axis: [1, 0, 0])
         backdrop.scale = [height, height, 1]
+        placeSleeve(at: eye)
     }
 
-    /// The room's sleeve (14 November 2026). The backdrop stands behind the mascots' landing,
-    /// ~3.4 m beyond the wall, so the corridor's floor, ceiling and walls between the wall and the
-    /// backdrop showed through the doorway (a dark band under the room, a cut lamp). The sleeve
-    /// lines the corridor there, textured with the room art exactly as the backdrop projects onto
-    /// it from the still camera: on screen it IS the backdrop, as if it stood right behind the
-    /// wall (HEAD's look), while the mascots still land in front of the room.
-    /// Its ceiling stays under the wall's top edge (`top`): the corridor above the wall must
-    /// still read as the corridor, as it does in HEAD.
-    private func placeSleeve(near: Float, far: Float, top: Float) {
-        guard let sleeve, var model = sleeve.model, near > far else { return }
+    /// The room's sleeve (14 November 2026). The corridor runs on behind the wall, so through the
+    /// doorway its floor, ceiling and walls would show between the wall and the room (a dark band
+    /// under the room, a cut lamp). The sleeve lines that space, from the camera the room is laid out
+    /// for to just behind the backdrop, textured with the room art exactly as the backdrop projects
+    /// onto it from that camera: from there it IS the backdrop; from behind it, as the camera
+    /// comes in, its floor, ceiling and walls open out in true perspective (a projected set).
+    /// Its ceiling stays under the wall's top edge: the corridor above the wall must still read as
+    /// the corridor. Built once, relative to its camera, and only moved.
+    private func placeSleeve(at eye: SIMD3<Float>) {
+        guard let sleeve, var model = sleeve.model else { return }
         sleeve.isEnabled = true
-        let shape = SIMD3<Float>(near, far, top)
-        guard shape != sleeveShape else { return }
-        sleeveShape = shape
-        guard let mesh = try? MeshResource.generate(from: [sleeveMesh(near: near, far: far, top: top)]) else { return }
+        sleeve.position = eye
+        guard !sleeveBuilt else { return }
+        sleeveBuilt = true
+        guard let mesh = try? MeshResource.generate(from: [sleeveMesh()]) else { return }
         model.mesh = mesh
         sleeve.model = model
     }
 
-    /// Floor, ceiling and both sides from `near` to `far` (world z), inset past the corridor's
-    /// fixtures (runway lights, seams, ribs, beams), each vertex mapped to the room art where the
-    /// camera sees the backdrop through it.
-    private func sleeveMesh(near: Float, far: Float, top: Float) -> MeshDescriptor {
+    /// Floor, ceiling and both sides (relative to the camera they are laid out for), from just in
+    /// front of it to beyond the backdrop, inset past the corridor's fixtures (runway lights,
+    /// seams, ribs, beams), each vertex mapped to the room art where that camera sees the
+    /// backdrop through it.
+    private func sleeveMesh() -> MeshDescriptor {
         let layout = scene.layout
-        let floorY = layout.corridorFloorY + 0.015, ceilingY = min(layout.corridorHeight - 0.06, top - 0.02)
+        let eyeY = layout.cameraPosition.y
+        let near: Float = -0.02, far = -Self.insideDistance - 0.4
+        let floorY = Self.roomFloorY - eyeY
+        let ceilingY = min(layout.corridorHeight - 0.06, wallY + wallHeight / 2 - 0.02) - eyeY
         let side = layout.corridorWidth / 2 - 0.08, edge = layout.corridorWidth / 2 - 0.005
-        let surfaces: [(SIMD2<Float>, SIMD2<Float>, Bool)] = [   // (x, y) at both ends; sideways?
-            ([-edge, floorY], [edge, floorY], false), ([-edge, ceilingY], [edge, ceilingY], false),
-            ([-side, floorY], [-side, ceilingY], true), ([side, floorY], [side, ceilingY], true),
+        let surfaces: [(SIMD2<Float>, SIMD2<Float>)] = [   // (x, y) at both ends
+            ([-edge, floorY], [edge, floorY]), ([-edge, ceilingY], [edge, ceilingY]),
+            ([-side, floorY], [-side, ceilingY]), ([side, floorY], [side, ceilingY]),
         ]
-        let rows = 48, columns = 4
+        // The texture is interpolated across each triangle in perspective, while the projection
+        // it stands for divides by depth: the error grows with the depth change across a triangle
+        // (it showed as stair-stepped seams on the floor). Rows grow geometrically, each 2.6 %
+        // deeper than the last, so the error is the same small share everywhere, and the floor and
+        // ceiling are cut into narrow columns.
+        let rows = 128, columns = 24, first: Float = -0.3
         var positions: [SIMD3<Float>] = [], uvs: [SIMD2<Float>] = [], indices: [UInt32] = []
-        for (a, b, _) in surfaces {
+        for (a, b) in surfaces {
             let base = UInt32(positions.count)
             for r in 0...rows {
-                let z = near + (far - near) * Float(r) / Float(rows)
+                let z = r == 0 ? near : first * pow(far / first, Float(r - 1) / Float(rows - 1))
                 for c in 0...columns {
                     let xy = a + (b - a) * Float(c) / Float(columns)
                     let point = SIMD3<Float>(xy.x, xy.y, z)
                     positions.append(point)
-                    uvs.append(roomArtCoordinate(of: point))
+                    // Kept off the art's transparent border (1–6 px, wider at small mip levels):
+                    // past its edge the sleeve carries the edge's floor, ceiling or wall colour.
+                    // On screen from the room's camera the art spans 0.02…0.98, so nothing there moves.
+                    let uv = Self.roomArtCoordinate(relative: point, layout: layout)
+                    uvs.append(simd_clamp(uv, SIMD2(repeating: Self.artEdge), SIMD2(repeating: 1 - Self.artEdge)))
                 }
             }
             let stride = UInt32(columns + 1)
@@ -485,25 +537,20 @@ final class FinalVaultPresentation {
         return descriptor
     }
 
-    /// Where the camera's line of sight through `point` meets the backdrop, in the room art's
-    /// texture coordinates. It depends on the direction only, not on the backdrop's distance.
+    /// Where the room's camera (`roomEye`) sees the backdrop through `point` (world), in the room
+    /// art's texture coordinates. It depends on the direction only, not on the backdrop's distance.
     func roomArtCoordinate(of point: SIMD3<Float>) -> SIMD2<Float> {
-        let layout = scene.layout
+        Self.roomArtCoordinate(relative: point - roomEye, layout: scene.layout)
+    }
+
+    private static func roomArtCoordinate(relative d: SIMD3<Float>, layout: LaserWorldLayout) -> SIMD2<Float> {
         let forward = simd_normalize(layout.cameraTarget - layout.cameraPosition)
         let right = SIMD3<Float>(1, 0, 0)
         let up = simd_cross(right, forward)
-        let d = point - layout.cameraPosition
         let depth = max(simd_dot(d, forward), 0.01)
-        let half = tan(layout.cameraVerticalFieldOfView / 2 * .pi / 180) * Self.backdropOverscan
+        let half = tan(layout.cameraVerticalFieldOfView / 2 * .pi / 180) * backdropOverscan
         return [0.5 + simd_dot(d, right) / depth / (2 * half * FinalVaultArt.insideAspect),
                 0.5 + simd_dot(d, up) / depth / (2 * half)]
-    }
-
-    /// The height of the camera's line of sight at a depth.
-    private func cameraAxisY(atZ z: Float) -> Float {
-        let layout = scene.layout
-        let forward = simd_normalize(layout.cameraTarget - layout.cameraPosition)
-        return layout.cameraPosition.y + forward.y / -forward.z * (layout.cameraPosition.z - z)
     }
 
     // MARK: - Helpers

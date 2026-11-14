@@ -11,10 +11,14 @@ import simd
 ///
 ///     0     50 ms        ~110 ms            ~380 ms              600 ms
 ///     IMPACT │ hit-stop │ RECOIL peak │ SHUDDER decays │ squash → overshoot → settle
-///     flash, contact squash   arcs at their brightest   arcs fade, sparks fall   back to live
+///     white body, burst   ring out, coral charge pulses   current fades, sparks fall   back to live
 ///
 /// - Contact (0–50 ms): the joints hold their last pose (presentation hit-stop); the body
-///   compresses at once and the contact flashes, so the first frame already changes.
+///   compresses at once, its own surface flashes hot white and a comic burst stamps the
+///   strike, so the first frame already changes. The frozen white silhouette IS the impact.
+/// - Charge (~50–460 ms): the white gives way to a coral glow of the body's own surface that
+///   swells three times with the shudder (never a strobe), while the current runs from the
+///   strike across the struck part and a shock ring travels out.
 /// - Recoil: a damped impulse (peaks ~110 ms, small overshoot ~280 ms) tilts the body away
 ///   from its partner and toward the camera (the beam's direction of travel); the trunk and
 ///   head follow a little later (overlapping action).
@@ -73,10 +77,15 @@ nonisolated struct LaserHitReaction: Equatable, Sendable {
         var headRoll: Float = 0
         var shoulderShrug: Float = 0
         var pelvisDip: Float = 0
-        /// VFX intensities, 0…1: the electric arcs, the body glow, the contact flash.
+        /// VFX intensities, 0…1: the electric arcs, the body glow, the contact burst.
         var arcs: Float = 0
         var glow: Float = 0
         var flash: Float = 0
+        /// The mascot's OWN surface (its material's emission, 0…1): `bodyFlash` the hot-white
+        /// impact frame held through the hit-stop, `charge` the coral current that pulses
+        /// through the body afterwards. Its colours and shape stay readable underneath.
+        var bodyFlash: Float = 0
+        var charge: Float = 0
         /// Whether residual sparks show (they fly on their own curve from `sparkStart`).
         var sparks = false
 
@@ -139,6 +148,8 @@ nonisolated struct LaserHitReaction: Equatable, Sendable {
             f.squash = 1 + Float(Self.squash(tau, contact: 0.02, recovery: 0.015) - 1) * end
             f.glow = Float(0.4 * Self.smooth(0, 0.08, tau) * (1 - Self.smooth(0.2, 0.55, tau)))
             f.flash = Float(0.5 * (1 - Self.smooth(0, 0.25, tau)))
+            // One soft coral tint that rises and fades: no white frame, no pulsing.
+            f.charge = Float(0.55 * Self.smooth(0, 0.08, tau) * (1 - Self.smooth(0.18, 0.5, tau)))
             return f
         }
         let s0 = Float(Self.shudder(tau, phase: 0)), s1 = Float(Self.shudder(tau, phase: 1.3))
@@ -173,9 +184,29 @@ nonisolated struct LaserHitReaction: Equatable, Sendable {
         let arcs = Self.smooth(0, 0.03, tau) * (1 - Self.smooth(0.26, 0.46, tau))
         f.arcs = Float(arcs * (0.75 + 0.25 * Self.shudderEnvelope(tau)))
         f.glow = Float(0.6 * Self.smooth(0, 0.02, tau) * (1 - Self.smooth(0.15, 0.5, tau)))
-        f.flash = Float(1 - Self.smooth(0, 0.09, tau))
+        // The contact burst holds at full strength through the hit-stop, then burns off.
+        f.flash = Float(1 - Self.smooth(0.04, 0.13, tau))
+        f.bodyFlash = Float(Self.bodyFlash(tau))
+        f.charge = Float(Self.charge(tau))
         f.sparks = tau >= Self.sparkStart && tau < Self.sparkStart + Self.sparkLife
         return f
+    }
+
+    /// The impact frame on the mascot's own surface: full during the hit-stop (the frozen pose
+    /// reads as a hot-white silhouette), gone by ~100 ms. One flash per hit.
+    static func bodyFlash(_ tau: Double) -> Double {
+        guard tau >= 0 else { return 0 }
+        return 1 - smooth(0.035, 0.1, tau)
+    }
+
+    /// Current pulsing through the body after the flash: three soft swells at 6 Hz (peaks
+    /// ~70, ~235 and ~400 ms) that never drop below 65 % of their decaying envelope, so it
+    /// reads as charge, not a strobe; gone by ~460 ms, before the recovery settles.
+    static func charge(_ tau: Double) -> Double {
+        guard tau > 0.03 else { return 0 }
+        let envelope = smooth(0.03, 0.07, tau) * (1 - smooth(0.3, 0.46, tau))
+        let pulse = 0.825 + 0.175 * cos(2 * .pi * 6 * (tau - 0.07))
+        return envelope * pulse
     }
 
     /// Deterministic 0…1 noise for the arcs' and sparks' variation (no random state).

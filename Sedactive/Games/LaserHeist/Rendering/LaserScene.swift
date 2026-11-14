@@ -740,6 +740,23 @@ final class LaserScene {
         return camera
     }
 
+    // MARK: - Camera dolly
+
+    /// How far the scene camera stands from its gameplay pose (`layout.cameraPosition`), keeping
+    /// its aim: a pure translation. Zero in gameplay. Only the final vault's push through the
+    /// doorway moves it (`FinalVaultPresentation`, 14 November 2026), and it is zero again before
+    /// Diamond Time starts. Presentation only: gameplay never reads the camera.
+    private(set) var cameraDolly: SIMD3<Float> = .zero
+
+    /// Where the scene camera is now (world).
+    var cameraWorldPosition: SIMD3<Float> { layout.cameraPosition + cameraDolly }
+
+    func setCameraDolly(_ offset: SIMD3<Float>) {
+        guard offset != cameraDolly, let camera = root.findEntity(named: "camera") else { return }
+        cameraDolly = offset
+        camera.setPosition(layout.cameraPosition + offset, relativeTo: nil)
+    }
+
     private func makeCorridor() -> Entity {
         let corridor = Entity()
         corridor.name = "corridor"
