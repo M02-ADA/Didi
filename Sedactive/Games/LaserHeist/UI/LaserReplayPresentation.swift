@@ -23,6 +23,8 @@ final class LaserReplayPresentation {
     #endif
     #if DEBUG
     var debugDiamondReadout: DebugDiamondVisualReadout?
+    /// Manual source-time steps through the existing replay coordinator, no second clock.
+    var holdsTimingComparison = false
     #endif
 
     /// DEBUG `-liveButtonLayout`: the synthetic replay shows the live vault-button layout and
@@ -159,7 +161,7 @@ final class LaserReplayPresentation {
             }
             guard session.phase == .running else { return }
             #if DEBUG
-            if session.isDebugWristPreview {
+            if session.isDebugWristPreview || self.holdsTimingComparison {
                 self.render(scene:scene,session:session) // user advances original fixture time; no extra clock
                 return
             }

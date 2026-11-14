@@ -656,6 +656,14 @@ final class LaserScene {
     /// Shows the shared move cue: a muted preview during the warning
     /// (`actionRemaining == nil`), then the action cue with the share of the cue
     /// lead left before the crossing (1 at the cue, 0 at the crossing). `nil` hides it.
+    #if DEBUG
+    var timingPresentation: LaserTimingPresentation? { feedback.timingModel }
+    var timingVariant: TimingIndicatorVariant { feedback.timingVariant }
+    func selectTimingVariant(_ variant: TimingIndicatorVariant) { feedback.selectTimingVariant(variant) }
+    func setTimingPresentation(_ model: LaserTimingPresentation?) { feedback.setTimingPresentation(model) }
+    func setTimingPaused(_ paused: Bool) { feedback.setTimingPaused(paused) }
+    #endif
+
     func setMoveCue(_ move: LaserFeedback.Move?, actionRemaining: Float?) {
         feedback.setMoveCue(move, actionRemaining: actionRemaining)
     }
