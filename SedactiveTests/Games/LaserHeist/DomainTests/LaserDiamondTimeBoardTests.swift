@@ -16,6 +16,42 @@ struct LaserDiamondTimeBoardTests {
         #expect(child.y == opposite.y)
     }
 
+    @Test func opposingPawsSeparateAtTheCenterAndAtTheBoardEdge() throws {
+        let board = LaserDiamondTimeBoard.self
+        let hands = LaserContactHand.ordered
+        for x in [board.inset, board.width / 2, board.width - board.inset] {
+            let meeting = try LaserDiamondPosition(x: x, y: board.inset)
+            let input = Dictionary(uniqueKeysWithValues: hands.map { ($0, meeting) })
+            let output = board.separateOpposingPaws(input, previous: [:])
+            #expect(output.count == 4)
+            for hand in hands {
+                let point = try #require(output[hand])
+                #expect(point.x >= board.inset - 0.000001 && point.x <= board.width - board.inset + 0.000001)
+                #expect(point.y >= board.inset - 0.000001 && point.y <= board.height - board.inset + 0.000001)
+                for other in hands where hand.playerID != other.playerID {
+                    let opponent = try #require(output[other])
+                    #expect(board.distance(point, opponent) >= board.opponentPawSpacing)
+                }
+            }
+        }
+    }
+
+    @Test func crossedPawsKeepTheirSideAndCanContactADiamondThere() throws {
+        let board = LaserDiamondTimeBoard.self
+        let yellow = LaserContactHand(playerID: .player1, wrist: .right)
+        let orange = LaserContactHand(playerID: .player2, wrist: .left)
+        let right = try LaserDiamondPosition(x: 0.7, y: 0.5)
+        let left = try LaserDiamondPosition(x: 0.65, y: 0.5)
+        let separated = board.separateOpposingPaws([yellow: right, orange: left], previous: [:])
+        let p1 = try #require(separated[yellow])
+        let p2 = try #require(separated[orange])
+        #expect(p2.x < p1.x)
+        let diamond = try LaserDiamondPosition(x: p2.x - 0.12, y: p2.y)
+        #expect(board.overlaps(p2, diamond))
+        #expect(!board.overlaps(p1, diamond))
+        #expect(board.separateOpposingPaws(separated, previous: separated) == separated)
+    }
+
     @Test(arguments: [false, true])
     func blockedSlotsStayEmptyUntilSafeThenRefillDeterministically(solo: Bool) throws {
         let board = LaserDiamondTimeBoard.self

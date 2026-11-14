@@ -49,6 +49,7 @@ nonisolated struct LaserWristDiamondConsumer: Sendable {
     private var vaultActivation: Activation?
 
     private var pawCapture: Double?
+    private var smoothedPaws: [LaserContactHand: LaserDiamondPosition] = [:]
     private var paws: [LaserContactHand: LaserDiamondPosition] = [:]
     private var recentPawPickups: [LaserDiamondPosition] = []
     private var pawNeedsExit: [UUID: Set<LaserContactHand>] = [:]
@@ -86,13 +87,15 @@ nonisolated struct LaserWristDiamondConsumer: Sendable {
                   let target = LaserDiamondTimeBoard.paw(point, laneX: configuration.layout.centerX(for: hand.playerID),
                       standingHeight: height, player: hand.playerID, solo: roster.count == 1) else { continue }
             raw.append(target)
-            if let old = recent[hand] {
+            if recent[hand] != nil, let old = smoothedPaws[hand] {
                 mapped[hand] = try LaserDiamondPosition(x: old.x + alpha * (target.x - old.x),
                                                         y: old.y + alpha * (target.y - old.y))
             } else {
                 mapped[hand] = target
             }
         }
+        smoothedPaws = mapped
+        mapped = LaserDiamondTimeBoard.separateOpposingPaws(mapped, previous: recent)
         let active = game.activeDiamonds
         // A fresh paw returning over a target must first move out of it. This also
         // prevents an untracked hand at spawn time from scoring when it reappears.
@@ -184,7 +187,7 @@ nonisolated struct LaserWristDiamondConsumer: Sendable {
     mutating func invalidate(atHostTime time: Double) {
         targets.removeAll(); activations.removeAll(); lastFrame = 0; lastCapture = nil
         vaultActivation = nil
-        pawCapture = nil; paws.removeAll(); pawNeedsExit.removeAll()
+        pawCapture = nil; paws.removeAll(); smoothedPaws.removeAll(); pawNeedsExit.removeAll()
         if time.isFinite { capturedAfter = max(capturedAfter, time) }
         // Reconstruct only transient entry state; target identity/outcomes remain domain-owned.
         entries = emptyEntries
