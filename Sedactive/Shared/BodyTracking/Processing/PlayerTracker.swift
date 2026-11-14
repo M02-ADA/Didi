@@ -87,6 +87,11 @@ nonisolated struct PlayerTrackingSlotResult: Equatable, Sendable {
   let cost: Double?
   let requiresRebind: Bool
   let lastConfirmedAt: Double? // Read-only history watermark; tentative/refused matches never advance it.
+  /// POSE-FIRST CANDIDATE (Kevin, 14 Nov 2026 — needs Edo's review): while `uncertain`, the one
+  /// partial body (both shoulders, no full descriptor) that squat presence holds for this player
+  /// in THIS frame. Never a confirmed match: it keeps no history and confirms nothing. Read only
+  /// by the DEBUG candidate (`PoseFirstCandidate`); nil otherwise.
+  var presentCandidateID: UInt64? = nil
 }
 nonisolated struct PlayerTrackingSnapshot: Equatable, Sendable {
   let source: PlayerTrackingSource? // Nil after reset/invalidation; expiry never fabricates a source.
@@ -186,11 +191,11 @@ nonisolated struct PlayerTracker: Sendable {
       acquireSolo(descriptors, overflow: input.observationCount > f.candidates.count, source: s, relink: true)
     } else {
       let aspect = Double(s.context.imageWidth) / Double(s.context.imageHeight)
-      let partials: [Point] = f.candidates.indices.compactMap { i in
+      let partials: [(point: Point, id: UInt64)] = f.candidates.indices.compactMap { i in
         guard descriptors[i] == nil, let l = f.candidates[i].joints[.leftShoulder], let r = f.candidates[i].joints[.rightShoulder],
           l.confidence >= policy.minimumJointConfidence, r.confidence >= policy.minimumJointConfidence,
           hypot((l.x - r.x) * aspect, l.y - r.y) >= policy.minimumTorsoExtent else { return nil }
-        return Point(x: (l.x + r.x) / 2 * aspect, y: (l.y + r.y) / 2)
+        return (Point(x: (l.x + r.x) / 2 * aspect, y: (l.y + r.y) / 2), f.candidates[i].candidateID)
       }
       associate(descriptors, overflow: input.observationCount > f.candidates.count,
         at: s.capturedAt, sourceGap: sourceGap, partials: partials)
@@ -285,11 +290,14 @@ nonisolated struct PlayerTracker: Sendable {
     /// keeps the identity from expiring; it never matches, measures or confirms anything.
     var presenceAt: Double?
     var presencePoint: Point?
+    /// This frame's presence-held partial body (see `PlayerTrackingSlotResult.presentCandidateID`).
+    var presentCandidateID: UInt64?
     /// When this player was last seen, fully or as a present partial body.
     var lastSeen: Double? { [confirmed?.time, presenceAt].compactMap { $0 }.max() }
     var result: PlayerTrackingSlotResult {
       PlayerTrackingSlotResult(state: state, reason: reason, candidateID: candidateID, cost: cost,
-        requiresRebind: state == .lost || identityAmbiguous, lastConfirmedAt: confirmed?.time)
+        requiresRebind: state == .lost || identityAmbiguous, lastConfirmedAt: confirmed?.time,
+        presentCandidateID: state == .uncertain && !identityAmbiguous ? presentCandidateID : nil)
     }
   }
   private func descriptor(_ candidate: PoseCandidate, at time: Double,
@@ -489,11 +497,12 @@ nonisolated struct PlayerTracker: Sendable {
   }
 
   private mutating func associate(_ values: [Descriptor?], overflow: Bool, at time: Double,
-    sourceGap: Bool, partials: [Point] = []) {
+    sourceGap: Bool, partials: [(point: Point, id: UInt64)] = []) {
     // A — Evaluate from a frame-local baseline. No permanent identity/history mutation.
     var baseline = slots
     for i in baseline.indices {
       baseline[i].candidateID = nil
+      baseline[i].presentCandidateID = nil
       baseline[i].cost = nil
       if sourceGap {
         baseline[i] = refused(baseline[i], at: time, reason: .observationGap, lost: true)
@@ -621,12 +630,13 @@ nonisolated struct PlayerTracker: Sendable {
       guard let reference = presenceReference(committed[i]), let seen = committed[i].lastSeen,
         time - seen <= policy.maximumObservationGap else { continue }
       let gate = policy.positionGate + policy.maximumSpeed * (time - seen)
-      let near = partials.filter { Point.distance($0, reference) <= gate }
+      let near = partials.filter { Point.distance($0.point, reference) <= gate }
       // Exactly one partial body, and not one that could be the other player's.
       guard near.count == 1,
-        presenceReference(committed[1 - i]).map({ Point.distance(near[0], $0) > gate }) ?? true else { continue }
+        presenceReference(committed[1 - i]).map({ Point.distance(near[0].point, $0) > gate }) ?? true else { continue }
       committed[i].presenceAt = time
-      committed[i].presencePoint = near[0]
+      committed[i].presencePoint = near[0].point
+      committed[i].presentCandidateID = near[0].id
     }
     slots = committed
   }

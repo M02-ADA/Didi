@@ -95,6 +95,9 @@ private struct ReplayRoundView: View {
                 let now = CACurrentMediaTime()
                 scene?.refreshLiveCutouts(now: now)
                 scene?.refreshLiveAvatars(now: now)
+                #if DEBUG
+                MaskBenchmark.recorder.renderTick(now) // no-op without `-maskBench`
+                #endif
             }
             if let avatarSource {
                 do {
@@ -436,7 +439,20 @@ private struct ReplayRoundView: View {
         }
         .onChange(of: session?.phase) { _, phase in
             if phase != .running { diamondFlights.clear() }
+            #if DEBUG
+            // `-maskBench` spike: the measured run is the live round, countdown to finish.
+            if let phase, session?.isReplay == false {
+                let inRound = [.countdown, .running, .paused].contains(phase)
+                let ended = phase == .finished || { if case .failed = phase { true } else { false } }()
+                MaskBenchmark.recorder.sessionPhase("\(phase)", inRound: inRound, finished: ended)
+            }
+            #endif
         }
+        #if DEBUG
+        .overlay(alignment: .topLeading) {
+            if MaskBenchmark.configuration.map({ $0.overlay || $0.script }) == true { MaskBenchmarkOverlay() }
+        }
+        #endif
         .onChange(of: session?.summary?.sessionGeneration) { _, final in
             if final != nil { presentation.stop() }
         }
@@ -454,6 +470,7 @@ private struct ReplayRoundView: View {
             // before this scene is replaced (Retry).
             scene.detachLiveAvatars()
             #if DEBUG
+            MaskBenchmark.recorder.suspend(reason: "view closed")
             cutoutFeed?.stop()
             cutoutFeed = nil
             directorPreview.stop()

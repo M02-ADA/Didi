@@ -22,6 +22,10 @@ nonisolated struct LiveBodyInputState: Sendable {
   var latest: BodySnapshot?
   /// Per-player live airborne estimators (reset with each calibration revision or source change).
   var jumps: [PlayerID: LiveJumpEstimator] = [:]
+  /// POSE-FIRST CANDIDATE (DEBUG `-trackingCandidate`, needs Edo's review): measure presence-held
+  /// players, use the conservative crown, and the candidate jump rules. False: production.
+  var poseFirstCandidate = PoseFirstCandidate.isRequested
+  var heads: [PlayerID: HeadHeightReference] = [:]
   var wrists: PreparedWristFrame?
   var lastAdmission: CameraFrameMetadata?
   var lastPublication: UInt64 = 0
@@ -37,7 +41,7 @@ nonisolated struct LiveBodyInputState: Sendable {
 
   mutating func invalidate(at time: Double) {
     measurements.invalidate()
-    latest = nil; wrists = nil; jumps = [:]; calibration.invalidate("Source/control invalidated")
+    latest = nil; wrists = nil; jumps = [:]; heads = [:]; calibration.invalidate("Source/control invalidated")
     if let configuration {
       self.configuration = configuration.replacingCalibrations([:])
       for id in PlayerID.allCases {
@@ -76,10 +80,18 @@ nonisolated struct LiveBodyInputState: Sendable {
       // Samples at/before an acceptance cutover never borrow that newly accepted baseline.
       let cut = cutovers[id]
       let usable = cut.map { pose.source.frameID > $0.frameID && pose.source.capturedAt > $0.capturedAt } ?? true
-      var sample = BodyMeasurementExtractor.sample(id: id, candidate: candidate, slot: slot,
-        calibration: usable ? calibration : nil, layout: config.playerPlaneLayout)
+      var sample: PlayerBodySample
+      if poseFirstCandidate {
+        var head = heads[id] ?? HeadHeightReference()
+        sample = BodyMeasurementExtractor.candidateSample(id: id, candidates: pose.frame.candidates, slot: slot,
+          calibration: usable ? calibration : nil, layout: config.playerPlaneLayout, head: &head)
+        heads[id] = head
+      } else {
+        sample = BodyMeasurementExtractor.sample(id: id, candidate: candidate, slot: slot,
+          calibration: usable ? calibration : nil, layout: config.playerPlaneLayout)
+      }
       // Live airborne estimate from this frame's valid soles against the standing reference.
-      if usable, let calibration, calibration.referenceQuality != nil, sample.trackingStatus == .reliable {
+      if usable, let calibration, calibration.referenceQuality != nil, sample.trackingStatus == .reliable || sample.isPresenceHeld {
         let layout = config.playerPlaneLayout
         let floorLeft = calibration.mapping.gameY(imageY: calibration.standingLeftSoleImageY, layout: layout)
         let floorRight = calibration.mapping.gameY(imageY: calibration.standingRightSoleImageY, layout: layout)
@@ -90,7 +102,12 @@ nonisolated struct LiveBodyInputState: Sendable {
           standingLeftSole: floorLeft, standingRightSole: floorRight,
           standingHeight: calibration.mapping.gameY(imageY: calibration.standingCrownImageY, layout: layout)
             - min(floorLeft, floorRight),
-          calibrationRevision: calibration.revision)
+          calibrationRevision: calibration.revision,
+          hipY: poseFirstCandidate ? BodyMeasurementExtractor.hipGameY(
+            candidate: pose.frame.candidates.first { $0.candidateID == (slot.candidateID ?? slot.presentCandidateID) },
+            calibration: calibration, layout: layout) : nil,
+          standingHip: calibration.mapping.gameY(imageY: calibration.standingHipImageY, layout: layout),
+          candidateRules: poseFirstCandidate)
         jumps[id] = estimator
         #if DEBUG
         // Frame-level jump evidence while the lower sole is off the floor (no image data).
@@ -103,8 +120,10 @@ nonisolated struct LiveBodyInputState: Sendable {
             "\(jump.phase)"))
         }
         #endif
+        let presenceOnly = sample.presenceOnly
         sample = PlayerBodySample(playerID: sample.playerID, calibrationRevision: sample.calibrationRevision,
           trackingStatus: sample.trackingStatus, geometry: sample.geometry, jumpState: jump)
+        sample.presenceOnly = presenceOnly
       } else { jumps[id] = nil }
       players[id] = sample
     }

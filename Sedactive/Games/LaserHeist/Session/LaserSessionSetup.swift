@@ -117,6 +117,13 @@ final class LaserSessionSetup {
         guard let binding = currentReliableBinding() else { return false }
         return confirmed == binding
     }
+    /// POSE-FIRST CANDIDATE (Kevin, 14 Nov 2026 — needs Jevon's review; DEBUG only): the confirmed
+    /// pair is still here, each player tracked OR held by squat presence (both shoulders exactly
+    /// where they were, never ambiguous, never lost). Identity loss still fails it.
+    var hasConfirmedPresentPair: Bool {
+        guard let binding = currentReliableBinding(allowingPresence: true) else { return false }
+        return confirmed == binding
+    }
 
     /// The players this setup links and calibrates: both, or P1 alone in a DEBUG Solo Test.
     let roster: [PlayerID]
@@ -327,7 +334,7 @@ final class LaserSessionSetup {
         if ownsBinding { controls.cancelBinding() }
     }
 
-    private func currentReliableBinding() -> Binding? {
+    private func currentReliableBinding(allowingPresence: Bool = false) -> Binding? {
         guard active, let context = controls.provider.currentContext, context.isActive,
               context.sessionGeneration == generation, let request = bindingRequest,
               let revision = bindingRevision else { return nil }
@@ -340,8 +347,11 @@ final class LaserSessionSetup {
               source.context == ack.source.context, source.context.generation == generation,
               source.context.geometryRevision == context.cameraGeometryRevision,
               source.frameID >= ack.source.frameID, source.capturedAt >= ack.source.capturedAt,
-              roster.flatMap({ [$0 == .player1 ? ack.player1 : ack.player2, latest[$0]] }).allSatisfy({
-                  $0.state == .tracking && !$0.requiresRebind
+              roster.allSatisfy({ id in
+                  let bound = id == .player1 ? ack.player1 : ack.player2, now = latest[id]
+                  return bound.state == .tracking && !bound.requiresRebind && !now.requiresRebind
+                      && (now.state == .tracking
+                          || (allowingPresence && now.state == .uncertain && now.presentCandidateID != nil))
               }) else { return nil }
         return Binding(request: request.requestID, context: source.context, revision: revision)
     }

@@ -61,7 +61,9 @@ nonisolated struct LaserLiveWristRoundPlan: Sendable {
     /// brief flickers still have the normal evidence-age allowance during the countdown.
     static var liveTiming: LaserLiveTimingPolicy {
         try! LaserLiveTimingPolicy(settlingDuration: 1, maximumEvidenceAge: 0.5, countdownDuration: 3,
-                                   preservesCountdownOnTrackingFlicker: true)
+                                   preservesCountdownOnTrackingFlicker: true,
+                                   // POSE-FIRST CANDIDATE (DEBUG `-trackingCandidate` only; needs Jevon's review).
+                                   absenceGrace: PoseFirstCandidate.isRequested ? PoseFirstCandidate.absenceGrace : nil)
     }
 }
 

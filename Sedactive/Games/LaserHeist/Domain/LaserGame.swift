@@ -92,6 +92,9 @@ nonisolated struct LaserGame: Sendable {
     /// player to press theirs). Nil in every co-op round, where both sides are always required.
     var soloPracticePlayer: PlayerID?
     #endif
+    /// POSE-FIRST CANDIDATE (DEBUG `-trackingCandidate`; needs Jevon's review): see
+    /// `LaserCollisionJudge`. Always false in Release (`PoseFirstCandidate.isRequested`).
+    var poseFirstCandidate = false
 
     var diamonds: [UUID: LaserDiamondState] { diamondField.states }
     var activeDiamonds: [LaserDiamondSpawn] { diamondField.active }
@@ -491,15 +494,21 @@ nonisolated struct LaserGame: Sendable {
             let deadline = timing.finalizationTime(crossing: crossing.target.crossingTime)
             guard inclusive ? deadline <= time : deadline < time else { continue }
             var result: LaserEvidenceSelection = crossing.historyOverflow ? .unavailable(.historyOverflow)
-                : LaserCollisionJudge().select(target: crossing.target,
+                : LaserCollisionJudge(acceptsPresenceHeldEvidence: poseFirstCandidate).select(target: crossing.target,
                     history: history[key.playerID, default: []], timing: timing, context: context)
             if result == .unavailable(.noSample), let pruned = lastPrunedCapture[key.playerID],
                pruned < timing.captureWindow(crossing: crossing.target.crossingTime).lowerBound {
                 result = .unavailable(.stale)
             }
             let verdict: Judgement?
-            if let clearanceMargin {
-                verdict = try LaserCollisionJudge().judge(target: crossing.target, selection: result,
+            if poseFirstCandidate, clearanceMargin != nil, crossing.target.requiredMove == .jump, !crossing.historyOverflow {
+                // POSE-FIRST CANDIDATE: a low laser is judged as a timed jump event (needs Jevon's review).
+                verdict = LaserCollisionJudge(acceptsPresenceHeldEvidence: true).judgeJumpEvent(
+                    target: crossing.target, history: history[key.playerID, default: []], timing: timing,
+                    context: context, minimumFlight: PoseFirstCandidate.jumpMinimumFlight,
+                    tolerance: PoseFirstCandidate.jumpTimingTolerance)
+            } else if let clearanceMargin {
+                verdict = try LaserCollisionJudge(acceptsPresenceHeldEvidence: poseFirstCandidate).judge(target: crossing.target, selection: result,
                                                          clearanceMargin: clearanceMargin, context: context)
             } else { verdict = nil }
             crossings[key]?.result = result

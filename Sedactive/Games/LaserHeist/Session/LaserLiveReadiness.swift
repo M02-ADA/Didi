@@ -13,13 +13,21 @@ nonisolated struct LaserLiveTimingPolicy: Equatable, Sendable {
     /// frame blocks at once).
     let trackingGrace: Double
     let preservesCountdownOnTrackingFlicker: Bool
+    /// POSE-FIRST CANDIDATE (Kevin, 14 Nov 2026 — needs Jevon's review; DEBUG only): while RUNNING,
+    /// a frame that cannot be admitted (a weak or hidden landmark) is skipped, not a pause, as long
+    /// as every player was PRESENT (tracked, or held by squat presence) within this many seconds.
+    /// Crossings without valid evidence are still UNAVAILABLE. Nil: today's rule (`trackingGrace`).
+    let absenceGrace: Double?
 
     init(settlingDuration: Double, maximumEvidenceAge: Double, countdownDuration: Double,
-         trackingGrace: Double = 0, preservesCountdownOnTrackingFlicker: Bool? = nil) throws {
+         trackingGrace: Double = 0, preservesCountdownOnTrackingFlicker: Bool? = nil,
+         absenceGrace: Double? = nil) throws {
         try requireLaserValue(settlingDuration.isFinite && settlingDuration >= 0
             && maximumEvidenceAge.isFinite && maximumEvidenceAge > 0
             && countdownDuration.isFinite && countdownDuration > 0
-            && trackingGrace.isFinite && trackingGrace >= 0, "live timing policy")
+            && trackingGrace.isFinite && trackingGrace >= 0
+            && (absenceGrace.map { $0.isFinite && $0 > 0 } ?? true), "live timing policy")
+        self.absenceGrace = absenceGrace
         self.settlingDuration = settlingDuration
         self.maximumEvidenceAge = maximumEvidenceAge
         self.countdownDuration = countdownDuration
@@ -46,6 +54,8 @@ nonisolated struct LaserLiveReadiness: Sendable {
     private var context: BodyInputContext?
     private var lastFrame: UInt64?
     private var lastCapture: Double?
+    /// Candidate: the last capture in which every roster player was present.
+    private var lastPresentAt: Double?
     private var settlingStart: Double?
     private var distinctSamples = 0
     private var lastEvaluation = 0.0
@@ -73,7 +83,9 @@ nonisolated struct LaserLiveReadiness: Sendable {
     private func toleratesMissingEvidence(at time: Double) -> Bool {
         guard let policy, let lastCapture else { return false }
         switch phase {
-        case .running: return time - lastCapture < policy.trackingGrace
+        case .running:
+            if let grace = policy.absenceGrace { return time - max(lastCapture, lastPresentAt ?? lastCapture) < grace }
+            return time - lastCapture < policy.trackingGrace
         case .settling, .ready, .countdown:
             return policy.preservesCountdownOnTrackingFlicker && time - lastCapture < policy.maximumEvidenceAge
         default: return false
@@ -116,6 +128,10 @@ nonisolated struct LaserLiveReadiness: Sendable {
         // not replace current readiness (the same packet still reaches the domain evidence path).
         if let lastFrame, let lastCapture,
            packet.frameID <= lastFrame || packet.capturedAt <= lastCapture { return }
+        if policy?.absenceGrace != nil, packet.capturedAt <= time,
+           roster.allSatisfy({ packet.players[$0]?.isPresent == true }) {
+            lastPresentAt = max(lastPresentAt ?? packet.capturedAt, packet.capturedAt)
+        }
         guard roster.allSatisfy({ id in
             guard let sample = packet.players[id] else { return false }
             // WRISTS ARE ACTION EVIDENCE (PROPOSED by Kevin, 13 Nov 2026 — needs Jevon's review): a
@@ -258,7 +274,7 @@ nonisolated struct LaserLiveReadiness: Sendable {
     }
 
     private mutating func resetEvidence() {
-        lastFrame = nil; lastCapture = nil; settlingStart = nil; distinctSamples = 0
+        lastFrame = nil; lastCapture = nil; lastPresentAt = nil; settlingStart = nil; distinctSamples = 0
     }
 
     private mutating func validateTime(_ time: Double) throws {
