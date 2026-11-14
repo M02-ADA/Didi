@@ -178,6 +178,15 @@ final class GameSessionCoordinator {
     private var countdownRequested = false
     private var recoveryAttempted = false
     private var withdrawnLiveEncounters: [LaserEncounter] = []
+    /// POSE-FIRST TRACKING (production default since 14 Nov 2026). False only in a DEBUG build
+    /// launched with `-trackingBaseline`: the previous rules everywhere below.
+    let poseFirstCandidate = PoseFirstCandidate.isEnabled
+    private var unavailableRetry = LaserUnavailableRetryPolicy()
+    /// The pair may keep playing: confirmed and tracked (production), or, in the candidate, also
+    /// held by squat presence (identity loss still fails it).
+    private var pairInPlay: Bool {
+        poseFirstCandidate ? setup?.hasConfirmedPresentPair == true : setup?.hasConfirmedReliablePair == true
+    }
     private var approvedRecovery: [LaserEncounter]?
     private let recoveryPlanner: (@MainActor (LaserLiveRecoveryRequest) throws -> [LaserEncounter]?)?
     private var liveTerminationTask: Task<Void, Never>?
@@ -541,7 +550,7 @@ final class GameSessionCoordinator {
         if let context = inputContext {
             do {
                 try liveReadiness?.observe(packet, context: context,
-                    bindingConfirmed: setup?.hasConfirmedReliablePair == true && setup?.canCancelCalibration == false,
+                    bindingConfirmed: pairInPlay && setup?.canCancelCalibration == false,
                     at: hostNow())
             } catch { debugRestart("observe threw: \(error)"); liveReadiness?.requireRestart() }
         }
@@ -582,7 +591,7 @@ final class GameSessionCoordinator {
         do {
             let time = hostNow()
             try liveReadiness?.updateContext(context, at: time)
-            if setup != nil, setup?.hasConfirmedReliablePair != true {
+            if setup != nil, !pairInPlay {
                 latestSnapshot = nil
                 try liveReadiness?.invalidateBinding(at: time)
             }
@@ -1051,17 +1060,23 @@ final class GameSessionCoordinator {
                 // invalidate immediately, but only the stream/frame path finalizes evidence.
                 guard allowAdvance, liveFrameHostReady else { return }
                 guard let configuration, let context = inputContext, provider.currentContext == context,
-                      setup?.hasConfirmedReliablePair == true else { return }
+                      pairInPlay else { return }
                 if game == nil {
                     var initial = try LaserGame(configuration: configuration, context: context, historyCapacityPerPlayer: 120)
                     #if DEBUG
                     initial.soloPracticePlayer = inputConfiguration.soloPlayer
                     #endif
+                    initial.poseFirstCandidate = poseFirstCandidate
+                    #if DEBUG
+                    print("[LaserCandidate] round starts · tracking rules: \(poseFirstCandidate ? "POSE-FIRST (default)" : "previous baseline (-trackingBaseline)")")
+                    #endif
                     for encounter in encounters { try initial.register(encounter) }
                     game = initial
                     finalVaultEntry = nil; finalVaultStamp = nil
                     withdrawnLiveEncounters = []; approvedRecovery = nil; recoveryAttempted = false
+                    unavailableRetry = LaserUnavailableRetryPolicy()
                 } else if phase != .running {
+                    unavailableRetry.resumed()
                     var resumed = game!
                     resumed.resume()
                     let replacements = approvedRecovery ?? []
@@ -1169,7 +1184,22 @@ final class GameSessionCoordinator {
                 collectLiveState()
                 if summary != nil { phase = .finished; finishLiveInput(); return }
                 try advanceFinalVaultEntry()
-                if encounters.contains(where: { encounter in
+                if poseFirstCandidate {
+                    // Candidate: UNAVAILABLE for a present player is unscored and play continues,
+                    // within the retry budget; past it (or for an absent player) the round pauses.
+                    let verdicts = encounters.flatMap { encounter in encounter.targets.compactMap { target in
+                        let key = LaserTargetKey(encounterID: encounter.id, attemptID: encounter.attemptID, playerID: target.playerID)
+                        return game?.judgement(for: key).map { (key: key, judgement: $0) }
+                    } }
+                    let snapshot = latestSnapshot
+                    if unavailableRetry.review(verdicts, isPresent: { snapshot?.players[$0]?.isPresent == true }) {
+                        #if DEBUG
+                        print("[LaserCandidate] UNAVAILABLE budget → PAUSED · \(unavailableRetry.lastPauseReason ?? "-")")
+                        #endif
+                        try liveReadiness?.invalidateMeasurements(at: hostNow())
+                        try pauseLiveGame(at: readiness.gameTime)
+                    }
+                } else if encounters.contains(where: { encounter in
                     encounter.targets.contains { target in
                         if case .unavailable = game?.judgement(for: LaserTargetKey(encounterID: encounter.id,
                             attemptID: encounter.attemptID, playerID: target.playerID)) { return true }
@@ -1228,6 +1258,8 @@ final class GameSessionCoordinator {
             wristDiamonds?.invalidate(atHostTime: hostNow())
             if game?.isPaused != true {
                 withdrawnLiveEncounters = encounters.filter { encounter in
+                    // Candidate: a laser already let through as unscored stays final (see the policy).
+                    !(poseFirstCandidate && unavailableRetry.forgiven.contains(encounter.id)) &&
                     !encounter.targets.allSatisfy { target in
                         guard let judgement = game?.judgement(for: LaserTargetKey(encounterID: encounter.id,
                             attemptID: encounter.attemptID, playerID: target.playerID)) else { return false }

@@ -22,6 +22,11 @@ nonisolated enum LaserEvidenceSelection: Equatable, Sendable {
 }
 
 nonisolated struct LaserCollisionJudge: Sendable {
+    /// POSE-FIRST CANDIDATE (Kevin, 14 Nov 2026 — needs Jevon's review; DEBUG only): also judge a
+    /// sample whose identity is held by squat presence (`PlayerBodySample.isPresenceHeld`), with
+    /// exactly the same required measurements and geometry. False: today's rule (reliable only).
+    var acceptsPresenceHeldEvidence = false
+
     /// Pure target-local geometry check. Nil means withdrawn, never an implicit CLEAR.
     func judge(target: LaserTarget, selection: LaserEvidenceSelection, clearanceMargin: Double,
                context: BodyInputContext) throws -> Judgement? {
@@ -52,6 +57,53 @@ nonisolated struct LaserCollisionJudge: Sendable {
                 return sample.jumpState.phase == .airborne ? .clear : .hit(.notAirborne)
             }
         }
+    }
+
+    /// POSE-FIRST CANDIDATE — TIMED JUMP EVENT (Kevin, 14 Nov 2026 — needs Jevon's review; a CP1
+    /// contract change for the task owner). Judges a low laser over every capture in its evidence
+    /// window instead of the one nearest the crossing:
+    /// - usable captures: this player's, arrived by the deadline, inside the capture window, with
+    ///   both soles and the jump state valid (`unavailableReason` == nil);
+    /// - an airborne run: consecutive usable captures in the `airborne` phase, no gap longer than
+    ///   `maximumGap` — the jump estimator's own limit (`LiveJumpEstimator.maximumGap`, 0.2 s), so a
+    ///   brief dropout, or a slower capture cadence, does not split one flight;
+    /// - CLEAR: a run lasting at least `minimumFlight` whose first capture is no later than
+    ///   crossing + `tolerance` and whose last is no earlier than crossing − `tolerance`;
+    /// - HIT (`notAirborne`): usable evidence, no such run; UNAVAILABLE: no usable evidence (the
+    ///   same reasons as `select`). The drawn laser's height is not compared.
+    func judgeJumpEvent(target: LaserTarget, history: [LaserBodyEvidence], timing: LaserEvidenceTiming,
+                        context: BodyInputContext, minimumFlight: Double, tolerance: Double,
+                        maximumGap: Double = LiveJumpEstimator.maximumGap) -> Judgement {
+        let window = timing.captureWindow(crossing: target.crossingTime)
+        let deadline = timing.finalizationTime(crossing: target.crossingTime)
+        let usable = history.filter {
+            $0.arrivedGameTime <= deadline && window.contains($0.capturedGameTime)
+                && unavailableReason(target: target, snapshot: $0.snapshot, context: context) == nil
+        }.sorted { $0.capturedGameTime < $1.capturedGameTime }
+        guard !usable.isEmpty else {
+            if case .unavailable(let reason) = select(target: target, history: history, timing: timing, context: context) {
+                return .unavailable(reason)
+            }
+            return .unavailable(.noSample)
+        }
+        var runs: [(start: Double, end: Double)] = []
+        for evidence in usable {
+            let airborne = evidence.snapshot.players[target.playerID]?.jumpState.phase == .airborne
+            let t = evidence.capturedGameTime
+            if airborne, let last = runs.last, last.end >= 0, t - last.end <= maximumGap {
+                runs[runs.count - 1].end = t
+            } else if airborne {
+                runs.append((t, t))
+            } else if !runs.isEmpty {
+                runs.append((-1, -1)) // a grounded capture ends the run
+            }
+        }
+        let crossing = target.crossingTime
+        let cleared = runs.contains { run in
+            run.start >= 0 && run.end - run.start >= minimumFlight - 1e-6
+                && run.start <= crossing + tolerance && run.end >= crossing - tolerance
+        }
+        return cleared ? .clear : .hit(.notAirborne)
     }
 
     func select(target: LaserTarget, history: [LaserBodyEvidence], timing: LaserEvidenceTiming,
@@ -85,7 +137,7 @@ nonisolated struct LaserCollisionJudge: Sendable {
         guard context.accepts(snapshot, playerID: target.playerID),
               let sample = snapshot.players[target.playerID],
               sample.calibrationRevision == target.calibrationRevision else { return .incompatibleContext }
-        guard sample.trackingStatus == .reliable else {
+        guard sample.trackingStatus == .reliable || (acceptsPresenceHeldEvidence && sample.isPresenceHeld) else {
             return .invalidEvidence(target.requiredMove == .duck ? .crown : .leftSole, .identityUncertain)
         }
         let required: [(LaserEvidenceRequirement, EstimatedScalar)] = target.requiredMove == .duck

@@ -7,6 +7,17 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
     let title: String
     let instruction: String
     let action: Action?
+    /// The calibration stage's Sketch title ("Hi-Fi Revisi 6 NOV" › Game Set Up: Home Copy 19
+    /// "stand inside the box to start", Home Copy 42 "stand still, don’t move"), shown instead of
+    /// `title` while the players are placed and measured; `nil` in every other state. From the setup
+    /// PHASE only, never from per-frame landmark confidence, so it cannot flicker with pose noise.
+    let headline: String?
+    /// At most one short line under the headline, only when it says something the boxes do not
+    /// (a player's current problem, a player still missing).
+    let headlineDetail: String?
+
+    static let placementHeadline = "stand inside the box to start"
+    static let holdStillHeadline = "stand still, don’t move"
     var actionTitle: String? {
         switch action {
         case .tryAgain: "Try again"
@@ -39,6 +50,7 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
 
     init(_ input: Input) {
         let p = input.presence
+        (headline, headlineDetail) = Self.sketchHeadline(input)
         if let message = input.message {
             (title, instruction, action) = ("Camera setup unavailable", message, .restartSetup); return
         }
@@ -111,18 +123,52 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
             }
             (title, instruction, action) = ("Get ready!", waiting, nil)
         case .inactive, .awaitingBinding, .binding, .waitingForReliablePair, .restartRequired, nil:
-            let solo: String = switch p.peopleInView {
+            let instruction = Self.finding(peopleInView: p.peopleInView, solo: input.solo)
+            (title, self.instruction, action) = (input.solo ? "Step into the middle" : "Step into your places", instruction, nil)
+        }
+    }
+
+    /// While the players are being found: what the camera sees.
+    static func finding(peopleInView: Int, solo: Bool) -> String {
+        if solo {
+            return switch peopleInView {
             case 0: "Stand in the middle, head to toe in view."
             case 1: "Hold still while we find you…"
             default: "Solo test needs just one person in view. Ask others to step out."
             }
-            let coop: String = switch p.peopleInView {
-            case 0: "P1 on the left, P2 on the right. Make sure the camera sees you both from head to toe."
-            case 1: "We can see one player. Waiting for the second."
-            default: "Hold your places while we find you both…"
-            }
-            let instruction = input.solo ? solo : coop
-            (title, self.instruction, action) = (input.solo ? "Step into the middle" : "Step into your places", instruction, nil)
+        }
+        return switch peopleInView {
+        case 0: "P1 on the left, P2 on the right. Make sure the camera sees you both from head to toe."
+        case 1: "We can see one player. Waiting for the second."
+        default: "Hold your places while we find you both…"
+        }
+    }
+
+    /// The Sketch headline for this state and its optional line, or `nil` outside placement and
+    /// measuring (errors, retries, the round's own states keep their copy above).
+    static func sketchHeadline(_ input: Input) -> (String?, String?) {
+        guard input.message == nil, !input.isStarting, !input.roundStarted,
+              input.sessionPhase != .paused, input.sessionPhase != .restartRequired else { return (nil, nil) }
+        switch input.setupPhase {
+        case .inactive, .awaitingBinding, .binding, .waitingForReliablePair:
+            // Only when someone is still missing; with everyone in view the boxes say it all.
+            let wanted = input.solo ? 1 : 2
+            let detail = input.presence.peopleInView < wanted || input.presence.peopleInView > wanted
+                ? finding(peopleInView: input.presence.peopleInView, solo: input.solo) : nil
+            return (placementHeadline, detail)
+        case .confirmPlayers:
+            return (placementHeadline, nil)
+        case .awaitingCalibration, .reviewCandidate:
+            return (holdStillHeadline, nil)
+        case .calibrating:
+            // A player's current problem, named, so the right person fixes it.
+            let issue = PlayerID.allCases.lazy.compactMap { player -> String? in
+                guard case .calibrating(_, let issue?) = input.presence.players[player], issue != .moving else { return nil }
+                return input.solo ? hint(issue, solo: true) : "\(player == .player1 ? "P1" : "P2"): \(hint(issue))"
+            }.first
+            return (holdStillHeadline, issue)
+        default:
+            return (nil, nil)
         }
     }
 

@@ -365,6 +365,11 @@ actor CameraCopySink: CameraFrameSink {
   private var detector: (any CameraPoseDetecting)?
   private var segmenter: (any PersonMaskDetecting)?
   private let makeSegmenter: (@Sendable () -> any PersonMaskDetecting)?
+  #if DEBUG
+  // DEBUG-ONLY MASK FEASIBILITY SPIKE (Kevin, 14 Nov 2026 — needs Edo's review): nil unless the app
+  // was launched with `-maskBench`. See `MaskBenchmark.swift`.
+  private let maskBenchmark = MaskBenchmark.configuration.map { MaskBenchmarkWorker(configuration: $0) }
+  #endif
   init(metrics: CameraCaptureMetrics? = nil, poses: CameraPoseResults? = nil,
     tracking: CameraTrackingGate? = nil,
     makeDetector: @escaping @Sendable () -> any CameraPoseDetecting = { PoseEstimator() },
@@ -391,12 +396,21 @@ actor CameraCopySink: CameraFrameSink {
     }
     guard let ticket = poses.start(frame.metadata) else { return }
     if detector == nil { detector = makeDetector() }
+    #if DEBUG
+    let benchmarkWorkerStart = CameraHostClock.now()
+    #endif
     do {
       try workspace!.copy(frame, metrics: metrics) { buffer in
         try Task.checkCancellation()
+        #if DEBUG
+        let poseSignpost = MaskBenchmark.begin("Pose")
+        #endif
         let started = CameraHostClock.now()
         let observations = try detector!.detect(in: buffer)
         let completed = CameraHostClock.now()
+        #if DEBUG
+        MaskBenchmark.end("Pose", poseSignpost)
+        #endif
         let result = try CameraPoseAdapter.convert(observations, source: frame.metadata)
         if poses.finish(result, ticket: ticket, startedAt: started, completedAt: completed,
           cancelled: Task.isCancelled) {
@@ -450,6 +464,14 @@ actor CameraCopySink: CameraFrameSink {
             tracking?.publishMeasurements(result, admission: frame.trackingAdmission,
               receipt: receipt, mask: measurementMask)
           }
+          #if DEBUG
+          // After this frame's evidence is published: the benchmark mask delays only later frames.
+          if !Task.isCancelled {
+            maskBenchmark?.process(buffer: buffer, pose: result, receipt: receipt,
+              admission: frame.trackingAdmission, calibrationMaskRan: measurementMask != nil,
+              poseStartedAt: started, poseCompletedAt: completed, workerStartedAt: benchmarkWorkerStart)
+          }
+          #endif
         }
       }
     } catch {

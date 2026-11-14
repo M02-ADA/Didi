@@ -3,8 +3,10 @@ import Testing
 @testable import Sedactive
 
 /// EVIDENCE (13 November 2026, co-op "frozen after Ready" and "back to calibration"): the live
-/// path with the PRODUCTION round plan and timing (`LaserLiveWristRoundPlan.completeRound`, PR #46
-/// policy), through the real coordinator, readiness and setup-stage rule. SYNTHETIC CP1 packets:
+/// path with the PRODUCTION round plan and timing (`LaserLiveWristRoundPlan.completeRound`), through
+/// the real coordinator, readiness and setup-stage rule. Under PR #46's policy one unusable frame
+/// paused the round (and a flicker once a second kept it mostly paused); the pose-first default
+/// (14 November 2026) keeps playing while the player is present. SYNTHETIC CP1 packets:
 /// both players standing, plus single frames in which one player's foot landmark is missing (as a
 /// jump, a duck or a small child's ankle confidence can cause). It measures the session's response;
 /// it says nothing about how often such frames happen on the iPad.
@@ -39,7 +41,7 @@ import Testing
         return players
     }
 
-    @Test func oneDroppedFootFrameRightAfterTheStartPausesTheRoundBehindTheSetupStage() async throws {
+    @Test func oneDroppedFootFrameRightAfterTheStartNeverPausesTheRound() async throws {
         let (rig, start) = try await Self.runningRig()
         let session = rig.session
         var time = start
@@ -56,14 +58,15 @@ import Testing
         let after = try #require(session.state?.gameTime)
         print(String(format: "[RobustnessEvidence] one dropped P2 foot frame at game %.3f → session %@, setup stage shown %@ · running again after %.2f s of steady evidence · game time advanced %.3f s meanwhile",
                      before, "\(pausedPhase)", "\(stage)", recovered, after - before))
-        #expect(pausedPhase == .paused, "PR #46 policy: a single unusable running frame pauses the round")
-        #expect(!stage, "the paused round stays over the game, never under the setup stage")
-        #expect(session.phase == .running && session.state?.teamHealth != nil, "it recovers by itself, round kept")
+        #expect(pausedPhase == .running, "pose-first default: one unusable frame of a present player never pauses")
+        #expect(!stage, "the round stays over the game, never under the setup stage")
+        #expect(session.phase == .running && session.state?.teamHealth != nil, "the round is kept")
+        #expect(recovered < 0.1 && after - before > 0, "no recovery was needed: game time kept running")
         await session.stop()
     }
 
     /// A flicker about once a second (one frame in 30): how much of 30 s is actually played?
-    @Test func aFlickerOnceASecondKeepsTheRoundMostlyPaused() async throws {
+    @Test func aFlickerOnceASecondNoLongerPausesTheRound() async throws {
         let (rig, start) = try await Self.runningRig()
         let session = rig.session
         var time = start
@@ -80,8 +83,8 @@ import Testing
         let played = try #require(session.state?.gameTime) - gameStart
         print(String(format: "[RobustnessEvidence] 30 s with one dropped foot frame per second: %d pauses · game time advanced %.2f s · running in %d of %d frames",
                      pauses, played, runningFrames, frames))
-        #expect(pauses >= 5, "each flicker during play pauses")
-        #expect(played < 15, "most of the time is spent paused, settling or counting down")
+        #expect(pauses == 0, "a present player's flickers never pause (PR #46 policy: one pause per flicker)")
+        #expect(played > 29, "the whole 30 s is played")
         await session.stop()
     }
 }

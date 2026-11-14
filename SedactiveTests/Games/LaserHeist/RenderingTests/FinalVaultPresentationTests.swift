@@ -62,6 +62,40 @@ struct FinalVaultPresentationTests {
 
     /// The doorway's measured place in Asset 43 lines up with the corridor, and each arc
     /// carries the mascot's middle through it, not through the wall.
+    /// 14 November 2026 regression: with the backdrop behind the mascots' landing, the corridor's
+    /// floor and ceiling showed through the doorway. The sleeve lines that gap with the room art as
+    /// the backdrop projects onto it (on screen it is the backdrop), stays under the wall's top edge
+    /// (the corridor above the wall stays the corridor), and only exists while the doorway shows.
+    @Test func theRoomSleeveIsTheBackdropSeenNearerAndStaysBehindTheWall() async throws {
+        let scene = try await scene()
+        let vault = FinalVaultPresentation(scene: scene)
+        let timeline = LaserFinalVaultTimeline(roster: PlayerID.allCases)
+        let wall = try entity(scene, "finalVault.wall"), inside = try entity(scene, "finalVault.inside")
+        let sleeve = try entity(scene, "finalVault.sleeve")
+        vault.update(.entry(timeline, elapsed: LaserFinalVaultTimeline.open.lowerBound - 0.01))
+        #expect(!sleeve.isEnabled, "closed door: no room behind it")
+        let wallTop = { wall.position.y + scene.layout.corridorWidth / FinalVaultArt.closedAspect / 2 }
+        for t in [LaserFinalVaultTimeline.open.upperBound, timeline.push.lowerBound,
+                  (timeline.push.lowerBound + timeline.push.upperBound) / 2, timeline.push.upperBound - 0.02] {
+            vault.update(.entry(timeline, elapsed: t))
+            #expect(sleeve.isEnabled && inside.isEnabled, "t \(t)")
+            let bounds = sleeve.visualBounds(relativeTo: nil)
+            #expect(bounds.max.z < wall.position.z && bounds.min.z <= inside.position.z, "t \(t): wall to backdrop")
+            #expect(bounds.max.y < wallTop() && bounds.min.y > scene.layout.corridorFloorY, "t \(t): under the wall's top")
+            // Any point of the backdrop maps to its own texture coordinate.
+            for local in [SIMD3<Float>(0.3, -0.2, 0), [-0.6, 0.35, 0], [0, 0, 0]] {
+                let world = inside.convert(position: local, to: nil)
+                let uv = vault.roomArtCoordinate(of: world)
+                #expect(abs(uv.x - (0.5 + local.x / FinalVaultArt.insideAspect)) < 1e-3 && abs(uv.y - (0.5 + local.y)) < 1e-3,
+                        "t \(t) \(local): \(uv)")
+            }
+        }
+        vault.update(.entry(timeline, elapsed: timeline.push.upperBound))
+        #expect(!sleeve.isEnabled, "inside: the room backdrop alone")
+        vault.update(.hidden)
+        #expect(!sleeve.isEnabled)
+    }
+
     @Test func eachJumpPassesThroughTheDoorway() async throws {
         let scene = try await scene()
         let vault = FinalVaultPresentation(scene: scene)
@@ -93,9 +127,12 @@ struct FinalVaultPresentationTests {
         #expect(robots.scriptedMoves[.player2] ?? RobotAvatarLayer.ScriptedMove.none == RobotAvatarLayer.ScriptedMove.none)
         #expect(robots.hoverboards[.player1]?.root.isEnabled == true) // the board stays behind, fading
 
-        vault.update(.entry(timeline, elapsed: tangerine.lowerBound + 0.5))
-        #expect(robots.scriptedMoves[.player1]?.opacity == 0) // Lemon is inside
-        #expect((robots.scriptedMoves[.player2]?.offset.y ?? 0) > 0 && robots.scriptedMoves[.player2]?.opacity == 1)
+        vault.update(.entry(timeline, elapsed: lemon.upperBound + FinalVaultPresentation.continueDuration + 0.05))
+        // Lemon has carried the jump on through the doorway and stands inside the vault, visible
+        // (13 November 2026: it used to vanish here and drop in from above later).
+        let inside = try #require(robots.scriptedMoves[.player1])
+        #expect(inside.opacity == 1 && inside.offset.z < FinalVaultPresentation.stopZ - scene.mapping.interactionPlaneZ && abs(inside.offset.y) < 1e-4)
+        #expect((robots.scriptedMoves[.player2]?.offset.y ?? 0) > 0 && robots.scriptedMoves[.player2]?.opacity == 1, "Tangerine in flight")
         #expect(robots.hoverboards[.player1]?.root.isEnabled == false)
 
         vault.update(.inside(timeline))
@@ -170,5 +207,96 @@ struct FinalVaultPresentationTests {
         let inside = GameplayHUDModel(state: state(60, .diamondTime), events: events, configuration: try configuration(),
                                       activityDuration: 60)
         #expect(inside.banner == .retrieveDiamonds && inside.diamondSecondsLeft == 10)
+    }
+
+    // MARK: - One continuous jump (13 November 2026)
+
+    /// The rendered mascot through the whole entry at 120 Hz, Solo and co-op: never hidden after
+    /// take-off, no jump in place or in on-screen size between frames, never ahead of the wall
+    /// while it shows, and on its own place, full size and live at the end.
+    @Test(arguments: [false, true]) func theEntryIsOneContinuousMovement(solo: Bool) async throws {
+        let roster: [PlayerID] = solo ? [.player1] : PlayerID.allCases
+        let scene = try await scene(robots: true, players: Set(roster))
+        let robots = try #require(scene.robotAvatars)
+        let vault = FinalVaultPresentation(scene: scene)
+        let timeline = LaserFinalVaultTimeline(roster: roster)
+        let camera = scene.layout.cameraPosition
+        // Position as drawn; the move's own size and opacity (the layer also dims an untracked
+        // mascot, and the take-off's crouch-to-stretch is a change of shape, not of size).
+        func rendered(_ player: PlayerID) throws -> (position: SIMD3<Float>, scale: Float, opacity: Float) {
+            let container = try #require(robots.robots[player]?.container)
+            let move = robots.scriptedMoves[player] ?? .none
+            return (container.position(relativeTo: nil), move.scale, container.isEnabled ? move.opacity : 0)
+        }
+        var last: [PlayerID: (position: SIMD3<Float>, scale: Float, opacity: Float)] = [:]
+        let dt = 1.0 / 120
+        for step in 0...Int(timeline.total / dt) {
+            let t = Double(step) * dt
+            vault.update(.entry(timeline, elapsed: t))
+            for player in roster {
+                let now = try rendered(player)
+                let jump = try #require(timeline.jump(of: player))
+                if t >= jump.lowerBound { #expect(now.opacity == 1, "\(player) visible at \(t)") }
+                if let before = last[player] {
+                    #expect(simd_distance(now.position, before.position) < 0.12, "\(player) jumps \(simd_distance(now.position, before.position)) m at \(t)")
+                    // On-screen size (scale over distance from the camera) changes smoothly.
+                    let size = now.scale / (camera.z - now.position.z), sizeBefore = before.scale / (camera.z - before.position.z)
+                    #expect(abs(size / sizeBefore - 1) < 0.05, "\(player) size step \(size / sizeBefore) at \(t)")
+                }
+                // While the wall shows, the mascot is never in front of it.
+                if let wall = scene.root.findEntity(named: "finalVault.wall"), wall.isEnabled, t > jump.upperBound {
+                    #expect(now.position.z < wall.position(relativeTo: nil).z, "\(player) behind the wall at \(t)")
+                }
+                last[player] = now
+            }
+        }
+        vault.update(.entry(timeline, elapsed: timeline.total))
+        #expect(robots.walksInVault, "floor walking before Diamond Time starts")
+        for player in roster {
+            let move = try #require(robots.scriptedMoves[player])
+            #expect(move.offset == .zero && move.scale == 1 && move.squash == 1 && move.anchorWeight == 0, "\(player): live at the end")
+        }
+        // Diamond Time: the same place, no pop.
+        let before = try roster.map { try rendered($0).position }
+        vault.update(.inside(timeline))
+        let after = try roster.map { try rendered($0).position }
+        #expect(zip(before, after).allSatisfy { simd_distance($0, $1) < 1e-4 })
+    }
+
+    /// The jump hands over to its continuation with the same position and velocity, and comes
+    /// down on the mascot's landing still falling, with no sideways or forward speed (no skating).
+    @Test func theJumpCarriesOnIntoTheLandingWithoutAKink() async throws {
+        let scene = try await scene()
+        let vault = FinalVaultPresentation(scene: scene)
+        let flight = Float(LaserFinalVaultTimeline.jumpDuration - LaserFinalVaultTimeline.anticipation)
+        let span = Float(FinalVaultPresentation.continueDuration)
+        let h: Float = 1e-3
+        for player in PlayerID.allCases {
+            #expect(simd_distance(vault.jumpOffset(player, at: 1), vault.continuation(player, at: 0)) < 1e-5)
+            let jumpVelocity = (vault.jumpOffset(player, at: 1) - vault.jumpOffset(player, at: 1 - h)) / (h * flight)
+            let carryVelocity = (vault.continuation(player, at: h) - vault.continuation(player, at: 0)) / (h * span)
+            #expect(simd_distance(jumpVelocity, carryVelocity) < 0.05 * simd_length(jumpVelocity), "\(player): \(jumpVelocity) vs \(carryVelocity)")
+            let down = vault.continuation(player, at: 1)
+            #expect(simd_distance(down, [0, 0, -vault.pushDistance]) < 1e-5, "lands on its own place inside")
+            let landing = (vault.continuation(player, at: 1) - vault.continuation(player, at: 1 - h)) / (h * span)
+            #expect(abs(landing.x) < 0.02 && abs(landing.z) < 0.02 && landing.y < -1, "\(player) touchdown \(landing)")
+            // Never below the floor on the way down.
+            #expect(stride(from: Float(0), through: 1, by: 0.01).allSatisfy { vault.continuation(player, at: $0).y >= -1e-4 })
+        }
+    }
+
+    /// A held root keeps the scripted mascot still against live tracking, then blends back.
+    @Test func aHeldRootBlendsBackToTheTrackedRoot() async throws {
+        let scene = try await scene(robots: true, players: [.player1])
+        let robots = try #require(scene.robotAvatars)
+        let tracked = robots.trackedRootPosition(.player1) ?? .zero
+        let held = tracked + [0.4, 0, 0]
+        robots.scriptedMoves[.player1] = .init(offset: [0, 0.2, 0], anchor: held, anchorWeight: 1)
+        let container = try #require(robots.robots[.player1]?.container)
+        #expect(simd_distance(container.position, held + [0, 0.2, 0]) < 1e-5)
+        robots.scriptedMoves[.player1] = .init(anchor: held, anchorWeight: 0.5)
+        #expect(simd_distance(container.position, tracked + [0.2, 0, 0]) < 1e-5)
+        robots.scriptedMoves[.player1] = .init(anchor: held, anchorWeight: 0)
+        #expect(simd_distance(container.position, tracked) < 1e-5)
     }
 }
