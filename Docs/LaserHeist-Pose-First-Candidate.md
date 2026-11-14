@@ -1,10 +1,10 @@
 # LaserHeist — Pose-First Temporal Candidate
 
-> **Status (14 November 2026): DEBUG candidate, Kevin. Not production rules.**
+> **Status (14 November 2026): PRODUCTION DEFAULT in Debug and Release, approved by the task owner.**
 >
-> Launch the app with `-trackingCandidate` to use the candidate. Without it, and always in Release, the app keeps today's production behaviour.
+> `PoseFirstCandidate.isEnabled` is `true` in every build. A DEBUG build launched with `-trackingBaseline` runs the previous rules for comparison. The earlier `-trackingCandidate` flag is gone.
 >
-> Every change below is marked in code as `POSE-FIRST CANDIDATE … needs <owner>'s review`.
+> Mask benchmarking and its overlay remain DEBUG-only.
 
 ## Baseline versus candidate
 

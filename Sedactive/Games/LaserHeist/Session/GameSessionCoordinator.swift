@@ -178,9 +178,9 @@ final class GameSessionCoordinator {
     private var countdownRequested = false
     private var recoveryAttempted = false
     private var withdrawnLiveEncounters: [LaserEncounter] = []
-    /// POSE-FIRST CANDIDATE (Kevin, 14 Nov 2026 — needs Jevon's review): DEBUG `-trackingCandidate`.
-    /// False: today's production rules everywhere below.
-    let poseFirstCandidate = PoseFirstCandidate.isRequested
+    /// POSE-FIRST TRACKING (production default since 14 Nov 2026). False only in a DEBUG build
+    /// launched with `-trackingBaseline`: the previous rules everywhere below.
+    let poseFirstCandidate = PoseFirstCandidate.isEnabled
     private var unavailableRetry = LaserUnavailableRetryPolicy()
     /// The pair may keep playing: confirmed and tracked (production), or, in the candidate, also
     /// held by squat presence (identity loss still fails it).
@@ -1068,7 +1068,7 @@ final class GameSessionCoordinator {
                     #endif
                     initial.poseFirstCandidate = poseFirstCandidate
                     #if DEBUG
-                    print("[LaserCandidate] round starts · tracking rules: \(poseFirstCandidate ? "POSE-FIRST CANDIDATE" : "production baseline")")
+                    print("[LaserCandidate] round starts · tracking rules: \(poseFirstCandidate ? "POSE-FIRST (default)" : "previous baseline (-trackingBaseline)")")
                     #endif
                     for encounter in encounters { try initial.register(encounter) }
                     game = initial

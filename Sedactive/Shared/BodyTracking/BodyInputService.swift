@@ -22,9 +22,9 @@ nonisolated struct LiveBodyInputState: Sendable {
   var latest: BodySnapshot?
   /// Per-player live airborne estimators (reset with each calibration revision or source change).
   var jumps: [PlayerID: LiveJumpEstimator] = [:]
-  /// POSE-FIRST CANDIDATE (DEBUG `-trackingCandidate`, needs Edo's review): measure presence-held
-  /// players, use the conservative crown, and the candidate jump rules. False: production.
-  var poseFirstCandidate = PoseFirstCandidate.isRequested
+  /// POSE-FIRST TRACKING (production default; DEBUG `-trackingBaseline` turns it off): measure
+  /// presence-held players, use the conservative crown, and the timed-jump floor rules.
+  var poseFirstCandidate = PoseFirstCandidate.isEnabled
   var heads: [PlayerID: HeadHeightReference] = [:]
   var wrists: PreparedWristFrame?
   var lastAdmission: CameraFrameMetadata?

@@ -25,8 +25,8 @@ import Testing
         }
         return BodySnapshot(sessionGeneration: generation, frameID: frame, capturedAt: time, cameraGeometryRevision: 1, players: players)
     }
-    private func running() throws -> (LaserLiveReadiness, Double, UInt64) {
-        var value = LaserLiveReadiness(policy: LaserLiveWristRoundPlan.liveTiming)
+    private func running(policy: LaserLiveTimingPolicy = LaserLiveWristRoundPlan.liveTiming) throws -> (LaserLiveReadiness, Double, UInt64) {
+        var value = LaserLiveReadiness(policy: policy)
         var t = 1000.0, frame: UInt64 = 1
         while value.phase != .ready, t < 1003 { try value.observe(packet(frame, t), context: context, bindingConfirmed: true, at: t); t += 0.125; frame += 1 }
         try value.beginCountdown(at: t)
@@ -43,11 +43,20 @@ import Testing
         }
     }
 
-    @Test func aHiddenHeadOrSoleStillBlocks() throws {
+    /// The previous rule (no absence grace): a hidden head or sole blocks a running round at once.
+    /// The pose-first default (14 November 2026): a present player's frame without them is skipped,
+    /// the round keeps running, and the judge alone makes that laser UNAVAILABLE.
+    @Test func aHiddenHeadOrSoleBlocksOnlyUnderThePreviousRule() throws {
+        let previous = try LaserLiveTimingPolicy(settlingDuration: 1, maximumEvidenceAge: 0.5, countdownDuration: 3,
+                                                 preservesCountdownOnTrackingFlicker: true)
+        #expect(LaserLiveWristRoundPlan.liveTiming.absenceGrace == PoseFirstCandidate.absenceGrace, "the default has the grace")
         for required in [\BodyGeometry.crownY, \.leftSoleY, \.rightSoleY] {
+            var (old, t0, f0) = try running(policy: previous)
+            try old.observe(packet(f0, t0, hide: required), context: context, bindingConfirmed: true, at: t0)
+            #expect(old.blocker == .measurements, "previous rule: \(required)")
             var (value, t, frame) = try running()
             try value.observe(packet(frame, t, hide: required), context: context, bindingConfirmed: true, at: t)
-            #expect(value.blocker == .measurements, "\(required)")
+            #expect(value.phase == .running, "default: \(required)")
         }
     }
 }

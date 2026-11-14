@@ -92,8 +92,8 @@ nonisolated struct LaserGame: Sendable {
     /// player to press theirs). Nil in every co-op round, where both sides are always required.
     var soloPracticePlayer: PlayerID?
     #endif
-    /// POSE-FIRST CANDIDATE (DEBUG `-trackingCandidate`; needs Jevon's review): see
-    /// `LaserCollisionJudge`. Always false in Release (`PoseFirstCandidate.isRequested`).
+    /// POSE-FIRST TRACKING: see `LaserCollisionJudge`. Set from `PoseFirstCandidate.isEnabled`
+    /// (on by default in every build).
     var poseFirstCandidate = false
 
     var diamonds: [UUID: LaserDiamondState] { diamondField.states }

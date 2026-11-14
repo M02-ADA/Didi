@@ -5,11 +5,13 @@
 
 import Foundation
 
-/// POSE-FIRST TEMPORAL CANDIDATE (Kevin, 14 November 2026). DEBUG ONLY, launch with
-/// `-trackingCandidate`; without it (and always in Release) every path below is today's production
-/// behaviour. Each component takes the switch as an explicit value so tests can run both.
+/// POSE-FIRST TEMPORAL TRACKING (Kevin, 14 November 2026). PRODUCTION DEFAULT in Debug and
+/// Release (approved by the task owner after the iPad tests in
+/// `Docs/LaserHeist-Pose-First-Candidate.md`). A DEBUG build launched with `-trackingBaseline`
+/// runs the previous rules for comparison. Each component takes the switch as an explicit value
+/// so tests can run both.
 ///
-/// What the candidate changes (each needs its owner's review before it can become production):
+/// What it changes (Edo's and Jevon's areas, recorded for their review):
 /// - Edo (producer): a player whose identity is held by squat presence (both shoulders exactly
 ///   where they just were, hips hidden) is still MEASURED from the landmarks Vision did see
 ///   (`PlayerBodySample.presenceOnly`); the crown is the higher of the nose estimate and a
@@ -21,12 +23,12 @@ import Foundation
 ///   `UnavailableBudget`, after which the round pauses and the existing recovery retries.
 /// Nothing here fabricates a joint: missing landmarks stay missing and are judged UNAVAILABLE.
 nonisolated enum PoseFirstCandidate {
-    /// The launch switch (DEBUG only).
-    static let isRequested: Bool = {
+    /// On in every build; off only in a DEBUG build launched with `-trackingBaseline`.
+    static let isEnabled: Bool = {
         #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-trackingCandidate")
+        !ProcessInfo.processInfo.arguments.contains("-trackingBaseline")
         #else
-        false
+        true
         #endif
     }()
 

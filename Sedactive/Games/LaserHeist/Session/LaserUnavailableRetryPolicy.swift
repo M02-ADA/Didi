@@ -5,8 +5,8 @@
 
 import Foundation
 
-/// POSE-FIRST CANDIDATE (Kevin, 14 November 2026 — needs Jevon's review; DEBUG `-trackingCandidate`
-/// only). Today every UNAVAILABLE verdict pauses the round. In the candidate, an UNAVAILABLE for a
+/// POSE-FIRST TRACKING (Kevin, 14 November 2026; production default, DEBUG `-trackingBaseline`
+/// restores the previous rule). Previously every UNAVAILABLE verdict paused the round. Now an UNAVAILABLE for a
 /// player who is still PRESENT is what the rules already make it: an unscored attempt (no damage,
 /// no points), and play continues. It cannot become a way around the lasers:
 /// - the `consecutive`-th UNAVAILABLE in a row for one player pauses the round;

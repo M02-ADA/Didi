@@ -116,7 +116,7 @@ nonisolated struct LaserTrackingWarningModelTests {
         let session = rig.session
         var time = start, record = Record()
         let before = try #require(session.state), calibrations = session.inputContext?.calibrationRevisions
-        for _ in 0..<15 { // half a second out of view (within the tracker's identity gap)
+        for _ in 0..<24 { // 0.8 s out of view: past the 0.6 s absence grace, within the tracker's 1 s identity gap
             try await rig.send(time, bad: "unbound", people: Self.people(without: gone)); time += Self.step
             record.observe(session)
         }
@@ -213,7 +213,9 @@ nonisolated struct LaserTrackingWarningModelTests {
         print("[WarningOrder] squat: first warning frame \(String(describing: firstWarning)) · first setup-stage frame \(String(describing: firstStage)) · last \(String(describing: shown.last)) · session \(session.phase)")
         #expect(firstStage == nil, "during a started round the calibration/setup stage is never the top screen (first at frame \(firstStage ?? -1))")
         #expect(!ContentView.showsSetupStage(session) || session.state == nil, "not even beneath the warning while the round is held")
-        #expect(firstWarning != nil, "the warning shows")
+        // Pose-first default (14 November 2026): a present player's squat with hidden hips no longer
+        // pauses, so no warning is needed; the round keeps running (PR #46 policy paused here).
+        #expect(firstWarning == nil && session.phase == .running, "no pause, no warning: the round keeps running")
         await session.stop()
     }
 

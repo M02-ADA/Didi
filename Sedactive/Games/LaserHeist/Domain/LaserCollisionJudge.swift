@@ -65,14 +65,15 @@ nonisolated struct LaserCollisionJudge: Sendable {
     /// - usable captures: this player's, arrived by the deadline, inside the capture window, with
     ///   both soles and the jump state valid (`unavailableReason` == nil);
     /// - an airborne run: consecutive usable captures in the `airborne` phase, no gap longer than
-    ///   `maximumGap` (brief dropouts inside a flight do not split it);
+    ///   `maximumGap` — the jump estimator's own limit (`LiveJumpEstimator.maximumGap`, 0.2 s), so a
+    ///   brief dropout, or a slower capture cadence, does not split one flight;
     /// - CLEAR: a run lasting at least `minimumFlight` whose first capture is no later than
     ///   crossing + `tolerance` and whose last is no earlier than crossing − `tolerance`;
     /// - HIT (`notAirborne`): usable evidence, no such run; UNAVAILABLE: no usable evidence (the
     ///   same reasons as `select`). The drawn laser's height is not compared.
     func judgeJumpEvent(target: LaserTarget, history: [LaserBodyEvidence], timing: LaserEvidenceTiming,
                         context: BodyInputContext, minimumFlight: Double, tolerance: Double,
-                        maximumGap: Double = 0.1) -> Judgement {
+                        maximumGap: Double = LiveJumpEstimator.maximumGap) -> Judgement {
         let window = timing.captureWindow(crossing: target.crossingTime)
         let deadline = timing.finalizationTime(crossing: target.crossingTime)
         let usable = history.filter {

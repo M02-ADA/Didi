@@ -62,8 +62,8 @@ nonisolated struct LaserLiveWristRoundPlan: Sendable {
     static var liveTiming: LaserLiveTimingPolicy {
         try! LaserLiveTimingPolicy(settlingDuration: 1, maximumEvidenceAge: 0.5, countdownDuration: 3,
                                    preservesCountdownOnTrackingFlicker: true,
-                                   // POSE-FIRST CANDIDATE (DEBUG `-trackingCandidate` only; needs Jevon's review).
-                                   absenceGrace: PoseFirstCandidate.isRequested ? PoseFirstCandidate.absenceGrace : nil)
+                                   // POSE-FIRST TRACKING (production default; DEBUG `-trackingBaseline` turns it off).
+                                   absenceGrace: PoseFirstCandidate.isEnabled ? PoseFirstCandidate.absenceGrace : nil)
     }
 }
 
