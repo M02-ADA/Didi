@@ -99,26 +99,14 @@ struct DiamondTimePawOverlay: View {
     }
 
     private func drawDiamond(_ context: GraphicsContext, at center: CGPoint, radius: CGFloat) {
-        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: center.x + x * radius, y: center.y + y * radius)
-        }
-        let shape = Path { path in
-            path.move(to: point(-0.60, -0.68))
-            path.addLines([point(0.60, -0.68), point(0.95, -0.15), point(0, 0.94), point(-0.95, -0.15)])
-            path.closeSubpath()
-        }
-        context.fill(shape, with: .linearGradient(
-            Gradient(colors: [Color(red: 0.43, green: 0.94, blue: 1), Color(red: 0.05, green: 0.45, blue: 0.91)]),
-            startPoint: point(0, -0.68), endPoint: point(0, 0.94)))
-        context.stroke(shape, with: .color(Color(red: 0.05, green: 0.21, blue: 0.49)), lineWidth: radius * 0.22)
-        context.stroke(shape, with: .color(.white.opacity(0.88)), lineWidth: radius * 0.08)
-        let facets = Path { path in
-            path.move(to: point(-0.95, -0.15))
-            path.addLine(to: point(0.95, -0.15))
-            path.move(to: point(-0.60, -0.68))
-            path.addLines([point(-0.36, -0.15), point(0, 0.94), point(0.36, -0.15), point(0.60, -0.68)])
-        }
-        context.stroke(facets, with: .color(.white.opacity(0.68)), lineWidth: radius * 0.052)
+        // Match the HUD flight artwork. Fit the complete image inside the target's
+        // screen-space bounds and preserve its original aspect ratio during pickup.
+        let diamond = context.resolve(Image("LaserHeistUI/diamond"))
+        let scale = 2 * radius / max(diamond.size.width, diamond.size.height)
+        let size = CGSize(width: diamond.size.width * scale, height: diamond.size.height * scale)
+        let bounds = CGRect(x: center.x - size.width / 2, y: center.y - size.height / 2,
+                            width: size.width, height: size.height)
+        context.draw(diamond, in: bounds)
     }
 
     private func drawPickup(_ context: GraphicsContext, at center: CGPoint, radius: CGFloat, age: Double) {
@@ -133,6 +121,15 @@ struct DiamondTimePawOverlay: View {
                 var gem = context
                 gem.opacity = 1 - fall
                 drawDiamond(gem, at: center, radius: radius * scale)
+
+                // The existing 3D pickup starts with a short flash. Recreate it
+                // with the same sprite so the highlight follows the gem's silhouette.
+                if age < 0.10 {
+                    var flash = context
+                    flash.opacity = 0.55 * (1 - age / 0.10)
+                    flash.addFilter(.brightness(0.7))
+                    drawDiamond(flash, at: center, radius: radius * scale)
+                }
             }
 
             let burst = min(1, age / 0.29)
