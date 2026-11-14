@@ -17,9 +17,9 @@ struct TimingIndicatorControls: View {
     }
     static let steps: [(String, Double)] = [
         ("Duck early", 1.15), ("Duck prepare", 2.6), ("Duck near", 3.85), ("Duck immediately before", 3.99),
-        ("Duck crossing", 4), ("Duck pulse", 4.06), ("Duck result", 4.4),
+        ("Duck crossing", 4), ("Duck follow-through 60ms", 4.06), ("Duck follow-through 120ms", 4.12), ("Duck result", 4.4),
         ("Jump early", 7.15), ("Jump prepare", 8.6), ("Jump near", 9.85), ("Jump immediately before", 9.99),
-        ("Jump crossing", 10), ("Jump pulse", 10.06), ("Jump result", 10.4)]
+        ("Jump crossing", 10), ("Jump follow-through 60ms", 10.06), ("Jump follow-through 120ms", 10.12), ("Jump result", 10.4)]
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
             if Self.isComparison {

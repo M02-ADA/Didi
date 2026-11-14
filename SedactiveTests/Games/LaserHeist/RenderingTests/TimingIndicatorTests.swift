@@ -100,25 +100,60 @@ import Testing
         #expect(scene.timingPresentation == original)
         #expect(scene.shownMoveCue?.move == .duck && scene.shownMoveCue?.acting == true)
     }
-    @Test func circleStaysCenteredMarkersRemainOutsideAndPulseIsSourceTimed() throws {
+    @Test(arguments: [LaserMove.duck, .jump])
+    func circleIsStationaryAndMarkersPassThroughInFrontAtConstantSpeed(move: LaserMove) throws {
         let renderer = TimingIndicatorRenderer()
-        for time in [1.15, 2.6, 3.85, 3.99, 4, 4.06, 4.13] {
-            let (state, config) = try fixture(time: time)
+        for time in [1.15, 2.6, 3.85, 3.99, 4, 4.06, 4.12, 4.13] {
+            let (state, config) = try fixture(move, time: time)
             let m = try #require(LaserTimingPresentation.make(state: state, configuration: config))
             renderer.apply(m, variant: .closing, reduceMotion: false)
             let circle = try #require(renderer.root.findEntity(named: "timing.circle"))
             let left = try #require(renderer.root.findEntity(named: "timing.marker.left"))
             let right = try #require(renderer.root.findEntity(named: "timing.marker.right"))
-            #expect(circle.position.x == 0 && circle.position.y == 0)
+            #expect(circle.position.x == 0 && circle.position.y == 0 && circle.isEnabled)
             #expect(abs(left.position.x + right.position.x) < 0.00001)
-            let innerEdge = abs(left.position.x) - TimingIndicatorRenderer.markerWidth/2
-            #expect(innerEdge > TimingIndicatorRenderer.circleDiameter/2 * circle.scale.x)
-            #expect(renderer.root.findEntity(named: "timing.circle.halo")?.isEnabled == (m.phase == .crossing))
+            #expect(left.position.z > circle.position.z + 0.003 && right.position.z == left.position.z)
+            let expected = Float(min(time-4, 0.12)/3) * TimingIndicatorRenderer.width/2
+            #expect(abs(left.position.x - expected) < 0.000001)
+            if time == 4 { #expect(left.position.x == 0 && right.position.x == 0) }
+            if time > 4 { #expect(left.position.x > 0 && right.position.x < 0, "Markers swapped sides") }
+            if time == 4.12 {
+                #expect(left.isEnabled && right.isEnabled)
+                #expect((left.components[OpacityComponent.self]?.opacity ?? 0) > 0.44)
+            }
             if time == 4.06 { #expect(circle.scale.x > 1.09) }
             if time == 4.13 { #expect(circle.scale.x == 1) }
         }
     }
-    @Test func circleColorFollowsOnlyCommittedVerdictsAndEntitiesAreReused() throws {
+    @Test func markerTravelIsContinuousAcrossCrossingAndFollowThroughIsBounded() throws {
+        let r = TimingIndicatorRenderer()
+        func offset(_ t: Double) throws -> Float {
+            let (s, c) = try fixture(time: t)
+            r.apply(try #require(LaserTimingPresentation.make(state: s, configuration: c)), variant: .closing, reduceMotion: false)
+            return try #require(r.root.findEntity(named: "timing.marker.left")).position.x
+        }
+        let before = try offset(3.999999), at = try offset(4), after = try offset(4.000001)
+        #expect(abs(before-at) < 0.000001 && abs(after-at) < 0.000001)
+        let first = try offset(4.03), second = try offset(4.06), third = try offset(4.09)
+        #expect(abs((second-first)-(third-second)) < 0.000001)
+        let end = try offset(4.12), held = try offset(4.2)
+        #expect(end == held)
+    }
+    @Test func greenTargetIsVisibleBeforeAnySuccessfulJudgement() throws {
+        let renderer = TimingIndicatorRenderer()
+        for time in [1.15, 2.6, 4.0] {
+            let (state, config) = try fixture(time: time)
+            let m = try #require(LaserTimingPresentation.make(state: state, configuration: config))
+            renderer.apply(m, variant: .closing, reduceMotion: false)
+            let circle = try #require(renderer.root.findEntity(named: "timing.circle") as? ModelEntity)
+            let material = try #require(circle.model?.materials.first as? UnlitMaterial)
+            var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+            #expect(material.color.tint.getRed(&red, green: &green, blue: &blue, alpha: &alpha))
+            #expect(circle.isEnabled && green > red && green > blue)
+            #expect(!m.allClear && !m.label.contains("CLEAR") && state.teamScore == 0)
+        }
+    }
+    @Test func circleResultFeedbackFollowsCommittedVerdictsAndEntitiesAreReused() throws {
         let (state, config) = try fixture(time: 4.4, judged: true)
         let renderer = TimingIndicatorRenderer()
         func tint() throws -> UIColor {
@@ -140,7 +175,7 @@ import Testing
         #expect(!clear.isEqual(hit) && !clear.isEqual(unavailable))
         let (pending, _) = try fixture(time: 4)
         renderer.apply(try #require(LaserTimingPresentation.make(state: pending, configuration: config)), variant: .closing, reduceMotion: false)
-        #expect(!(try tint()).isEqual(clear), "Convergence is never CLEAR")
+        #expect(!(try tint()).isEqual(clear), "Green target convergence is not the committed CLEAR feedback")
         let count = renderer.root.children.count
         for _ in 0..<30 { renderer.apply(renderer.model, variant: .closing, reduceMotion: false) }
         #expect(renderer.root.children.count == count)

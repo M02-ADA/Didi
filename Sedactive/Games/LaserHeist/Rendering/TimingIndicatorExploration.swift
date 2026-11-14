@@ -112,12 +112,15 @@ private extension Judgement {
     private let right: ModelEntity
     private let circle: ModelEntity
     private let dot: ModelEntity
+    private let innerRing: ModelEntity
     private let halo: ModelEntity
     private let captions = Entity()
     private var captionFaces: [String: ModelEntity] = [:]
     private var shownLabel: String?
     private let palette: [[UnlitMaterial]]
     private let circlePalette: [[UnlitMaterial]]
+    private let innerCirclePalette: [[UnlitMaterial]]
+    private let closingMarkerPalette: [[UnlitMaterial]]
     private var lastTint: Int?
     private var lastCircleTint: Int?
     private(set) var model: LaserTimingPresentation?
@@ -126,13 +129,15 @@ private extension Judgement {
     static let circleDiameter: Float = 0.17
     static let haloDiameter: Float = 0.22
     static let markerWidth: Float = 0.035
-    static let markerRest: Float = 0.115
     static let crossingEmphasis = 0.12
 
     init() {
         func color(_ n: UInt32) -> UIColor { UIColor(red: CGFloat((n >> 16) & 255)/255, green: CGFloat((n >> 8)&255)/255, blue: CGFloat(n&255)/255, alpha: 1) }
         palette = [0x7565FF, 0xFFD447, 0x7BEFFF, 0x37D9A1, 0xF67585, 0x8C8BA9].map { [UnlitMaterial(color: color($0))] }
-        circlePalette = [0x33B8DE, 0x7BEFFF, 0xDBFFFF, 0x37D9A1, 0xF67585, 0x8C8BA9].map { [UnlitMaterial(color: color($0))] }
+        // Green identifies the crossing destination; only verdicts produce result feedback.
+        circlePalette = [0x45F578, 0x72FF99, 0xB0FFD0, 0x27DF72, 0xF67585, 0x8C8BA9].map { [UnlitMaterial(color: color($0))] }
+        innerCirclePalette = [0xA1FFBA, 0xC0FFD0, 0xE7FFF0, 0xC5FFDC, 0xFFD0D8, 0xC4C3D5].map { [UnlitMaterial(color: color($0))] }
+        closingMarkerPalette = [0xE7FFE9, 0xFFFFFF].map { [UnlitMaterial(color: color($0))] }
         let dark = UnlitMaterial(color: color(0x19152F))
         func plane(_ name: String, _ width: Float, _ height: Float, _ materials: [UnlitMaterial]) -> ModelEntity {
             let e = ModelEntity(mesh: .generatePlane(width: width, height: height, cornerRadius: min(width, height)/2), materials: materials)
@@ -150,12 +155,14 @@ private extension Judgement {
         right = plane("timing.marker.right", Self.markerWidth, 0.13, palette[2]); right.position.z = 0.005
         root.addChild(left); root.addChild(right)
         // Native rounded planes form a thick ring, dark core and dot. No texture/shader
-        // generation for the target, and the moving markers stop outside its perimeter.
+        // generation for the target. Closing markers render above every ring/core layer.
         circle = plane("timing.circle", Self.circleDiameter, Self.circleDiameter, circlePalette[0])
         circle.position.z = 0.008
-        let core = plane("timing.circle.core", 0.11, 0.11, [dark]); core.position.z = 0.001
+        innerRing = plane("timing.circle.innerRing", 0.12, 0.12, innerCirclePalette[0]); innerRing.position.z = 0.001
+        circle.addChild(innerRing)
+        let core = plane("timing.circle.core", 0.10, 0.10, [dark]); core.position.z = 0.002
         circle.addChild(core)
-        dot = plane("timing.circle.dot", 0.024, 0.024, circlePalette[0]); dot.position.z = 0.002
+        dot = plane("timing.circle.dot", 0.024, 0.024, innerCirclePalette[0]); dot.position.z = 0.003
         circle.addChild(dot); root.addChild(circle)
         halo = plane("timing.circle.halo", Self.haloDiameter, Self.haloDiameter, circlePalette[2])
         halo.position.z = 0.006
@@ -173,18 +180,34 @@ private extension Judgement {
         let p = Float(value.displayedProgress(reduceMotion: reduceMotion)), w = Self.width
         let tint = value.phase == .result ? (value.anyHit ? 4 : value.allClear ? 3 : 5)
             : value.phase == .paused || value.phase == .passed ? 5 : value.phase == .approach ? 0 : value.phase == .prepare ? 1 : 2
-        if lastTint != tint {
-            lastTint = tint
-            left.model?.materials = palette[tint]; right.model?.materials = palette[tint]
+        let markerStyle = variant == .closing ? 100 + (value.phase == .crossing ? 1 : 0) : tint
+        if lastTint != markerStyle {
+            lastTint = markerStyle
+            let materials = variant == .closing ? closingMarkerPalette[value.phase == .crossing ? 1 : 0] : palette[tint]
+            left.model?.materials = materials; right.model?.materials = materials
             #if DEBUG
             fill.model?.materials = palette[tint]
             #endif
         }
-        left.isEnabled = !reduceMotion && !variant.isFill
-        right.isEnabled = !reduceMotion && variant == .closing
-        let gap = Self.markerRest + (w/2 - Self.markerRest) * (1-p)
-        left.position.x = variant == .closing ? -gap : -w/2 + w*p
-        right.position.x = gap
+        let elapsed = value.gameTime - value.crossingTime
+        let resolved = value.phase == .result
+        left.isEnabled = !reduceMotion && !variant.isFill && !(variant == .closing && resolved)
+        right.isEnabled = !reduceMotion && variant == .closing && !resolved
+        // Same constant speed on both sides of crossing. Progress reaches exactly zero
+        // offset at crossing, then continues through for the existing bounded 120ms.
+        let approachOffset = -w/2 * (1-p)
+        let followOffset = Float(min(Self.crossingEmphasis, max(0, elapsed))
+            / (value.crossingTime-value.warningTime)) * w/2
+        left.position.x = variant == .closing ? (elapsed < 0 ? approachOffset : followOffset) : -w/2 + w*p
+        right.position.x = -left.position.x
+        left.position.z = variant == .closing ? 0.016 : 0.005
+        right.position.z = left.position.z
+        // Fade modestly while passing through; keep +120ms visible until the committed
+        // result resolves the markers. No position snap or independently running animation.
+        let followShare = Float(min(1, max(0, elapsed/Self.crossingEmphasis)))
+        let markerOpacity: Float = variant == .closing ? 1 - 0.55*followShare : 1
+        left.components.set(OpacityComponent(opacity: markerOpacity))
+        right.components.set(OpacityComponent(opacity: markerOpacity))
         #if DEBUG
         fill.isEnabled = variant.isFill || (reduceMotion && variant != .closing)
         fill.scale.x = max(0.001, p); fill.position.x = -w/2 + w*p/2
@@ -196,10 +219,12 @@ private extension Judgement {
             : value.phase == .paused || value.phase == .passed ? 5 : value.phase == .approach ? 0 : value.phase == .prepare ? 1 : 2
         if lastCircleTint != circleTint {
             lastCircleTint = circleTint
-            circle.model?.materials = circlePalette[circleTint]; dot.model?.materials = circlePalette[circleTint]
+            circle.model?.materials = circlePalette[circleTint]
+            innerRing.model?.materials = innerCirclePalette[circleTint]; dot.model?.materials = innerCirclePalette[circleTint]
         }
         // A 120ms cosmetic emphasis derived solely from the original crossing timestamp.
-        // At crossing the ring lights immediately, with a scale peak at +60ms.
+        // At crossing the green ring lights immediately, with a scale peak at +60ms.
+        // Target green is never a player-success judgement.
         let crossing = value.phase == .crossing && !reduceMotion
         let t = min(1, max(0, (value.gameTime-value.crossingTime)/Self.crossingEmphasis))
         let pulse = crossing ? Float(sin(t * .pi)) : 0
