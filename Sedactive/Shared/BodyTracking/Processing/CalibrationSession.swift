@@ -145,6 +145,10 @@ nonisolated struct StandingCalibrationProgress: Sendable {
   let reason: String
   /// Per-player window progress and refusal reasons (presentation and diagnostics only).
   var players: [PlayerID: StandingPlayerProgress] = [:]
+  #if DEBUG
+  var debugCurrent: StandingCollectionDebugSummary?
+  var debugLastAttempt: StandingCollectionDebugSummary?
+  #endif
 }
 
 /// One bounded paired window. No accepted references, raw images or pose history.
@@ -203,6 +207,14 @@ nonisolated enum StandingSampleIssue: String, Sendable, CaseIterable {
 #if DEBUG
 /// One player's latest sample, as measured (setup diagnostics only; no image data).
 nonisolated struct StandingSampleDiagnostics: Equatable, Sendable {
+  var source: CameraFrameMetadata?
+  var bindingRevision: UInt64 = 0
+  var tracking = "unobserved"
+  var requiresRebind = false
+  var association = MaskAssociationPlayerDiagnostic()
+  var maskOutcome = "unobserved"
+  var maskServiceSeconds: Double?
+  var maskInstances: Int?
   var frameID: UInt64 = 0
   var capturedAt: Double = 0
   /// Joint confidences, 0 when not observed.
@@ -238,8 +250,24 @@ nonisolated struct StandingPlayerProgress: Equatable, Sendable {
   var moveRangePixels: [Double] = []
   var maskRows: Int?
   var last = StandingSampleDiagnostics()
+  var maskRefusals: [String: Int] = [:]
   #endif
 }
+
+#if DEBUG
+/// At most one current and one terminal attempt. Scalars only; never calibration authority.
+nonisolated struct StandingCollectionDebugSummary: Sendable {
+  let request: UUID
+  let source: CameraSourceContext
+  let bindingRevision: UInt64
+  let deadline: Double
+  let candidateExpiresAt: Double?
+  let phase: StandingCalibrationPhase
+  let outcome: String
+  let players: [PlayerID: StandingPlayerProgress]
+  let windows: [PlayerID: [Double]] // first/last capture time; no joint history
+}
+#endif
 
 /// One bounded standing window PER PLAYER. No accepted references, raw images or pose history.
 ///
@@ -275,6 +303,18 @@ nonisolated struct CalibrationSession: Sendable {
   private(set) var players: [PlayerID: StandingPlayerProgress] = [:]
   private(set) var latestAnatomy: [PlayerID: AnatomicalPlayerCandidate] = [:]
   private(set) var reason = "No calibration requested"
+  #if DEBUG
+  private var debugLastAttempt: StandingCollectionDebugSummary?
+  private func debugSummary(outcome: String) -> StandingCollectionDebugSummary? {
+    guard let a = admission else { return nil }
+    return .init(request: a.request.id, source: a.source, bindingRevision: a.bindingRevision,
+      deadline: deadline, candidateExpiresAt: candidate?.expiresAt, phase: phase, outcome: outcome,
+      players: players, windows: windows.mapValues { samples in
+        guard let first = samples.first, let last = samples.last else { return [] }
+        return [first.source.capturedAt, last.source.capturedAt]
+      })
+  }
+  #endif
 
   /// Drop the entire collection while retaining token anti-replay/exhaustion across sessions.
   mutating func resetForNewSession() {
@@ -302,6 +342,9 @@ nonisolated struct CalibrationSession: Sendable {
     return token
   }
   mutating func invalidate(_ why: String) {
+    #if DEBUG
+    if let summary = debugSummary(outcome: why) { debugLastAttempt = summary }
+    #endif
     admission = nil; candidate = nil; phase = .cancelled; resetWindow(); reason = why
   }
   mutating func expire(at time: Double) {
@@ -372,6 +415,37 @@ nonisolated struct CalibrationSession: Sendable {
     let tolerance = max(AnatomicalCandidatePolicyV1.standingSpreadPixels / imageHeight,
       mask.maskHeight.map { StandingCollectionPolicyV1.minimumStabilityMaskRows / Double(max(1, $0)) } ?? 0)
     for id in stamp.roster {
+      // Age every player's evidence on this source frame, even when their NEW anatomy
+      // will be refused below. Otherwise an unavailable player's full old window can
+      // borrow their partner's later candidate timestamp and five-second lifetime.
+      var window = windows[id] ?? []
+      while let first = window.first,
+        pose.source.capturedAt - first.source.capturedAt > StandingCollectionPolicyV1.maximumWindowSpan {
+        window.removeFirst()
+      }
+      windows[id] = window
+      players[id, default: .init()].samples = window.count
+      if let outlier = outliers[id],
+        pose.source.capturedAt - outlier.source.capturedAt > StandingCollectionPolicyV1.maximumWindowSpan {
+        outliers[id] = nil
+      }
+      #if DEBUG
+      players[id, default: .init()].spreadPixels = Self.spread(window) * imageHeight
+      var diagnostic = StandingSampleDiagnostics()
+      diagnostic.resets = players[id, default: .init()].last.resets
+      diagnostic.source = pose.source; diagnostic.bindingRevision = stamp.bindingRevision
+      diagnostic.tracking = association[id].state.rawValue; diagnostic.requiresRebind = association[id].requiresRebind
+      diagnostic.association = mask.associationDiagnostics.players[id] ?? .init(reason: mask.associationDiagnostics.global)
+      diagnostic.maskOutcome = mask.quality.rawValue + "/" + mask.associationDiagnostics.global
+      diagnostic.maskServiceSeconds = mask.serviceSeconds
+      diagnostic.maskInstances = mask.associationDiagnostics.instanceCount
+      diagnostic.frameID = pose.source.frameID; diagnostic.capturedAt = pose.source.capturedAt
+      players[id, default: .init()].last = diagnostic
+      if mask.regions[id] == nil {
+        let key = diagnostic.association.reason
+        players[id, default: .init()].maskRefusals[key, default: 0] += 1
+      }
+      #endif
       // Identity first: a slot that is not tracking (or needs rebind) restarts this player only.
       guard association[id].state == .tracking, !association[id].requiresRebind else {
         windows[id] = []; outliers[id] = nil; players[id, default: .init()].samples = 0; reject(id, .trackingLost)
@@ -408,16 +482,10 @@ nonisolated struct CalibrationSession: Sendable {
         reject(id, details.first.map(StandingSampleIssue.init) ?? .bodyNotFullyVisible)
         continue
       }
-      var window = windows[id] ?? []
       let sample = PlayerSample(source: pose.source,
         values: [nose.y, la.y, ra.y, hip, shoulder - hip, (ls.x + rs.x + lh.x + rh.x) / 4, region.minY, region.maxY],
         anatomy: [a.crownY, a.leftSoleY, a.rightSoleY], tolerance: tolerance)
       players[id, default: .init()].accepted += 1
-      // Recency: a window spans at most `maximumWindowSpan` of capture time.
-      while let first = window.first,
-        pose.source.capturedAt - first.source.capturedAt > StandingCollectionPolicyV1.maximumWindowSpan {
-        window.removeFirst()
-      }
       // Stability (same tolerance; a billionth of the image height absorbs rounding of equal mask
       // rows). A sample outside the window's tolerance is skipped on its own (iPad, 11 November
       // 2026: one jittery mask reading collapsed the window 31 times, 84 s to calibrate). Two
@@ -524,9 +592,19 @@ nonisolated struct CalibrationSession: Sendable {
     guard admission == stamp else { return }
     invalidate("Mask service exceeded experimental budget; STOP/REVIEW"); phase = .stoppedForReview
   }
-  mutating func consumed() { candidate = nil; admission = nil; phase = .accepted; reason = "Accepted by live provider" }
+  mutating func consumed() {
+    #if DEBUG
+    debugLastAttempt = debugSummary(outcome: "Atomic roster acceptance committed by E05")
+    #endif
+    candidate = nil; admission = nil; phase = .accepted; reason = "Accepted by live provider"
+  }
   var progress: StandingCalibrationProgress {
-    .init(request: admission?.request, phase: phase, sampleCount: count, candidate: candidate, reason: reason,
-      players: players)
+    var value = StandingCalibrationProgress(request: admission?.request, phase: phase, sampleCount: count,
+      candidate: candidate, reason: reason, players: players)
+    #if DEBUG
+    value.debugCurrent = debugSummary(outcome: reason)
+    value.debugLastAttempt = debugLastAttempt
+    #endif
+    return value
   }
 }
