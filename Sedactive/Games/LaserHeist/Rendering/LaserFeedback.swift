@@ -36,14 +36,13 @@ final class LaserFeedback {
     private let badges: [PlayerID: Entity]
     private let badgeFaces: [PlayerID: [Outcome: Entity]]
     private var impacts: [PlayerID: Entity] = [:]
-    #if DEBUG
     private lazy var timingRenderer: TimingIndicatorRenderer = {
         let renderer = TimingIndicatorRenderer()
         renderer.root.position = [0, -0.215, 0.004]
         cue.addChild(renderer.root)
         return renderer
     }()
-    private(set) var timingVariant: TimingIndicatorVariant = .approved
+    private(set) var timingVariant: TimingIndicatorVariant = .closing
     private(set) var timingModel: LaserTimingPresentation?
     private var timingPaused = false
     private var approvedCue: (Move?, Float?) = (nil, nil)
@@ -74,7 +73,6 @@ final class LaserFeedback {
         countdown.isEnabled = false
         timingRenderer.apply(model, variant: timingVariant, reduceMotion: Self.reduceMotion)
     }
-    #endif
 
     /// Builds every cue, badge and texture once; showing them later only toggles and animates.
     init() {
@@ -155,10 +153,8 @@ final class LaserFeedback {
     var shownMoveCue: (move: Move, acting: Bool)? { shownCue }
 
     func setMoveCue(_ move: Move?, actionRemaining: Float? = nil) {
-        #if DEBUG
         approvedCue = (move, actionRemaining)
         if timingVariant != .approved { return } // one chosen renderer owns cue visibility
-        #endif
         guard let move else {
             if shownCue != nil { hideCue() }
             return
@@ -207,13 +203,11 @@ final class LaserFeedback {
 
     /// Clears the cue, badges and impacts, e.g. when a new encounter starts.
     func clear() {
-        #if DEBUG
         timingModel = nil
         if timingVariant != .approved {
             timingRenderer.apply(nil, variant: timingVariant, reduceMotion: Self.reduceMotion)
             if shownCue != nil { hideCue() }
         }
-        #endif
         setMoveCue(nil)
         for entity in Array(badges.values) + Array(impacts.values) {
             entity.stopAllAnimations()

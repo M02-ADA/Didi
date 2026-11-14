@@ -447,9 +447,7 @@ private struct ReplayRoundView: View {
         }
         #endif
         .onChange(of: session?.phase) { _, phase in
-            #if DEBUG
             scene.setTimingPaused(phase == .paused)
-            #endif
             if phase != .running { diamondFlights.clear() }
             #if DEBUG
             // `-maskBench` spike: the measured run is the live round, countdown to finish.

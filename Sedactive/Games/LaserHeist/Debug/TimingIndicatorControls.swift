@@ -6,7 +6,7 @@ struct TimingIndicatorControls: View {
     let session: GameSessionCoordinator?
     let scene: LaserScene
     let retry: () -> Void
-    @State private var selected: TimingIndicatorVariant = launchVariant ?? .approved
+    @State private var selected: TimingIndicatorVariant = launchVariant ?? .closing
     @State private var busy = false
     @State private var error: String?
     static var isComparison: Bool { ProcessInfo.processInfo.arguments.contains("-timingComparison") }
@@ -16,8 +16,10 @@ struct TimingIndicatorControls: View {
         return TimingIndicatorVariant(rawValue: args[i + 1])
     }
     static let steps: [(String, Double)] = [
-        ("Duck early", 1.15), ("Duck mid", 2.5), ("Duck near", 3.85), ("Duck crossing", 4), ("Duck result", 4.4),
-        ("Jump early", 7.15), ("Jump mid", 8.5), ("Jump near", 9.85), ("Jump crossing", 10), ("Jump result", 10.4)]
+        ("Duck early", 1.15), ("Duck prepare", 2.6), ("Duck near", 3.85), ("Duck immediately before", 3.99),
+        ("Duck crossing", 4), ("Duck pulse", 4.06), ("Duck result", 4.4),
+        ("Jump early", 7.15), ("Jump prepare", 8.6), ("Jump near", 9.85), ("Jump immediately before", 9.99),
+        ("Jump crossing", 10), ("Jump pulse", 10.06), ("Jump result", 10.4)]
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
             if Self.isComparison {

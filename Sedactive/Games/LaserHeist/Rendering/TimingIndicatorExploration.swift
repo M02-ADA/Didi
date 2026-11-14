@@ -1,13 +1,29 @@
-#if DEBUG
 import Foundation
 import RealityKit
 import UIKit
 
-/// DEBUG presentation only. Never an ideal/action-success window or an input to judgement.
+/// Presentation only. Closing Gate is selected; the legacy bar is an internal fallback.
 nonisolated enum TimingIndicatorVariant: String, CaseIterable, Sendable {
-    case approved, fill, sweep, closing
+    case approved, closing
+    #if DEBUG
+    case fill, sweep
+    #endif
     var title: String {
-        switch self { case .approved: "Approved"; case .fill: "A · Fill"; case .sweep: "B · Sweep"; case .closing: "C · Closing Gate" }
+        switch self {
+        case .approved: "Legacy fallback"
+        case .closing: "Closing Gate"
+        #if DEBUG
+        case .fill: "A · Fill"
+        case .sweep: "B · Sweep"
+        #endif
+        }
+    }
+    var isFill: Bool {
+        #if DEBUG
+        self == .fill
+        #else
+        false
+        #endif
     }
 }
 
@@ -85,38 +101,69 @@ private extension Judgement {
     var timingIsPending: Bool { if case .pending = self { true } else { false } }
 }
 
-/// One renderer, a bounded reusable set of unlit planes, no animation/timer/subscription.
-/// The existing cue owns this subtree, so its camera placement and lifecycle remain shared.
+/// One reusable native subtree. Source-time transforms only; no timer or subscriptions.
 @MainActor final class TimingIndicatorRenderer {
     let root = Entity()
+    #if DEBUG
     private let fill: ModelEntity
+    private let target: ModelEntity
+    #endif
     private let left: ModelEntity
     private let right: ModelEntity
-    private let target: ModelEntity
+    private let circle: ModelEntity
+    private let dot: ModelEntity
+    private let halo: ModelEntity
     private let captions = Entity()
     private var captionFaces: [String: ModelEntity] = [:]
-    private let palette: [UnlitMaterial]
+    private var shownLabel: String?
+    private let palette: [[UnlitMaterial]]
+    private let circlePalette: [[UnlitMaterial]]
+    private var lastTint: Int?
+    private var lastCircleTint: Int?
     private(set) var model: LaserTimingPresentation?
-    private(set) var variant: TimingIndicatorVariant = .approved
+    private(set) var variant: TimingIndicatorVariant = .closing
     static let width: Float = 1.03
+    static let circleDiameter: Float = 0.17
+    static let haloDiameter: Float = 0.22
+    static let markerWidth: Float = 0.035
+    static let markerRest: Float = 0.115
+    static let crossingEmphasis = 0.12
 
     init() {
         func color(_ n: UInt32) -> UIColor { UIColor(red: CGFloat((n >> 16) & 255)/255, green: CGFloat((n >> 8)&255)/255, blue: CGFloat(n&255)/255, alpha: 1) }
-        palette = [0x7565FF, 0xFFD447, 0x7BEFFF, 0x37D9A1, 0xF67585, 0x8C8BA9].map { UnlitMaterial(color: color($0)) }
-        func plane(_ name: String, _ width: Float, _ height: Float, _ material: UnlitMaterial) -> ModelEntity {
-            let e = ModelEntity(mesh: .generatePlane(width: width, height: height, cornerRadius: min(width, height) / 2), materials: [material]); e.name = name; return e
+        palette = [0x7565FF, 0xFFD447, 0x7BEFFF, 0x37D9A1, 0xF67585, 0x8C8BA9].map { [UnlitMaterial(color: color($0))] }
+        circlePalette = [0x33B8DE, 0x7BEFFF, 0xDBFFFF, 0x37D9A1, 0xF67585, 0x8C8BA9].map { [UnlitMaterial(color: color($0))] }
+        let dark = UnlitMaterial(color: color(0x19152F))
+        func plane(_ name: String, _ width: Float, _ height: Float, _ materials: [UnlitMaterial]) -> ModelEntity {
+            let e = ModelEntity(mesh: .generatePlane(width: width, height: height, cornerRadius: min(width, height)/2), materials: materials)
+            e.name = name; return e
         }
-        let track = plane("timing.track", Self.width + 0.04, 0.12, UnlitMaterial(color: color(0x19152F)))
-        root.addChild(track)
-        let outline = plane("timing.outline", Self.width + 0.06, 0.14, UnlitMaterial(color: color(0xC8BEF4)))
+        let track = plane("timing.track", Self.width + 0.04, 0.12, [dark]); root.addChild(track)
+        let outline = plane("timing.outline", Self.width + 0.06, 0.14, [UnlitMaterial(color: color(0xC8BEF4))])
         outline.position.z = -0.001; root.addChild(outline)
+        #if DEBUG
         fill = plane("timing.fill", Self.width, 0.08, palette[0]); fill.position.z = 0.003
-        left = plane("timing.marker.left", 0.035, 0.13, palette[2]); left.position.z = 0.005
-        right = plane("timing.marker.right", 0.035, 0.13, palette[2]); right.position.z = 0.005
-        target = plane("timing.crossing.target", 0.018, 0.12, palette[1]); target.position.z = 0.004
-        root.addChild(fill); root.addChild(left); root.addChild(right); root.addChild(target)
-        captions.position = [0, -0.105, 0.006]; root.addChild(captions)
-        root.name = "timing.exploration"; root.isEnabled = false
+        target = plane("timing.crossing.target", 0.018, 0.12, palette[2]); target.position.z = 0.004
+        root.addChild(fill); root.addChild(target)
+        #endif
+        left = plane("timing.marker.left", Self.markerWidth, 0.13, palette[2]); left.position.z = 0.005
+        right = plane("timing.marker.right", Self.markerWidth, 0.13, palette[2]); right.position.z = 0.005
+        root.addChild(left); root.addChild(right)
+        // Native rounded planes form a thick ring, dark core and dot. No texture/shader
+        // generation for the target, and the moving markers stop outside its perimeter.
+        circle = plane("timing.circle", Self.circleDiameter, Self.circleDiameter, circlePalette[0])
+        circle.position.z = 0.008
+        let core = plane("timing.circle.core", 0.11, 0.11, [dark]); core.position.z = 0.001
+        circle.addChild(core)
+        dot = plane("timing.circle.dot", 0.024, 0.024, circlePalette[0]); dot.position.z = 0.002
+        circle.addChild(dot); root.addChild(circle)
+        halo = plane("timing.circle.halo", Self.haloDiameter, Self.haloDiameter, circlePalette[2])
+        halo.position.z = 0.006
+        let haloCore = plane("timing.circle.halo.core", 0.198, 0.198, [dark]); haloCore.position.z = 0.001
+        halo.addChild(haloCore); root.addChild(halo)
+        halo.isEnabled = false
+        captions.position = [0, -0.165, 0.010]; root.addChild(captions)
+        root.name = "timing.closingGate"; root.isEnabled = false
     }
 
     func apply(_ value: LaserTimingPresentation?, variant: TimingIndicatorVariant, reduceMotion: Bool) {
@@ -125,39 +172,68 @@ private extension Judgement {
         guard let value, root.isEnabled else { return }
         let p = Float(value.displayedProgress(reduceMotion: reduceMotion)), w = Self.width
         let tint = value.phase == .result ? (value.anyHit ? 4 : value.allClear ? 3 : 5)
-            : value.phase == .paused ? 5 : value.phase == .approach ? 0 : value.phase == .prepare ? 1 : 2
-        let material = palette[tint]
-        fill.model?.materials = [material]; left.model?.materials = [material]; right.model?.materials = [material]
-        fill.isEnabled = variant == .fill || reduceMotion
-        left.isEnabled = !reduceMotion && variant != .fill
+            : value.phase == .paused || value.phase == .passed ? 5 : value.phase == .approach ? 0 : value.phase == .prepare ? 1 : 2
+        if lastTint != tint {
+            lastTint = tint
+            left.model?.materials = palette[tint]; right.model?.materials = palette[tint]
+            #if DEBUG
+            fill.model?.materials = palette[tint]
+            #endif
+        }
+        left.isEnabled = !reduceMotion && !variant.isFill
         right.isEnabled = !reduceMotion && variant == .closing
+        let gap = Self.markerRest + (w/2 - Self.markerRest) * (1-p)
+        left.position.x = variant == .closing ? -gap : -w/2 + w*p
+        right.position.x = gap
+        #if DEBUG
+        fill.isEnabled = variant.isFill || (reduceMotion && variant != .closing)
         fill.scale.x = max(0.001, p); fill.position.x = -w/2 + w*p/2
-        left.position.x = variant == .closing ? -w/2 * (1-p) : -w/2 + w*p
-        right.position.x = w/2 * (1-p)
-        // The end tick (or centre tick) is a crossing destination, never an ideal zone.
-        target.position.x = variant == .closing && !reduceMotion ? 0 : w/2
-        target.model?.materials = [palette[2]]
-        target.scale.y = value.phase == .crossing && !reduceMotion ? 1.2 : 1
+        target.isEnabled = variant != .closing
+        target.position.x = w/2
+        #endif
+        circle.isEnabled = variant == .closing
+        let circleTint = value.phase == .result ? (value.anyHit ? 4 : value.allClear ? 3 : 5)
+            : value.phase == .paused || value.phase == .passed ? 5 : value.phase == .approach ? 0 : value.phase == .prepare ? 1 : 2
+        if lastCircleTint != circleTint {
+            lastCircleTint = circleTint
+            circle.model?.materials = circlePalette[circleTint]; dot.model?.materials = circlePalette[circleTint]
+        }
+        // A 120ms cosmetic emphasis derived solely from the original crossing timestamp.
+        // At crossing the ring lights immediately, with a scale peak at +60ms.
+        let crossing = value.phase == .crossing && !reduceMotion
+        let t = min(1, max(0, (value.gameTime-value.crossingTime)/Self.crossingEmphasis))
+        let pulse = crossing ? Float(sin(t * .pi)) : 0
+        circle.scale = .init(repeating: 1 + 0.10*pulse)
+        halo.isEnabled = variant == .closing && crossing
+        halo.scale = .init(repeating: 1 + 0.10*pulse)
+        captions.position.y = variant == .closing ? -0.165 : -0.105
+        let baseLabel = variant == .closing ? value.label.replacingOccurrences(of: "AT TICK", with: "AT CIRCLE") : value.label
+        let label = reduceMotion ? "\(baseLabel) · REDUCED MOTION" : baseLabel
+        let cacheKey = "\(variant == .closing ? "circle" : "line"):\(label)"
+        guard shownLabel != cacheKey else { return }
+        shownLabel = cacheKey
         for face in captionFaces.values { face.isEnabled = false }
-        let label = reduceMotion ? "\(value.label) · REDUCED MOTION" : value.label
         let face: ModelEntity
-        if let cached = captionFaces[label] { face = cached }
+        if let cached = captionFaces[cacheKey] { face = cached }
         else {
-            // Bounded vocabulary: phase labels + P1/P2 verdict combinations only.
             let image = UIGraphicsImageRenderer(size: CGSize(width: 800, height: 60)).image { _ in
+                if variant == .closing {
+                    let textWidth = (label as NSString).size(withAttributes: [.font: UIFont.systemFont(ofSize: 27, weight: .heavy)]).width
+                    UIColor(red: 0.10, green: 0.08, blue: 0.20, alpha: 0.94).setFill()
+                    UIBezierPath(roundedRect: CGRect(x: (800-textWidth)/2-12, y: 0,
+                        width: textWidth+24, height: 38), cornerRadius: 12).fill()
+                }
                 let style = NSMutableParagraphStyle(); style.alignment = .center
                 (label as NSString).draw(in: CGRect(x: 0, y: 0, width: 800, height: 60), withAttributes: [
                     .font: UIFont.systemFont(ofSize: 27, weight: .heavy), .foregroundColor: UIColor.white, .paragraphStyle: style])
             }
             var mat = UnlitMaterial(color: .white)
             if let cg = image.cgImage, let texture = try? TextureResource.generate(from: cg, options: .init(semantic: .color)) {
-                mat.color = .init(tint: .white, texture: .init(texture))
-                mat.blending = .transparent(opacity: 1.0)
+                mat.color = .init(tint: .white, texture: .init(texture)); mat.blending = .transparent(opacity: 1.0)
             }
             face = ModelEntity(mesh: .generatePlane(width: 1.25, height: 0.094), materials: [mat])
-            captions.addChild(face); captionFaces[label] = face
+            captions.addChild(face); captionFaces[cacheKey] = face
         }
         face.isEnabled = true
     }
 }
-#endif

@@ -202,10 +202,8 @@ final class GameplayScenePresenter {
         diamondsHeard = collected
         updateHazards(state: state, at: time)
         updateCue(state: state, at: time)
-        #if DEBUG
         scene.setTimingPresentation(endedAt == nil && scene.timingVariant != .approved ? LaserTimingPresentation.make(state: state,
             configuration: configuration, withdrawn: Set(withdrawnAt.keys)) : nil)
-        #endif
         if let snapshot, snapshot.sessionGeneration == state.sessionGeneration { present(snapshot) }
         updateBandEdges()
     }
