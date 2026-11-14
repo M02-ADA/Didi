@@ -49,9 +49,27 @@ struct SetupDiagnosticsView: View {
                      "setup \(setup.phase) · session \(session.phase) · people in view \(session.presence.peopleInView)",
                      "calibration \(progress.phase.rawValue) · attempts \(session.presence.attempts) · \(progress.reason)"]
         let now = CameraHostClock.now()
+        if let mask = controls.debugMask, let last = mask.last {
+            lines.append(String(format: "native mask %@ · %@ · frame %llu age %.3fs service %.1fms regions %d",
+                mask.isCurrentSourceAndFresh ? "CURRENT" : "HISTORICAL", last.quality.rawValue,
+                last.source.frameID, now - last.source.capturedAt, last.serviceSeconds * 1000, last.supportedRegions))
+        } else { lines.append("native mask: no committed result (inspect binding/source admission above)") }
         // Gameplay evidence: what the live round would judge from right now.
         lines.append("readiness \(session.liveReadiness.map { String(describing: $0.phase) } ?? "-") · plan \(session.hasLiveRoundPlan ? "installed" : "none")"
             + (session.livePlanError.map { " · plan error \($0)" } ?? ""))
+        if let current = progress.debugCurrent {
+            lines.append(String(format: "request %@ · deadline in %.2fs · candidate expires %@", current.request.uuidString,
+                current.deadline - now, current.candidateExpiresAt.map { String(format: "%.2fs", $0 - now) } ?? "none"))
+        }
+        if let previous = progress.debugLastAttempt {
+            lines.append("LAST ATTEMPT \(previous.request): \(previous.outcome)")
+            for id in session.inputConfiguration.roster {
+                let old = previous.players[id] ?? .init()
+                lines.append("  \(id.rawValue) window \(old.samples) accepted \(old.accepted) first blocker \(old.latestIssue?.rawValue ?? "none") masks \(old.maskRefusals)")
+            }
+        }
+        lines.append("binding request \(controls.tracking.requestID?.uuidString ?? "none") · ack \(controls.tracking.acknowledgment == nil ? "NONE" : "present") · revision \(controls.tracking.revision) · accepted revision \(controls.acceptedRevision)")
+        lines.append("decision \(setup.diagnosticReason) · retry \(session.presence.willRetry) · UI \(session.presence.players)")
         for player in session.inputConfiguration.roster {
             let slot = controls.tracking.latest?[player]
             let p = progress.players[player] ?? .init()
@@ -60,6 +78,21 @@ struct SetupDiagnosticsView: View {
             let refused = p.rejected.sorted { $0.value > $1.value }.map { "\($0.key.rawValue) \($0.value)" }.joined(separator: ", ")
             lines.append("")
             lines.append("\(player.rawValue): tracking \(slot.map { "\($0.state.rawValue)/\($0.reason.rawValue)" } ?? "none") · window \(p.samples)/\(StandingCollectionPolicyV1.sampleCount) · accepted \(p.accepted) · resets \(d.resets)")
+            if let source = d.source {
+                let fresh = progress.debugCurrent != nil && now >= source.capturedAt
+                    && now - source.capturedAt < StandingCollectionPolicyV1.sampleFreshness
+                    && progress.debugCurrent?.source == source.context
+                lines.append("  sample \(fresh ? "FRESH" : "HISTORICAL — not current evidence")")
+                lines.append(String(format: "  frame %llu capture %.3f age %.3fs generation %@ epoch %@ geometry %llu control %llu rebind %@",
+                    source.frameID, source.capturedAt, now - source.capturedAt, source.context.generation.uuidString,
+                    source.context.epoch.uuidString, source.context.geometryRevision, d.bindingRevision, d.requiresRebind ? "YES" : "no"))
+            }
+            let association = d.association
+            lines.append("  FIRST association blocker: \(association.reason) joint \(association.joint.map { String(describing: $0) } ?? "-") confidence \(association.confidence.map { String(format: "%.3f", $0) } ?? "-") label \(association.label.map(String.init) ?? "-")")
+            lines.append("  mask \(d.maskOutcome) instances \(d.maskInstances.map(String.init) ?? "-") service \(d.maskServiceSeconds.map { String(format: "%.1fms", $0 * 1000) } ?? "-") · refused \(p.maskRefusals)")
+            if let window = progress.debugCurrent?.windows[player], window.count == 2 {
+                lines.append(String(format: "  window capture %.3f...%.3f (span %.2fs; oldest %.2fs ago)", window[0], window[1], window[1] - window[0], now - window[0]))
+            }
             lines.append("  latest issue: \(p.latestIssue?.rawValue ?? "none") · refused: \(refused.isEmpty ? "none" : refused)")
             lines.append("  head top: \(d.crownSeen ? "seen" : d.crown?.rawValue ?? "—") · soles: \(d.solesSeen ? "seen" : d.soles?.rawValue ?? "—")")
             lines.append("  face nose \(c(.nose)) eyes \(c(.leftEye))/\(c(.rightEye)) ears \(c(.leftEar))/\(c(.rightEar)) neck \(c(.neck))")

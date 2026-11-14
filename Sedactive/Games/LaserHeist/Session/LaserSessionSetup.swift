@@ -20,6 +20,7 @@ protocol LaserSetupControlling: AnyObject {
     // Requirements (not extension-only) so the live controls' versions are the ones called.
     var debugPeople: [(x: Double, core: [Double])] { get }
     var debugVision: String { get }
+    var debugMask: VisionPreviewMaskRead? { get }
     #endif
 }
 
@@ -28,6 +29,7 @@ extension LaserSetupControlling {
     #if DEBUG
     var debugPeople: [(x: Double, core: [Double])] { [] }
     var debugVision: String { "" }
+    var debugMask: VisionPreviewMaskRead? { nil }
     #endif
 }
 
@@ -56,6 +58,7 @@ final class LaserLiveSetupControls: LaserSetupControlling {
         return min(2, latest.frame.candidates.count)
     }
     #if DEBUG
+    var debugMask: VisionPreviewMaskRead? { service.camera.frames.tracking.readVisionPreviewMask() }
     /// Vision's raw body count and the age of its latest result (DEBUG setup log).
     var debugVision: String {
         guard let latest = service.camera.frames.poses.snapshot.latest else { return "vision: no result yet" }

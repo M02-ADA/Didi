@@ -20,6 +20,9 @@ nonisolated struct PersonMaskObservation: Sendable {
   var anatomy: [PlayerID: AnatomicalPlayerCandidate] = [:]
   /// Rows in the native instance mask the anatomy was read from (its Y quantization).
   var maskHeight: Int? = nil
+  #if DEBUG
+  var associationDiagnostics = MaskAssociationDiagnostics()
+  #endif
   // Native labels do NOT establish crown or separate anatomical soles.
 }
 nonisolated protocol PersonMaskDetecting: AnyObject {
@@ -52,8 +55,13 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
       guard !roster.isEmpty, let observations = request.results, observations.count == 1,
         let observation = observations.first, observation.allInstances.count == roster.count,
         observation.allInstances.allSatisfy({ $0 > 0 && $0 <= 255 }) else {
-        return .init(source: pose.source, quality: .insufficientEvidence, regions: [:],
+        var refused = PersonMaskObservation(source: pose.source, quality: .insufficientEvidence, regions: [:],
           outputBytes: 0, serviceSeconds: CameraHostClock.now() - start)
+        #if DEBUG
+        refused.associationDiagnostics.global = "nativeInstanceCountOrResults"
+        refused.associationDiagnostics.instanceCount = request.results?.first?.allInstances.count
+        #endif
+        return refused
       }
       let mask = observation.instanceMask
       onOwnedBytes(CVPixelBufferGetDataSize(mask))
@@ -103,10 +111,17 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
             }
         }
       }
-      return .init(source: pose.source,
+      var output = PersonMaskObservation(source: pose.source,
         quality: result.count == roster.count ? .torsoSupportedGeometryUnverified : .insufficientEvidence,
         regions: result, outputBytes: max(bytes, CVPixelBufferGetDataSize(mask)),
         serviceSeconds: CameraHostClock.now() - start, anatomy: anatomy, maskHeight: h)
+      #if DEBUG
+      output.associationDiagnostics = Self.diagnoseAssociation(pose: pose, association: association,
+        labels: labels, bounds: bounds, width: w, height: h, result: result) { x, y in
+          base.advanced(by: y * stride).assumingMemoryBound(to: UInt8.self)[x]
+        }
+      #endif
+      return output
     }
   }
 
@@ -169,4 +184,82 @@ nonisolated protocol AnatomyInspectionMaskDetecting: PersonMaskDetecting {
   var anatomyInspectionImages: AnatomyInspectionImageBuilder? { get set }
 }
 extension PersonSegmenter: AnatomyInspectionMaskDetecting {}
+#endif
+
+#if DEBUG
+/// Latest scalar-only association diagnosis. Never used to admit a sample or weaken pair rules.
+nonisolated struct MaskAssociationPlayerDiagnostic: Equatable, Sendable {
+  var reason = "unobserved"
+  var joint: BodyJoint?
+  var confidence: Double?
+  var label: UInt8?
+}
+nonisolated struct MaskAssociationDiagnostics: Equatable, Sendable {
+  var global = "unobserved"
+  var instanceCount: Int?
+  var players: [PlayerID: MaskAssociationPlayerDiagnostic] = [:]
+}
+extension PersonSegmenter {
+  static func diagnoseAssociation(pose: CameraPoseResult, association: PlayerTrackingSnapshot,
+    labels: [UInt8], bounds: [[Int]], width: Int, height: Int,
+    result: [PlayerID: PersonMaskRegion], labelAt: (Int, Int) -> UInt8) -> MaskAssociationDiagnostics {
+    var d = MaskAssociationDiagnostics(global: "contextOrRosterMismatch", instanceCount: labels.count)
+    let roster = linkedRoster(association)
+    // Mirror production preconditions to distinguish global refusal from per-player torso
+    // support. Diagnostics never turn a refused production association into success.
+    guard width > 0, height > 0 else { return d }
+    let original = association.source
+    guard !roster.isEmpty, pose.matchesSource, pose.observationCount == roster.count,
+      pose.frame.candidates.count == roster.count,
+      original?.frameID == pose.source.frameID, original?.capturedAt == pose.source.capturedAt,
+      original?.controlRevision == association.controlRevision,
+      original?.context.generation == pose.source.context.generation,
+      original?.context.epoch == pose.source.context.epoch,
+      original?.context.geometryRevision == pose.source.context.geometryRevision,
+      original?.context.imageWidth == pose.frame.imageWidth,
+      original?.context.imageHeight == pose.frame.imageHeight,
+      original?.context.rotationAngle == pose.source.rotationAngle, original?.context.mirrored == false,
+      labels.count == roster.count, Set(labels).count == roster.count, !labels.contains(0),
+      bounds.count == roster.count, bounds.allSatisfy({ $0.count == 4 }) else { return d }
+    d.global = result.count == roster.count ? "supported" : "pairAssociationRefused"
+    for id in roster {
+      let slot = association[id]
+      var player = MaskAssociationPlayerDiagnostic(reason: "torsoSupportedPartnerRefused")
+      if slot.state != .tracking || slot.requiresRebind {
+        player.reason = "trackingOrRebind"
+      } else if let c = pose.frame.candidates.first(where: { $0.candidateID == slot.candidateID }) {
+        var support: UInt8?
+        for j in [BodyJoint.leftShoulder, .rightShoulder, .leftHip, .rightHip] {
+          player.joint = j; player.confidence = nil; player.label = nil
+          guard let v = c.joints[j] else { player.reason = "torsoMissing"; break }
+          player.confidence = v.confidence
+          guard (try? v.validate()) != nil, v.x > 0, v.x < 1, v.y > 0, v.y < 1 else {
+            player.reason = "torsoInvalidCoordinate"; break
+          }
+          guard v.confidence >= 0.5 else { player.reason = "torsoLowConfidence"; break }
+          let x = Int(v.x * Double(width)), y = Int((1 - v.y) * Double(height))
+          guard (0..<width).contains(x), (0..<height).contains(y) else {
+            player.reason = "maskSamplingBounds"; break
+          }
+          let label = labelAt(x, y); player.label = label
+          guard labels.contains(label) else { player.reason = "torsoBackgroundOrUnknownLabel"; break }
+          guard support == nil || support == label else { player.reason = "torsoMixedLabels"; break }
+          support = label
+        }
+        if player.reason == "torsoSupportedPartnerRefused", let support,
+          let i = labels.firstIndex(of: support) {
+          if bounds[i][1] < bounds[i][0] || bounds[i][3] < bounds[i][2] { player.reason = "invalidInstanceBounds" }
+          else if result[id] != nil { player.reason = "supported" }
+        }
+      } else { player.reason = "candidateMissing" }
+      d.players[id] = player
+    }
+    let supported = d.players.filter { $0.value.reason == "torsoSupportedPartnerRefused" }
+    if supported.count == roster.count, Set(supported.values.compactMap(\.label)).count < roster.count {
+      d.global = "sharedInstanceLabel"
+      for id in roster { d.players[id]?.reason = "sharedInstanceLabel" }
+    }
+    return d
+  }
+}
 #endif
