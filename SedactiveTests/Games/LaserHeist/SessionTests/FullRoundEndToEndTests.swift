@@ -149,23 +149,10 @@ import Testing
         scene.robotAvatars = robots
         let presenter = GameplayScenePresenter(scene: scene, configuration: configuration, encounters: session.plannedEncounters)
         let layout = session.inputConfiguration.playerPlaneLayout
-        let display = LaserReplayPresentation.diamondDisplay(scene: scene, layout: layout)
-        presenter.diamondTime.source = { [weak session] _ in
-            guard let session else { return [] }
-            return session.diamondStates.values.compactMap { state in
-                guard case .diamondTime = state.lifetime,
-                      let lane = PlayerID.allCases.first(where: { state.spawn.eligiblePlayers.contains($0) }),
-                      let id = Int(state.spawn.id.uuidString.suffix(12), radix: 16) else { return nil }
-                let collected: Bool
-                switch state.outcome { case .collected: collected = true; case nil: collected = false; default: return nil }
-                let shown = display(lane, state.spawn.position)
-                return DiamondTimeDiamond(id: id, lane: lane, offsetX: shown.offsetX, heightAboveFloor: shown.height, collected: collected)
-            }.sorted { $0.id < $1.id }
-        }
         func render() {
             guard let state = session.state else { return }
             presenter.apply(state: state, events: session.events, snapshot: session.latestSnapshot,
-                            upcomingVaultIn: session.liveVaultIn, finalVault: session.finalVaultEntry)
+                            upcomingVaultIn: session.liveVaultIn, finalVault: session.finalVaultEntry, showsPawBoard: session.showsDiamondTimePaws)
         }
 
         // Synthetic evidence: clear every laser at its crossing; wrists only where told.
@@ -252,15 +239,16 @@ import Testing
         #expect(sawWall, "round \(round): the vault wall was shown")
         #expect(sawLemonFirst, "round \(round): Lemon jumped while Tangerine waited")
         #expect(sawTangerine, "round \(round): Tangerine jumped")
-        try await send()
+        try await send(outside)
         #expect(presenter.finalVault.stage == .inside(entry.timeline) && !scene.isCorridorShown, "inside the vault room")
-        #expect(presenter.diamondTime.floatingIDs.count == 4, "Diamond Time diamonds shown")
+        #expect(session.showsDiamondTimePaws && presenter.diamondTime.floatingIDs.isEmpty)
+        #expect(scene.players.values.allSatisfy { !$0.isEnabled })
         #expect(scene.vaultDoorDepth == nil || !scene.isCorridorShown, "no gate left in view")
 
         // MARK: Diamond Time: one real collection, no false ones, a held wrist scores once.
         let start = unlocked.gameTime
         let active = session.diamondStates.values.filter { $0.outcome == nil }.sorted { $0.spawn.id.uuidString < $1.spawn.id.uuidString }
-        #expect(active.count == 4 && active.allSatisfy { $0.interactionDeadline == start + 10 })
+        #expect(active.count == 6 && active.allSatisfy { $0.interactionDeadline == start + 10 })
         let target = try #require(active.first)
         let player = try #require(target.spawn.eligiblePlayers.first)
         let hand = LaserContactHand(playerID: player, wrist: .left)
@@ -269,9 +257,11 @@ import Testing
         try await send(outside)
         try await send([hand: WristGameplayFixture.outside])
         #expect(session.diamondsCollected == 0)
-        try await send([hand: .init(x: target.spawn.position.x, y: target.spawn.position.y)])
+        let point = wristForPaw(at: target.spawn.position, player: player,
+                               calibration: try #require(calibrations[player]), layout: layout)
+        try await send([hand: point])
         #expect(session.diamondsCollected == 1 && session.state?.teamScore == scoreBefore + 25, "exactly one award")
-        for _ in 0..<3 { try await send([hand: .init(x: target.spawn.position.x, y: target.spawn.position.y)]) }
+        for _ in 0..<3 { try await send([hand: point]) }
         #expect(session.diamondsCollected == 1 && session.state?.teamScore == scoreBefore + 25, "a held wrist scores once")
         #expect(GameplayHUDModel(state: session.state!, events: session.events, configuration: configuration,
                                  activityDuration: 300).banner == .retrieveDiamonds)

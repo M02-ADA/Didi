@@ -349,6 +349,11 @@ private struct ReplayRoundView: View {
         .ignoresSafeArea()
         .background(.black)
         .overlay {
+            if let session, session.showsDiamondTimePaws {
+                DiamondTimePawOverlay(session: session)
+            }
+        }
+        .overlay {
             // One HUD at a time: the Sketch gameplay HUD, or (Debug, `-replayDebugHUD`)
             // Jevon's text HUD for replay diagnostics. Results replaces either.
             if let session, session.summary == nil, !Self.showsReplayDebugHUD, let model = hudModel(session) {
