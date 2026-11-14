@@ -9,8 +9,8 @@ import SwiftUI
 /// "stand inside the box to start", Home Copy 42 "stand still, don’t move"): the camera image and
 /// one standing box per player, P1 left and P2 right, laid out on the 1210 × 834 artboard.
 ///
-/// - The WHOLE camera frame is shown (aspect fit, never cropped) below a title band, so what the
-///   players see is what tracking sees (11 November decision). The boxes are Sketch's exact
+/// - The camera underlays the header. Landscape fill preserves the full source height;
+///   other viewports fall back to the whole frame. The boxes are Sketch's exact
 ///   rectangles (422 × 601 pt at x 149 and 668, y 177, radius 59) scaled with the artboard; on every
 ///   supported landscape iPad they lie inside the camera image, each within its player's half, so
 ///   standing inside a box always means standing where the tracker looks for that player.
@@ -38,17 +38,25 @@ struct CalibrationStageView<Panel: View>: View {
     var body: some View {
         GeometryReader { geo in
             let k = CalibrationStageLayout.scale(for: geo.size)
-            let band = CalibrationStageLayout.bandHeight(for: geo.size)
-            let image = CalibrationStageLayout.imageRect(in: geo.size, band: band, aspect: cameraAspect)
+            let image = CalibrationStageLayout.previewRect(in: geo.size, aspect: cameraAspect)
+            let fills = CalibrationStageLayout.canFill(in: geo.size, aspect: cameraAspect)
             let origin = CalibrationStageLayout.artboardOrigin(in: geo.size)
             ZStack(alignment: .topLeading) {
-                Color.black
+                // Non-camera fallback for viewports that would crop vertically. Never add
+                // another preview layer/session merely to fill a decorative background.
+                LinearGradient(colors: [Color(sketch: 0x39334F), Color(sketch: 0x161436)],
+                               startPoint: .top, endPoint: .bottom)
                 // Mirrored for display only (CP2 rule): players see themselves
                 // as in a mirror, so P1 on the left stands in the left box.
                 if let cameraPreview {
                     cameraPreview
+                        .environment(\.calibrationPreviewFill, fills)
                         .scaleEffect(x: -1, y: 1)
                         .frame(width: image.width, height: image.height)
+                        .clipped()
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Camera preview")
+                        .accessibilityIdentifier("calibrationCameraSurface")
                         .offset(x: image.minX, y: image.minY)
                 } else {
                     cameraUnavailable(k)
@@ -59,7 +67,7 @@ struct CalibrationStageView<Panel: View>: View {
                 LinearGradient(colors: [Color(sketch: 0x0D0A26), Color(sketch: 0x1E1A41, opacity: 0)],
                                startPoint: .top, endPoint: .bottom)
                     .opacity(0.74)
-                    .frame(width: geo.size.width, height: band * 1.4)
+                    .frame(width: geo.size.width, height: geo.size.height * 0.32)
                     .allowsHitTesting(false)
                 ForEach(solo ? [PlayerID.player1] : PlayerID.allCases, id: \.self) { player in
                     let box = CalibrationStageLayout.boxRect(player, solo: solo, in: geo.size)
@@ -135,17 +143,39 @@ enum CalibrationStageLayout {
         return CGRect(x: origin.x + x * k, y: origin.y + boxTop * k, width: boxSize.width * k, height: boxSize.height * k)
     }
 
-    /// The instruction band above the image: room for the title and one line.
-    static func bandHeight(for size: CGSize) -> CGFloat {
-        min(max(size.height * 0.15, 110), 160)
+    /// Aspect-fill only when it preserves the full source height and both guide areas
+    /// remain representable. Otherwise show the whole source over a decorative background.
+    static func canFill(in size: CGSize, aspect: CGFloat) -> Bool {
+        guard size.width > 0, size.height > 0, aspect.isFinite, aspect > 0,
+              aspect >= size.width / size.height else { return false }
+        let viewport = CGRect(origin: .zero, size: size)
+        return PlayerID.allCases.allSatisfy { player in
+            let box = boxRect(player, solo: false, in: size)
+            let source = sourceRect(for: box, in: size, aspect: aspect, fill: true)
+            return viewport.contains(box) && CGRect(x: 0, y: 0, width: 1, height: 1).contains(source)
+                && (player == .player1 ? source.minX >= 0.5 : source.maxX <= 0.5)
+        }
     }
 
-    /// The camera image, aspect fit (whole frame) and centred in the space below the band.
-    static func imageRect(in size: CGSize, band: CGFloat, aspect: CGFloat) -> CGRect {
-        let available = CGSize(width: size.width, height: max(1, size.height - band))
-        let width = min(available.width, available.height * aspect)
+    static func contentRect(in size: CGSize, aspect: CGFloat, fill: Bool) -> CGRect {
+        let aspect = aspect.isFinite && aspect > 0 ? aspect : 16 / 9
+        let width = fill ? max(size.width, size.height * aspect) : min(size.width, size.height * aspect)
         let height = width / aspect
-        return CGRect(x: (size.width - width) / 2, y: band + (available.height - height) / 2, width: width, height: height)
+        return CGRect(x: (size.width - width) / 2, y: (size.height - height) / 2, width: width, height: height)
+    }
+
+    static func previewRect(in size: CGSize, aspect: CGFloat) -> CGRect {
+        canFill(in: size, aspect: aspect) ? CGRect(origin: .zero, size: size)
+            : contentRect(in: size, aspect: aspect, fill: false)
+    }
+
+    /// Inverse display transform, normalized to the original UNMIRRORED source.
+    /// The preview is mirrored exactly once by CalibrationStageView.
+    static func sourceRect(for rect: CGRect, in size: CGSize, aspect: CGFloat, fill: Bool) -> CGRect {
+        let content = contentRect(in: size, aspect: aspect, fill: fill)
+        return CGRect(x: 1 - (rect.maxX - content.minX) / content.width,
+                      y: (rect.minY - content.minY) / content.height,
+                      width: rect.width / content.width, height: rect.height / content.height)
     }
 
 }
@@ -153,6 +183,7 @@ enum CalibrationStageLayout {
 /// The calibration stage's artboard scale, for the panel's Sketch-sized title.
 extension EnvironmentValues {
     @Entry var calibrationStageScale: CGFloat = 1
+    @Entry var calibrationPreviewFill = false
 }
 
 /// Sketch title: SF Pro Rounded Bold 57 pt, white, centred (Home Copy 19 and 42; measured against
@@ -258,6 +289,7 @@ struct CalibrationGuideBox: View {
                 .opacity(progress > 0.001 ? 1 : 0)
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.4), value: progress)
+        .transaction { if progress == 0 { $0.animation = nil; $0.disablesAnimations = true } }
         .animation(.easeInOut(duration: 0.3), value: done)
         .animation(.easeInOut(duration: 0.3), value: Self.scans(status))
         .accessibilityElement(children: .ignore)

@@ -91,7 +91,7 @@ struct CalibrationStageTests {
         // Every supported landscape iPad (points): inside the camera image, each in its player's half.
         for size in [CGSize(width: 1180, height: 820), CGSize(width: 1376, height: 1032), CGSize(width: 1366, height: 1024),
                      CGSize(width: 1194, height: 834), CGSize(width: 1210, height: 834), CGSize(width: 1133, height: 744)] {
-            let image = CalibrationStageLayout.imageRect(in: size, band: CalibrationStageLayout.bandHeight(for: size), aspect: 16 / 9)
+            let image = CalibrationStageLayout.previewRect(in: size, aspect: 16 / 9)
             let p1 = CalibrationStageLayout.boxRect(.player1, solo: false, in: size)
             let p2 = CalibrationStageLayout.boxRect(.player2, solo: false, in: size)
             #expect(image.contains(p1) && image.contains(p2), "\(size): image \(image), boxes \(p1) \(p2)")
@@ -103,4 +103,30 @@ struct CalibrationStageTests {
             #expect(abs(solo.midX - size.width / 2) < 0.5 && image.contains(solo))
         }
     }
+    @Test func landscapeFillPreservesHeightAndBothMirroredSourceHalves() {
+        for size in [CGSize(width: 1376, height: 1032), CGSize(width: 1180, height: 820)] {
+            #expect(CalibrationStageLayout.canFill(in: size, aspect: 16 / 9))
+            let viewport = CGRect(origin: .zero, size: size)
+            let visible = CalibrationStageLayout.sourceRect(for: viewport, in: size, aspect: 16 / 9, fill: true)
+            #expect(abs(visible.minY) < 0.0001 && abs(visible.height - 1) < 0.0001)
+            for id in PlayerID.allCases {
+                let box = CalibrationStageLayout.boxRect(id, solo: false, in: size)
+                let source = CalibrationStageLayout.sourceRect(for: box, in: size, aspect: 16 / 9, fill: true)
+                #expect(visible.contains(source))
+                #expect(id == .player1 ? source.minX >= 0.5 : source.maxX <= 0.5)
+            }
+        }
+        let visible = CalibrationStageLayout.sourceRect(for: CGRect(x: 0, y: 0, width: 1376, height: 1032),
+            in: CGSize(width: 1376, height: 1032), aspect: 16 / 9, fill: true)
+        #expect(abs(visible.minX - 0.125) < 0.0001 && abs(visible.width - 0.75) < 0.0001)
+    }
+    @Test func widerViewportFallsBackWithoutVerticalCropping() {
+        let size = CGSize(width: 1600, height: 800)
+        #expect(!CalibrationStageLayout.canFill(in: size, aspect: 16 / 9))
+        let image = CalibrationStageLayout.previewRect(in: size, aspect: 16 / 9)
+        #expect(image.width < size.width && image.height == size.height)
+        let source = CalibrationStageLayout.sourceRect(for: image, in: size, aspect: 16 / 9, fill: false)
+        #expect(abs(source.width - 1) < 0.0001 && abs(source.height - 1) < 0.0001)
+    }
+
 }

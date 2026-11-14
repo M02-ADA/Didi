@@ -121,6 +121,7 @@ struct SetupStagePreview: View {
         case "placement": (.waitingForReliablePair, [.player1: .linked, .player2: .searching], false)
         case "start": (.calibrating, [.player1: .calibrating(progress: 0, issue: nil), .player2: .calibrating(progress: 0, issue: nil)], false)
         case "early": (.calibrating, [.player1: .calibrating(progress: 0.2, issue: nil), .player2: .calibrating(progress: 0.1, issue: nil)], false)
+        case "hifi": (.calibrating, [.player1: .calibrating(progress: 0.5, issue: nil), .player2: .ready], false)
         case "onefull": (.calibrating, [.player1: .calibrating(progress: 1, issue: nil), .player2: .calibrating(progress: 0.6, issue: nil)], false)
         case "ready": (.awaitingGameplayReadiness, [.player1: .ready, .player2: .ready], false)
         case "solo": (.calibrating, [.player1: .calibrating(progress: 0.5, issue: nil)], true)
@@ -160,6 +161,11 @@ struct SetupStagePreview: View {
                 .background(.regularMaterial, in: .rect(cornerRadius: 20)).preferredColorScheme(.dark)
             }
         }
+        .overlay(alignment: .bottom) {
+            Text("SYNTHETIC CAMERA / STATUS FIXTURE — not physical tracking")
+                .font(.caption2.monospaced()).foregroundStyle(.white)
+                .padding(6).background(.black.opacity(0.35)).allowsHitTesting(false)
+        }
     }
 
     private struct StandIn: View {
@@ -168,12 +174,12 @@ struct SetupStagePreview: View {
             GeometryReader { g in
                 ZStack {
                     LinearGradient(colors: [.gray.opacity(0.5), .gray.opacity(0.25)], startPoint: .top, endPoint: .bottom)
-                    // Two adults about 1.7 m tall, 2.5 m from the camera: roughly 80 % of the frame height.
-                    ForEach(solo ? [0.5] : [0.27, 0.73], id: \.self) { x in
+                    // Symbol stand-ins inside the intended full-body areas; no camera or physical evidence.
+                    ForEach(solo ? [0.5] : [0.28, 0.70], id: \.self) { x in
                         Image(systemName: "figure.stand").resizable().scaledToFit()
-                            .frame(height: g.size.height * 0.8)
+                            .frame(height: g.size.height * 0.6)
                             .foregroundStyle(.white.opacity(0.6))
-                            .position(x: g.size.width * x, y: g.size.height * 0.52)
+                            .position(x: g.size.width * x, y: g.size.height * 0.57)
                     }
                 }
             }
