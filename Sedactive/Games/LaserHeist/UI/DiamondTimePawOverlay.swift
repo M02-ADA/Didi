@@ -122,20 +122,48 @@ struct DiamondTimePawOverlay: View {
     }
 
     private func drawPickup(_ context: GraphicsContext, at center: CGPoint, radius: CGFloat, age: Double) {
-        let progress = age / LaserDiamondTimeBoard.pickupEffectDuration
-        var effect = context
-        effect.opacity = 1 - progress
+        let duration = LaserDiamondTimeBoard.pickupEffectDuration
         if !reduceMotion {
-            if age < 0.14 { drawDiamond(effect, at: center, radius: radius * (1 + progress)) }
-            for index in 0..<4 {
-                let angle = Double(index) * .pi / 2 + .pi / 4
-                let spread = radius * (0.8 + 1.1 * progress)
-                let spark = CGPoint(x: center.x + cos(angle) * spread, y: center.y + sin(angle) * spread)
-                effect.draw(Text(Image(systemName: "sparkle")).font(.system(size: radius * 0.65))
-                    .foregroundStyle(.yellow), at: spark)
+            let popDuration = 0.08
+            let collapseDuration = 0.16
+            if age < popDuration + collapseDuration {
+                let rise = min(1, age / popDuration)
+                let fall = max(0, (age - popDuration) / collapseDuration)
+                let scale = (1 + 0.30 * (1 - pow(1 - rise, 3))) * (1 - fall * fall)
+                var gem = context
+                gem.opacity = 1 - fall
+                drawDiamond(gem, at: center, radius: radius * scale)
+            }
+
+            let burst = min(1, age / 0.29)
+            if burst < 1 {
+                var sparkles = context
+                sparkles.opacity = (1 - burst) * (1 - burst)
+                let spread = radius * (0.85 + 0.95 * (1 - pow(1 - burst, 3)))
+                for index in 0..<4 {
+                    let angle = Double(index) * .pi / 2 + .pi / 4
+                    let spark = CGPoint(x: center.x + cos(angle) * spread, y: center.y + sin(angle) * spread)
+                    sparkles.draw(Text(Image(systemName: "sparkle"))
+                        .font(.system(size: radius * (0.58 - 0.22 * burst)))
+                        .foregroundStyle(.yellow), at: spark)
+                }
             }
         }
-        effect.draw(Text("+25").font(.system(size: max(15, radius * 0.90), weight: .black, design: .rounded))
-            .foregroundStyle(.white), at: CGPoint(x: center.x, y: center.y - radius * (1.0 + (reduceMotion ? 0 : progress))))
+
+        let fade = max(0, (age - 0.23) / (duration - 0.23))
+        let lift = reduceMotion ? 0 : 0.55 * min(1, age / 0.23)
+        var confirmation = context
+        confirmation.opacity = 1 - fade
+        let label = confirmation.resolve(Text("+25")
+            .font(.system(size: max(15, radius * 0.90), weight: .black, design: .rounded))
+            .foregroundStyle(.white))
+        let labelSize = label.measure(in: CGSize(width: 120, height: 60))
+        let position = CGPoint(x: center.x, y: center.y - radius * (1.05 + lift))
+        let background = CGRect(x: position.x - labelSize.width / 2 - 7,
+                                y: position.y - labelSize.height / 2 - 3,
+                                width: labelSize.width + 14, height: labelSize.height + 6)
+        confirmation.fill(Path(roundedRect: background, cornerRadius: background.height / 2),
+                          with: .color(Color(red: 0.12, green: 0.07, blue: 0.27).opacity(0.86)))
+        confirmation.draw(label, at: position)
     }
 }
