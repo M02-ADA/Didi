@@ -5,19 +5,22 @@
 
 import SwiftUI
 
-/// "To start the game, stand here" (Sketch "Hi-Fi Revisi 6 NOV" › Game Set Up,
-/// artboard "Home Copy 19"): the camera image and a dashed standing guide for
-/// each player, P1 left and P2 right.
+/// The calibration stage (Sketch "Hi-Fi Revisi 6 NOV" › Stack 5 Game Set Up: Home Copy 19
+/// "stand inside the box to start", Home Copy 42 "stand still, don’t move"): the camera image and
+/// one standing box per player, P1 left and P2 right, laid out on the 1210 × 834 artboard.
 ///
-/// The WHOLE camera frame is shown (aspect fit, never cropped), below a compact
-/// instruction band, so what the players see is exactly what tracking sees, and
-/// the guides are laid out as shares of that image: each covers most of its half.
-/// The 11 November layout used aspect fill, which cut about a quarter of the 16:9
-/// image's width off a 4:3 screen, and fixed 365 × 553 pt guides not tied to it.
+/// - The WHOLE camera frame is shown (aspect fit, never cropped) below a title band, so what the
+///   players see is what tracking sees (11 November decision). The boxes are Sketch's exact
+///   rectangles (422 × 601 pt at x 149 and 668, y 177, radius 59) scaled with the artboard; on every
+///   supported landscape iPad they lie inside the camera image, each within its player's half, so
+///   standing inside a box always means standing where the tracker looks for that player.
+/// - Each box is a white dashed outline until its player is calibrated; a yellow stroke traces it
+///   clockwise from the top centre as that player's REAL calibration evidence grows
+///   (`CalibrationGuideBox`), and closes when calibration is accepted.
 ///
-/// Presentation only. Binding, calibration and readiness are the live
-/// session's; its controls sit in `panel`. Nothing here decides that a player is
-/// placed or calibrated, and the guides never change tracking coordinates.
+/// Presentation only. Binding, calibration and readiness are the live session's; its controls
+/// sit in `panel`. Nothing here decides that a player is placed or calibrated, and the boxes never
+/// change tracking coordinates.
 struct CalibrationStageView<Panel: View>: View {
     /// The camera image as the camera delivers it (unmirrored), e.g.
     /// `CalibrationCameraPreview` on `CameraPipeline.previewSession`; mirrored
@@ -25,26 +28,23 @@ struct CalibrationStageView<Panel: View>: View {
     var cameraPreview: AnyView?
     /// The capture's width ÷ height (1280 × 720 → 16:9).
     var cameraAspect: CGFloat = 16 / 9
-    /// Automatic setup: each player's status, shown inside their standing guide.
+    /// Automatic setup: each player's status, shown by their box.
     var playerStatus: [PlayerID: LaserSetupPlayerStatus] = [:]
-    /// DEBUG Solo Test: one centred guide for P1 instead of two halves.
+    /// DEBUG Solo Test: one centred box for P1 instead of two.
     var solo = false
     let onBack: () -> Void
     @ViewBuilder var panel: () -> Panel
 
-    /// Guide size as shares of the camera image: each player's half, with a margin.
-    static var guideWidthShare: CGFloat { 0.42 }
-    static var guideHeightShare: CGFloat { 0.94 }
-
     var body: some View {
         GeometryReader { geo in
-            let k = min(geo.size.width / LaserHeistDesign.artboard.width, geo.size.height / LaserHeistDesign.artboard.height)
-            let band = Self.bandHeight(for: geo.size)
-            let image = Self.imageRect(in: geo.size, band: band, aspect: cameraAspect)
+            let k = CalibrationStageLayout.scale(for: geo.size)
+            let band = CalibrationStageLayout.bandHeight(for: geo.size)
+            let image = CalibrationStageLayout.imageRect(in: geo.size, band: band, aspect: cameraAspect)
+            let origin = CalibrationStageLayout.artboardOrigin(in: geo.size)
             ZStack(alignment: .topLeading) {
                 Color.black
                 // Mirrored for display only (CP2 rule): players see themselves
-                // as in a mirror, so P1 on the left stands in the left guide.
+                // as in a mirror, so P1 on the left stands in the left box.
                 if let cameraPreview {
                     cameraPreview
                         .scaleEffect(x: -1, y: 1)
@@ -62,67 +62,33 @@ struct CalibrationStageView<Panel: View>: View {
                     .frame(width: geo.size.width, height: band * 1.4)
                     .allowsHitTesting(false)
                 ForEach(solo ? [PlayerID.player1] : PlayerID.allCases, id: \.self) { player in
-                    let guide = solo ? Self.soloGuideRect(in: image) : Self.guideRect(player, in: image)
-                    standingGuide(player, k: k, corner: guide.width * 0.14)
-                        .frame(width: guide.width, height: guide.height)
-                        .offset(x: guide.minX, y: guide.minY)
-                        .accessibilityLabel(player == .player1 ? "Player 1 standing area" : "Player 2 standing area")
-                    // In the guide's outer top corner: never over the feet (the hints ask players
-                    // to check them) or the head (centred).
-                    if let status = playerStatus[player] {
-                        statusChip(player, status, k)
-                            .frame(width: guide.width - 2 * guide.width * 0.1,
-                                   alignment: player == .player1 ? .leading : .trailing)
-                            .offset(x: guide.minX + guide.width * 0.1, y: guide.minY + 18 * k)
-                    }
+                    let box = CalibrationStageLayout.boxRect(player, solo: solo, in: geo.size)
+                    CalibrationGuideBox(player: player, status: playerStatus[player], k: k,
+                                        sweepOffset: player == .player2 ? 0.45 : 0)
+                        .frame(width: box.width, height: box.height)
+                        .offset(x: box.minX, y: box.minY)
                 }
-                HStack(alignment: .top, spacing: 16 * k) {
-                    SketchBackButton(k: k, action: onBack)
+                // The title band: the headline centred on the screen, as in Sketch.
+                Group {
                     if Panel.self == EmptyView.self {
-                        Text("To start the game, stand here")
-                            .font(.system(size: 34 * k, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity)
-                            .accessibilityAddTraits(.isHeader)
+                        CalibrationStageHeadline(text: LaserAutomaticSetupCopy.placementHeadline, detail: nil)
                     } else {
-                        panel().frame(maxWidth: .infinity, maxHeight: band - 16 * k, alignment: .top)
+                        panel()
                     }
                 }
-                .padding(.horizontal, 24 * k).padding(.top, 10 * k)
-                .frame(width: geo.size.width, alignment: .topLeading)
+                .environment(\.calibrationStageScale, k)
+                // From the Sketch title's top to just above the boxes (y 55 → 173 on the artboard).
+                .frame(width: max(0, geo.size.width - 2 * (CalibrationStageLayout.backButtonOrigin.x + 80) * k),
+                       height: CalibrationStageLayout.panelHeight * k, alignment: .top)
+                .offset(x: (CalibrationStageLayout.backButtonOrigin.x + 80) * k, y: origin.y + CalibrationStageLayout.titleTop * k)
+                SketchBackButton(k: k, action: onBack)
+                    .offset(x: origin.x + CalibrationStageLayout.backButtonOrigin.x * k, y: origin.y + CalibrationStageLayout.backButtonOrigin.y * k)
             }
         }
         .ignoresSafeArea()
     }
 
-    /// The instruction band above the image: room for a short title, one line and buttons.
-    static func bandHeight(for size: CGSize) -> CGFloat {
-        min(max(size.height * 0.15, 110), 160)
-    }
-
-    /// The camera image, aspect fit (whole frame) and centred in the space below the band.
-    static func imageRect(in size: CGSize, band: CGFloat, aspect: CGFloat) -> CGRect {
-        let available = CGSize(width: size.width, height: max(1, size.height - band))
-        let width = min(available.width, available.height * aspect)
-        let height = width / aspect
-        return CGRect(x: (size.width - width) / 2, y: band + (available.height - height) / 2, width: width, height: height)
-    }
-
-    /// A player's guide: most of their half of the (mirrored) image, P1 left.
-    static func guideRect(_ player: PlayerID, in image: CGRect) -> CGRect {
-        let width = image.width * guideWidthShare, height = image.height * guideHeightShare
-        let half = image.width / 2
-        let x = image.minX + (player == .player1 ? 0 : half) + (half - width) / 2
-        return CGRect(x: x, y: image.minY + (image.height - height) / 2, width: width, height: height)
-    }
-
-    /// The solo guide: the middle of the image, the size of one co-op guide.
-    static func soloGuideRect(in image: CGRect) -> CGRect {
-        let width = image.width * guideWidthShare, height = image.height * guideHeightShare
-        return CGRect(x: image.midX - width / 2, y: image.minY + (image.height - height) / 2, width: width, height: height)
-    }
-
-    /// Said plainly when there is no camera image, so the empty guides are not
+    /// Said plainly when there is no camera image, so the empty boxes are not
     /// mistaken for a camera that sees nobody. Not a Sketch element.
     private func cameraUnavailable(_ k: CGFloat) -> some View {
         Label(Self.unavailableText, systemImage: "video.slash.fill")
@@ -139,38 +105,246 @@ struct CalibrationStageView<Panel: View>: View {
     #else
     static var unavailableText: String { "Camera preview not connected yet" }
     #endif
+}
 
-    /// The Sketch dashed rounded rectangle, 5 pt border: dashed while searching,
-    /// solid once the player is found, green when ready.
-    private func standingGuide(_ player: PlayerID, k: CGFloat, corner: CGFloat) -> some View {
-        let status = playerStatus[player]
-        let found = status.map { $0 != .searching } ?? false
-        let color: Color = status == .ready ? Color(sketch: 0x7BE38A) : .white
-        return RoundedRectangle(cornerRadius: corner, style: .continuous)
-            .strokeBorder(color, style: StrokeStyle(lineWidth: 5 * k, lineCap: .butt,
-                                                    dash: found ? [] : [28 * k, 14 * k]))
+/// The calibration stage's geometry (Sketch Home Copy 19/42, artboard points → screen).
+enum CalibrationStageLayout {
+    /// Sketch Home Copy 19/42, artboard points.
+    static let boxSize = CGSize(width: 422, height: 601)
+    static let boxTop: CGFloat = 177
+    static let boxX: [PlayerID: CGFloat] = [.player1: 149, .player2: 668]
+    static let backButtonOrigin = CGPoint(x: 51, y: 63)
+    static let titleTop: CGFloat = 55
+    static let panelHeight: CGFloat = 118
+
+    /// The artboard's scale on this screen (aspect fit) and its top-left corner.
+    static func scale(for size: CGSize) -> CGFloat {
+        min(size.width / LaserHeistDesign.artboard.width, size.height / LaserHeistDesign.artboard.height)
     }
 
-    /// A readable status pill with a progress bar while measuring. No technical terms.
-    private func statusChip(_ player: PlayerID, _ status: LaserSetupPlayerStatus, _ k: CGFloat) -> some View {
+    static func artboardOrigin(in size: CGSize) -> CGPoint {
+        let k = scale(for: size)
+        return CGPoint(x: (size.width - LaserHeistDesign.artboard.width * k) / 2,
+                       y: (size.height - LaserHeistDesign.artboard.height * k) / 2)
+    }
+
+    /// A player's box on screen: the Sketch rectangle scaled with the artboard (Solo: centred).
+    static func boxRect(_ player: PlayerID, solo: Bool, in size: CGSize) -> CGRect {
+        let k = scale(for: size), origin = artboardOrigin(in: size)
+        let x = solo ? (LaserHeistDesign.artboard.width - boxSize.width) / 2 : boxX[player, default: 149]
+        return CGRect(x: origin.x + x * k, y: origin.y + boxTop * k, width: boxSize.width * k, height: boxSize.height * k)
+    }
+
+    /// The instruction band above the image: room for the title and one line.
+    static func bandHeight(for size: CGSize) -> CGFloat {
+        min(max(size.height * 0.15, 110), 160)
+    }
+
+    /// The camera image, aspect fit (whole frame) and centred in the space below the band.
+    static func imageRect(in size: CGSize, band: CGFloat, aspect: CGFloat) -> CGRect {
+        let available = CGSize(width: size.width, height: max(1, size.height - band))
+        let width = min(available.width, available.height * aspect)
+        let height = width / aspect
+        return CGRect(x: (size.width - width) / 2, y: band + (available.height - height) / 2, width: width, height: height)
+    }
+
+}
+
+/// The calibration stage's artboard scale, for the panel's Sketch-sized title.
+extension EnvironmentValues {
+    @Entry var calibrationStageScale: CGFloat = 1
+}
+
+/// Sketch title: SF Pro Rounded Bold 57 pt, white, centred (Home Copy 19 and 42; measured against
+/// the Sketch render: both strings' widths and ink coverage match). The change between the two
+/// headlines crossfades; an optional short line sits underneath.
+struct CalibrationStageHeadline: View {
+    let text: String
+    let detail: String?
+    @Environment(\.calibrationStageScale) private var k
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
         VStack(spacing: 6 * k) {
-            Label(LaserAutomaticSetupCopy.chip(player, status, solo: solo),
-                  systemImage: status == .ready ? "checkmark.circle.fill" : status == .searching ? "person.fill.questionmark" : "figure.stand")
-                .font(.system(size: 19 * k, weight: .bold, design: .rounded))
+            Text(text)
+                .font(.system(size: 57 * k, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
-            if case .calibrating(let progress, _) = status {
-                ProgressView(value: min(1, max(0, progress)))
-                    .tint(player == .player1 ? Color(sketch: 0xF6CA58) : Color(sketch: 0xF78146))
-                    .frame(width: 170 * k)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .shadow(color: .black.opacity(0.25), radius: 6 * k, y: 2 * k)
+                .id(text)
+                .transition(.opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.96)))
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("setupPhase")
+            if let detail {
+                Text(detail)
+                    .font(.system(size: 21 * k, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .transition(.opacity)
+                    .accessibilityIdentifier("setupInstruction")
             }
         }
-        .padding(.horizontal, 18 * k).padding(.vertical, 10 * k)
-        .background(.black.opacity(0.55), in: Capsule())
-        .accessibilityElement(children: .combine)
+        .frame(maxWidth: .infinity)
+        .animation(reduceMotion ? .linear(duration: 0.15) : .easeInOut(duration: 0.35), value: text)
+        .animation(.easeInOut(duration: 0.25), value: detail)
+    }
+}
+
+/// One player's standing box (Sketch Home Copy 19/42), driven by the player's REAL calibration
+/// status only:
+/// - white dashed outline (5 pt, dashes 30/10, radius 59) until calibrated;
+/// - a yellow stroke (#F1C03A, 11 pt, round caps, soft drop shadow) traced clockwise from the
+///   top centre, `borderProgress` of the way round, eased between the 0.25 s samples so it grows
+///   smoothly; it closes only when calibration is accepted;
+/// - the Sketch scan band (#6A6CC1, fading in toward a #BDCAFF glowing edge) sweeping down while
+///   the box is in use and not complete (none under Reduce Motion).
+struct CalibrationGuideBox: View {
+    let player: PlayerID
+    let status: LaserSetupPlayerStatus?
+    let k: CGFloat
+    /// Offsets the two boxes' sweeps (Sketch shows them at different heights).
+    var sweepOffset: Double = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    static let yellow = Color(sketch: 0xF1C03A)
+    static let cornerRadius: CGFloat = 59
+    static let dashedWidth: CGFloat = 5
+    static let progressWidth: CGFloat = 11
+    /// A full window of stable samples is not yet an accepted calibration (both players are
+    /// accepted together, then checked): it traces to here, and only acceptance closes the box.
+    static let evidenceShare = 0.92
+
+    /// How much of the outline is yellow for this status (0…1).
+    static func borderProgress(_ status: LaserSetupPlayerStatus?) -> Double {
+        switch status {
+        case .ready: 1
+        case .calibrating(let progress, _): evidenceShare * min(1, max(0, progress.isFinite ? progress : 0))
+        case .searching, .linked, nil: 0
+        }
+    }
+
+    /// Whether the scan band sweeps: the player is being found or measured, not done.
+    static func scans(_ status: LaserSetupPlayerStatus?) -> Bool {
+        switch status {
+        case .searching, .linked, .calibrating: true
+        case .ready, nil: false
+        }
+    }
+
+    var body: some View {
+        let radius = Self.cornerRadius * k
+        let progress = Self.borderProgress(status)
+        let done = status == .ready
+        ZStack {
+            if Self.scans(status), !reduceMotion {
+                CalibrationScanSweep(k: k, offset: sweepOffset)
+                    .clipShape(RoundedRectangle(cornerRadius: radius, style: .circular))
+                    .transition(.opacity)
+            }
+            RoundedRectangle(cornerRadius: radius, style: .circular)
+                .strokeBorder(.white, style: StrokeStyle(lineWidth: Self.dashedWidth * k, lineCap: .butt,
+                                                         dash: [30 * k, 10 * k]))
+                .opacity(done ? 0 : 1)
+            // The progress stroke sits inside the box like the completed border, so 100 % is the
+            // finished look exactly.
+            let inset = Self.progressWidth * k / 2
+            CalibrationTracePath(cornerRadius: max(0, radius - inset))
+                .inset(by: inset)
+                .trim(from: 0, to: progress)
+                .stroke(Self.yellow, style: StrokeStyle(lineWidth: Self.progressWidth * k, lineCap: .round, lineJoin: .round))
+                .shadow(color: .black.opacity(0.25), radius: 4 * k, y: 4 * k)
+                .opacity(progress > 0.001 ? 1 : 0)
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.4), value: progress)
+        .animation(.easeInOut(duration: 0.3), value: done)
+        .animation(.easeInOut(duration: 0.3), value: Self.scans(status))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(player == .player1 ? "Player 1 standing area" : "Player 2 standing area")
+        .accessibilityValue(Self.accessibilityValue(status))
         .accessibilityIdentifier(player == .player1 ? "setupStatusP1" : "setupStatusP2")
+    }
+
+    static func accessibilityValue(_ status: LaserSetupPlayerStatus?) -> String {
+        switch status {
+        case .ready: "Calibrated"
+        case .calibrating(let progress, _): "Measuring, \(Int((min(1, max(0, progress)) * 100).rounded())) percent"
+        case .linked: "In place"
+        case .searching, nil: "Waiting for a player"
+        }
+    }
+}
+
+/// A rounded rectangle traced clockwise from the middle of its top edge, so `trim(from: 0, to:)`
+/// grows like a progress ring around the box (Sketch Home Copy 42: P1's yellow begins top centre).
+struct CalibrationTracePath: InsettableShape {
+    var cornerRadius: CGFloat
+    var insetAmount: CGFloat = 0
+
+    func path(in rect: CGRect) -> Path {
+        let r = rect.insetBy(dx: insetAmount, dy: insetAmount)
+        let c = min(cornerRadius, r.width / 2, r.height / 2)
+        var path = Path()
+        path.move(to: CGPoint(x: r.midX, y: r.minY))
+        path.addLine(to: CGPoint(x: r.maxX - c, y: r.minY))
+        path.addArc(center: CGPoint(x: r.maxX - c, y: r.minY + c), radius: c, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false)
+        path.addLine(to: CGPoint(x: r.maxX, y: r.maxY - c))
+        path.addArc(center: CGPoint(x: r.maxX - c, y: r.maxY - c), radius: c, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
+        path.addLine(to: CGPoint(x: r.minX + c, y: r.maxY))
+        path.addArc(center: CGPoint(x: r.minX + c, y: r.maxY - c), radius: c, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
+        path.addLine(to: CGPoint(x: r.minX, y: r.minY + c))
+        path.addArc(center: CGPoint(x: r.minX + c, y: r.minY + c), radius: c, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
+        path.closeSubpath()
+        return path
+    }
+
+    func inset(by amount: CGFloat) -> CalibrationTracePath {
+        var copy = self
+        copy.insetAmount += amount
+        return copy
+    }
+}
+
+/// The Sketch scan band: from the box top down to a glowing edge (#6A6CC1 rising from about 10 %
+/// to 90 % opacity, measured on the Sketch render; edge #BDCAFF, 5 pt, white glow), sweeping down
+/// the box and starting again. Cosmetic: it says "looking", never how far calibration is.
+struct CalibrationScanSweep: View {
+    let k: CGFloat
+    var offset: Double = 0
+    static let period = 2.6
+
+    /// The band's share of the box height at `time` (eased down, then a quick fade at the bottom).
+    static func sweep(at time: TimeInterval, offset: Double) -> (height: Double, opacity: Double) {
+        let phase = ((time / period + offset).truncatingRemainder(dividingBy: 1) + 1).truncatingRemainder(dividingBy: 1)
+        let eased = phase * phase * (3 - 2 * phase)
+        let opacity = phase < 0.85 ? 1 : max(0, 1 - (phase - 0.85) / 0.15)
+        return (eased, opacity)
+    }
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            GeometryReader { geo in
+                let s = Self.sweep(at: context.date.timeIntervalSinceReferenceDate, offset: offset)
+                let height = geo.size.height * s.height
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [Color(sketch: 0x6A6CC1, opacity: 0.08), Color(sketch: 0x6A6CC1, opacity: 0.88)],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: height)
+                    Rectangle()
+                        .fill(Color(sketch: 0xBDCAFF))
+                        .frame(height: 5 * k)
+                        .shadow(color: .white, radius: 8 * k)
+                    Spacer(minLength: 0)
+                }
+                .opacity(s.opacity)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
 #Preview(traits: .landscapeLeft) {
-    CalibrationStageView(onBack: {}) { EmptyView() }
+    CalibrationStageView(playerStatus: [.player1: .calibrating(progress: 0.5, issue: nil), .player2: .ready], onBack: {}) { EmptyView() }
 }

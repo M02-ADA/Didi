@@ -9,7 +9,7 @@ nonisolated struct LaserTrackingWarningModelTests {
 
     @Test func onlyATrackingPauseOfAStartedRoundShowsIt() {
         let lost = W.Input(roundStarted: true, sessionPhase: .paused, readinessBlocker: .measurements, attention: [.player2: .tracking])
-        #expect(W.triggers(lost) && W(lost).stage == .waitingForPlayers && W(lost).detail.hasPrefix("P2: step back into your place."))
+        #expect(W.triggers(lost) && W(lost).stage == .waitingForPlayers && W(lost).detail.hasPrefix("P2: stand in your place, whole body in view."))
         #expect(!W.triggers(W.Input(roundStarted: false, sessionPhase: .paused, attention: [.player2: .tracking])), "not before the round")
         #expect(!W.triggers(W.Input(roundStarted: true, roundEnded: true, sessionPhase: .paused, attention: [.player2: .tracking])))
         #expect(!W.triggers(W.Input(roundStarted: true, sessionPhase: .paused, readinessBlocker: .manualPause, hasPacket: false)))

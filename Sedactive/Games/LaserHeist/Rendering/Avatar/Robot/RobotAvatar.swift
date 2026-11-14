@@ -709,6 +709,12 @@ final class RobotAvatarLayer {
         var squash: Float = 1
         var opacity: Float = 1
         var boardOpacity: Float = 1
+        /// A held root (lane-local) the move starts from instead of the live tracked root, and how
+        /// much of it applies (1: held, 0: live). A short cinematic holds the mascot still against
+        /// live tracking (a player's lean or jump would otherwise push the scripted flight), then
+        /// blends back to the live root without a pop.
+        var anchor: SIMD3<Float>?
+        var anchorWeight: Float = 1
         static let none = ScriptedMove()
     }
     /// Scripted moves by player; a player without one is shown as tracked.
@@ -735,6 +741,143 @@ final class RobotAvatarLayer {
     #endif
     /// Each mascot's tracked root (sway, lift) before any scripted move.
     private var trackedRoot: [PlayerID: SIMD3<Float>] = [:]
+
+    // MARK: Laser HIT reaction (`LaserHitReaction`, `LaserHitZap`; presentation only)
+
+    private struct ActiveHit {
+        let reaction: LaserHitReaction
+        /// Render time of the first frame shown (set by that frame: one clock, the render loop's).
+        var start: Double?
+        /// Where the beam met the mascot, in its lane's space.
+        let contact: SIMD3<Float>
+        var frame = LaserHitReaction.Frame.rest
+    }
+    private var hits: [PlayerID: ActiveHit] = [:]
+    private var zaps: [PlayerID: LaserHitZap] = [:]
+    /// While a reaction shows, the pose WITHOUT it: diamond contact reads this, never the zap.
+    private var unreactedJoints: [PlayerID: [Transform]] = [:]
+    private var hitCount: UInt32 = 0
+    #if DEBUG
+    /// DEBUG previews: Reduce Motion without changing the device setting.
+    static var forcesReducedMotionForHits = false
+    #endif
+    private static var hitsReduceMotion: Bool {
+        #if DEBUG
+        if forcesReducedMotionForHits { return true }
+        #endif
+        return UIAccessibility.isReduceMotionEnabled
+    }
+
+    /// Plays one mascot's HIT reaction: call it for an authoritative HIT verdict only. `contact`
+    /// is where the shown beam meets the mascot (world); its height picks the upper or lower
+    /// body. A HIT within `LaserHitReaction.retriggerGuard` of the last one is the same hit; a
+    /// later one restarts the reaction cleanly (never stacks). The other mascot is untouched.
+    func startHitReaction(_ player: PlayerID, contact: SIMD3<Float>) {
+        guard let robot = robots[player], let lane = robot.container.parent else { return }
+        if let hit = hits[player], let start = hit.start, let shown = lastPresented[player],
+           shown - start < LaserHitReaction.retriggerGuard { return }
+        if let hit = hits[player], hit.start == nil { return }
+        let local = lane.convert(position: contact, from: nil)
+        let feetY = trackedRoot[player]?.y ?? 0
+        let region: LaserHitReaction.Region = local.y - feetY >= Self.standingHeight * 0.5 ? .upper : .lower
+        hitCount &+= 1
+        // Knocked outward, away from the partner: P1 rides the left lane.
+        let reaction = LaserHitReaction(region: region, side: player == .player1 ? -1 : 1,
+                                        reduceMotion: Self.hitsReduceMotion, seed: hitCount &* 7 &+ (player == .player1 ? 1 : 2))
+        hits[player] = ActiveHit(reaction: reaction, contact: local)
+        if zaps[player] == nil {
+            let zap = LaserHitZap()
+            zap.root.name = "player.\(player.rawValue).laserHitZap"
+            lane.addChild(zap.root)
+            zaps[player] = zap
+        }
+    }
+
+    /// Whether a mascot is showing a HIT reaction (tests, previews).
+    func isReactingToHit(_ player: PlayerID) -> Bool { hits[player] != nil }
+    /// The reaction a mascot shows (tests, previews).
+    func hitReaction(_ player: PlayerID) -> LaserHitReaction? { hits[player]?.reaction }
+    /// The reaction frame a mascot shows now (tests).
+    func hitFrame(_ player: PlayerID) -> LaserHitReaction.Frame? { hits[player]?.frame }
+
+    /// Ends every HIT reaction at once (a new round, a stop, the avatars' removal): the mascots
+    /// show their plain live pose again and no effect stays on screen.
+    func cancelHitReactions() {
+        let players = Array(hits.keys)
+        hits = [:]
+        unreactedJoints = [:]
+        for zap in zaps.values { zap.hide() }
+        for player in players { applyScripted(player) }
+    }
+
+    /// The render time each mascot was last presented at (the reaction's clock).
+    private var lastPresented: [PlayerID: Double] = [:]
+
+    /// The current reaction frame for `player` at render `time`, starting its clock on the first
+    /// frame and ending it after `LaserHitReaction.duration`.
+    private func advanceHit(_ player: PlayerID, time: Double) -> (LaserHitReaction, LaserHitReaction.Frame, Double)? {
+        guard var hit = hits[player] else { return nil }
+        let start = hit.start ?? time
+        hit.start = start
+        let tau = time - start
+        guard tau < LaserHitReaction.duration else {
+            hits[player] = nil
+            unreactedJoints[player] = nil
+            zaps[player]?.hide()
+            return nil
+        }
+        hit.frame = hit.reaction.frame(at: tau)
+        hits[player] = hit
+        return (hit.reaction, hit.frame, tau)
+    }
+
+    /// The zap's effects on the mascot's posed body.
+    private func showZap(_ player: PlayerID, robot: Robot, reaction: LaserHitReaction, frame: LaserHitReaction.Frame, tau: Double) {
+        guard let zap = zaps[player], let lane = robot.container.parent, let hit = hits[player] else { return }
+        guard robot.container.isEnabled else { zap.hide(); return }
+        let skeleton = robot.solver.skeleton
+        let pose = skeleton.world(robot.model.jointTransforms)
+        func point(_ name: String, _ offset: SIMD3<Float> = .zero) -> SIMD3<Float> {
+            guard let i = skeleton(name) else { return robot.container.position }
+            return robot.model.convert(position: pose.position[i] + pose.rotation[i].act(offset), to: lane)
+        }
+        let bind = skeleton.world(skeleton.bind)
+        var headTop = point("Head"), headCenter = headTop
+        if let head = skeleton("Head") {
+            let top = SIMD3<Float>(bind.position[head].x, RobotSkeleton.modelHeight, bind.position[head].z)
+            let offset = bind.rotation[head].inverse.act(top - bind.position[head])
+            headTop = point("Head", offset)
+            headCenter = point("Head", offset * 0.5)
+        }
+        let body = LaserHitZap.Body(
+            headTop: headTop, headCenter: headCenter,
+            headHalfWidth: 0.3 * Self.standingHeight / 1.6,
+            chest: point("Chest"), pelvis: point("Pelvis"),
+            hands: (point("Hand_L"), point("Hand_R")), knees: (point("Shin_L"), point("Shin_R")),
+            feet: (point("Foot_L"), point("Foot_R")))
+        // The contact at the mascot as drawn now (it moves with the recoil).
+        var contact = hit.contact
+        contact.x = robot.container.position.x
+        zap.show(reaction, frame: frame, at: tau, body: body, contact: contact)
+    }
+
+    /// The pose diamond contact reads: the live tracked pose, never a HIT reaction's offsets
+    /// (cosmetic only; TEAM_ALIGNMENT §C: judged geometry is never moved by presentation).
+    func contactPose(_ player: PlayerID) -> (joints: [Transform], toWorld: (SIMD3<Float>) -> SIMD3<Float>)? {
+        guard let robot = robots[player] else { return nil }
+        guard let frame = hits[player]?.frame, !frame.isRest, let joints = unreactedJoints[player],
+              let lane = robot.container.parent else {
+            return (robot.model.jointTransforms, { robot.model.convert(position: $0, to: nil) })
+        }
+        let move = scriptedMoves[player] ?? .none
+        let tracked = trackedRoot[player] ?? .zero
+        let base = move.anchor.map { tracked + ($0 - tracked) * max(0, min(1, move.anchorWeight)) } ?? tracked
+        let squash = max(0.05, move.squash).squareRoot()
+        let rest = Transform(scale: SIMD3(move.scale / squash, move.scale * squash, move.scale / squash) * Self.modelScale,
+                             rotation: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1), translation: base + move.offset)
+        let matrix = lane.transformMatrix(relativeTo: nil) * rest.matrix * robot.model.transformMatrix(relativeTo: robot.container)
+        return (joints, { p in let v = matrix * SIMD4<Float>(p, 1); return SIMD3(v.x, v.y, v.z) })
+    }
     private(set) var walksInVault = false
     private struct WalkingPosition {
         let entryHipX: Float
@@ -1493,6 +1636,8 @@ final class RobotAvatarLayer {
 
     /// A mascot's tracked root X on its lane (metres from the lane centre), before any scripted move.
     func trackedRootX(_ player: PlayerID) -> Float? { trackedRoot[player]?.x }
+    /// The tracked root (lane-local: sideways steering and sway, lift), before any scripted move.
+    func trackedRootPosition(_ player: PlayerID) -> SIMD3<Float>? { trackedRoot[player] }
 
     /// A mascot's current world X as drawn (its lane plus its tracked root and any scripted move).
     func mascotWorldX(_ player: PlayerID) -> Float? {
@@ -1635,12 +1780,29 @@ final class RobotAvatarLayer {
            reachConsole(&t, solved: solved.local, robot: robot, player: player, console: console, time: time) {
             solved = robot.solver.solveDetailed(t)
         }
-        robot.model.jointTransforms = solved.local
+        lastPresented[player] = time
+        let hit = advanceHit(player, time: time)
+        if let frame = hit?.1, !frame.isRest {
+            // The zap adds to the live pose (never replaces it); diamond contact keeps the pose without it.
+            unreactedJoints[player] = solved.local
+            if !frame.holdsPose {
+                var zapped = t
+                zapped.lean += frame.lean
+                zapped.headRoll += frame.headRoll
+                zapped.shoulderShrug += frame.shoulderShrug
+                zapped.pelvisDrop += frame.pelvisDip / scale
+                robot.model.jointTransforms = robot.solver.solveDetailed(zapped).local
+            }
+            // Hit-stop: the joints keep last frame's pose for `LaserHitReaction.hitStop`.
+        } else {
+            robot.model.jointTransforms = solved.local
+        }
         if diagnosticsEnabled { recordFeet(player, robot, solved, rootX: rootX, ride: ride, lift: s.lift, plan: plan, trackedLift: t.footLift) }
         #if DEBUG
         if showsFairnessMarkers { updateFairnessMarkers(player) }
         #endif
         applyScripted(player)
+        if let hit { showZap(player, robot: robot, reaction: hit.0, frame: hit.1, tau: hit.2) }
         #if DEBUG
         logSteering(player, time: time, trunk: t.lean, bank: hoverboards[player]?.motion.bank ?? 0, tracked: r.isAvailable)
         #endif
@@ -1670,8 +1832,14 @@ final class RobotAvatarLayer {
     private func applyScripted(_ player: PlayerID) {
         guard let robot = robots[player] else { return }
         let move = scriptedMoves[player] ?? .none
-        robot.container.position = (trackedRoot[player] ?? .zero) + move.offset
-        let squash = max(0.05, move.squash).squareRoot()
+        let tracked = trackedRoot[player] ?? .zero
+        let base = move.anchor.map { tracked + ($0 - tracked) * max(0, min(1, move.anchorWeight)) } ?? tracked
+        // A HIT reaction adds its recoil, tilt (about the feet) and squash on top of all of that.
+        let hit = hits[player]?.frame ?? .rest
+        robot.container.position = base + move.offset + hit.rootOffset
+        let tilt = simd_quatf(angle: hit.roll, axis: [0, 0, 1]) * simd_quatf(angle: hit.pitch, axis: [1, 0, 0])
+        if robot.container.orientation != tilt { robot.container.orientation = tilt }
+        let squash = max(0.05, move.squash * hit.squash).squareRoot()
         robot.container.scale = SIMD3(move.scale / squash, move.scale * squash, move.scale / squash) * Self.modelScale
         // Dimmed exactly while the player is not tracked (the pose itself fades separately).
         let opacity = (robot.retargeter.isAvailable ? 1 : Self.unavailableOpacity) * max(0, min(1, move.opacity))
@@ -1748,6 +1916,10 @@ final class RobotAvatarLayer {
         for marker in fairnessMarkers.values.flatMap({ $0 }) { marker.removeFromParent() }
         fairnessMarkers = [:]
         #endif
+        hits = [:]
+        unreactedJoints = [:]
+        for zap in zaps.values { zap.root.removeFromParent() }
+        zaps = [:]
         robots = [:]
         shown = [:]
         footDiagnostics = [:]

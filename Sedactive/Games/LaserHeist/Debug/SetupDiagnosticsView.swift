@@ -90,33 +90,86 @@ struct SetupDiagnosticsView: View {
 #endif
 
 #if DEBUG
-/// DEBUG layout check (`-setupStagePreview`): the setup stage over a stand-in 16:9 "camera"
-/// with two figures where real players stand, and sample statuses. No camera, no session.
+/// DEBUG layout check (`-setupStagePreview [state]`): the setup stage over a stand-in 16:9 "camera"
+/// with two figures where real players stand. SYNTHETIC statuses, no camera, no session, through the
+/// REAL copy mapping (`LaserAutomaticSetupCopy`) and boxes (`CalibrationGuideBox`). States:
+/// placement, start, early, half, onefull, ready, solo, issue; `animate` steps progress at the real
+/// 0.25 s sample cadence, with a reset, to review the border's motion.
 struct SetupStagePreview: View {
+    private static var state: String {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-setupStagePreview"), index + 1 < arguments.count,
+              !arguments[index + 1].hasPrefix("-") else { return "half" }
+        return arguments[index + 1]
+    }
+
+    /// The scripted statuses at `t` seconds of the `animate` loop (a window of 10 samples, one per 0.25 s).
+    static func animated(at t: Double) -> (LaserSetupPhase, [PlayerID: LaserSetupPlayerStatus]) {
+        let loop = t.truncatingRemainder(dividingBy: 9)
+        if loop < 1.5 { return (.waitingForReliablePair, [.player1: .linked, .player2: .linked]) }
+        let samples = Int((loop - 1.5) / 0.25)
+        // P1: steady; P2: steady to 5 samples, moves (window restarts), then steady again.
+        let p1 = min(10, samples)
+        let p2 = samples < 5 ? samples : samples < 7 ? 0 : min(10, samples - 7)
+        if loop > 7.5 { return (.awaitingGameplayReadiness, [.player1: .ready, .player2: .ready]) }
+        return (.calibrating, [.player1: .calibrating(progress: Double(p1) / 10, issue: nil),
+                               .player2: .calibrating(progress: Double(p2) / 10, issue: samples >= 5 && samples < 7 ? .moving : nil)])
+    }
+
+    static func statuses(_ state: String) -> (LaserSetupPhase, [PlayerID: LaserSetupPlayerStatus], Bool) {
+        switch state {
+        case "placement": (.waitingForReliablePair, [.player1: .linked, .player2: .searching], false)
+        case "start": (.calibrating, [.player1: .calibrating(progress: 0, issue: nil), .player2: .calibrating(progress: 0, issue: nil)], false)
+        case "early": (.calibrating, [.player1: .calibrating(progress: 0.2, issue: nil), .player2: .calibrating(progress: 0.1, issue: nil)], false)
+        case "onefull": (.calibrating, [.player1: .calibrating(progress: 1, issue: nil), .player2: .calibrating(progress: 0.6, issue: nil)], false)
+        case "ready": (.awaitingGameplayReadiness, [.player1: .ready, .player2: .ready], false)
+        case "solo": (.calibrating, [.player1: .calibrating(progress: 0.5, issue: nil)], true)
+        case "issue": (.calibrating, [.player1: .calibrating(progress: 0.4, issue: nil), .player2: .calibrating(progress: 0.2, issue: .feetCutOff)], false)
+        default: (.calibrating, [.player1: .calibrating(progress: 0.5, issue: nil), .player2: .calibrating(progress: 0.5, issue: nil)], false)
+        }
+    }
+
     var body: some View {
-        CalibrationStageView(cameraPreview: AnyView(StandIn()), playerStatus: [
-            .player1: .calibrating(progress: 0.6, issue: nil), .player2: .calibrating(progress: 0.2, issue: .feetCutOff)],
-            onBack: {}) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Stand still and upright!").font(.title.bold())
-                    Text("Step back so your feet are in view.").font(.title3).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Leave camera setup", role: .cancel) {}.buttonStyle(.bordered).controlSize(.large)
+        if Self.state == "animate" {
+            TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                let (phase, players) = Self.animated(at: context.date.timeIntervalSinceReferenceDate)
+                stage(phase, players, solo: false)
             }
-            .padding(.horizontal, 18).padding(.vertical, 10)
-            .background(.regularMaterial, in: .rect(cornerRadius: 20)).preferredColorScheme(.dark)
+        } else {
+            let (phase, players, solo) = Self.statuses(Self.state)
+            stage(phase, players, solo: solo)
+        }
+    }
+
+    func stage(_ phase: LaserSetupPhase, _ players: [PlayerID: LaserSetupPlayerStatus], solo: Bool) -> some View {
+        var presence = LaserSetupPresence()
+        presence.players = players
+        presence.peopleInView = players.values.filter { $0 != .searching }.count
+        let copy = LaserAutomaticSetupCopy(.init(sessionPhase: .awaitingSetup, setupPhase: phase, presence: presence,
+                                                 hasRoundPlan: true, solo: solo))
+        return CalibrationStageView(cameraPreview: AnyView(StandIn(solo: solo)), playerStatus: players, solo: solo, onBack: {}) {
+            if let headline = copy.headline {
+                CalibrationStageHeadline(text: headline, detail: copy.headlineDetail)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(copy.title).font(.title.bold())
+                    Text(copy.instruction).font(.title3).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 18).padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.regularMaterial, in: .rect(cornerRadius: 20)).preferredColorScheme(.dark)
+            }
         }
     }
 
     private struct StandIn: View {
+        var solo = false
         var body: some View {
             GeometryReader { g in
                 ZStack {
                     LinearGradient(colors: [.gray.opacity(0.5), .gray.opacity(0.25)], startPoint: .top, endPoint: .bottom)
                     // Two adults about 1.7 m tall, 2.5 m from the camera: roughly 80 % of the frame height.
-                    ForEach([0.27, 0.73], id: \.self) { x in
+                    ForEach(solo ? [0.5] : [0.27, 0.73], id: \.self) { x in
                         Image(systemName: "figure.stand").resizable().scaledToFit()
                             .frame(height: g.size.height * 0.8)
                             .foregroundStyle(.white.opacity(0.6))

@@ -37,14 +37,9 @@ import Testing
                      hidden, "\(during.player1.state)", "\(during.player1.requiresRebind)", "\(during.player2.state)",
                      "\(during.player2.requiresRebind)", "\(after.player1.state)", "\(after.player1.requiresRebind)",
                      "\(after.player2.state)", "\(after.player2.requiresRebind)"))
-        if hidden <= Self.longestSafeHide {
-            #expect(!after.player1.requiresRebind && !after.player2.requiresRebind && after.player1.candidateID == 10,
-                    "short enough: the same identities, no rebind")
-        } else {
-            // Recorded current contract (Edo): past the gap the hidden player's anchor is too old to
-            // exclude, the OTHER, fully visible player is latched ambiguous and a rebind is required.
-            #expect(after.player1.requiresRebind || after.player2.requiresRebind, "past the gap: rebind required")
-        }
+        // With squat presence (Edo): a player still in view keeps both identities, however long.
+        #expect(!after.player1.requiresRebind && !after.player2.requiresRebind && after.player1.candidateID == 10,
+                "the same identities, no rebind")
     }
 
     /// The longest hidden-hips squat (30 Hz frames) that keeps both identities: the 1 s observation
@@ -60,7 +55,7 @@ import Testing
             longest = hidden
         }
         print(String(format: "[DuckEvidence] longest hidden-hips squat that keeps both identities: %.3f s", longest))
-        #expect(longest >= Self.longestSafeHide - 0.05 && longest < 1.0)
+        #expect(longest >= 1.5, "squat presence: every scanned length keeps both identities")
     }
 
     /// Hidden wrists alone (hips and shoulders visible) never touch identity.

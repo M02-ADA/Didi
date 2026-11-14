@@ -96,7 +96,7 @@ nonisolated struct LaserTrackingWarning: Equatable, Sendable {
             (stage, detail, primary) = (.recovering, "Found you! Hold still, the round continues in a moment.", nil)
         } else {
             let who = LiveEvidenceAttention.line(input.attention, solo: input.solo)
-                ?? (input.solo ? "Step back into the middle, whole body in view." : "Step back into your places, whole body in view.")
+                ?? (input.solo ? "Stand in the middle, whole body in view." : "Stand in your places, whole body in view.")
             (stage, detail, primary) = (.waitingForPlayers, "\(who) Your score is kept.", nil)
         }
     }

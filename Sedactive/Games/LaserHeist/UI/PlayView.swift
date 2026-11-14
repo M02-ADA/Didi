@@ -62,6 +62,7 @@ private struct ReplayRoundView: View {
     @State private var environmentPreview = EnvironmentPreview()
     @State private var hoverboardPreview = HoverboardPreview()
     @State private var finalVaultPreview = FinalVaultPreview()
+    @State private var hitReactionPreview = LaserHitReactionPreview()
     @State private var gateConsolePreview = GateConsolePreview()
     @State private var cutoutFeed: SyntheticCutoutFeed?
     @State private var directorPreview = DirectorLaserPreview()
@@ -208,6 +209,17 @@ private struct ReplayRoundView: View {
                     scene.isLaserVisible = false
                     try gateConsolePreview.start(on: content, scene: scene, robots: robots,
                                                  configuration: input.configuration, heldAt: heldAt)
+                } catch { startupError = String(describing: error) }
+                return
+            }
+            // Launch with `-replay -hitReactionPreview [p1|p2|both] [high|low] …` to review the HIT zap.
+            if LaserHitReactionPreview.isRequested {
+                do {
+                    let input = try LaserReplayScript.load().input
+                    let request = LaserHitReactionPreview.requested
+                    guard let robots = try await installAvatars(calibrations: input.configuration.calibrations,
+                                                                layout: input.configuration.playerPlaneLayout) else { return }
+                    hitReactionPreview.start(on: content, scene: scene, robots: robots, request: request)
                 } catch { startupError = String(describing: error) }
                 return
             }

@@ -20,10 +20,12 @@ extension RobotAvatarLayer {
     func diamondContactBody(_ player: PlayerID) -> [AvatarDiamondContactCapsule] {
         guard let robot = robots[player], robot.container.isEnabled, robot.model.isEnabled else { return [] }
         let skeleton = robot.solver.skeleton
-        let transforms = robot.model.jointTransforms
+        // The live pose without any HIT reaction: the zap is cosmetic and never moves contact.
+        guard let contact = contactPose(player) else { return [] }
+        let transforms = contact.joints
         guard transforms.count == skeleton.paths.count else { return [] }
         let pose = skeleton.world(transforms)
-        func world(_ p: SIMD3<Float>) -> SIMD3<Float> { robot.model.convert(position: p, to: nil) }
+        func world(_ p: SIMD3<Float>) -> SIMD3<Float> { contact.toWorld(p) }
         let scale = simd_distance(world([1, 0, 0]), world(.zero))
         var volumes: [AvatarDiamondContactCapsule] = []
         func add(_ a: String, _ b: String, radius: Float) {

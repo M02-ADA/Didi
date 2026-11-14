@@ -682,11 +682,15 @@ final class LaserScene {
             badge.y = headTop + 0.25
         }
         feedback.showOutcome(outcome, for: id, badgeAt: badge, impactAt: impact)
+        // The mascot itself is zapped (primary cue); the badge stays as the explicit one.
+        // Only a HIT: CLEAR and UNAVAILABLE never shock a mascot.
+        if outcome == .hit { robotAvatars?.startHitReaction(id, contact: impact) }
     }
 
     /// Clears the move cue and outcome feedback, e.g. when the next encounter starts.
     func clearLaserFeedback() {
         feedback.clear()
+        robotAvatars?.cancelHitReactions()
     }
 
     /// Reads the named placement points authored under `Root/Anchors`.

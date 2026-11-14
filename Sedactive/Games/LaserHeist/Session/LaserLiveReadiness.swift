@@ -118,9 +118,14 @@ nonisolated struct LaserLiveReadiness: Sendable {
            packet.frameID <= lastFrame || packet.capturedAt <= lastCapture { return }
         guard roster.allSatisfy({ id in
             guard let sample = packet.players[id] else { return false }
+            // WRISTS ARE ACTION EVIDENCE (PROPOSED by Kevin, 13 Nov 2026 — needs Jevon's review): a
+            // hidden wrist (a duck with the hands behind the body) no longer pauses the round. The
+            // DUCK judge still needs both wrists (UNAVAILABLE without them, never a free CLEAR) and
+            // the wall consoles and diamonds still need their own fresh wrists (no press). Readiness
+            // keeps reliable tracking, the head, both soles and the jump state.
             return sample.trackingStatus == .reliable
-                && [sample.geometry.crownY, sample.geometry.leftWristY, sample.geometry.rightWristY,
-                    sample.geometry.leftSoleY, sample.geometry.rightSoleY].allSatisfy { $0.validity == .valid }
+                && [sample.geometry.crownY, sample.geometry.leftSoleY, sample.geometry.rightSoleY]
+                    .allSatisfy { $0.validity == .valid }
                 && sample.jumpState.validity == .valid
         }) else {
             if toleratesMissingEvidence(at: time) { skippedFrames += 1 } else { try block(.measurements, at: time) }
