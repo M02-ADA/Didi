@@ -1,0 +1,275 @@
+import RealityKit
+import Testing
+import UIKit
+@testable import Sedactive
+
+/// The players' 3D hoverboards: the asset as RealityKit loads it, one board
+/// per mascot that never moves the lane, `ride` or the mascot, and the
+/// cosmetic hover and bank (deterministic, bounded, neutral without tracking).
+@MainActor
+struct PlayerHoverboardTests {
+    typealias Motion = PlayerHoverboard.Motion
+    typealias Input = PlayerHoverboard.Input
+
+    private static func run(_ motion: inout Motion, _ input: Input, seconds: Float, dt: Float = 1 / 60) {
+        for _ in 0..<Int((seconds / dt).rounded()) { motion.step(dt: dt, input: input) }
+    }
+
+    // MARK: Motion
+
+    @Test("A lean to screen right dips the board's right side, smoothly and at most about 3°")
+    func bankFollowsLean() {
+        var motion = Motion()
+        let lean = Input(lean: 0.15, available: true)
+        motion.step(dt: 1 / 60, input: lean)
+        #expect(motion.bank > 0 && motion.bank < Motion.bankTarget(for: lean), "eases in, never snaps")
+        Self.run(&motion, lean, seconds: 1)
+        #expect(abs(motion.bank - PlayerHoverboard.bankPerLean * 0.15) < 1e-3)
+        #expect(motion.roll < 0, "negative roll about +Z lowers +X, screen right")
+        Self.run(&motion, Input(lean: 5, available: true), seconds: 1)
+        #expect(abs(motion.bank - PlayerHoverboard.maximumBank) < 1e-4)
+        Self.run(&motion, Input(lean: -5, available: true), seconds: 1)
+        #expect(abs(motion.bank + PlayerHoverboard.maximumBank) < 1e-4)
+    }
+
+    @Test("Tracking loss keeps no stale lean or push-off: the board levels out")
+    func trackingLossLevelsTheBoard() {
+        var motion = Motion()
+        Self.run(&motion, Input(lean: 0.3, lift: 0.2, available: true), seconds: 1)
+        #expect(motion.bank > 0.05 && motion.recoil > 0.005)
+        Self.run(&motion, Input(lean: 0.3, lift: 0.2, available: false), seconds: 1)
+        #expect(abs(motion.bank) < 1e-4 && abs(motion.recoil) < 1e-4)
+        Self.run(&motion, Input(lean: .nan, lift: .infinity, available: true), seconds: 1)
+        #expect(abs(motion.bank) < 1e-4 && motion.recoil <= PlayerHoverboard.maximumRecoil, "invalid input is neutral")
+    }
+
+    @Test("The deck never rises above the soles' plane, whatever the hover, bank, pitch or push-off")
+    func deckNeverRisesIntoTheFeet() {
+        var motion = Motion()
+        var lowest: Float = 0
+        for step in 0..<1200 {
+            let t = Float(step) / 60
+            motion.step(dt: 1 / 60, input: Input(lean: 0.4 * sin(t * 2.3), lift: max(0, 0.3 * sin(t * 1.7)), available: step % 400 < 300))
+            // The raised side of the deck under each foot, including the bank and pitch.
+            let rise = PlayerHoverboard.footHalfSpan * sin(abs(motion.roll)) + PlayerHoverboard.footHalfLength * sin(abs(motion.pitch))
+            #expect(motion.height + rise <= 1e-6)
+            lowest = min(lowest, motion.height)
+        }
+        // Never more than a few centimetres below the feet (3.5 cm with the 6° lean bank).
+        #expect(lowest > -0.035)
+    }
+
+    /// The board itself has no lane limit (12 November 2026): where it may go is
+    /// `LateralSteering`'s (walls, partner), tested in `LeanSteeringTests`.
+    @Test("The board glides under the stance and sits exactly on a given ride")
+    func boardGlidesWithTheStance() throws {
+        var motion = Motion()
+        Self.run(&motion, Input(stanceX: 0.1, available: true), seconds: 1)
+        #expect(abs(motion.offsetX - 0.1) < 1e-3)
+        Self.run(&motion, Input(stanceX: 1.8, available: true), seconds: 1)
+        #expect(abs(motion.offsetX - 1.8) < 1e-3, "no lane limit")
+        Self.run(&motion, Input(stanceX: .nan, available: true), seconds: 1)
+        #expect(abs(motion.offsetX) < 1e-3)
+        motion.step(dt: 1 / 60, input: Input(available: true, ride: -2.1))
+        #expect(motion.offsetX == -2.1, "a ride is followed at once (the feet are planted on it)")
+    }
+
+    @Test("The same inputs give the same motion")
+    func deterministic() {
+        var a = Motion(hoverPhase: 0.3), b = Motion(hoverPhase: 0.3)
+        for step in 0..<300 {
+            let input = Input(lean: Float(step % 50) / 100, centerX: 0, lift: step % 90 < 10 ? 0.2 : 0, available: true)
+            a.step(dt: 1 / 60, input: input)
+            b.step(dt: 1 / 60, input: input)
+        }
+        #expect(a == b)
+    }
+
+    // MARK: Asset
+
+    @Test("The asset loads from the Reality Composer Pro package at game scale, facing the camera")
+    func assetLoadsAtGameScale() async throws {
+        let template = try #require(await PlayerHoverboard.sharedTemplate())
+        let bounds = template.visualBounds(relativeTo: nil)
+        #expect(abs(bounds.extents.x - 1.16) < 0.02, "width \(bounds.extents.x)")
+        #expect(bounds.extents.z > 0.44 && bounds.extents.z < 0.56, "depth \(bounds.extents.z)")
+        // Origin on the deck: the rim rises about 2 cm above it, the body hangs below.
+        #expect(bounds.max.y > 0.01 && bounds.max.y < 0.03)
+        #expect(bounds.min.y < -0.1 && bounds.min.y > -0.16)
+        #expect(abs(bounds.center.x) < 0.01)
+        let accent = try #require(template.findEntity(named: "Accent"))
+        let display = accent.visualBounds(relativeTo: nil)
+        #expect(display.extents.x > 1.0, "end stripes at both ends")
+        // Delivered as two meshes: the shared body and the per-player accent.
+        #expect(template.findEntity(named: "Body") != nil)
+    }
+
+    // MARK: Integration
+
+    private static func sceneWithBoards() async throws -> (LaserScene, RobotAvatarLayer) {
+        let scene = LaserScene()
+        scene.installEnvironment(authored: await LaserScene.loadAuthoredEnvironment())
+        let templates = try await RobotAvatarLayer.sharedTemplates()
+        let layer = RobotAvatarLayer(scene: scene, players: Set(PlayerID.allCases), templates: templates)
+        scene.robotAvatars = layer
+        return (scene, layer)
+    }
+
+    @Test("The boards' steering knows both lanes, the corridor and the loaded board's width")
+    func boardsKnowWhereTheirPartnerIs() async throws {
+        let (scene, layer) = try await Self.sceneWithBoards()
+        let steering = try #require(layer.steering)
+        #expect(steering.riders[.player1]?.laneX == scene.players[.player1]?.position.x)
+        #expect(steering.riders[.player2]?.laneX == scene.players[.player2]?.position.x)
+        #expect(abs(steering.halfWidth - 0.58 * PlayerHoverboard.scale) < 0.02, "from the asset: \(steering.halfWidth)")
+        #expect(steering.bounds.upperBound + steering.halfWidth < scene.layout.corridorWidth / 2, "inside the walls")
+        layer.remove()
+    }
+
+    @Test("Each mascot stands on its own board, beside the lane's ride; the shared 2D board is hidden until they leave")
+    func oneBoardPerMascot() async throws {
+        let lanes = LaserScene().players.mapValues(\.position)
+        let (scene, layer) = try await Self.sceneWithBoards()
+        let twoD = try #require(scene.hoverboard)
+        #expect(!twoD.root.isEnabled)
+        #expect(Set(layer.hoverboards.keys) == Set(PlayerID.allCases))
+        for (player, board) in layer.hoverboards {
+            let lane = try #require(scene.players[player])
+            #expect(board.root.parent === lane)
+            #expect(lane.ride.transform == .identity)
+            #expect(lane.position == lanes[player], "the lane never moves")
+            #expect(board.root.transform == .identity, "the board moves only its model inside its own root")
+        }
+        let p1 = try #require(layer.hoverboards[.player1]).model
+        let p2 = try #require(layer.hoverboards[.player2]).model
+        #expect(p1 !== p2)
+        layer.remove()
+        #expect(layer.hoverboards.isEmpty && twoD.root.isEnabled)
+        for player in scene.players.values {
+            #expect(!player.children.contains { $0.name.hasSuffix(".hoverboard") })
+        }
+    }
+
+    @Test("Scaled together: each mascot's soles stand on its board's deck, well inside its ends")
+    func mascotStandsOnTheScaledBoard() async throws {
+        let (scene, layer) = try await Self.sceneWithBoards()
+        for player in PlayerID.allCases {
+            let lane = try #require(scene.players[player]).position
+            let points = try #require(layer.extremityPoints(of: player))
+            let board = try #require(layer.hoverboards[player])
+            let deck = board.model.visualBounds(relativeTo: nil)
+            // The mascot and the board share one scale: about 1.2 m and 0.87 m.
+            #expect(abs(points.headTop.y - lane.y - RobotAvatarLayer.standingHeight) < 0.06)
+            #expect(abs(deck.extents.x - 1.16 * PlayerHoverboard.scale) < 0.02)
+            for sole in [points.leftSole, points.rightSole] {
+                #expect(sole.x > deck.min.x + 0.12 && sole.x < deck.max.x - 0.12, "\(player) sole \(sole.x) on deck \(deck.min.x)...\(deck.max.x)")
+                #expect(abs(sole.y - lane.y) < 0.02, "\(player) sole on the deck: \(sole.y)")
+            }
+            #expect(deck.max.y - lane.y < 0.02 && deck.max.y - lane.y > 0, "only the rim rises above the soles")
+        }
+        layer.remove()
+    }
+
+    @Test("Boards take each player's accent colour from one shared model")
+    func accentPerPlayer() async throws {
+        let (_, layer) = try await Self.sceneWithBoards()
+        func accent(_ player: PlayerID) throws -> UIColor? {
+            let entity = try #require(layer.hoverboards[player]?.model.findEntity(named: "Accent"))
+            let model = try #require(Self.firstModel(in: entity))
+            return (model.materials.first as? PhysicallyBasedMaterial)?.baseColor.tint
+        }
+        func rgb(_ color: UIColor?) -> SIMD3<Float>? {
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            guard let color, color.getRed(&r, green: &g, blue: &b, alpha: &a) else { return nil }
+            return [Float(r), Float(g), Float(b)]
+        }
+        for player in PlayerID.allCases {
+            let shown = try #require(rgb(try accent(player)))
+            let wanted = try #require(rgb(PlayerHoverboard.accentColor[player]))
+            #expect(simd_length(shown - wanted) < 0.02, "\(player): \(shown) vs \(wanted)")
+        }
+        layer.remove()
+    }
+
+    /// Live lean: the board carries the mascot sideways with its hips and its lean steering, the
+    /// feet stay planted ON the board (no sliding), and the board banks toward the lean.
+    @Test(arguments: [RobotDemoScenario.leanLeft, .leanRight, .stepLeft, .stepRight])
+    func theBoardCarriesTheMascotWithItsLean(_ scenario: RobotDemoScenario) async throws {
+        let scene = LaserScene()
+        scene.installEnvironment(authored: await LaserScene.loadAuthoredEnvironment())
+        let input = try LaserReplayScript.load().input
+        let layer = RobotAvatarLayer(scene: scene, calibrations: input.configuration.calibrations,
+                                     layout: input.configuration.playerPlaneLayout,
+                                     templates: try await RobotAvatarLayer.sharedTemplates())
+        scene.robotAvatars = layer
+        layer.footPlanting = true
+        layer.diagnosticsEnabled = true
+        layer.smoothing = 0.03
+        let board = try #require(layer.hoverboards[.player1], "boards are part of the live scene")
+        let sequence = RobotDemoSequence(configuration: input.configuration,
+                                         cameraGeometryRevision: input.cameraGeometryRevision, only: scenario)
+        var lastFrame: UInt64 = 0, maxRide: Float = 0, maxBank: Float = 0, maxGap: Float = 0
+        var steps = 0, drift: Float = 0
+        var anchors: [RobotPoseTargets.Side: Float] = [:]
+        for n in 1..<Int(RobotDemoScenario.duration * 60) {
+            let time = Double(n) / 60
+            let index = UInt64(time * RobotDemoSequence.frameRate)
+            if index > lastFrame {
+                let f = try sequence.frame(index)
+                layer.apply(f.snapshot, joints: f.joints)
+                lastFrame = index
+            }
+            layer.render(now: time)
+            board.step(dt: 1 / 60)
+            let d = try #require(layer.footDiagnostics[.player1])
+            if abs(d.rideX) > abs(maxRide) { maxRide = d.rideX }
+            maxBank = max(maxBank, abs(board.motion.bank))
+            // The board sits exactly where it carries the feet.
+            maxGap = max(maxGap, abs(board.motion.offsetX - d.rideX))
+            steps = max(steps, d.steps.values.max() ?? 0)
+            for side in RobotPoseTargets.Side.allCases where d.contact[side] == .planted {
+                let x = d.actualX[side] ?? 0
+                drift = max(drift, abs(x - (anchors[side] ?? x)))
+                anchors[side] = anchors[side] ?? x
+            }
+            for side in RobotPoseTargets.Side.allCases where d.contact[side] != .planted { anchors[side] = nil }
+        }
+        let toward: Float = scenario == .leanLeft || scenario == .stepLeft ? -1 : 1
+        let steering = try #require(layer.steering)
+        let lane = try #require(steering.riders[.player1]).laneX
+        print(String(format: "BOARD-RIDE %@ ride %.3f m bank %.1f° gap %.4f steps %d drift %.4f",
+                     scenario.key, maxRide, maxBank * 180 / .pi, maxGap, steps, drift))
+        #expect(maxRide * toward > 0.05, "the board rides the body")
+        #expect(lane + maxRide >= steering.bounds.lowerBound - 1e-3 && lane + maxRide <= steering.bounds.upperBound + 1e-3,
+                "within the corridor (float rounding at the limit)")
+        #expect(maxGap < 1e-4, "board and planted feet move together")
+        #expect(drift < 0.003, "planted feet never slide on the board")
+        if scenario == .leanLeft || scenario == .leanRight {
+            #expect(steps == 0, "a lean never steps")
+            #expect(maxBank > 0.03, "the board visibly banks with the lean")
+        }
+        layer.remove()
+    }
+
+    @Test("Stepping a board never moves the mascot it carries")
+    func boardMotionLeavesTheMascotAlone() async throws {
+        let (scene, layer) = try await Self.sceneWithBoards()
+        let robot = try #require(layer.robots[.player1])
+        let before = robot.container.transform
+        let headTop = layer.extremityPoints(of: .player1)?.headTop
+        let board = try #require(layer.hoverboards[.player1])
+        board.input = .init(lean: 0.3, centerX: 0.1, lift: 0.1, available: true)
+        for _ in 0..<120 { board.step(dt: 1 / 60) }
+        #expect(robot.container.transform == before)
+        #expect(layer.extremityPoints(of: .player1)?.headTop == headTop)
+        #expect(board.model.position.y <= 0 && board.motion.bank > 0)
+        #expect(scene.players[.player1]?.ride.transform == .identity)
+        layer.remove()
+    }
+
+    private static func firstModel(in entity: Entity) -> ModelComponent? {
+        if let model = entity.components[ModelComponent.self] { return model }
+        for child in entity.children { if let model = firstModel(in: child) { return model } }
+        return nil
+    }
+}

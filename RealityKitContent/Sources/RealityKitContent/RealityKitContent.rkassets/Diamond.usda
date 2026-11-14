@@ -1,0 +1,137 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Root" (
+    doc = "Diamond presentation (LH-03)."
+)
+{
+    quatf xformOp:orient = (1, 0, 0, 0)
+    float3 xformOp:scale = (1, 1, 1)
+    float3 xformOp:translate = (0, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+    def Scope "Materials"
+    {
+        def Material "GemArt"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/GemArt/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/GemArt/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/GemArt/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/diamond.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/GemArt/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/GemArt/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+
+        def Material "SparkleArt"
+        {
+            token outputs:mtlx:surface.connect = </Root/Materials/SparkleArt/Unlit.outputs:out>
+            token outputs:realitykit:vertex
+            token outputs:surface
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                bool inputs:applyPostProcessToneMap = 0
+                color3f inputs:color.connect = </Root/Materials/SparkleArt/Color.outputs:out>
+                float inputs:opacity.connect = </Root/Materials/SparkleArt/Channels.outputs:outa>
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @Textures/diamond_sparkle.png@
+                string inputs:filtertype = "linear"
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "clamp"
+                color4f outputs:out
+            }
+
+            def Shader "Color"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </Root/Materials/SparkleArt/Image.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Channels"
+            {
+                uniform token info:id = "ND_separate4_color4"
+                color4f inputs:in.connect = </Root/Materials/SparkleArt/Image.outputs:out>
+                float outputs:outa
+            }
+        }
+    }
+
+    def Xform "Diamond" (
+        doc = "Diamonds.png on a camera-facing plane. Sparkle is a template Swift copies for the collect effect."
+    )
+    {
+        quatf xformOp:orient = (1, 0, 0, 0)
+        float3 xformOp:scale = (1, 1, 1)
+        float3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+        def Xform "Gem" (
+            prepend references = @Diamond3D.usdz@</root>
+            doc = "Approved Diamond v1: closed blue faceted mesh, original K06 width/height. Sparkle below stays unchanged."
+        )
+        {
+        }
+
+        def Mesh "Sparkle" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            rel material:binding = </Root/Materials/SparkleArt>
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "vertex"
+            )
+            point3f[] points = [(-0.06, -0.06, 0), (0.06, -0.06, 0), (0.06, 0.06, 0), (-0.06, 0.06, 0)]
+            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                interpolation = "vertex"
+            )
+            uniform token subdivisionScheme = "none"
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            float3 xformOp:translate = (0.26, 0, 0.01)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+    }
+}

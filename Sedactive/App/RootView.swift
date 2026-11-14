@@ -8,12 +8,202 @@
 import SwiftUI
 
 struct ContentView: View {
-    var body: some View {
-        // Temporary entry for LH-11 until Edo wires real routing here.
-        PlayView()
+  private let dependencies = AppDependencies.shared
+  @Environment(\.scenePhase) private var scenePhase
+  #if DEBUG
+  @State private var showingLiveWrist = InGameCameraPreviewView.wristRequested(ProcessInfo.processInfo.arguments)
+  @State private var showingGameCamera = InGameCameraPreviewView.requested(ProcessInfo.processInfo.arguments)
+  #endif
+  var body: some View {
+    let flow = dependencies.inputFlow
+    Group {
+      #if DEBUG
+      if ProcessInfo.processInfo.arguments.contains("-setupStagePreview") {
+        SetupStagePreview()
+      } else if LiveAvatarSmokeModel.requested(ProcessInfo.processInfo.arguments) {
+        LiveAvatarSmokeView(flow:flow,service:dependencies.bodyInput,bridge:dependencies.visionPoseBridge)
+      } else if showingGameCamera || showingLiveWrist {
+        InGameCameraPreviewView(flow: flow, service: dependencies.bodyInput,
+          bridge: dependencies.visionPoseBridge, offersWristSetup:showingLiveWrist,
+          onContinueToGame:{ showingLiveWrist = false;showingGameCamera = false },
+          onExit: { showingGameCamera = false;showingLiveWrist = false })
+      } else { routedContent(flow:flow) }
+      #else
+      routedContent(flow:flow)
+      #endif
     }
+    #if DEBUG
+    // Device checks: `-startCameraSetup` opens Camera Setup at launch (same flow as the button).
+    .task {
+      let arguments = ProcessInfo.processInfo.arguments
+      if arguments.contains("-startSoloTest"), flow.canStartSolo {
+        await flow.startLiveSetup(solo: true)
+      } else if arguments.contains("-startCameraSetup"), flow.canStartLive {
+        await flow.startLiveSetup()
+      }
+    }
+    #endif
+    .onChange(of: scenePhase) { _, phase in
+      if phase == .background { Task { await flow.handleBackground() } }
+    }
+  }
+  @ViewBuilder private func routedContent(flow: LaserInputFlow) -> some View {
+      switch flow.route {
+      case .selection:
+        // Sketch Home and Set Up (Kevin): presentation over the same flow. In
+        // DEBUG, Home also offers PR #31's real-camera game scene preview.
+        #if DEBUG
+        LaserHeistIntroView(flow: flow, onInGameCamera: { showingGameCamera = true })
+        #else
+        LaserHeistIntroView(flow: flow)
+        #endif
+      case .replay:
+        replayView(flow: flow)
+      case .liveSetup:
+        liveSetup(flow: flow)
+        #if DEBUG
+          .overlay(alignment: .top) {
+            if flow.session?.isSoloPractice == true {
+              Text("SOLO PRACTICE · 1 Player · not a co-op result")
+                .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                .padding(.horizontal, 12).padding(.vertical, 5)
+                .background(Color(sketch: 0xFFC83A), in: Capsule())
+                .foregroundStyle(Color(sketch: 0x16123A))
+                .padding(.top, 4)
+                .allowsHitTesting(false)
+                .accessibilityIdentifier("soloTestBanner")
+            }
+          }
+        #endif
+      case .diagnostics:
+        #if DEBUG
+        LiveInputDiagnosticsView(model: dependencies.cameraDiagnostics)
+          .safeAreaInset(edge: .bottom) {
+            Button("Close camera diagnostics") { Task { await flow.closeDiagnostics() } }
+              .buttonStyle(.borderedProminent).controlSize(.large).disabled(flow.isClosing).padding()
+          }
+        #else
+        LaserInputSelectionView(flow: flow)
+        #endif
+      }
+  }
+  /// Camera setup, then the live round over it (co-op, or a DEBUG Solo Test).
+  @ViewBuilder private func liveSetup(flow: LaserInputFlow) -> some View {
+        // Automatic setup mounts the game scene from the start (hidden behind the camera screen),
+        // so its first load does not stall tracking right after calibration (iPad, 11 November).
+        ZStack {
+          if let session = flow.session, session.hasLiveRoundPlan || session.automaticSetup {
+            PlayView(avatarSource: { try VisionK03MailboxPump(bridge: dependencies.visionPoseBridge, mailbox: $0) },
+                     onExit: { Task { await flow.closeLiveSetup() } }, liveSession: session,
+                     onLiveRetry: { Task { await flow.retryLiveSetup() } })
+              .id(ObjectIdentifier(session)) // a new session (Retry) gets a fresh scene
+          }
+          // The setup stage, with its camera preview, stays MOUNTED for the whole visit and is only
+          // hidden over the game: attaching or detaching the preview layer reconfigures the running
+          // capture session and stalls frames 220–500 ms (iPad, 11 November 2026), which aborted
+          // every countdown and, repeated, lost the player and restarted setup.
+          let stageShown = Self.showsSetupStage(flow.session)
+          liveSetupStage(flow, preview: cameraPreview)
+            .opacity(stageShown ? 1 : 0)
+            .allowsHitTesting(stageShown)
+            .accessibilityHidden(!stageShown)
+          // In-round tracking warning (Kevin, 13 November 2026): over the still-mounted stage while a
+          // started round is paused for tracking, from the session's own state (LaserTrackingWarning).
+          if let session = flow.session, session.hasLiveRoundPlan {
+            LaserTrackingWarningOverlay(flow: flow, session: session).id(ObjectIdentifier(session))
+          }
+          // The countdown shows only the session's own remaining time (no second clock).
+          if let session = flow.session, session.phase == .countdown,
+             let remaining = session.liveReadiness?.countdownRemaining {
+            RoundCountdownOverlay(value: Int(remaining.rounded(.up)))
+          }
+          #if DEBUG
+          // DEBUG test round controls (Kevin): from the round's start to its Results, above the
+          // setup stage too, so a tracking pause never hides them. Top right, under the HUD.
+          if let session = flow.session, session.hasLiveRoundPlan, session.state != nil, session.summary == nil {
+            DebugRoundControls(session: session)
+              .padding(.trailing, 16).padding(.top, 130)
+              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+          }
+          #endif
+        }
+  }
+  /// Whether the camera setup stage is in front: always until a live round's game scene is
+  /// mounted, then except while counting down, playing or showing results.
+  static func showsSetupStage(_ session: GameSessionCoordinator?) -> Bool {
+    guard let session, session.hasLiveRoundPlan || session.automaticSetup else { return true }
+    // A started round is never covered by the camera setup stage, paused or not (Kevin, 13 November
+    // 2026: in a squat the calibration stage showed before the tracking warning). Its pauses show
+    // over the frozen game: the tracking warning, a pause notice or the HUD's pause menu
+    // (`LaserTrackingWarningOverlay`). The stage returns only with a new setup (Recalibrate).
+    if session.state != nil && session.summary == nil { return false }
+    return session.phase != .countdown && session.phase != .running && session.summary == nil
+  }
+  /// The live camera image for the setup stage: the pipeline's one retained
+  /// session, display only. Nil in the Simulator (no camera).
+  private var cameraPreview: AnyView? {
+    #if targetEnvironment(simulator)
+    nil
+    #else
+    dependencies.camera.previewSession.map { AnyView(CalibrationCameraPreview(session: $0)) }
+    #endif
+  }
+  @ViewBuilder private func replayView(flow: LaserInputFlow) -> some View {
+    #if DEBUG
+    if ProcessInfo.processInfo.arguments.contains("--synthetic-gameplay-preview") {
+      PlayView(avatarSource: { try SyntheticGameplayAvatarPump(mailbox: $0) },
+        onExit: { flow.leaveReplay() })
+        .overlay(alignment: .bottomLeading) {
+          Text("SEEDED SYNTHETIC / REPLAY · no camera or live calibration")
+            .font(.caption2.monospaced()).padding(6).background(.black.opacity(0.7))
+            .foregroundStyle(.white).allowsHitTesting(false)
+        }
+    } else { PlayView(onExit: { flow.leaveReplay() }) }
+    #else
+    PlayView(onExit: { flow.leaveReplay() })
+    #endif
+  }
+
+}
+
+/// Jevon's setup controls on the Sketch "stand here" stage (Kevin's presentation).
+@MainActor
+private func liveSetupStage(_ flow: LaserInputFlow, preview: AnyView?) -> some View {
+  CalibrationStageView(cameraPreview: preview,
+    cameraAspect: AppDependencies.shared.camera.negotiated.map {
+      CGFloat($0.outputWidth) / CGFloat(max(1, $0.outputHeight)) } ?? 16 / 9,
+    playerStatus: flow.session?.automaticSetup == true ? flow.session?.presence.players ?? [:] : [:],
+    solo: flow.session?.isSoloPractice == true,
+    onBack: { Task { await flow.closeLiveSetup() } }) {
+    PlayerSetupView(flow: flow, isOverlay: true)
+  }
+  #if DEBUG
+  .overlay(alignment: .bottomTrailing) { SetupDiagnosticsToggle(flow: flow) }
+  #endif
+  #if DEBUG
+  // DEBUG only, for testing without an iPad: ends camera setup (nothing is
+  // calibrated or marked ready) and opens the seeded synthetic replay through
+  // the same flow. Never compiled into Release.
+  .overlay(alignment: .bottomLeading) {
+    Button("DEBUG · Skip camera & play synthetic replay") {
+      Task {
+        await flow.closeLiveSetup()
+        flow.showReplay()
+      }
+    }
+    .font(.system(size: 15, weight: .heavy, design: .monospaced))
+    .padding(.horizontal, 14).padding(.vertical, 8)
+    .background(Color(sketch: 0xFFC83A), in: Capsule())
+    .foregroundStyle(Color(sketch: 0x16123A))
+    .buttonStyle(.plain)
+    .disabled(flow.isClosing)
+    .padding([.leading, .bottom], 16)
+    .accessibilityIdentifier("debugSkipToReplay")
+  }
+  #endif
+  .onAppear { AudioService.shared.setMusic(.menu) }
 }
 
 #Preview {
-    ContentView()
+  ContentView()
 }

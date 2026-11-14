@@ -1,0 +1,184 @@
+//
+//  BodyInputProviding.swift
+//  Sedactive
+//
+//  Created by Edward Geraldo Kristian on 25/10/26.
+//
+
+import Foundation
+
+nonisolated enum BodyInputOperationError: Error, Equatable, Sendable {
+    case notRunning, configurationChanged, generationReused, wrongGeneration
+    case consumerAlreadyClaimed, observerAlreadyRegistered, reentrantControl
+}
+
+nonisolated enum BodyInputFailure: String, Sendable, Codable {
+    case permissionDenied, cameraUnavailable, processingFailure, clockNormalizationFailure
+}
+nonisolated enum BodyInputInterruption: String, Sendable, Codable {
+    case system, cameraUnavailable
+}
+nonisolated enum BodyInputStatus: Equatable, Sendable, Codable {
+    case stopped, starting, running
+    case interrupted(BodyInputInterruption)
+    case failed(BodyInputFailure)
+}
+nonisolated enum BodyInputProgress: String, Sendable { case waiting, progressing, suspectedStall }
+nonisolated enum BodyInputDelivery: String, Sendable { case prepared, claimed, closed }
+nonisolated enum BodyInputTerminationReason: String, Sendable {
+    case released, cancelled, finished, stopped, failed
+}
+
+nonisolated enum NoProgressPolicy: Equatable, Sendable, Codable {
+    case disabled
+    /// Diagnostic only, never a pause/failure or production timeout.
+    case diagnostic(threshold: Double)
+    func validate() throws {
+        if case let .diagnostic(threshold) = self {
+            try requireBodyValue(threshold.isFinite && threshold > 0, "stall investigation threshold")
+        }
+    }
+}
+
+nonisolated struct BodyInputConfiguration: Equatable, Sendable, Codable {
+    let sessionGeneration: UUID
+    let calibrations: [PlayerID: PlayerCalibration]
+    let playerPlaneLayout: PlayerPlaneLayout
+    let snapshotBufferCapacity: Int
+    let noProgressPolicy: NoProgressPolicy
+    /// DEBUG Solo Test only: the one player this session tracks and calibrates (P1, Lemon).
+    /// Nil is the production two-player session. Release builds refuse a solo session.
+    var soloPlayer: PlayerID? = nil
+    /// The players this session links, calibrates and judges.
+    var roster: [PlayerID] { soloPlayer.map { [$0] } ?? PlayerID.allCases }
+
+    init(sessionGeneration: UUID,
+         calibrations: [PlayerID: PlayerCalibration], playerPlaneLayout: PlayerPlaneLayout,
+         snapshotBufferCapacity: Int = 8, noProgressPolicy: NoProgressPolicy = .disabled) {
+        self.sessionGeneration = sessionGeneration
+        self.calibrations = calibrations
+        self.playerPlaneLayout = playerPlaneLayout
+        self.snapshotBufferCapacity = snapshotBufferCapacity
+        self.noProgressPolicy = noProgressPolicy
+    }
+
+    func validate() throws {
+        try playerPlaneLayout.validate()
+        try noProgressPolicy.validate()
+        try requireBodyValue(snapshotBufferCapacity > 0, "snapshotBufferCapacity")
+        for (id, calibration) in calibrations {
+            try calibration.validate()
+            try requireBodyValue(id == calibration.playerID && calibration.sessionGeneration == sessionGeneration, "calibration identity")
+        }
+        try requireBodyValue(Set(calibrations.values.map(\.cameraGeometryRevision)).count <= 1,
+                             "mixed camera calibration geometry")
+        #if DEBUG
+        try requireBodyValue(soloPlayer == nil || soloPlayer == .player1, "solo test tracks P1")
+        #else
+        try requireBodyValue(soloPlayer == nil, "solo test is DEBUG only")
+        #endif
+    }
+
+    /// Complete replacement: omitted slots lose acceptance; callers validate before committing.
+    func replacingCalibrations(_ values: [PlayerID: PlayerCalibration]) -> Self {
+        var next = Self(sessionGeneration: sessionGeneration, calibrations: values,
+             playerPlaneLayout: playerPlaneLayout, snapshotBufferCapacity: snapshotBufferCapacity,
+             noProgressPolicy: noProgressPolicy)
+        next.soloPlayer = soloPlayer
+        return next
+    }
+}
+
+nonisolated struct BodyInputCutover: Equatable, Sendable, Codable {
+    let frameID: UInt64
+    let capturedAt: Double
+}
+
+/// Read this AGAIN after suspension and before accepting evidence into gameplay history.
+nonisolated struct BodyInputContext: Equatable, Sendable {
+    let sessionGeneration: UUID
+    let cameraGeometryRevision: UInt64
+    let calibrationRevisions: [PlayerID: UInt64]
+    let cutovers: [PlayerID: BodyInputCutover]
+    /// Source/context activity only, never permission to begin countdown/gameplay.
+    let isActive: Bool
+    let wristContact: WristContactContextV1?
+
+    init(sessionGeneration: UUID, cameraGeometryRevision: UInt64,
+         calibrationRevisions: [PlayerID: UInt64], cutovers: [PlayerID: BodyInputCutover],
+         isActive: Bool, wristContact: WristContactContextV1? = nil) {
+        self.sessionGeneration = sessionGeneration; self.cameraGeometryRevision = cameraGeometryRevision
+        self.calibrationRevisions = calibrationRevisions; self.cutovers = cutovers
+        self.isActive = isActive; self.wristContact = wristContact
+    }
+
+    func accepts(_ snapshot: BodySnapshot, playerID: PlayerID) -> Bool {
+        guard isActive, snapshot.sessionGeneration == sessionGeneration,
+              snapshot.cameraGeometryRevision == cameraGeometryRevision,
+              let sample = snapshot.players[playerID],
+              sample.playerID == playerID,
+              sample.calibrationRevision == calibrationRevisions[playerID] else { return false }
+        if let cutover = cutovers[playerID] {
+            return snapshot.frameID > cutover.frameID && snapshot.capturedAt > cutover.capturedAt
+        }
+        return true
+    }
+
+    func accepts(_ snapshot: BodySnapshot) -> Bool {
+        Set(snapshot.players.keys) == Set(PlayerID.allCases)
+            && PlayerID.allCases.allSatisfy { accepts(snapshot, playerID: $0) }
+    }
+}
+
+nonisolated struct BodyInputDiagnostics: Equatable, Sendable {
+    private(set) var droppedSnapshotCount: UInt64 = 0
+    private(set) var terminatedYieldCount: UInt64 = 0
+    private(set) var subscriptionTerminationCount: UInt64 = 0
+    private(set) var rejectedSnapshotCount: UInt64 = 0
+    private(set) var lastTerminationReason: BodyInputTerminationReason?
+
+    mutating func dropped() { if droppedSnapshotCount < .max { droppedSnapshotCount += 1 } }
+    mutating func terminatedYield() { if terminatedYieldCount < .max { terminatedYieldCount += 1 } }
+    mutating func terminated(_ reason: BodyInputTerminationReason) {
+        if subscriptionTerminationCount < .max { subscriptionTerminationCount += 1 }
+        lastTerminationReason = reason
+    }
+    mutating func rejected() { if rejectedSnapshotCount < .max { rejectedSnapshotCount += 1 } }
+}
+
+nonisolated struct BodyInputStatusEvent: Equatable, Sendable {
+    let sessionGeneration: UUID?
+    let occurredAt: Double
+    let statusRevision: UInt64
+    let status: BodyInputStatus
+    let context: BodyInputContext?
+    let delivery: BodyInputDelivery
+    let progress: BodyInputProgress
+}
+
+/// App-module shared surface. No capture, clock conversion, evidence selection or verdicts here.
+@MainActor
+protocol BodyInputProviding: AnyObject {
+    var latestSnapshot: BodySnapshot? { get }
+    var currentContext: BodyInputContext? { get }
+    var status: BodyInputStatus { get }
+    var diagnostics: BodyInputDiagnostics { get }
+    func start(configuration: BodyInputConfiguration) async throws
+    func stop() async
+    /// Atomic full replacement, not a merge. Empty/partial accepted sets are valid during calibration.
+    /// Jevon gates gameplay on both compatible baselines AND current tracking readiness.
+    @discardableResult
+    func setCalibrations(_ values: [PlayerID: PlayerCalibration], generation: UUID) async throws -> BodyInputContext
+    func snapshotStream(generation: UUID) throws -> AsyncStream<BodySnapshot>
+    func releaseSnapshotSubscription(generation: UUID) throws
+    @discardableResult
+    func statusUpdates(_ observer: @escaping @MainActor (BodyInputStatusEvent) -> Void) throws -> UUID
+    func removeStatusObserver(_ token: UUID) throws
+    /// The accepted standing references behind `currentContext.calibrationRevisions`,
+    /// read-only. Round planning reads them; only the producer accepts or replaces them.
+    var acceptedCalibrations: [PlayerID: PlayerCalibration] { get }
+}
+
+extension BodyInputProviding {
+    var acceptedCalibrations: [PlayerID: PlayerCalibration] { [:] }
+}

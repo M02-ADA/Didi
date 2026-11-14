@@ -1,0 +1,446 @@
+diff --git a/Sedactive/App/VisionK03PacketFactory.swift b/Sedactive/App/VisionK03PacketFactory.swift
+new file mode 100644
+index 0000000..ae74c47
+--- /dev/null
++++ b/Sedactive/App/VisionK03PacketFactory.swift
+@@ -0,0 +1,26 @@
++import Foundation
++
++/// PROPOSED App-owned adapter against Kevin commit e7b4a2f; not a public D06 field freeze.
++nonisolated enum VisionK03PacketFactory: VisionAvatarPacketFactory {
++  static func status(_ s: VisionNumericPoseStatus) -> AvatarSourceStatus {
++    AvatarSourceStatus(revision:s.revision,isActive:s.active,
++      context:s.context.map(AvatarSourceContext.init),controlRevision:s.controlRevision,layout:s.layout,
++      calibrations:s.calibrationRevisions.reduce(into:[:]) { result, pair in
++        if let cutover = s.cutovers[pair.key] {
++          result[pair.key] = AvatarCalibrationStatus(revision:pair.value,cutover:cutover)
++        }
++      })
++  }
++  static func output(source: PlayerTrackingSource, revision: UInt64,
++    player1: PlayerTrackingSlotResult, player2: PlayerTrackingSlotResult,
++    candidates: [PoseCandidate], calibration: [PlayerID: VisionAvatarCalibrationValues]) -> AvatarSourceOutput {
++    AvatarSourceOutput(source:AvatarSourceFrame(source),contextRevision:revision,
++      player1:AvatarTrackedSlot(player1),player2:AvatarTrackedSlot(player2),candidates:candidates,
++      calibration:calibration.mapValues { c in
++        AvatarCalibrationInput(revision:c.revision,mapping:c.mapping,
++          standingCrownImageY:c.standingCrownImageY,standingHipImageY:c.standingHipImageY,
++          standingLeftAnkleImageY:c.standingLeftAnkleImageY,standingRightAnkleImageY:c.standingRightAnkleImageY,
++          visual:nil) // no CP1 reader or experimental anatomy promoted to visual truth
++      })
++  }
++}
+diff --git a/Sedactive/App/VisionK03MailboxPump.swift b/Sedactive/App/VisionK03MailboxPump.swift
+new file mode 100644
+index 0000000..edee6dd
+--- /dev/null
++++ b/Sedactive/App/VisionK03MailboxPump.swift
+@@ -0,0 +1,37 @@
++import Foundation
++
++/// PROPOSED App-owned hookup between Edo's numeric pose bridge and Kevin's K03
++/// mailbox. The presenter calls `tick` once per render tick, before it drains.
++///
++/// - A drain with no output is normal: most render ticks have no new result.
++/// - A nil drain means the lease was retired, for example when the body
++///   session stopped. That ends this pump; Retry attaches a new one.
++/// - A refused packet changes nothing in the mailbox and is counted in its
++///   diagnostics. A newer packet can still be accepted, and with none the
++///   mascots relax by age, so a refusal doesn't end the feed.
++/// - A mapping error can lose a coalesced reset, so it does end the feed. The
++///   presenter then forgets any held pose.
++@MainActor final class VisionK03MailboxPump: AvatarPosePump {
++  private let bridge: VisionNumericPoseBridge
++  private let attachment: VisionPoseAttachment
++  let mailbox: AvatarPoseMailbox
++  private var stopped = false
++  init(bridge: VisionNumericPoseBridge, mailbox: AvatarPoseMailbox) throws {
++    self.bridge = bridge; self.mailbox = mailbox
++    attachment = try bridge.attach()
++  }
++  func tick() throws -> Bool {
++    guard !stopped, !mailbox.isRevoked else { stop(); return false }
++    guard let drain = bridge.drain(attachment) else { stop(); return false }
++    do {
++      let batch = try VisionAvatarPacketAdapter.map(drain, using: VisionK03PacketFactory.self)
++      mailbox.publish(batch.status, forceResetAll: batch.resetAll)
++      if let output = batch.output { mailbox.offer(output) }
++      return true
++    } catch { stop(); throw error }
++  }
++  func stop() {
++    guard !stopped else { return }
++    stopped = true; bridge.cancel(attachment); mailbox.revoke()
++  }
++}
+diff --git a/SedactiveTests/Games/LaserHeist/RenderingTests/VisionK03IntegrationTests.swift b/SedactiveTests/Games/LaserHeist/RenderingTests/VisionK03IntegrationTests.swift
+new file mode 100644
+index 0000000..3a6d8bf
+--- /dev/null
++++ b/SedactiveTests/Games/LaserHeist/RenderingTests/VisionK03IntegrationTests.swift
+@@ -0,0 +1,365 @@
++import Foundation
++import RealityKit
++import Testing
++import simd
++@testable import Sedactive
++
++/// E07 to K03 through the real gate, tracker, bridge, adapter, factory and pump,
++/// into the real mailbox, presenter and mascots. Deterministic Vision fixtures
++/// and an injected clock: no camera, so this says nothing about real tracking.
++@MainActor
++struct VisionK03IntegrationTests {
++    private struct Rig {
++        var f: TrackingIntegrationFixture
++        let bridge: VisionNumericPoseBridge
++        let scene: LaserScene
++        let mailbox: AvatarPoseMailbox
++        var nextFrame: UInt64 = 3
++        var time = 0.25
++
++        var avatars: RobotAvatarLayer { scene.robotAvatars! }
++        func robot(_ player: PlayerID) -> RobotAvatarLayer.Robot { avatars.robots[player]! }
++        func renderTick() { scene.refreshLiveAvatars(now: f.clock.time + 0.005) }
++
++        /// One camera frame through admission, tracking and publication, as the worker runs it.
++        @discardableResult
++        mutating func deliver(_ candidates: [PoseCandidate] = LiveVisionFixtures.standingPair,
++                              duringInference: () -> Void = {}) throws -> UInt64 {
++            let id = nextFrame
++            let result = try f.result(id, time, candidates)
++            f.clock.time = time
++            let admission = try #require(f.gate.admit(result.source))
++            duringInference()
++            try #require(try f.finish(result, stamp: admission))
++            f.gate.publishPresentation(result, admission: admission, receipt: try #require(f.gate.snapshot.latest))
++            nextFrame += 1
++            time += 0.125
++            return id
++        }
++    }
++
++    private func rig(boundBeforeAttach: Bool = false) async throws -> Rig {
++        var f = try TrackingIntegrationFixture()
++        let bridge = VisionNumericPoseBridge(gate: f.gate)
++        if boundBeforeAttach { try f.bind() }
++        let scene = LaserScene()
++        let mailbox = AvatarPoseMailbox(maxAge: LiveAvatarPresenter.maximumPoseAge)
++        let pump = try VisionK03MailboxPump(bridge: bridge, mailbox: mailbox)
++        scene.attachLiveAvatars(mailbox: mailbox, templates: try await RobotAvatarLayer.sharedTemplates(), pump: pump)
++        if !boundBeforeAttach { try f.bind() }
++        return Rig(f: f, bridge: bridge, scene: scene, mailbox: mailbox)
++    }
++
++    private func raised(_ candidate: PoseCandidate) -> PoseCandidate {
++        var joints = candidate.joints
++        let x = joints[.leftShoulder]!.x
++        joints[.leftWrist] = PoseJoint(x: x, y: 0.98, confidence: 0.9)
++        return PoseCandidate(candidateID: candidate.candidateID, joints: joints, maskTopImageY: nil, maskBottomImageY: nil,
++                             leftFootBottomImageY: nil, rightFootBottomImageY: nil, maskAssociation: .unavailable)
++    }
++
++    private func armY(_ robot: RobotAvatarLayer.Robot) -> Float {
++        simd_normalize(robot.retargeter.targets.upperArm[.left] ?? SIMD3(0, -1, 0)).y
++    }
++
++    private func oneMascotEach(_ scene: LaserScene) throws {
++        for player in PlayerID.allCases {
++            let entity = try #require(scene.players[player])
++            #expect(entity.children.filter { $0.name == "player.\(player.rawValue).robot" }.count == 1)
++        }
++    }
++
++    // MARK: Identity and field mapping
++
++    @Test func packetsKeepSourceIdentityPlayerSlotsAndObservedJoints() throws {
++        var f = try TrackingIntegrationFixture()
++        let bridge = VisionNumericPoseBridge(gate: f.gate)
++        let lease = try bridge.attach()
++        try f.bind()
++        var candidates = LiveVisionFixtures.standingPair
++        var joints = candidates[0].joints
++        joints.removeValue(forKey: .leftWrist)
++        joints[.rightWrist] = PoseJoint(x: 0.71, y: 0.33, confidence: 0.1)
++        candidates[0] = PoseCandidate(candidateID: 10, joints: joints, maskTopImageY: nil, maskBottomImageY: nil,
++                                      leftFootBottomImageY: nil, rightFootBottomImageY: nil, maskAssociation: .unavailable)
++        let result = try f.result(3, 0.25, candidates)
++        let admission = try #require(f.gate.admit(result.source))
++        try #require(try f.finish(result, stamp: admission))
++        f.gate.publishPresentation(result, admission: admission, receipt: try #require(f.gate.snapshot.latest))
++
++        let batch = try VisionAvatarPacketAdapter.map(try #require(bridge.drain(lease)), using: VisionK03PacketFactory.self)
++        let output = try #require(batch.output)
++        #expect(output.source.frameID == 3 && output.source.capturedAt == 0.25)
++        #expect(output.source.context == batch.status.context && output.contextRevision == batch.status.revision)
++        #expect(output.source.controlRevision == batch.status.controlRevision)
++        #expect(output.player1 == AvatarTrackedSlot(state: .tracking, candidateID: 10, requiresRebind: false))
++        #expect(output.player2 == AvatarTrackedSlot(state: .tracking, candidateID: 20, requiresRebind: false))
++        #expect(output.candidates == candidates)
++        let p1 = try #require(output.candidates.first { $0.candidateID == 10 })
++        #expect(p1.joints[.leftWrist] == nil && p1.joints[.rightWrist]?.confidence == 0.1)
++        #expect(output.calibration.isEmpty)
++    }
++
++    @Test func acceptedCalibrationIsCalibratedForThatPlayerOnlyAndCarriesNoVisualValues() throws {
++        let fixtures = VisionAvatarPacketAdapterTests()
++        let drain = try fixtures.fixture(calibration: true)
++        let batch = try VisionAvatarPacketAdapter.map(drain, using: VisionK03PacketFactory.self)
++        let mailbox = AvatarPoseMailbox(maxAge: 0.25)
++        mailbox.publish(batch.status, forceResetAll: batch.resetAll)
++        #expect(mailbox.offer(try #require(batch.output)) == nil)
++        let out = mailbox.drain(now: 0.26)
++        #expect(out.reset.all)
++        let frame = try #require(out.frame)
++        guard case .available(let p1) = frame.player1, case .calibrated(let reference, let visual) = p1.capability else {
++            Issue.record("P1 was not calibrated"); return
++        }
++        let c = try #require(drain.output?.acceptedCalibrations[.player1])
++        #expect(visual == nil && reference.calibrationRevision == c.revision)
++        guard case .available(let p2) = frame.player2 else { Issue.record("P2 not tracked"); return }
++        #expect(p2.capability == .directionOnly)
++
++        let mismatched = try VisionAvatarPacketAdapter.map(fixtures.fixture(calibration: true, mismatch: true), using: VisionK03PacketFactory.self)
++        #expect(mismatched.output?.calibration.isEmpty == true)
++    }
++
++    // MARK: Render tick
++
++    @Test func eachPlayersPacketsDriveOnlyThatMascotOnTheRenderTick() async throws {
++        var rig = try await rig()
++        for _ in 0..<12 {
++            var pair = LiveVisionFixtures.standingPair
++            pair[0] = raised(pair[0])  // candidate 10, P1
++            try rig.deliver(pair)
++            rig.renderTick()
++        }
++        #expect(rig.robot(.player1).retargeter.isAvailable && rig.robot(.player2).retargeter.isAvailable)
++        #expect(armY(rig.robot(.player1)) > 0.5, "P1 \(armY(rig.robot(.player1)))")
++        #expect(armY(rig.robot(.player2)) < 0.3, "P2 \(armY(rig.robot(.player2)))")
++        // Direction-only: no calibration was accepted, so no lift or crouch is claimed.
++        for player in PlayerID.allCases {
++            let r = rig.robot(player).retargeter
++            #expect(r.reference == nil && r.lift == 0 && r.targets.pelvisDrop == 0 && r.footDelta.isEmpty)
++            #expect(rig.robot(player).container.position.y == 0)
++        }
++        try oneMascotEach(rig.scene)
++    }
++
++    @Test func aPacketPublishedBeforeTheTickIsShownOnThatTick() async throws {
++        var rig = try await rig()
++        rig.renderTick()
++        #expect(!rig.robot(.player1).retargeter.isAvailable)
++        try rig.deliver()
++        #expect(rig.mailbox.diagnostics.accepted == 0)
++        rig.renderTick()
++        #expect(rig.mailbox.diagnostics.accepted == 1)
++        #expect(rig.robot(.player1).retargeter.isAvailable)
++    }
++
++    @Test func renderTicksBetweenCameraFramesDoNotEndTheFeed() async throws {
++        var rig = try await rig()
++        try rig.deliver()
++        for _ in 0..<6 { rig.renderTick() }
++        #expect(rig.scene.liveAvatars?.feedEnded == false && !rig.mailbox.isRevoked)
++        #expect(rig.mailbox.diagnostics.accepted == 1 && rig.mailbox.diagnostics.rejected.isEmpty)
++    }
++
++    // MARK: Loss, reset and teardown
++
++    @Test func oneLostPlayerDimsWhileThePeerContinuesThenRecovers() async throws {
++        var rig = try await rig()
++        for _ in 0..<4 { try rig.deliver(); rig.renderTick() }
++        for _ in 0..<3 { try rig.deliver([TrackingFixtures.candidate(10, x: 0.75)]); rig.renderTick() }
++        #expect(rig.robot(.player1).retargeter.isAvailable)
++        #expect(!rig.robot(.player2).retargeter.isAvailable)
++        #expect(rig.robot(.player1).container.components[OpacityComponent.self]?.opacity == 1)
++        #expect(rig.robot(.player2).container.components[OpacityComponent.self]?.opacity == RobotAvatarLayer.unavailableOpacity)
++        try oneMascotEach(rig.scene)
++        for _ in 0..<8 { try rig.deliver(); rig.renderTick() }
++        #expect(rig.robot(.player2).retargeter.isAvailable)
++        #expect(rig.mailbox.diagnostics.rejected.isEmpty)
++    }
++
++    @Test func sourceLossForgetsThePoseOnTheNextTickAndTheFeedSurvives() async throws {
++        var rig = try await rig()
++        for _ in 0..<4 { try rig.deliver(); rig.renderTick() }
++        #expect(rig.robot(.player1).retargeter.isAvailable)
++        rig.f.gate.sourceLost(rig.f.context)
++        rig.renderTick()
++        for player in PlayerID.allCases {
++            #expect(!rig.robot(player).retargeter.isAvailable)
++            #expect(rig.robot(player).container.components[OpacityComponent.self]?.opacity == RobotAvatarLayer.unavailableOpacity)
++        }
++        #expect(rig.scene.liveAvatars?.feedEnded == false && !rig.mailbox.isRevoked)
++    }
++
++    @Test func aNewCaptureContextReplacesTheOldPoseAndPacketsResume() async throws {
++        var rig = try await rig()
++        for _ in 0..<4 { try rig.deliver(); rig.renderTick() }
++        let accepted = rig.mailbox.diagnostics.accepted
++
++        let next = CameraSourceContext(generation: UUID(), epoch: UUID(), geometryRevision: 2)
++        rig.f.gate.invalidate(rig.f.context, ended: true)
++        rig.f.gate.begin(next, wake: AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1)).continuation)
++        rig.renderTick()
++        #expect(!rig.robot(.player1).retargeter.isAvailable)
++        #expect(!rig.robot(.player2).retargeter.isAvailable)
++
++        _ = try rig.f.gate.arm(request: rig.f.gate.makeBindingRequest())
++        var t = rig.time + 0.125
++        for id in UInt64(1)...5 {
++            let result = try rig.f.result(id, t, LiveVisionFixtures.standingPair, context: next)
++            rig.f.clock.time = t
++            let admission = try #require(rig.f.gate.admit(result.source))
++            try #require(try rig.f.finish(result, stamp: admission))
++            rig.f.gate.publishPresentation(result, admission: admission, receipt: try #require(rig.f.gate.snapshot.latest))
++            rig.renderTick()
++            t += 0.125
++        }
++        #expect(rig.mailbox.diagnostics.accepted > accepted)
++        #expect(rig.mailbox.diagnostics.rejected.isEmpty)
++        #expect(rig.robot(.player1).retargeter.isAvailable && rig.robot(.player2).retargeter.isAvailable)
++    }
++
++    @Test func aRetiredLeaseEndsTheFeedWithoutHoldingAPose() async throws {
++        var rig = try await rig()
++        for _ in 0..<4 { try rig.deliver(); rig.renderTick() }
++        _ = try rig.bridge.attach()   // As a session stop or a newer scene would.
++        rig.renderTick()
++        #expect(rig.scene.liveAvatars?.feedEnded == true && rig.mailbox.isRevoked)
++        for player in PlayerID.allCases {
++            #expect(!rig.robot(player).retargeter.isAvailable)
++            #expect(rig.robot(player).container.components[OpacityComponent.self]?.opacity == RobotAvatarLayer.unavailableOpacity)
++        }
++        try oneMascotEach(rig.scene)
++    }
++
++    @Test func retryAttachesAFreshLeaseAndTheOldSceneCannotCancelIt() async throws {
++        var rig = try await rig()
++        for _ in 0..<4 { try rig.deliver(); rig.renderTick() }
++
++        // The new scene attaches before the old one finishes tearing down.
++        let scene = LaserScene()
++        let mailbox = AvatarPoseMailbox(maxAge: LiveAvatarPresenter.maximumPoseAge)
++        let pump = try VisionK03MailboxPump(bridge: rig.bridge, mailbox: mailbox)
++        scene.attachLiveAvatars(mailbox: mailbox, templates: try await RobotAvatarLayer.sharedTemplates(), pump: pump)
++        rig.scene.detachLiveAvatars()
++        #expect(rig.mailbox.isRevoked && !mailbox.isRevoked)
++
++        let accepted = rig.mailbox.diagnostics.accepted
++        for _ in 0..<3 {
++            try rig.deliver()
++            scene.refreshLiveAvatars(now: rig.f.clock.time + 0.005)
++        }
++        #expect(mailbox.diagnostics.accepted > 0 && rig.mailbox.diagnostics.accepted == accepted)
++        #expect(scene.robotAvatars?.robots.values.allSatisfy { $0.retargeter.isAvailable } == true)
++        try oneMascotEach(scene)
++    }
++
++    // MARK: Camera stall (E07 frame-gap fix)
++
++    /// The render tick runs during each frame's Vision inference, between
++    /// admission and publication. A stall at least as long as B2's freshness
++    /// limit forgets the shown pose; fresh frames then reach the mascots again
++    /// in the same capture context, with no rebind.
++    @Test func aCameraStallDoesNotEndDeliveryForTheRestOfTheSession() async throws {
++        var rig = try await rig()
++        for _ in 0..<4 { try rig.deliver(); rig.renderTick() }
++        #expect(PlayerID.allCases.allSatisfy { rig.robot($0).retargeter.isAvailable })
++        let before = rig.mailbox.diagnostics.accepted
++
++        rig.time += 0.6   // No frame reaches the gate for longer than the policy's 0.5 s freshness.
++        rig.f.clock.time = rig.time
++        rig.renderTick()
++        for player in PlayerID.allCases {
++            #expect(!rig.robot(player).retargeter.isAvailable)
++            #expect(rig.robot(player).container.components[OpacityComponent.self]?.opacity == RobotAvatarLayer.unavailableOpacity)
++        }
++        #expect(rig.scene.liveAvatars?.feedEnded == false)
++
++        // After the gap only P1 raises an arm, so each mascot shows its own player's new packets.
++        for _ in 0..<16 {
++            var pair = LiveVisionFixtures.standingPair
++            pair[0] = raised(pair[0])
++            let tick = rig
++            try rig.deliver(pair, duringInference: { tick.renderTick() })
++            rig.renderTick()
++        }
++        let diagnostics = rig.mailbox.diagnostics
++        #expect(diagnostics.accepted == before + 16, "accepted \(diagnostics.accepted - before) of 16 after the gap")
++        #expect(diagnostics.rejected.isEmpty)
++        for player in PlayerID.allCases {
++            #expect(rig.robot(player).retargeter.isAvailable)
++            #expect(rig.robot(player).container.components[OpacityComponent.self]?.opacity == 1)
++        }
++        #expect(armY(rig.robot(.player1)) > 0.5, "P1 \(armY(rig.robot(.player1)))")
++        #expect(armY(rig.robot(.player2)) < 0.3, "P2 \(armY(rig.robot(.player2)))")
++        #expect(rig.scene.liveAvatars?.feedEnded == false && !rig.mailbox.isRevoked)
++        #expect(rig.f.gate.readBody().context == nil)   // No CP1 session or reader was involved.
++        try oneMascotEach(rig.scene)
++    }
++
++    /// The same stall, read at the K03 boundary: the real pump into the real
++    /// mailbox, drained here once per render tick. Only new frames arrive,
++    /// with their own ID, capture time, context and slots.
++    @Test func afterAStallOnlyNewFramesReachTheMailboxWithTheirOwnIdentity() throws {
++        var f = try TrackingIntegrationFixture()
++        let bridge = VisionNumericPoseBridge(gate: f.gate)
++        let mailbox = AvatarPoseMailbox(maxAge: LiveAvatarPresenter.maximumPoseAge)
++        let pump = try VisionK03MailboxPump(bridge: bridge, mailbox: mailbox)
++        try f.bind()
++        var frames: [AvatarPoseFrame] = []
++        var time = 0.25, id: UInt64 = 3
++
++        func renderTick() throws -> AvatarPoseDrain {
++            #expect(try pump.tick())
++            return mailbox.drain(now: f.clock.time + 0.005)
++        }
++        func deliver(inFlightTick: Bool) throws {
++            let result = try f.result(id, time, LiveVisionFixtures.standingPair)
++            f.clock.time = time
++            let admission = try #require(f.gate.admit(result.source))
++            if inFlightTick { #expect(try renderTick().frame == nil) }
++            try #require(try f.finish(result, stamp: admission))
++            f.gate.publishPresentation(result, admission: admission, receipt: try #require(f.gate.snapshot.latest))
++            let frame = try #require(try renderTick().frame, "frame \(id) did not reach the mailbox")
++            #expect(frame.source.frameID == id && frame.source.capturedAt == time)
++            frames.append(frame)
++            id += 1
++            time += 0.125
++        }
++        func hipX(_ slot: AvatarSlot) -> Double? {
++            guard case .available(let pose) = slot, let l = pose.joints[.leftHip], let r = pose.joints[.rightHip] else { return nil }
++            return (l.x + r.x) / 2
++        }
++
++        for _ in 0..<4 { try deliver(inFlightTick: false) }
++        let last = try #require(frames.last)
++        time += 0.6
++        f.clock.time = time
++        let gap = try renderTick()
++        #expect(gap.reset.all && gap.frame == nil && !gap.hasCurrent)
++        for _ in 0..<16 { try deliver(inFlightTick: true) }
++
++        let after = frames.dropFirst(4)
++        #expect(after.count == 16)
++        #expect(zip(frames, frames.dropFirst()).allSatisfy { $0.source.frameID < $1.source.frameID && $0.source.capturedAt < $1.source.capturedAt })
++        #expect(after.allSatisfy { $0.source.context == last.source.context })              // no new capture context
++        #expect(after.allSatisfy { $0.source.controlRevision == last.source.controlRevision }) // no rebind
++        #expect(after.allSatisfy { $0.contextRevision > last.contextRevision })             // a new presentation epoch
++        // Tracking is uncertain right after the gap, then recovers; P1 stays the right-hand (x 0.75) body.
++        #expect(after.contains { if case .unavailable = $0.player1 { true } else { false } })
++        let final = try #require(after.last)
++        #expect(try #require(hipX(final.player1)) > 0.5 && (try #require(hipX(final.player2))) < 0.5)
++        #expect(frames.allSatisfy { hipX($0.player1).map { $0 > 0.5 } ?? true && hipX($0.player2).map { $0 < 0.5 } ?? true })
++
++        // A pre-gap packet can't come back, under its old epoch or the current one.
++        let lost = AvatarTrackedSlot(state: .lost, candidateID: nil, requiresRebind: false)
++        #expect(mailbox.offer(AvatarSourceOutput(source: last.source, contextRevision: last.contextRevision,
++                                                 player1: lost, player2: lost, candidates: [], calibration: [:])) == .staleContext)
++        #expect(mailbox.offer(AvatarSourceOutput(source: last.source, contextRevision: final.contextRevision,
++                                                 player1: lost, player2: lost, candidates: [], calibration: [:])) == .staleFrame)
++        #expect(mailbox.drain(now: f.clock.time + 0.01).frame == nil)
++        #expect(mailbox.diagnostics.accepted == 20)
++        #expect(mailbox.diagnostics.rejected == [.staleContext: 1, .staleFrame: 1])
++    }
++}
