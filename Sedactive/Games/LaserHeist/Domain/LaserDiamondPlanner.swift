@@ -52,6 +52,11 @@ nonisolated struct LaserDiamondPlanner: Sendable {
         // A replacement is still due when every legal zone overlaps a collecting wrist.
         let candidates = preferred.isEmpty ? available : preferred
         let placement = candidates[Int(random() % UInt64(candidates.count))]
+        return try spawn(placement, at: time, entry: entry, exit: exit)
+    }
+
+    private mutating func spawn(_ placement: LaserDiamondPlacement, at time: Double, entry: Double, exit: Double) throws -> LaserDiamondSpawn {
+        try requireLaserValue(sequence < 0xffffffffffff, "diamond identity exhausted")
         sequence += 1
         let id = UUID(uuidString: String(format: "D1A00000-0000-4000-8000-%012llX", sequence))!
         return try LaserDiamondSpawn(id: id, position: placement.position, eligiblePlayers: placement.eligiblePlayers,
@@ -75,6 +80,29 @@ nonisolated struct LaserDiamondPlanner: Sendable {
         }
         self = next
         return result
+    }
+
+    /// Keep empty slots when the board has no safe placement for this input frame.
+    mutating func refillPawBoard(at time: Double, deadline: Double, roster: Set<PlayerID>,
+                                active: [LaserDiamondSpawn], recent: [LaserDiamondPosition],
+                                paws: [LaserDiamondPosition]) throws -> [LaserDiamondSpawn] {
+        guard active.count < LaserDiamondTimeBoard.maximumActiveDiamonds else { return [] }
+        var occupied = active.map(\.position)
+        var spawns: [LaserDiamondSpawn] = []
+        let positions = LaserDiamondTimeBoard.positions(solo: roster.count == 1)
+        while occupied.count < LaserDiamondTimeBoard.maximumActiveDiamonds {
+            let safe = positions.filter { candidate in
+                !recent.contains(candidate)
+                    && occupied.allSatisfy { LaserDiamondTimeBoard.distance($0, candidate) >= LaserDiamondTimeBoard.interDiamondSpacing }
+                    && paws.allSatisfy { LaserDiamondTimeBoard.distance($0, candidate) >= LaserDiamondTimeBoard.spawnClearance }
+            }
+            guard !safe.isEmpty else { break }
+            let position = safe[Int(random() % UInt64(safe.count))]
+            let placement = LaserDiamondPlacement(position: position, eligiblePlayers: roster)
+            spawns.append(try spawn(placement, at: time, entry: time, exit: deadline))
+            occupied.append(position)
+        }
+        return spawns
     }
 
     mutating func bonusInitial(at time: Double, deadline: Double) throws -> [LaserDiamondSpawn] {

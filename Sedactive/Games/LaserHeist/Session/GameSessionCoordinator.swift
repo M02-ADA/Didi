@@ -27,6 +27,13 @@ final class GameSessionCoordinator {
     var isCompleteReplay: Bool { replayDriver?.script.fullRound != nil }
     /// Read-only domain state for the separately reviewed K06 rendering handoff.
     var diamondStates: [UUID: LaserDiamondState] { game?.diamonds ?? [:] }
+    var showsDiamondTimePaws: Bool {
+        !isReplay && state?.phase == .diamondTime && finalVaultEntry?.isComplete == true
+    }
+
+    // Published on the live frame host so an expired hand disappears even without a new packet.
+    private(set) var diamondTimePaws: [LaserContactHand: LaserDiamondPosition] = [:]
+
     var diamondsCollected: Int { game?.diamondsCollected ?? 0 }
     /// The scripted entry into the final vault (live rounds), from the moment Diamond Time is
     /// unlocked until the team stands inside; `nil` before it and in replay. While it is
@@ -510,6 +517,7 @@ final class GameSessionCoordinator {
         setupTask?.cancel(); setupTask = nil
         let hadLifetime = lifetime != nil
         wristDiamonds = nil
+        diamondTimePaws = [:]
         lifetime = nil
         phase = .finished
         liveFrameAttachment = nil
@@ -912,6 +920,13 @@ final class GameSessionCoordinator {
         guard lifetime != nil, liveFrameAttachment == token else { return }
         liveFrameHostReady = true
         advanceLive()
+        updatePaws()
+    }
+
+    private func updatePaws() {
+        let visible = showsDiamondTimePaws && phase == .running && liveReadiness?.isClockHeld == false
+            ? wristDiamonds?.visiblePaws(at: hostNow()) ?? [:] : [:]
+        if diamondTimePaws != visible { diamondTimePaws = visible }
     }
 
     func collectAvatarDiamondContacts(_ contacts: [UUID: Set<PlayerID>], frameHost token: LaserLiveFrameAttachment) {
@@ -919,7 +934,7 @@ final class GameSessionCoordinator {
               liveReadiness?.isClockHeld == false, let context = inputContext,
               context == provider.currentContext, context.isActive,
               var stagedGame = game, !stagedGame.isPaused, stagedGame.roundOutcome == nil,
-              stagedGame.roundPhase == .activity || stagedGame.roundPhase == .diamondTime,
+              stagedGame.roundPhase == .activity,
               var stagedWrist = wristDiamonds else { return }
         do {
             try stagedWrist.receiveBodyContacts(contacts, context: context, atHostTime: hostNow(), game: &stagedGame)
@@ -1095,8 +1110,9 @@ final class GameSessionCoordinator {
                     withdrawnLiveEncounters = []; approvedRecovery = nil; recoveryAttempted = false
                 }
                 if phase != .running, let plan = wristDiamondConfiguration, let token = lifetime {
-                    var consumer = try LaserWristDiamondConsumer(configuration: plan, context: context,
-                        lifetime: token, afterCapturedAt: hostNow(), planner: wristDiamonds?.replacementPlanner)
+                    var consumer = try wristDiamonds?.restarting(configuration: plan, context: context,
+                        lifetime: token, atHostTime: hostNow())
+                        ?? LaserWristDiamondConsumer(configuration: plan, context: context, lifetime: token, afterCapturedAt: hostNow())
                     if let vault = liveVault, game?.roundPhase == .vault, let current = game {
                         try consumer.openVault(id: vault.id, zones: vault.zones, game: current, atHostTime: hostNow())
                     }
@@ -1129,15 +1145,22 @@ final class GameSessionCoordinator {
                 // Receive before inclusive advance: equal-deadline arrivals remain eligible.
                 if let packet, let captured = liveReadiness?.capturedGameTime(for: packet) {
                     try stagedGame.receive(packet, capturedGameTime: captured, arrivedAt: readiness.gameTime)
-                    let shifts = vaultZoneShifts(for: packet)
-                    try stagedWrist?.receive(packet, context: context, atHostTime: hostNow(),
-                        capturedGameTime: captured, arrivedGameTime: readiness.gameTime, game: &stagedGame,
-                        vaultZoneShifts: shifts)
-                    #if DEBUG
-                    if let readout = stagedWrist?.lastVaultReadout, !readout.isEmpty {
-                        logVaultContact(readout, shifts: shifts, pressed: stagedGame.vault?.buttons ?? [:], at: packet.capturedAt)
+                    if stagedGame.roundPhase == .diamondTime {
+                        if finalVaultEntry?.isComplete == true, !readiness.isClockHeld {
+                            try stagedWrist?.receivePawBoard(packet, context: context, atHostTime: hostNow(),
+                                capturedGameTime: captured, arrivedGameTime: readiness.gameTime, game: &stagedGame)
+                        }
+                    } else if stagedGame.roundOutcome == nil {
+                        let shifts = vaultZoneShifts(for: packet)
+                        try stagedWrist?.receive(packet, context: context, atHostTime: hostNow(),
+                            capturedGameTime: captured, arrivedGameTime: readiness.gameTime, game: &stagedGame,
+                            vaultZoneShifts: shifts)
+                        #if DEBUG
+                        if let readout = stagedWrist?.lastVaultReadout, !readout.isEmpty {
+                            logVaultContact(readout, shifts: shifts, pressed: stagedGame.vault?.buttons ?? [:], at: packet.capturedAt)
+                        }
+                        #endif
                     }
-                    #endif
                 }
                 #if DEBUG
                 // DEBUG Solo Test tap fallback: P1's own vault button, at this frame's game time,
@@ -1165,14 +1188,10 @@ final class GameSessionCoordinator {
                     }
                 }
                 #endif
-                // The final vault unlocks Diamond Time at the opening press: place its targets then.
-                if stagedGame.roundPhase == .diamondTime, !stagedGame.hasStartedDiamondTimeDiamonds,
-                   var director = stagedDirector {
-                    let spawns = try director.diamondTimeSpawns(at: stagedGame.gameTime,
-                        deadline: stagedGame.gameTime + configuration.diamondTimeDuration)
-                    try stagedGame.startDiamondTimeDiamonds(spawns)
+                if stagedGame.roundPhase == .diamondTime, finalVaultEntry == nil,
+                   let director = stagedDirector {
+                    // Carry forward the normal planner's identity watermark.
                     stagedWrist?.adoptPlanner(director.planner)
-                    stagedDirector = director
                 }
                 if stagedGame.roundPhase != .vault { stagedVault = nil }
                 try stagedGame.advance(to: readiness.gameTime)
@@ -1182,6 +1201,7 @@ final class GameSessionCoordinator {
                 game = stagedGame; wristDiamonds = stagedWrist; liveDirector = stagedDirector
                 encounters.append(contentsOf: stagedRegistered); liveVault = stagedVault
                 collectLiveState()
+                updatePaws()
                 if summary != nil { phase = .finished; finishLiveInput(); return }
                 try advanceFinalVaultEntry()
                 if poseFirstCandidate {
@@ -1248,7 +1268,7 @@ final class GameSessionCoordinator {
         finalVaultEntry = entry
         guard entry.isComplete else { return }
         try liveReadiness?.releaseClock(at: now)
-        // Fresh outside→inside entries only: the wrists' baseline restarts at the release.
+        // Seed the paw board only from captures made after the entry cinematic.
         wristDiamonds?.invalidate(atHostTime: now)
         print(String(format: "[LaserFinalVault] inside · Diamond Time starts at game %.2f s", game.gameTime))
     }
@@ -1272,6 +1292,7 @@ final class GameSessionCoordinator {
             approvedRecovery = nil; recoveryAttempted = false
         }
         phase = .paused
+        updatePaws()
     }
 
     private func collectLiveState() {
@@ -1298,6 +1319,7 @@ final class GameSessionCoordinator {
         guard liveTerminationTask == nil else { return }
         setupTask?.cancel(); setupTask = nil
         wristDiamonds = nil
+        diamondTimePaws = [:]
         lifetime = nil
         liveFrameAttachment = nil
         liveFrameHostReady = false

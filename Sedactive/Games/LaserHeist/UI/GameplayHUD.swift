@@ -366,14 +366,14 @@ struct GameplayHUD: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("\(seconds) seconds left")
             }
-            if model.diamondsAreFixture {
-                Text("FIXTURE")
+            if model.diamondSecondsLeft != nil || model.diamondsAreFixture {
+                Text(model.diamondsAreFixture ? "FIXTURE" : "DIAMOND TIME")
                     .font(.system(size: 13 * k, weight: .heavy, design: .monospaced))
                     .padding(.horizontal, 6 * k)
                     .padding(.vertical, 2 * k)
                     .background(Self.sun, in: Capsule())
                     .foregroundStyle(Self.ink)
-                    .accessibilityLabel("Synthetic diamond fixture")
+                    .accessibilityLabel(model.diamondsAreFixture ? "Synthetic diamond fixture" : "Diamond Time")
             }
         }
         .font(.system(size: 24 * k, weight: .black, design: .rounded))

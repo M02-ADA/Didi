@@ -23,6 +23,8 @@ final class LaserReplayPresentation {
     #endif
     #if DEBUG
     var debugDiamondReadout: DebugDiamondVisualReadout?
+    /// Manual source-time steps through the existing replay coordinator, no second clock.
+    var holdsTimingComparison = false
     #endif
 
     /// DEBUG `-liveButtonLayout`: the synthetic replay shows the live vault-button layout and
@@ -120,7 +122,7 @@ final class LaserReplayPresentation {
             let layout = session.inputConfiguration.playerPlaneLayout
             let display = Self.diamondDisplay(scene: scene, layout: layout)
             presenter?.diamondTime.source = { [weak session] _ in
-                guard let session else { return [] }
+                guard let session, session.isReplay else { return [] }
                 return session.diamondStates.values.compactMap { state in
                     guard case .diamondTime = state.lifetime,
                           let lane = PlayerID.allCases.first(where: { state.spawn.eligiblePlayers.contains($0) }),
@@ -159,7 +161,7 @@ final class LaserReplayPresentation {
             }
             guard session.phase == .running else { return }
             #if DEBUG
-            if session.isDebugWristPreview {
+            if session.isDebugWristPreview || self.holdsTimingComparison {
                 self.render(scene:scene,session:session) // user advances original fixture time; no extra clock
                 return
             }
@@ -207,6 +209,7 @@ final class LaserReplayPresentation {
     #endif
 
     func stop() {
+        pawPickupsHeard = nil
         diamondFlights?.clear()
         subscription?.cancel()
         subscription = nil
@@ -223,7 +226,7 @@ final class LaserReplayPresentation {
     private func avatarDiamondContacts(scene: LaserScene, session: GameSessionCoordinator) -> [UUID: Set<PlayerID>] {
         guard let presenter, let avatars = scene.robotAvatars, let state = session.state,
               let snapshot = session.latestSnapshot, session.phase == .running,
-              state.phase == .activity || state.phase == .diamondTime else { return [:] }
+              state.phase == .activity else { return [:] }
         let active = session.diamondStates.values.filter {
             $0.outcome == nil && state.gameTime >= $0.spawn.entry && state.gameTime < $0.interactionDeadline
         }
@@ -235,14 +238,7 @@ final class LaserReplayPresentation {
         var contacts: [UUID: Set<PlayerID>] = [:]
         for target in active {
             let id = target.spawn.id
-            let sphere: (center: SIMD3<Float>, radius: Float)?
-            switch target.lifetime {
-            case .passage:
-                sphere = presenter.normalDiamonds.bodyContactSphere(id: id)
-            case .diamondTime:
-                sphere = Int(id.uuidString.suffix(12), radix: 16).flatMap { presenter.diamondTime.bodyContactSphere(id: $0) }
-            }
-            guard let sphere, sphere.radius > 0 else { continue }
+            guard let sphere = presenter.normalDiamonds.bodyContactSphere(id: id), sphere.radius > 0 else { continue }
             for player in target.spawn.eligiblePlayers where bodies[player]?.contains(where: {
                 $0.overlaps(center: sphere.center, radius: sphere.radius)
             }) == true {
@@ -252,15 +248,25 @@ final class LaserReplayPresentation {
         return contacts
     }
 
+    private var pawPickupsHeard: Int?
+
     private func render(scene: LaserScene, session: GameSessionCoordinator) {
         guard let state = session.state else { return }
+        if session.showsDiamondTimePaws {
+            if let previous = pawPickupsHeard, session.diamondsCollected > previous {
+                AudioService.shared.play(.diamondCollect)
+            }
+            pawPickupsHeard = session.diamondsCollected
+        } else {
+            pawPickupsHeard = nil
+        }
         if flightScenePhase != state.phase { diamondFlights?.clear(); flightScenePhase = state.phase }
         diamondFlights?.session(state.sessionGeneration, running: session.phase == .running && session.summary == nil)
         presenter?.apply(state: state, events: session.events, snapshot: session.latestSnapshot,
                          upcomingVaultIn: session.isCompleteReplay
                             ? Self.upcomingVaultIn(state: state, activityDuration: session.activityDuration)
                             : session.liveVaultIn,
-                         finalVault: session.finalVaultEntry)
+                         finalVault: session.finalVaultEntry, showsPawBoard: session.showsDiamondTimePaws)
         // The wrists' reach cursors (the tracked wrist the gate judges) are an engineering view only
         // (owner, 12 November 2026: players see the mascots and the buttons, no helper circles):
         // DEBUG `-showReachCursors`, while a vault's buttons wait. Contact is judged either way.

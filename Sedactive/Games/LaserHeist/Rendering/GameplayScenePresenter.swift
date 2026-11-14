@@ -59,6 +59,7 @@ final class GameplayScenePresenter {
     }
 
     private let scene: LaserScene
+    private var hiddenPawBoardLanes: [PlayerID: Bool] = [:]
     private let configuration: LaserRoundConfiguration
     /// Gates each player is expected to need at once, from the schedule known
     /// at the start. A guide, not a limit: pending hazards are always shown and
@@ -178,7 +179,7 @@ final class GameplayScenePresenter {
     /// - Parameter finalVault: the live session's final vault entry; `nil` before it and in
     ///   replay, where Diamond Time shows the vault room at once.
     func apply(state: LaserGameState, events: [GameEvent], snapshot: BodySnapshot?, upcomingVaultIn: Double? = nil,
-               finalVault entry: LaserFinalVaultEntry? = nil) {
+               finalVault entry: LaserFinalVaultEntry? = nil, showsPawBoard: Bool = false) {
         if generation != state.sessionGeneration {
             reset()
             generation = state.sessionGeneration
@@ -189,12 +190,13 @@ final class GameplayScenePresenter {
         let stage = finalVaultStage(state: state, entry: entry)
         // The approach to the final vault moves the corridor (cosmetic, while game time is held).
         let approach = finalVault.update(stage)
+        showPawBoard(showsPawBoard)
         travel(state: state, to: time, plus: approach, upcomingVaultIn: upcomingVaultIn, holding: vault.holdsTravel(for: state))
         vault.update(state: state, travelDistance: travelDistance + approach, upcomingVaultIn: upcomingVaultIn)
         soundVault(state)
         // Diamond Time's diamonds appear once the team is inside the vault.
         diamondTime.update(state: state, diamondTimeStartedAt: diamondTimeStartedAt,
-                           hidden: { if case .entry = stage { true } else { false } }())
+                           hidden: showsPawBoard || { if case .entry = stage { true } else { false } }())
         normalDiamonds.update(state: state)
         // One pickup sound per collection shown, normal or Diamond Time.
         let collected = diamondTime.collections + normalDiamonds.collections
@@ -202,12 +204,27 @@ final class GameplayScenePresenter {
         diamondsHeard = collected
         updateHazards(state: state, at: time)
         updateCue(state: state, at: time)
+        scene.setTimingPresentation(endedAt == nil && scene.timingVariant != .approved ? LaserTimingPresentation.make(state: state,
+            configuration: configuration, withdrawn: Set(withdrawnAt.keys)) : nil)
         if let snapshot, snapshot.sessionGeneration == state.sessionGeneration { present(snapshot) }
         updateBandEdges()
     }
 
+    private func showPawBoard(_ visible: Bool) {
+        if visible {
+            for (player, lane) in scene.players where hiddenPawBoardLanes[player] == nil {
+                hiddenPawBoardLanes[player] = lane.isEnabled
+                lane.isEnabled = false
+            }
+        } else {
+            for (player, enabled) in hiddenPawBoardLanes { scene.players[player]?.isEnabled = enabled }
+            hiddenPawBoardLanes.removeAll()
+        }
+    }
+
     /// Hides everything this presenter shows; called when the session stops.
     func stop() {
+        showPawBoard(false)
         for key in Array(slots.keys) { release(key) }
         scene.setMoveCue(nil, actionRemaining: nil)
         scene.clearLaserFeedback()
@@ -219,6 +236,7 @@ final class GameplayScenePresenter {
     }
 
     private func reset() {
+        showPawBoard(false)
         for key in Array(slots.keys) { release(key) }
         scene.clearLaserFeedback()
         travelDistance = 0

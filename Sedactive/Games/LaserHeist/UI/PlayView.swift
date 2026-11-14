@@ -75,6 +75,10 @@ private struct ReplayRoundView: View {
     var body: some View {
         RealityView { content in
             content.camera = .virtual
+            #if DEBUG
+            if let selected = TimingIndicatorControls.launchVariant { scene.selectTimingVariant(selected) }
+            presentation.holdsTimingComparison = TimingIndicatorControls.isComparison
+            #endif
             presentation.diamondFlights = diamondFlights
             let authored = await LaserScene.loadAuthoredEnvironment()
             #if DEBUG
@@ -326,7 +330,7 @@ private struct ReplayRoundView: View {
                 #endif
                 var useSlice = ProcessInfo.processInfo.arguments.contains("-replaySlice")
                 #if DEBUG
-                useSlice = useSlice || DiamondTimeFixture.isRequested
+                useSlice = useSlice || DiamondTimeFixture.isRequested || TimingIndicatorControls.isComparison
                 #endif
                 let base = try useSlice ? LaserReplayScript.load() : LaserReplayScript.complete()
                 let script = try base.freshRound(generation: generation)
@@ -348,6 +352,11 @@ private struct ReplayRoundView: View {
         }
         .ignoresSafeArea()
         .background(.black)
+        .overlay {
+            if let session, session.showsDiamondTimePaws {
+                DiamondTimePawOverlay(session: session)
+            }
+        }
         .overlay {
             // One HUD at a time: the Sketch gameplay HUD, or (Debug, `-replayDebugHUD`)
             // Jevon's text HUD for replay diagnostics. Results replaces either.
@@ -437,7 +446,13 @@ private struct ReplayRoundView: View {
                     .accessibilityIdentifier("endRound")
             }
         }
+        #if DEBUG
+        .overlay(alignment: .bottomTrailing) {
+            TimingIndicatorControls(session: session, scene: scene, retry: retry)
+        }
+        #endif
         .onChange(of: session?.phase) { _, phase in
+            scene.setTimingPaused(phase == .paused)
             if phase != .running { diamondFlights.clear() }
             #if DEBUG
             // `-maskBench` spike: the measured run is the live round, countdown to finish.

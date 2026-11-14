@@ -235,8 +235,9 @@ struct GameplayScenePresenterTests {
 
     // MARK: - Cue
 
-    @Test func cueFollowsTheEarliestPendingTargetOnlyDuringActivity() throws {
+    @Test func legacyCueFollowsTheEarliestPendingTargetOnlyDuringActivity() throws {
         let scene = LaserScene()
+        scene.selectTimingVariant(.approved) // explicitly verify the retained legacy fallback
         let laser = try encounter(1, crossing: [.player1: 10, .player2: 10])
         let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [laser])
 

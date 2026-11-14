@@ -36,6 +36,43 @@ final class LaserFeedback {
     private let badges: [PlayerID: Entity]
     private let badgeFaces: [PlayerID: [Outcome: Entity]]
     private var impacts: [PlayerID: Entity] = [:]
+    private lazy var timingRenderer: TimingIndicatorRenderer = {
+        let renderer = TimingIndicatorRenderer()
+        renderer.root.position = [0, -0.215, 0.004]
+        cue.addChild(renderer.root)
+        return renderer
+    }()
+    private(set) var timingVariant: TimingIndicatorVariant = .closing
+    private(set) var timingModel: LaserTimingPresentation?
+    private var timingPaused = false
+    private var approvedCue: (Move?, Float?) = (nil, nil)
+
+    func selectTimingVariant(_ variant: TimingIndicatorVariant) {
+        timingVariant = variant
+        if variant == .approved {
+            timingRenderer.apply(nil, variant: .approved, reduceMotion: Self.reduceMotion)
+            let previous = approvedCue
+            setMoveCue(previous.0, actionRemaining: previous.1)
+            countdown.isEnabled = previous.0 != nil && previous.1 != nil
+        } else { setTimingPresentation(timingModel) }
+    }
+    func setTimingPaused(_ paused: Bool) {
+        timingPaused = paused
+        if timingVariant != .approved { setTimingPresentation(timingModel) }
+    }
+    func setTimingPresentation(_ model: LaserTimingPresentation?) {
+        timingModel = model
+        guard timingVariant != .approved else { return }
+        guard let model, !timingPaused else {
+            timingRenderer.apply(nil, variant: timingVariant, reduceMotion: Self.reduceMotion)
+            if shownCue != nil { hideCue() }
+            return
+        }
+        let move: Move = model.move == .duck ? .duck : .jump
+        if shownCue?.move != move || shownCue?.acting != true { showCue(move, acting: true) }
+        countdown.isEnabled = false
+        timingRenderer.apply(model, variant: timingVariant, reduceMotion: Self.reduceMotion)
+    }
 
     /// Builds every cue, badge and texture once; showing them later only toggles and animates.
     init() {
@@ -116,6 +153,8 @@ final class LaserFeedback {
     var shownMoveCue: (move: Move, acting: Bool)? { shownCue }
 
     func setMoveCue(_ move: Move?, actionRemaining: Float? = nil) {
+        approvedCue = (move, actionRemaining)
+        if timingVariant != .approved { return } // one chosen renderer owns cue visibility
         guard let move else {
             if shownCue != nil { hideCue() }
             return
@@ -164,6 +203,11 @@ final class LaserFeedback {
 
     /// Clears the cue, badges and impacts, e.g. when a new encounter starts.
     func clear() {
+        timingModel = nil
+        if timingVariant != .approved {
+            timingRenderer.apply(nil, variant: timingVariant, reduceMotion: Self.reduceMotion)
+            if shownCue != nil { hideCue() }
+        }
         setMoveCue(nil)
         for entity in Array(badges.values) + Array(impacts.values) {
             entity.stopAllAnimations()
