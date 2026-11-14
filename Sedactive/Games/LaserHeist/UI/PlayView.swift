@@ -443,7 +443,11 @@ private struct ReplayRoundView: View {
         }
         #if DEBUG
         .overlay(alignment: .bottomTrailing) {
-            TimingIndicatorControls(session: session, scene: scene, retry: retry)
+            GeometryReader { geometry in
+                VStack { Spacer(); HStack { Spacer()
+                    TimingIndicatorControls(session: session, scene: scene, retry: retry, viewport: geometry.size)
+                } }
+            }.ignoresSafeArea()
         }
         #endif
         .onChange(of: session?.phase) { _, phase in

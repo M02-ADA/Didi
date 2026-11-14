@@ -38,16 +38,17 @@ final class LaserFeedback {
     private var impacts: [PlayerID: Entity] = [:]
     private lazy var timingRenderer: TimingIndicatorRenderer = {
         let renderer = TimingIndicatorRenderer()
-        renderer.root.position = [0, -0.215, 0.004]
+        renderer.root.position = [0, 0, 0.004]
         cue.addChild(renderer.root)
         return renderer
     }()
-    private(set) var timingVariant: TimingIndicatorVariant = .closing
+    private(set) var timingVariant: TimingIndicatorVariant = .circular
     private(set) var timingModel: LaserTimingPresentation?
     private var timingPaused = false
     private var approvedCue: (Move?, Float?) = (nil, nil)
 
     func selectTimingVariant(_ variant: TimingIndicatorVariant) {
+        if timingVariant != variant { shownCue = nil }
         timingVariant = variant
         if variant == .approved {
             timingRenderer.apply(nil, variant: .approved, reduceMotion: Self.reduceMotion)
@@ -71,6 +72,12 @@ final class LaserFeedback {
         let move: Move = model.move == .duck ? .duck : .jump
         if shownCue?.move != move || shownCue?.acting != true { showCue(move, acting: true) }
         countdown.isEnabled = false
+        for panel in cuePanels.values { panel.isEnabled = timingVariant != .circular && panel == cuePanels[move] }
+        timingRenderer.root.position.y = timingVariant == .circular ? 0.075 : -0.215
+        if timingVariant == .circular {
+            cue.stopAllAnimations(); cue.scale = .one
+            cue.components.set(OpacityComponent(opacity: 1))
+        }
         timingRenderer.apply(model, variant: timingVariant, reduceMotion: Self.reduceMotion)
     }
 

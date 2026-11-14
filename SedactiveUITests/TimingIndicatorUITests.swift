@@ -17,9 +17,20 @@ final class TimingIndicatorUITests: XCTestCase {
             let expected = String(format: "t %.2f", time)
             expectation(for: NSPredicate(format: "label BEGINSWITH %@", expected), evaluatedWith: source)
             waitForExpectations(timeout: 15)
-            XCTAssertTrue(app.buttons["timingSelector"].label.contains("Closing Gate"))
+            XCTAssertTrue(app.buttons["timingSelector"].label.contains("Circular cue"))
+            if i == 1 || i == 9 {
+                for layout in 0..<6 {
+                    app.buttons["timingLayoutMenu"].tap()
+                    app.buttons["timingLayout\(layout)"].tap()
+                    let reading = app.staticTexts["timingClearance"].label
+                    XCTAssertFalse(reading.isEmpty)
+                    let data = XCTAttachment(string: reading); data.name = "projection-\(i)-\(layout)"; data.lifetime = .keepAlways; add(data)
+                    let image = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); image.name = "layout-\(i)-\(layout)-SYNTHETIC"; image.lifetime = .keepAlways; add(image)
+                }
+                app.buttons["timingLayoutMenu"].tap(); app.buttons["timingLayout3"].tap()
+            }
             let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-            shot.name = String(format: "%02d-green-crossing-SYNTHETIC", i)
+            shot.name = String(format: "%02d-circular-SYNTHETIC", i)
             shot.lifetime = .keepAlways; add(shot)
         }
         app.buttons["timingRetry"].tap()
