@@ -48,6 +48,84 @@ nonisolated struct LaserWristDiamondConsumer: Sendable {
     private var vault: (id: UUID, zones: [UUID: LaserVaultZone])?
     private var vaultActivation: Activation?
 
+    private var pawCapture: Double?
+    private var paws: [LaserContactHand: LaserDiamondPosition] = [:]
+    private var recentPawPickups: [LaserDiamondPosition] = []
+    private var pawNeedsExit: [UUID: Set<LaserContactHand>] = [:]
+
+    func visiblePaws(at hostTime: Double) -> [LaserContactHand: LaserDiamondPosition] {
+        guard let pawCapture, let freshness = context.wristContact?.freshness,
+              hostTime >= pawCapture, hostTime - pawCapture < min(freshness, 0.15) else { return [:] }
+        return paws
+    }
+
+    /// Called only after the live entry cinematic releases the existing GameClock.
+    mutating func receivePawBoard(_ snapshot: BodySnapshot, context current: BodyInputContext,
+                                  atHostTime hostTime: Double, capturedGameTime: Double,
+                                  arrivedGameTime: Double, game: inout LaserGame) throws {
+        guard let deadline = game.diamondTimeDeadline, !game.isPaused, game.roundOutcome == nil,
+              arrivedGameTime < deadline else { return }
+        if current != context { invalidate(atHostTime: hostTime); context = current }
+        let previousCapture = pawCapture ?? capturedAfter
+        guard snapshot.frameID > lastFrame, snapshot.capturedAt > previousCapture else { return }
+
+        let recent = visiblePaws(at: snapshot.capturedAt)
+        let alpha = 1 - exp(-(snapshot.capturedAt - previousCapture) / 0.035)
+        let roster = Set(current.calibrationRevisions.keys)
+        var mapped: [LaserContactHand: LaserDiamondPosition] = [:]
+        var raw: [LaserDiamondPosition] = []
+        let admittedPlayers = roster.filter {
+            current.acceptsWristContact(snapshot, playerID: $0, at: hostTime,
+                                        afterFrameID: lastFrame, afterCapturedAt: previousCapture)
+        }
+        for hand in LaserContactHand.ordered where admittedPlayers.contains(hand.playerID) {
+            guard let player = snapshot.wristContact?.players[hand.playerID],
+                  let height = configuration.standingHeights[hand.playerID] else { continue }
+            let wrist = hand.wrist == .left ? player.left : player.right
+            guard let point = wrist.playerPlane, wrist.contactRefusal == nil, wrist.observationRefusal == nil,
+                  let target = LaserDiamondTimeBoard.paw(point, laneX: configuration.layout.centerX(for: hand.playerID),
+                      standingHeight: height, player: hand.playerID, solo: roster.count == 1) else { continue }
+            raw.append(target)
+            if let old = recent[hand] {
+                mapped[hand] = try LaserDiamondPosition(x: old.x + alpha * (target.x - old.x),
+                                                        y: old.y + alpha * (target.y - old.y))
+            } else {
+                mapped[hand] = target
+            }
+        }
+        let active = game.activeDiamonds
+        // A fresh paw returning over a target must first move out of it. This also
+        // prevents an untracked hand at spawn time from scoring when it reappears.
+        let knownTargets = Set(active.map(\.id))
+        pawNeedsExit = pawNeedsExit.filter { knownTargets.contains($0.key) }
+        let contacts = active.compactMap { spawn -> LaserContactActivation? in
+            guard capturedGameTime > spawn.entry else { return nil }
+            var winner: LaserContactHand?
+            for hand in LaserContactHand.ordered where spawn.eligiblePlayers.contains(hand.playerID) {
+                guard let paw = mapped[hand], LaserDiamondTimeBoard.overlaps(paw, spawn.position) else {
+                    pawNeedsExit[spawn.id]?.remove(hand)
+                    continue
+                }
+                if recent[hand] == nil { pawNeedsExit[spawn.id, default: []].insert(hand) }
+                if pawNeedsExit[spawn.id]?.contains(hand) != true, winner == nil { winner = hand }
+            }
+            return winner.map { LaserContactActivation(targetID: spawn.id, hand: $0) }
+        }
+        let accepted = try game.collectDiamonds(contacts, generation: current.sessionGeneration,
+            calibrationRevisions: current.calibrationRevisions, capturedAt: capturedGameTime,
+            arrivedAt: arrivedGameTime, deferredBonusRefill: true)
+        recentPawPickups.append(contentsOf: accepted.compactMap { game.diamonds[$0.targetID]?.spawn.position })
+        recentPawPickups = Array(recentPawPickups.suffix(8))
+        if !mapped.isEmpty, let deadline = game.diamondTimeDeadline {
+            let spawns = try planner.refillPawBoard(at: game.gameTime, deadline: deadline, roster: roster,
+                active: game.activeDiamonds, recent: recentPawPickups, paws: raw + Array(mapped.values))
+            try game.refillDiamondTimePaws(spawns)
+        }
+        lastFrame = snapshot.frameID
+        pawCapture = snapshot.capturedAt
+        paws = mapped
+    }
+
     /// What the last packet's vault evaluation saw, per zone and wrist (diagnostics only, from the
     /// same conditions the judge used): why a wrist was unavailable, its distance to the (shifted)
     /// zone centre, and whether that zone's press was emitted.
@@ -85,6 +163,14 @@ nonisolated struct LaserWristDiamondConsumer: Sendable {
     /// Diamond Time's replacements continue from the planner that placed its first targets.
     mutating func adoptPlanner(_ value: LaserDiamondPlanner) { planner = value }
 
+    func restarting(configuration: LaserWristDiamondConfiguration, context: BodyInputContext,
+                    lifetime: UUID, atHostTime time: Double) throws -> Self {
+        var next = try Self(configuration: configuration, context: context,
+                            lifetime: lifetime, afterCapturedAt: time, planner: planner)
+        next.recentPawPickups = recentPawPickups
+        return next
+    }
+
     /// Live vault: the six button zones become contact targets until the vault closes.
     /// Activation records the current watermark: no earlier capture can be the outside baseline.
     mutating func openVault(id: UUID, zones: [LaserVaultZone], game: LaserGame, atHostTime time: Double) throws {
@@ -98,6 +184,7 @@ nonisolated struct LaserWristDiamondConsumer: Sendable {
     mutating func invalidate(atHostTime time: Double) {
         targets.removeAll(); activations.removeAll(); lastFrame = 0; lastCapture = nil
         vaultActivation = nil
+        pawCapture = nil; paws.removeAll(); pawNeedsExit.removeAll()
         if time.isFinite { capturedAfter = max(capturedAfter, time) }
         // Reconstruct only transient entry state; target identity/outcomes remain domain-owned.
         entries = emptyEntries

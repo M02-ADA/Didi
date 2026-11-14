@@ -129,6 +129,7 @@ nonisolated struct LaserGame: Sendable {
     var historyCount: Int { history.values.reduce(0) { $0 + $1.count } }
     /// Registered laser targets still waiting for their verdict.
     var pendingCrossingCount: Int { crossings.values.filter { $0.result == .pending }.count }
+    var diamondTimeDeadline: Double? { roundPhase == .diamondTime ? bonusDeadline : nil }
     var hasStartedDiamondTimeDiamonds: Bool { bonusDiamondsStarted }
     var crossingCount: Int { crossings.count }
     var isPaused: Bool { blocked && !exited && roundOutcome == nil }
@@ -389,13 +390,25 @@ nonisolated struct LaserGame: Sendable {
         bonusDiamondsStarted = true
     }
 
+    mutating func refillDiamondTimePaws(_ spawns: [LaserDiamondSpawn]) throws {
+        guard !spawns.isEmpty else { return }
+        guard !blocked, !exited, roundOutcome == nil, diamondPoints != nil,
+              let deadline = diamondTimeDeadline else {
+            throw LaserDataError.invalidValue("paw board refill outside Diamond Time")
+        }
+        try diamondField.spawn(spawns, at: gameTime, before: deadline,
+                               maximumActive: LaserRoundConfiguration.initialBonusDiamondCount, bonusDeadline: deadline)
+        bonusDiamondsStarted = true
+    }
+
     /// Contact tracker output after producer/context admission, not raw wrist input.
     /// Replacements are paired with accepted collections in stable target-ID order.
     @discardableResult
     mutating func collectDiamonds(_ contacts: [LaserContactActivation], generation: UUID,
                                   calibrationRevisions: [PlayerID: UInt64], capturedAt: Double,
                                   arrivedAt: Double, replacements: [LaserDiamondSpawn] = [],
-                                  bodyContacts: [UUID: Set<PlayerID>] = [:]) throws
+                                  bodyContacts: [UUID: Set<PlayerID>] = [:],
+                                  deferredBonusRefill: Bool = false) throws
         -> [LaserContactActivation] {
         guard !blocked && !exited && roundOutcome == nil && context.isActive,
               generation == context.sessionGeneration, let diamondPoints else { return [] }
@@ -417,7 +430,7 @@ nonisolated struct LaserGame: Sendable {
         } }
         let accepted = try next.diamondField.collect(eligible, capturedAt: capturedAt, arrivedAt: arrivedAt,
             replacements: replacements, bonusDeadline: next.roundPhase == .diamondTime ? next.bonusDeadline : nil,
-            bodyContacts: eligibleBodies)
+            bodyContacts: eligibleBodies, deferredBonusRefill: deferredBonusRefill)
         let (points, multipliedOverflow) = diamondPoints.multipliedReportingOverflow(by: next.diamondsCollected - diamondsCollected)
         let (score, scoreOverflow) = next.teamScore.addingReportingOverflow(points)
         try requireLaserValue(!multipliedOverflow && !scoreOverflow, "diamond score overflow")
