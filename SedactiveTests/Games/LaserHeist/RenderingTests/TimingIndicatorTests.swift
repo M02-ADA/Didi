@@ -215,7 +215,7 @@ import Testing
             let (s,c) = try fixture(move, time: time, judged: time == 4.4)
             let m = try #require(LaserTimingPresentation.make(state: s, configuration: c))
             renderer.apply(m, reduceMotion: false)
-            #expect(renderer.litSegmentCount == Int((m.progress * 72).rounded(.down)))
+            #expect(renderer.renderedProgress == Double(Int((m.progress * 120).rounded(.down)))/120)
             #expect((renderer.displayedState == "perfect") == (time == 4.4))
             if time == 4.2 { #expect(renderer.displayedState == "pending") }
             #expect(renderer.root.findEntity(named: "timing.circular.perfect")?.isEnabled == (time == 4.4))
@@ -224,7 +224,7 @@ import Testing
         let (s,c) = try fixture(move, time: 3)
         let m = try #require(LaserTimingPresentation.make(state: s, configuration: c))
         for _ in 0..<100 { renderer.apply(m, reduceMotion: true) }
-        #expect(renderer.root.children.count == count && renderer.litSegmentCount == 72)
+        #expect(renderer.root.children.count == count && renderer.renderedProgress == 1)
         #expect(renderer.root.findEntity(named: "timing.circular.crossingPulse")?.isEnabled == false)
         renderer.apply(nil, reduceMotion: false)
         #expect(!renderer.root.isEnabled && renderer.displayedState == "hidden")
@@ -242,6 +242,21 @@ import Testing
                 #expect(s.teamScore == 0 && s.teamHealth == 5)
             }
         }
+    }
+
+    @Test func cleanBadgeUsesOneConnectedArcArrowAndSeparateLargeLabel() throws {
+        let renderer = CircularTimingCueRenderer()
+        #expect(renderer.progressMeshCount == 120)
+        #expect(renderer.root.findEntity(named: "timing.radial.0") == nil)
+        let arrow = try #require(renderer.root.findEntity(named: "timing.circular.icon.duck"))
+        let label = try #require(renderer.root.findEntity(named: "timing.circular.label.duck"))
+        #expect(arrow.position.y == 0 && label.position.y < -CircularTimingCueRenderer.diameter/2)
+        #expect(CircularTimingCueRenderer.actionLabel(for: "duck") == "DUCK")
+        #expect(CircularTimingCueRenderer.actionLabel(for: "jump") == "JUMP")
+        let first = CircularTimingCueRenderer.arcVertices(progress: 0.5)
+        #expect(first.count > 4)
+        #expect(abs(first[0].y - 0.18) < 0.00001)
+        #expect(abs(first[first.count-2].y + 0.18) < 0.00001)
     }
 
 }

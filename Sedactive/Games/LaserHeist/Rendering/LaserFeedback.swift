@@ -73,7 +73,7 @@ final class LaserFeedback {
         if shownCue?.move != move || shownCue?.acting != true { showCue(move, acting: true) }
         countdown.isEnabled = false
         for panel in cuePanels.values { panel.isEnabled = timingVariant != .circular && panel == cuePanels[move] }
-        timingRenderer.root.position.y = timingVariant == .circular ? 0.075 : -0.215
+        timingRenderer.root.position.y = timingVariant == .circular ? 0.045 : -0.215
         if timingVariant == .circular {
             cue.stopAllAnimations(); cue.scale = .one
             cue.components.set(OpacityComponent(opacity: 1))
