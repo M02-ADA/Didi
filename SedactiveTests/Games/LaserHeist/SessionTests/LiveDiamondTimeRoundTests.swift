@@ -93,7 +93,7 @@ func wristForPaw(at position: LaserDiamondPosition, player: PlayerID,
         try await send(outside)
         #expect(Set(rig.session.diamondTimePaws.keys) == Set(LaserContactHand.ordered))
         let before = rig.session.diamondStates.values.filter { $0.outcome == nil }
-        #expect(before.count == 4)
+        #expect(before.count == 6)
         #expect(before.allSatisfy { $0.interactionDeadline == start + 10 })
         #expect(before.allSatisfy { $0.spawn.eligiblePlayers == Set(PlayerID.allCases) })
         let target = try #require(before.sorted { $0.spawn.id.uuidString < $1.spawn.id.uuidString }.first)
@@ -112,7 +112,7 @@ func wristForPaw(at position: LaserDiamondPosition, player: PlayerID,
         try await send(overlap)
         #expect(rig.session.diamondsCollected == 1 && rig.session.state?.teamScore == score + 25)
         let active = rig.session.diamondStates.values.filter { $0.outcome == nil }
-        #expect(active.count == 4)
+        #expect(active.count == 6)
         let replacement = try #require(active.first { candidate in !before.contains { $0.spawn.id == candidate.spawn.id } })
         #expect(replacement.spawn.position != target.spawn.position && replacement.interactionDeadline == start + 10)
         #expect(LaserDiamondTimeBoard.distance(replacement.spawn.position, target.spawn.position)

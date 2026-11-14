@@ -16,10 +16,11 @@ struct LaserDiamondTimeBoardTests {
         #expect(child.y == opposite.y)
     }
 
-    @Test func blockedSlotsStayEmptyUntilSafeThenRefillDeterministically() throws {
+    @Test(arguments: [false, true])
+    func blockedSlotsStayEmptyUntilSafeThenRefillDeterministically(solo: Bool) throws {
         let board = LaserDiamondTimeBoard.self
-        let roster = Set(PlayerID.allCases)
-        let positions = board.positions(solo: false)
+        let roster: Set<PlayerID> = solo ? [.player1] : Set(PlayerID.allCases)
+        let positions = board.positions(solo: solo)
         let placements = positions.map { LaserDiamondPlacement(position: $0, eligiblePlayers: roster) }
         var planner = try LaserDiamondPlanner(seed: 42, placements: placements, approachLead: 1, passageDuration: 1)
         var duplicate = planner
@@ -33,7 +34,13 @@ struct LaserDiamondTimeBoardTests {
                                               active: [], recent: recent, paws: avoid)
         let second = try duplicate.refillPawBoard(at: 1, deadline: 10, roster: roster,
                                                  active: [], recent: recent, paws: avoid)
-        #expect(first == second && first.count == 4)
+        #expect(first == second && first.count == 6)
+        let capped = try planner.refillPawBoard(at: 2, deadline: 10, roster: roster,
+                                               active: first, recent: recent, paws: avoid)
+        #expect(capped.isEmpty)
+        let refilled = try planner.refillPawBoard(at: 2, deadline: 10, roster: roster,
+                                                 active: Array(first.dropLast()), recent: recent, paws: avoid)
+        #expect(refilled.count == 1)
         for (index, spawn) in first.enumerated() {
             #expect(spawn.eligiblePlayers == roster && spawn.entry == 1 && spawn.exit == 10)
             #expect(!recent.contains(spawn.position))

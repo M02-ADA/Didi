@@ -106,7 +106,7 @@ Store effects against logical encounter identity and attempt identity so duplica
 
 **Confirmed — task owner:** Live Diamond Time starts after the final vault entry, lasts **10 active seconds**, and uses a shared 2D playfield against the vault background. The four tracked wrists control four independent paw cursors. Either player can collect a diamond by overlapping it with a visible, active paw. Standing calibration scales each player's motion, and a missing or stale hand cannot collect.
 
-The game places up to **four diamonds** at distinct, reachable positions away from active paws, other diamonds and the HUD. Each accepted pickup awards **25 team points** once. Refill happens after the pickup batch, with a vacancy held open when no safe location is available. A hand reacquired while already over a diamond must leave it before it can collect it. Uncollected diamonds persist until the phase ends.
+The live paw board places up to **six diamonds** in Solo and Co-op at distinct, reachable positions away from active paws, other diamonds and the HUD. Each accepted pickup awards **25 team points** once. Refill happens after the pickup batch, with a vacancy held open when no safe location is available. A hand reacquired while already over a diamond must leave it before it can collect it. Uncollected diamonds persist until the phase ends.
 
 The GameClock holds during the entry cinematic and existing pauses. At the exact ten-second deadline, the game closes remaining targets and proceeds to Results. Both capture and arrival must precede that deadline. Replay fixtures retain their historical scripted inputs and pickups.
 

@@ -248,7 +248,7 @@ import Testing
         // MARK: Diamond Time: one real collection, no false ones, a held wrist scores once.
         let start = unlocked.gameTime
         let active = session.diamondStates.values.filter { $0.outcome == nil }.sorted { $0.spawn.id.uuidString < $1.spawn.id.uuidString }
-        #expect(active.count == 4 && active.allSatisfy { $0.interactionDeadline == start + 10 })
+        #expect(active.count == 6 && active.allSatisfy { $0.interactionDeadline == start + 10 })
         let target = try #require(active.first)
         let player = try #require(target.spawn.eligiblePlayers.first)
         let hand = LaserContactHand(playerID: player, wrist: .left)

@@ -2,6 +2,7 @@ import Foundation
 
 /// Logical screen units. The overlay fits this rectangle uniformly inside its safe area.
 nonisolated enum LaserDiamondTimeBoard {
+    static let maximumActiveDiamonds = 6
     static let width = 1.8
     static let height = 1.0
     static let pawRadius = 0.082
