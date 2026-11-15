@@ -150,6 +150,40 @@ struct LaserGateDecorationTests {
         }
     }
 
+    /// Distant visibility (14 November 2026): before it powers on, a gate shows its beam's path across
+    /// the corridor, so it can be seen far away between the mascots. Dim violet, never the red beam; it
+    /// is exactly the band from before the warning on, and gone once the gate is active, hit or off.
+    @Test("An unpowered gate shows its path far away and yields to the beam", arguments: [Float(0.01), 0.016, 0.05])
+    func theUnpoweredPathShowsFarAndYieldsToTheBeam(band: Float) throws {
+        let gate = try Self.gate()
+        gate.setSpan(leftX: -4.34, rightX: 4.34)
+        gate.setBandHeight(band)
+        gate.setState(.inactive)
+        #expect(gate.showsTrace)
+        gate.setViewDistance(60)
+        #expect(gate.traceHeight >= max(band, 60 * LaserGate.traceAngle) - 1e-6, "far: at least ~0.1° tall")
+        // From before a warning starts (~18.7 m out) to the players: exactly the band.
+        for d: Float in [LaserGate.traceNear, 12, 3.1] {
+            gate.setViewDistance(d)
+            #expect(abs(gate.traceHeight - band) < 1e-6, "at \(d) m: \(gate.traceHeight)")
+        }
+        // Smooth with distance: no step as the gate comes closer.
+        var previous: Float?
+        for d in stride(from: Float(70), through: 3, by: -0.05) {
+            gate.setViewDistance(d)
+            if let previous { #expect(gate.traceHeight <= previous + 1e-6 && previous - gate.traceHeight < 0.001) }
+            previous = gate.traceHeight
+        }
+        // Charging: the path stays (the red beam extends over it), at the band, however far.
+        gate.setViewDistance(40)
+        gate.setState(.warning)
+        #expect(gate.showsTrace && abs(gate.traceHeight - band) < 1e-6)
+        for state: LaserGate.VisualState in [.active, .hit, .disabled] {
+            gate.setState(state)
+            #expect(!gate.showsTrace, "\(state): no path drawn")
+        }
+    }
+
     @Test("A JUMP's curtain stops above the corridor floor")
     func jumpCurtainStaysAboveTheFloor() throws {
         let gate = try Self.gate()

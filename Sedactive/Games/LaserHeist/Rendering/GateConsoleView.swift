@@ -72,6 +72,27 @@ final class GateConsoleView {
         box.position = housing.center
         box.orientation = lean
         root.addChild(box)
+        // The pedestal: a post from the floor into the housing, on a low floor plate, with a neon strip
+        // down its inner face (it turns green with the plate's strips when the side is complete).
+        let pedestal = console.pedestal
+        let post = ModelEntity(mesh: .generateBox(size: pedestal.size, cornerRadius: 0.012),
+                               materials: [Self.lit(Palette.housing, roughness: 0.55, metallic: 0.25)])
+        post.name = "vault.console.pedestal"
+        post.position = pedestal.center
+        root.addChild(post)
+        let floorY = pedestal.center.y - pedestal.size.y / 2
+        let foot = ModelEntity(mesh: .generateBox(size: LaserGateConsole.basePlate, cornerRadius: 0.008),
+                               materials: [Self.lit(Palette.bezel, roughness: 0.4, metallic: 0.5)])
+        foot.name = "vault.console.base"
+        foot.position = [pedestal.center.x, floorY + LaserGateConsole.basePlate.y / 2, pedestal.center.z]
+        root.addChild(foot)
+        let postStrip = ModelEntity(mesh: .generateBox(size: [0.008, pedestal.size.y * 0.55, 0.012], cornerRadius: 0.004),
+                                    materials: [Self.glow(Palette.strip)])
+        postStrip.name = "vault.console.strip"
+        postStrip.position = [pedestal.center.x - console.side * (pedestal.size.x / 2 + 0.002),
+                              floorY + LaserGateConsole.basePlate.y + pedestal.size.y * 0.3, pedestal.center.z]
+        root.addChild(postStrip)
+        strips.append(postStrip)
         // The mounting plate on the open face, inset from the housing's edge.
         let plateSize = SIMD2(housing.size.z - 0.03, housing.size.y - 0.03)
         let plate = ModelEntity(mesh: .generateBox(size: [plateSize.x, plateSize.y, 0.006], cornerRadius: 0.003),

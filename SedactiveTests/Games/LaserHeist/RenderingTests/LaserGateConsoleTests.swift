@@ -48,9 +48,15 @@ struct LaserGateConsoleTests {
             let c = try #require(layer.consoles[player])
             let side: Float = player == .player1 ? -1 : 1
             #expect(c.side == side)
-            // Anchored: the main block reaches the corridor wall; the face is inside the camera's view.
-            let main = c.blocks[0]
-            #expect(abs(abs(main.center.x + side * main.size.x / 2) - scene.layout.corridorWidth / 2) < 1e-4, "\(player): on the wall")
+            // A compact unit standing on the floor (not a block stretched to the wider wall): a fixed-depth
+            // housing on a pedestal whose foot is on the corridor floor and whose top is inside the housing.
+            let main = c.blocks[0], post = c.blocks[1]
+            #expect(abs(main.size.x - LaserGateConsole.housingDepth) < 1e-5 && main.size.x < 0.6, "\(player): compact housing")
+            #expect(abs(main.center.x + side * main.size.x / 2) < scene.layout.environmentWidth / 2 - 1, "\(player): well inside the walls")
+            #expect(abs(post.center.y - post.size.y / 2 - scene.layout.corridorFloorY) < 1e-5, "\(player): the pedestal stands on the floor")
+            #expect(abs(post.center.y + post.size.y / 2 - main.center.y) < 1e-5 && abs(post.center.z - main.center.z) < 1e-5,
+                    "\(player): the pedestal rises into the housing")
+            #expect(abs(post.center.x - main.center.x) + post.size.x / 2 < main.size.x / 2, "\(player): under the housing")
             let screen = try #require(scene.screenFraction(of: [c.faceX, 0.6, 0], aspect: 4 / 3))
             #expect(player == .player1 ? (screen > 0.02 && screen < 0.2) : (screen > 0.8 && screen < 0.98), "\(player): face on screen at \(screen)")
             // HIGH just under the head, MIDDLE at the chest, LOW at the hips; one column, no gaps closed.
@@ -114,6 +120,10 @@ struct LaserGateConsoleTests {
             closest = min(closest, plateGap)
             let lowY = c.blocks[0].center.y - c.blocks[0].size.y / 2
             #expect(lowY > 0.05, "\(player): board clear under the console (housing bottom \(lowY))")
+            // The pedestal stands beyond the docked board's outer edge (steering never takes it further out).
+            let post = c.blocks[1], postInner = abs(post.center.x) - post.size.x / 2
+            print(String(format: "CLEAR %@ board edge %.3f · pedestal inner face %.3f", player.rawValue, abs(c.dockX) + steering.halfWidth, postInner))
+            #expect(postInner - (abs(c.dockX) + steering.halfWidth) > 0.05, "\(player): the board clears the pedestal")
             print(String(format: "CONSOLE %@ closest body-to-console gap at the dock %.3f m", player.rawValue, closest))
             #expect(closest > 0.02, "\(player): head and body clear by \(closest) m")
             let screenEdge = LateralSteering.visibleHalfWidth(depth: scene.layout.cameraPosition.z, verticalFieldOfViewDegrees: scene.layout.cameraVerticalFieldOfView,

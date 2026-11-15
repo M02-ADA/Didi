@@ -82,6 +82,26 @@ final class LaserGate {
     private let riserSpill = ModelEntity(mesh: LaserGateArt.unitQuad, materials: [LaserGateArt.softGlow])
     /// Energy that runs from the emitter along the armed beam.
     private let packet = ModelEntity(mesh: LaserGateArt.unitQuad, materials: [LaserGateArt.packet])
+    /// The beam's path before it powers on, across the whole span (inactive and charging).
+    ///
+    /// DISTANT VISIBILITY (Kevin, 14 November 2026; normal replay frames): a gate was in the
+    /// corridor from 60 m out, but before its warning it was only two dim wall lenses, and from
+    /// ~12 m to ~43 m from the camera those lie behind the two mascots on screen (the corridor's
+    /// centre between them is the only part always in view). Its warning beam then grew out of
+    /// the same hidden walls, so a laser was first seen ~8 m away, ~1.6 s before its crossing.
+    /// The trace crosses that open centre at every distance: a flat, dim mauve line (no hot core,
+    /// no glow, no red), emerging through the corridor's haze with the gate, then covered by the red
+    /// beam as it extends. Never shown once the gate is active, hit or disabled.
+    private let trace = ModelEntity(mesh: LaserGateArt.unitQuad, materials: [LaserGateArt.trace])
+    static let traceOpacity: Float = 0.6
+    /// The trace's smallest angular height (radians, ~0.1°), so a far gate stays at least a line on
+    /// screen. It applies only far away: it eases back to exactly the band between `traceFar` and
+    /// `traceNear` from the camera (a warning starts ~18.7 m out: 3 s at 5.2 m/s + 3.1 m), and while
+    /// the gate warns the trace is the band. It is never thinner than the band.
+    static let traceAngle: Float = 0.0018
+    static let traceNear: Float = 19, traceFar: Float = 30
+    /// The gate's distance from the camera (from `LaserHazard.setDepth`), for the trace's height.
+    private var viewDistance: Float?
 
     private var span: ClosedRange<Float>
     private var bandHeight: Float
@@ -160,6 +180,7 @@ final class LaserGate {
         gate.addChild(riser)
         packet.position.z = 0.003
         gate.addChild(packet)
+        gate.addChild(trace)
 
         emitters = mounts.enumerated().map { index, parts in
             let (mount, active, disabled, ring, spark) = parts
@@ -381,14 +402,17 @@ final class LaserGate {
 
         switch newState {
         case .inactive:
-            // Installed and armed, not firing: dim lenses with a little light on the walls.
+            // Installed and armed, not firing: dim lenses with a little light on the walls, and the
+            // beam's unpowered path between them.
+            showTrace()
             showEmitters()
             for emitter in emitters {
                 emitter.active.components.set(OpacityComponent(opacity: 0.5))
                 emitter.splash.components.set(OpacityComponent(opacity: 0.5))
             }
         case .warning:
-            // The emitters charge, then the beam extends (`setWarningProgress`).
+            // The emitters charge, then the beam extends (`setWarningProgress`) over its path.
+            showTrace()
             showEmitters()
             warning.isEnabled = true
             for emitter in emitters {
@@ -545,6 +569,35 @@ final class LaserGate {
         riserSpill.scale = [bandHeight + 0.05, abs(offset) + bandHeight + 0.04, 1]
         packet.position = [innerX, 0, 0.003]
         packet.scale = [0.5, bandHeight, 1]
+        layoutTrace()
+    }
+
+    /// The trace across the span, behind every beam layer, never thinner than the band.
+    private func layoutTrace() {
+        trace.position = [(span.lowerBound + span.upperBound) / 2, 0, -0.006]
+        trace.scale = [spanLength, traceHeight, 1]
+    }
+
+    /// The trace's height: the band, or up to ~0.1° of view when that is taller (far away only).
+    var traceHeight: Float {
+        guard state != .warning, let d = viewDistance else { return bandHeight }
+        let t = min(max((d - Self.traceNear) / (Self.traceFar - Self.traceNear), 0), 1)
+        return bandHeight + max(0, d * Self.traceAngle - bandHeight) * t * t * (3 - 2 * t)
+    }
+    /// Whether the unpowered path is drawn (tests and debugging).
+    var showsTrace: Bool { trace.isEnabled }
+
+    /// The gate's distance from the camera, for the trace's on-screen height.
+    func setViewDistance(_ distance: Float?) {
+        guard distance != viewDistance else { return }
+        viewDistance = distance
+        trace.scale.y = traceHeight
+    }
+
+    private func showTrace() {
+        trace.scale.y = traceHeight
+        trace.isEnabled = true
+        trace.components.set(OpacityComponent(opacity: Self.traceOpacity))
     }
 
     /// One spill quad at rest: anchored on its band edge, reaching `height` beyond it.
@@ -568,7 +621,7 @@ final class LaserGate {
     }
 
     private var codeLayers: [Entity] {
-        [flash, floorLight, riser, packet, upperSpill, lowerSpill] + emitters.flatMap { [$0.flare, $0.splash] }
+        [flash, floorLight, riser, packet, upperSpill, lowerSpill, trace] + emitters.flatMap { [$0.flare, $0.splash] }
     }
 
     private static var reduceMotion: Bool { UIAccessibility.isReduceMotionEnabled }

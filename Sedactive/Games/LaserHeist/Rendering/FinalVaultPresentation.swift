@@ -197,6 +197,14 @@ final class FinalVaultPresentation {
         wall.addChild(jamb)
         wall.addChild(mechanism.root)
         wall.addChild(closed)
+        // The corridor is wider than the art (`LaserWorldLayout.environmentWidth`): the wall carries
+        // on to the side walls with Asset 42's own outer edge, so the vault still closes the corridor.
+        // The art, its doorway and the room keep their size.
+        for side: Float in [-1, 1] {
+            guard let extension_ = Self.wallExtension(art.closed, side: side, from: wallWidth / 2,
+                                                      to: layout.environmentWidth / 2, height: wallHeight) else { continue }
+            wall.addChild(extension_)
+        }
         let backdrop = Self.plane(art.inside, width: FinalVaultArt.insideAspect, height: 1, blended: false)
         backdrop.name = "finalVault.inside"
         backdrop.isEnabled = false
@@ -554,6 +562,27 @@ final class FinalVaultPresentation {
     }
 
     // MARK: - Helpers
+
+    /// A strip from the art's edge (`from`, wall half-width) out to `to`, painted with Asset 42's
+    /// outermost column on that side (its bands carry straight on), tucked 1 cm under the art.
+    private static func wallExtension(_ texture: TextureResource, side: Float, from inner: Float, to outer: Float,
+                                      height: Float) -> ModelEntity? {
+        guard outer > inner + 0.001 else { return nil }
+        let u: Float = side < 0 ? 3 / FinalVaultDoorArtwork.size.x : 1 - 3 / FinalVaultDoorArtwork.size.x
+        let a = side * (inner - 0.01), b = side * outer, h = height / 2
+        var descriptor = MeshDescriptor(name: "finalVault.wallExtension")
+        descriptor.positions = MeshBuffers.Positions([[a, -h, 0], [b, -h, 0], [b, h, 0], [a, h, 0]])
+        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates([[u, 0], [u, 0], [u, 1], [u, 1]])
+        descriptor.primitives = .triangles([0, 1, 2, 0, 2, 3])
+        guard let mesh = try? MeshResource.generate(from: [descriptor]) else { return nil }
+        var material = UnlitMaterial(applyPostProcessToneMap: false)
+        material.color = .init(tint: .white, texture: .init(texture))
+        material.faceCulling = .none
+        let strip = ModelEntity(mesh: mesh, materials: [material])
+        strip.name = side < 0 ? "finalVault.wallExtensionLeft" : "finalVault.wallExtensionRight"
+        strip.position.z = 0.004
+        return strip
+    }
 
     private static func plane(_ texture: TextureResource, width: Float, height: Float, blended: Bool) -> ModelEntity {
         var material = UnlitMaterial(applyPostProcessToneMap: false)

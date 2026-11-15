@@ -103,6 +103,45 @@ struct VaultPresentationTests {
         #expect(scene.root.children.filter { $0.name == "vaultDoor.exiting" }.isEmpty)
     }
 
+    /// Gate pop-in (iPad, 14 November 2026): DEBUG "Skip to Next Gate" drops the time left from 56 s
+    /// to 5 s in one frame. The door no longer jumps ~36 m: it glides in from the far end while the
+    /// corridor travels the same distance, so it stays fixed in the corridor, and it still arrives at
+    /// its stop exactly when the vault begins.
+    @Test func aSkippedTimeLeftIsClosedByAGlideWithTheCorridorNotAJump() throws {
+        let (scene, _) = scene()
+        let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
+        let stop = scene.layout.vaultDoorStopZ, dt = 1.0 / 60, skipAt = 0.5, arrival = skipAt + 5
+        var t = 0.0, travel: Float = 0, lastOffset = scene.travelOffset
+        var frames: [(t: Double, door: Float, travel: Float)] = []
+        while t < arrival - dt / 2 {
+            let lead = t < skipAt ? 56 - t : arrival - t
+            presenter.apply(state: state(t, .activity), events: [], snapshot: nil, upcomingVaultIn: lead)
+            // The corridor's travel, unwrapped from its 12 m loop.
+            var step = scene.travelOffset - lastOffset
+            if step < -6 { step += 12 }
+            lastOffset = scene.travelOffset
+            travel += step
+            frames.append((t, try #require(scene.vaultDoorDepth), travel))
+            t += dt
+        }
+        let steps = zip(frames, frames.dropFirst()).map { $1.door - $0.door }
+        let jump = GateTravelEase.distance(lead: 56 - skipAt, speed: scene.layout.travelSpeed) // what a placement from the time left alone jumps (capped at the far end)
+        print(String(format: "SKIP glide: largest door step %.3f m per 1/60 s (a jump would be ≥ %.1f m)", steps.max() ?? 0, min(jump, stop - presenter.vault.approachHorizonZ) - GateTravelEase.distance(lead: 5, speed: scene.layout.travelSpeed)))
+        #expect(steps.allSatisfy { $0 >= -1e-4 && $0 < 1.5 }, "never moves away, never jumps")
+        // Fixed in the corridor from the frame after the skip: door and corridor move together (until the
+        // eased stop, where the corridor's per-frame easing and the door's exact one differ by centimetres, as before).
+        let after = frames.filter { $0.t > skipAt + dt && arrival - $0.t > GateTravelEase.duration }
+        let relative = after.map { $0.door - $0.travel }
+        #expect((relative.max()! - relative.min()!) < 1e-3, "door fixed in the corridor: drift \(relative.max()! - relative.min()!) m")
+        // The glide is over well before the gate: the door is back on its time-left place.
+        let late = try #require(frames.last)
+        #expect(abs(late.door - (stop - GateTravelEase.distance(lead: arrival - late.t, speed: scene.layout.travelSpeed))) < 1e-4)
+        #expect(presenter.vault.diagnostics.catchUps == 1)
+        presenter.apply(state: state(arrival, .vault, vault: vault()), events: [], snapshot: nil)
+        #expect(abs((scene.vaultDoorDepth ?? .nan) - stop) < 1e-4, "arrives at its stop when the vault begins")
+        #expect(presenter.vault.diagnostics.handoffs == 0)
+    }
+
     /// Without a schedule (production until Jevon exposes one) nothing approaches.
     @Test func withoutTheScheduleTheDoorStillFadesInAtItsStop() throws {
         let (scene, _) = scene()

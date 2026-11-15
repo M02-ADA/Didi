@@ -191,8 +191,11 @@ final class GameplayScenePresenter {
         // The approach to the final vault moves the corridor (cosmetic, while game time is held).
         let approach = finalVault.update(stage)
         showPawBoard(showsPawBoard)
-        travel(state: state, to: time, plus: approach, upcomingVaultIn: upcomingVaultIn, holding: vault.holdsTravel(for: state))
+        travel(state: state, to: time, upcomingVaultIn: upcomingVaultIn, holding: vault.holdsTravel(for: state))
         vault.update(state: state, travelDistance: travelDistance + approach, upcomingVaultIn: upcomingVaultIn)
+        // The corridor itself, with any distance a gate's approach glide covered (`VaultPresentation.glide`):
+        // the door stays fixed in the corridor while both close a skipped gap. Cosmetic only.
+        scene.setTravelDistance(travelDistance + approach + vault.corridorCatchUp)
         soundVault(state)
         // Diamond Time's diamonds appear once the team is inside the vault.
         diamondTime.update(state: state, diamondTimeStartedAt: diamondTimeStartedAt,
@@ -347,8 +350,9 @@ final class GameplayScenePresenter {
     /// activity and Diamond Time, not while the team stands at a vault or
     /// after the round ends. Gates don't use this distance: each is placed
     /// from its own crossing time, at the same speed, so the two always agree.
-    /// - Parameter extra: cosmetic distance on top (the final vault approach, on held game time).
-    private func travel(state: LaserGameState, to time: Double, plus extra: Float = 0, upcomingVaultIn: Double? = nil,
+    /// The corridor is shown at this distance plus cosmetic extras (`apply`: the final vault approach on
+    /// held game time, a gate approach's glide).
+    private func travel(state: LaserGameState, to time: Double, upcomingVaultIn: Double? = nil,
                         holding: Bool = false) {
         // `holding`: an opened gate's door is still opening; the team waits until it is clear.
         let moving = (state.phase == .activity || state.phase == .diamondTime) && endedAt == nil && !holding
@@ -358,7 +362,6 @@ final class GameplayScenePresenter {
             travelDistance += scene.layout.travelSpeed * Float(time - last) * GateTravelEase.speedFactor(lead: upcomingVaultIn)
         }
         travelledUntil = max(travelledUntil ?? time, time)
-        scene.setTravelDistance(travelDistance + extra)
     }
 
     /// The final vault from game state: nothing before Diamond Time; the scripted entry while

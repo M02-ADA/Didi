@@ -1579,7 +1579,10 @@ final class RobotAvatarLayer {
         var consoles: [PlayerID: LaserGateConsole] = [:]
         for player in players {
             consoles[player] = LaserGateConsole(player: player, arm: arm, visibleHalfWidth: visible,
-                                                wallHalfWidth: layout.corridorWidth / 2, planeZ: scene.mapping.interactionPlaneZ)
+                                                // A free-standing unit on the corridor floor; its face (and the dock)
+                                                // stays where the camera's view puts it, inside the walls.
+                                                wallHalfWidth: layout.environmentWidth / 2, planeZ: scene.mapping.interactionPlaneZ,
+                                                floorY: layout.corridorFloorY)
         }
         return consoles
     }
