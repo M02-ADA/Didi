@@ -21,8 +21,8 @@ struct DiamondTimePawOverlay: View {
             let availableHeight = max(0, proxy.size.height - top - bottom)
             let unit = min(availableWidth / LaserDiamondTimeBoard.width, availableHeight / LaserDiamondTimeBoard.height)
             if unit > 0 {
-                Canvas { context, _ in
-                    draw(context, unit: unit, time: time, diamonds: diamonds, paws: paws)
+                Canvas { context, size in
+                    draw(context, size: size, unit: unit, time: time, diamonds: diamonds, paws: paws)
                 }
                 .frame(width: unit * LaserDiamondTimeBoard.width, height: unit * LaserDiamondTimeBoard.height)
                 .position(x: left + availableWidth / 2, y: top + availableHeight / 2)
@@ -32,10 +32,10 @@ struct DiamondTimePawOverlay: View {
         .accessibilityHidden(true)
     }
 
-    private func draw(_ context: GraphicsContext, unit: CGFloat, time: Double,
+    private func draw(_ context: GraphicsContext, size: CGSize, unit: CGFloat, time: Double,
                       diamonds: [LaserDiamondState], paws: [LaserContactHand: LaserDiamondPosition]) {
         var reacting: Set<LaserContactHand> = []
-        var pickups: [(center: CGPoint, radius: CGFloat, age: Double)] = []
+        var pickups: [(center: CGPoint, radius: CGFloat, age: Double, player: PlayerID)] = []
         for diamond in diamonds {
             let center = point(diamond.spawn.position, unit: unit)
             let radius = unit * LaserDiamondTimeBoard.diamondRadius
@@ -45,7 +45,7 @@ struct DiamondTimePawOverlay: View {
                 let age = time - collectedAt
                 if age >= 0, age < LaserDiamondTimeBoard.pickupEffectDuration {
                     if age < 0.12 { reacting.insert(hand) }
-                    pickups.append((center, radius, age))
+                    pickups.append((center, radius, age, hand.playerID))
                 }
             }
         }
@@ -55,7 +55,7 @@ struct DiamondTimePawOverlay: View {
                     player: hand.playerID, reacting: reacting.contains(hand))
         }
         for pickup in pickups {
-            drawPickup(context, at: pickup.center, radius: pickup.radius, age: pickup.age)
+            drawPickup(context, at: pickup.center, radius: pickup.radius, age: pickup.age, player: pickup.player, canvas: size)
         }
     }
 
@@ -99,43 +99,126 @@ struct DiamondTimePawOverlay: View {
     }
 
     private func drawDiamond(_ context: GraphicsContext, at center: CGPoint, radius: CGFloat) {
-        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: center.x + x * radius, y: center.y + y * radius)
-        }
-        let shape = Path { path in
-            path.move(to: point(-0.60, -0.68))
-            path.addLines([point(0.60, -0.68), point(0.95, -0.15), point(0, 0.94), point(-0.95, -0.15)])
-            path.closeSubpath()
-        }
-        context.fill(shape, with: .linearGradient(
-            Gradient(colors: [Color(red: 0.43, green: 0.94, blue: 1), Color(red: 0.05, green: 0.45, blue: 0.91)]),
-            startPoint: point(0, -0.68), endPoint: point(0, 0.94)))
-        context.stroke(shape, with: .color(Color(red: 0.05, green: 0.21, blue: 0.49)), lineWidth: radius * 0.22)
-        context.stroke(shape, with: .color(.white.opacity(0.88)), lineWidth: radius * 0.08)
-        let facets = Path { path in
-            path.move(to: point(-0.95, -0.15))
-            path.addLine(to: point(0.95, -0.15))
-            path.move(to: point(-0.60, -0.68))
-            path.addLines([point(-0.36, -0.15), point(0, 0.94), point(0.36, -0.15), point(0.60, -0.68)])
-        }
-        context.stroke(facets, with: .color(.white.opacity(0.68)), lineWidth: radius * 0.052)
+        // Match the HUD flight artwork. Fit the complete image inside the target's
+        // screen-space bounds and preserve its original aspect ratio during pickup.
+        let diamond = context.resolve(Image("LaserHeistUI/diamond"))
+        let scale = 2 * radius / max(diamond.size.width, diamond.size.height)
+        let size = CGSize(width: diamond.size.width * scale, height: diamond.size.height * scale)
+        let bounds = CGRect(x: center.x - size.width / 2, y: center.y - size.height / 2,
+                            width: size.width, height: size.height)
+        context.draw(diamond, in: bounds)
     }
 
-    private func drawPickup(_ context: GraphicsContext, at center: CGPoint, radius: CGFloat, age: Double) {
-        let progress = age / LaserDiamondTimeBoard.pickupEffectDuration
-        var effect = context
-        effect.opacity = 1 - progress
+    private func drawPickup(_ context: GraphicsContext, at center: CGPoint, radius: CGFloat, age: Double,
+                            player: PlayerID, canvas: CGSize) {
+        let duration = LaserDiamondTimeBoard.pickupEffectDuration
+        let accent = player == .player1
+            ? Color(red: 1, green: 0.83, blue: 0.28)
+            : Color(red: 1, green: 0.57, blue: 0.26)
         if !reduceMotion {
-            if age < 0.14 { drawDiamond(effect, at: center, radius: radius * (1 + progress)) }
-            for index in 0..<4 {
-                let angle = Double(index) * .pi / 2 + .pi / 4
-                let spread = radius * (0.8 + 1.1 * progress)
-                let spark = CGPoint(x: center.x + cos(angle) * spread, y: center.y + sin(angle) * spread)
-                effect.draw(Text(Image(systemName: "sparkle")).font(.system(size: radius * 0.65))
-                    .foregroundStyle(.yellow), at: spark)
+            let pulse = min(1, age / 0.22)
+            if pulse < 1 {
+                let spread = 1 - pow(1 - pulse, 3)
+                let reach = radius * (0.9 + 1.5 * spread)
+                let ring = Path(ellipseIn: CGRect(x: center.x - reach, y: center.y - reach,
+                                                 width: 2 * reach, height: 2 * reach))
+                let opacity = pow(1 - pulse, 2)
+                let stroke = max(2, radius * 0.13)
+                context.stroke(ring, with: .color(accent.opacity(0.88 * opacity)), lineWidth: stroke)
+                context.stroke(ring, with: .color(.white.opacity(0.76 * opacity)), lineWidth: stroke * 0.32)
+            }
+
+            let popDuration = 0.08
+            let collapseDuration = 0.16
+            if age < popDuration + collapseDuration {
+                let rise = min(1, age / popDuration)
+                let fall = max(0, (age - popDuration) / collapseDuration)
+                let scale = (1 + 0.30 * (1 - pow(1 - rise, 3))) * (1 - fall * fall)
+                var gem = context
+                gem.opacity = 1 - fall
+                drawDiamond(gem, at: center, radius: radius * scale)
+
+                // The existing 3D pickup starts with a short flash. Recreate it
+                // with the same sprite so the highlight follows the gem's silhouette.
+                if age < 0.10 {
+                    var flash = context
+                    flash.opacity = 0.55 * (1 - age / 0.10)
+                    flash.addFilter(.brightness(0.7))
+                    drawDiamond(flash, at: center, radius: radius * scale)
+                }
+            }
+
+            let burst = min(1, age / 0.36)
+            if burst < 1 {
+                var fragments = context
+                fragments.opacity = 1 - burst * burst
+                let travel = 1 - pow(1 - burst, 3)
+                let colors: [Color] = [
+                    Color(red: 1, green: 0.86, blue: 0.32),
+                    Color(red: 0.38, green: 0.95, blue: 1),
+                    Color(red: 1, green: 0.55, blue: 0.84),
+                    Color(red: 0.78, green: 0.70, blue: 1)
+                ]
+                for index in 0..<8 {
+                    let star = index.isMultiple(of: 2)
+                    let angle = Double(index) * .pi / 4 + .pi / 8
+                    let size = radius * (star ? 1.22 : 0.82) * (1 - 0.36 * burst)
+                    let spread = radius * (0.75 + (star ? 2.05 : 1.55) * travel)
+                    let dx = cos(angle), dy = sin(angle)
+                    // Shorten outward travel near an edge so the stars stay on the board.
+                    let padding = size * 0.65
+                    let edgeX = dx > 0 ? canvas.width - padding - center.x : center.x - padding
+                    let edgeY = dy > 0 ? canvas.height - padding - center.y : center.y - padding
+                    let distance = max(0, min(spread, edgeX / abs(dx), edgeY / abs(dy)))
+                    let position = CGPoint(x: center.x + dx * distance, y: center.y + dy * distance)
+                    let color = colors[(index / 2) % colors.count]
+                    if star {
+                        fragments.draw(Text(Image(systemName: "sparkle"))
+                            .font(.system(size: size, weight: .bold))
+                            .foregroundStyle(color), at: position)
+                    } else {
+                        let x = position.x, y = position.y
+                        let shard = Path { path in
+                            path.move(to: CGPoint(x: x + dx * size * 0.62, y: y + dy * size * 0.62))
+                            path.addLines([
+                                CGPoint(x: x - dy * size * 0.30, y: y + dx * size * 0.30),
+                                CGPoint(x: x - dx * size * 0.48, y: y - dy * size * 0.48),
+                                CGPoint(x: x + dy * size * 0.30, y: y - dx * size * 0.30)
+                            ])
+                            path.closeSubpath()
+                        }
+                        fragments.fill(shard, with: .color(color))
+                        fragments.stroke(shard, with: .color(.white.opacity(0.75)), lineWidth: 1)
+                    }
+                }
             }
         }
-        effect.draw(Text("+25").font(.system(size: max(15, radius * 0.90), weight: .black, design: .rounded))
-            .foregroundStyle(.white), at: CGPoint(x: center.x, y: center.y - radius * (1.0 + (reduceMotion ? 0 : progress))))
+
+        let fade = max(0, (age - 0.27) / (duration - 0.27))
+        let lift = reduceMotion ? 0 : 0.55 * min(1, age / 0.23)
+        var confirmation = context
+        confirmation.opacity = 1 - fade
+        let label = confirmation.resolve(Text("+25")
+            .font(.system(size: max(28, radius * 1.62), weight: .black, design: .rounded))
+            .foregroundStyle(Color(red: 1, green: 0.96, blue: 0.62)))
+        let labelSize = label.measure(in: CGSize(width: canvas.width, height: canvas.height))
+        let badgeSize = CGSize(width: labelSize.width + 24, height: labelSize.height + 10)
+        let settle = min(1, age / 0.16)
+        let bounce = reduceMotion ? 1 : 1 + 0.18 * sin(.pi * settle)
+        let halfWidth = badgeSize.width * bounce / 2 + 2
+        let halfHeight = badgeSize.height * bounce / 2 + 2
+        let x = min(canvas.width - halfWidth, max(halfWidth, center.x))
+        let y = max(halfHeight, center.y - radius * (1.50 + lift))
+        confirmation.translateBy(x: x, y: y)
+        confirmation.scaleBy(x: bounce, y: bounce)
+        let background = CGRect(x: -badgeSize.width / 2, y: -badgeSize.height / 2,
+                                width: badgeSize.width, height: badgeSize.height)
+        let badge = Path(roundedRect: background, cornerRadius: background.height / 2)
+        confirmation.fill(badge, with: .linearGradient(
+            Gradient(colors: [Color(red: 0.25, green: 0.16, blue: 0.66), Color(red: 0.65, green: 0.10, blue: 0.47)]),
+            startPoint: CGPoint(x: background.minX, y: background.minY),
+            endPoint: CGPoint(x: background.maxX, y: background.maxY)))
+        confirmation.stroke(badge, with: .color(accent), lineWidth: 2)
+        confirmation.draw(label, at: .zero)
     }
 }
