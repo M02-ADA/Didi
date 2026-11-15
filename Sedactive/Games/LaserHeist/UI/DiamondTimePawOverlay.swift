@@ -34,7 +34,7 @@ struct DiamondTimePawOverlay: View {
 
     private func draw(_ context: GraphicsContext, size: CGSize, unit: CGFloat, time: Double,
                       diamonds: [LaserDiamondState], paws: [LaserContactHand: LaserDiamondPosition]) {
-        var reacting: Set<LaserContactHand> = []
+        var pawPickupAges: [LaserContactHand: Double] = [:]
         var pickups: [(center: CGPoint, radius: CGFloat, age: Double, player: PlayerID)] = []
         for diamond in diamonds {
             let center = point(diamond.spawn.position, unit: unit)
@@ -44,7 +44,7 @@ struct DiamondTimePawOverlay: View {
             } else if case let .collected(hand, collectedAt) = diamond.outcome {
                 let age = time - collectedAt
                 if age >= 0, age < LaserDiamondTimeBoard.pickupEffectDuration {
-                    if age < 0.12 { reacting.insert(hand) }
+                    pawPickupAges[hand] = min(pawPickupAges[hand] ?? age, age)
                     pickups.append((center, radius, age, hand.playerID))
                 }
             }
@@ -52,7 +52,7 @@ struct DiamondTimePawOverlay: View {
         for hand in LaserContactHand.ordered {
             guard let position = paws[hand] else { continue }
             drawPaw(context, at: point(position, unit: unit), radius: unit * LaserDiamondTimeBoard.pawRadius,
-                    player: hand.playerID, reacting: reacting.contains(hand))
+                    player: hand.playerID, pickupAge: pawPickupAges[hand])
         }
         for pickup in pickups {
             drawPickup(context, at: pickup.center, radius: pickup.radius, age: pickup.age, player: pickup.player, canvas: size)
@@ -63,7 +63,7 @@ struct DiamondTimePawOverlay: View {
         CGPoint(x: position.x * unit, y: position.y * unit)
     }
 
-    private func drawPaw(_ context: GraphicsContext, at center: CGPoint, radius: CGFloat, player: PlayerID, reacting: Bool) {
+    private func drawPaw(_ context: GraphicsContext, at center: CGPoint, radius: CGFloat, player: PlayerID, pickupAge: Double?) {
         func oval(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> Path {
             Path(ellipseIn: CGRect(x: center.x + (x - w / 2) * radius, y: center.y + (y - h / 2) * radius,
                                    width: w * radius, height: h * radius))
@@ -74,14 +74,28 @@ struct DiamondTimePawOverlay: View {
         let toeCenters: [(CGFloat, CGFloat)] = [(-0.62, -0.25), (-0.27, -0.60), (0.27, -0.60), (0.62, -0.25)]
         let silhouette = oval(0, 0.22, 1.56, 1.43)
         let toes = toeCenters.map { oval($0.0, $0.1, 0.66, 0.68) }
-        for shape in [silhouette] + toes {
+        let shapes = [silhouette] + toes
+        let charge = pickupAge.map { pow(max(0, 1 - $0 / 0.30), 1.5) } ?? 0
+        let padLit = (pickupAge ?? .infinity) < 0.12
+        if !reduceMotion, charge > 0 {
+            // The aura follows this paw. Its silhouette and hitbox stay fixed.
+            var glow = context
+            glow.addFilter(.blur(radius: radius * 0.14))
+            for shape in shapes {
+                glow.stroke(shape, with: .color(coat.opacity(charge * 0.95)), lineWidth: radius * 0.32)
+            }
+        }
+        for shape in shapes {
             context.stroke(shape, with: .color(outline), lineWidth: 0.115 * radius)
         }
-        for shape in [silhouette] + toes {
+        for shape in shapes {
             context.fill(shape, with: .color(coat))
+            if !reduceMotion, charge > 0 {
+                context.fill(shape, with: .color(.white.opacity(0.40 * charge)))
+            }
         }
         for (x, y) in toeCenters {
-            context.fill(oval(x, y, 0.36, 0.40), with: .color(pad))
+            context.fill(oval(x, y, 0.36, 0.40), with: .color(padLit ? .white : pad))
         }
         let centralPad = Path { path in
             func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
@@ -94,7 +108,7 @@ struct DiamondTimePawOverlay: View {
             path.addCurve(to: p(0, -0.19), control1: p(-0.49, 0.12), control2: p(-0.28, -0.19))
             path.closeSubpath()
         }
-        context.fill(centralPad, with: .color(reacting ? .white : pad))
+        context.fill(centralPad, with: .color(padLit ? .white : pad))
         context.fill(oval(-0.21, 0.07, 0.18, 0.10), with: .color(.white.opacity(0.92)))
     }
 
@@ -119,7 +133,7 @@ struct DiamondTimePawOverlay: View {
             let pulse = min(1, age / 0.22)
             if pulse < 1 {
                 let spread = 1 - pow(1 - pulse, 3)
-                let reach = radius * (0.9 + 1.5 * spread)
+                let reach = radius * (0.9 + 1.95 * spread)
                 let ring = Path(ellipseIn: CGRect(x: center.x - reach, y: center.y - reach,
                                                  width: 2 * reach, height: 2 * reach))
                 let opacity = pow(1 - pulse, 2)
@@ -159,11 +173,11 @@ struct DiamondTimePawOverlay: View {
                     Color(red: 1, green: 0.55, blue: 0.84),
                     Color(red: 0.78, green: 0.70, blue: 1)
                 ]
-                for index in 0..<8 {
-                    let star = index.isMultiple(of: 2)
-                    let angle = Double(index) * .pi / 4 + .pi / 8
-                    let size = radius * (star ? 1.22 : 0.82) * (1 - 0.36 * burst)
-                    let spread = radius * (0.75 + (star ? 2.05 : 1.55) * travel)
+                for index in 0..<12 {
+                    let star = index.isMultiple(of: 3)
+                    let angle = Double(index) * .pi / 6 + .pi / 12
+                    let size = radius * (star ? 1.52 : 1.08) * (1 - 0.36 * burst)
+                    let spread = radius * (0.90 + (star ? 2.65 : 2.15) * travel)
                     let dx = cos(angle), dy = sin(angle)
                     // Shorten outward travel near an edge so the stars stay on the board.
                     let padding = size * 0.65
@@ -171,7 +185,16 @@ struct DiamondTimePawOverlay: View {
                     let edgeY = dy > 0 ? canvas.height - padding - center.y : center.y - padding
                     let distance = max(0, min(spread, edgeX / abs(dx), edgeY / abs(dy)))
                     let position = CGPoint(x: center.x + dx * distance, y: center.y + dy * distance)
-                    let color = colors[(index / 2) % colors.count]
+                    let color = colors[(index / 3 + index % 3) % colors.count]
+                    if !star {
+                        let tail = min(distance, size * (1 - burst))
+                        let streak = Path { path in
+                            path.move(to: CGPoint(x: position.x - dx * tail, y: position.y - dy * tail))
+                            path.addLine(to: position)
+                        }
+                        fragments.stroke(streak, with: .color(color.opacity(0.48)),
+                                         style: StrokeStyle(lineWidth: max(1, size * 0.10), lineCap: .round))
+                    }
                     if star {
                         fragments.draw(Text(Image(systemName: "sparkle"))
                             .font(.system(size: size, weight: .bold))
