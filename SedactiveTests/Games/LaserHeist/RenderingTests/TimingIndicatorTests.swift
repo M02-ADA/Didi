@@ -26,7 +26,7 @@ import Testing
         let scene = LaserScene()
         let presenter = GameplayScenePresenter(scene: scene, configuration: config, encounters: state.encounters.map(\.encounter))
         var models: [LaserTimingPresentation] = []
-        for variant in [TimingIndicatorVariant.fill, .sweep, .closing] {
+        for variant in [TimingIndicatorVariant.fill, .sweep, .closing, .circular] {
             scene.selectTimingVariant(variant)
             presenter.apply(state: state, events: [], snapshot: nil)
             models.append(try #require(scene.timingPresentation))
@@ -92,13 +92,14 @@ import Testing
     @Test func defaultSelectsClosingAndLegacyFallbackIsPresentationOnly() throws {
         let (state, config) = try fixture(time: 3)
         let scene = LaserScene()
-        #expect(scene.timingVariant == .closing)
+        #expect(scene.timingVariant == .circular)
         let presenter = GameplayScenePresenter(scene: scene, configuration: config, encounters: state.encounters.map(\.encounter))
         presenter.apply(state: state, events: [], snapshot: nil)
         let original = scene.timingPresentation
         scene.selectTimingVariant(.closing); scene.selectTimingVariant(.approved)
         #expect(scene.timingPresentation == original)
         #expect(scene.shownMoveCue?.move == .duck && scene.shownMoveCue?.acting == true)
+        #expect(scene.root.findEntity(named: "laserFeedback.cue.duck")?.isEnabled == true)
     }
     @Test(arguments: [LaserMove.duck, .jump])
     func circleIsStationaryAndMarkersPassThroughInFrontAtConstantSpeed(move: LaserMove) throws {
@@ -179,7 +180,7 @@ import Testing
         let count = renderer.root.children.count
         for _ in 0..<30 { renderer.apply(renderer.model, variant: .closing, reduceMotion: false) }
         #expect(renderer.root.children.count == count)
-        #expect(renderer.root.children.filter { $0.name == "timing.circle" }.count == 1)
+        #expect(renderer.root.findEntity(named: "timing.circle") != nil)
     }
     @Test(arguments: [LaserMove.duck, .jump]) func selectedCircleSupportsSoloWithoutInventingP2(move: LaserMove) throws {
         let (state, config) = try fixture(move, time: 4.4, judged: true)
@@ -199,12 +200,63 @@ import Testing
         presenter.apply(state: state, events: [], snapshot: nil)
         let m = scene.timingPresentation
         scene.setTimingPaused(true)
-        #expect(scene.root.findEntity(named: "timing.closingGate")?.isEnabled == false)
+        #expect(scene.root.findEntity(named: "timing.circularCue")?.isEnabled == false)
         scene.setTimingPaused(false)
-        #expect(scene.root.findEntity(named: "timing.closingGate")?.isEnabled == true)
+        #expect(scene.root.findEntity(named: "timing.circularCue")?.isEnabled == true)
         #expect(scene.timingPresentation == m)
         presenter.stop()
-        #expect(scene.root.findEntity(named: "timing.closingGate")?.isEnabled == false)
+        #expect(scene.root.findEntity(named: "timing.circularCue")?.isEnabled == false)
+    }
+
+    @Test(arguments: [LaserMove.duck, .jump])
+    func circularSweepUsesSourceProgressAndOnlyCommittedClearShowsPerfect(move: LaserMove) throws {
+        let renderer = CircularTimingCueRenderer()
+        for time in [1.15, 2.6, 3.99, 4.0, 4.06, 4.2, 4.4] {
+            let (s,c) = try fixture(move, time: time, judged: time == 4.4)
+            let m = try #require(LaserTimingPresentation.make(state: s, configuration: c))
+            renderer.apply(m, reduceMotion: false)
+            #expect(renderer.renderedProgress == Double(Int((m.progress * 120).rounded(.down)))/120)
+            #expect((renderer.displayedState == "perfect") == (time == 4.4))
+            if time == 4.2 { #expect(renderer.displayedState == "pending") }
+            #expect(renderer.root.findEntity(named: "timing.circular.perfect")?.isEnabled == (time == 4.4))
+        }
+        let count = renderer.root.children.count
+        let (s,c) = try fixture(move, time: 3)
+        let m = try #require(LaserTimingPresentation.make(state: s, configuration: c))
+        for _ in 0..<100 { renderer.apply(m, reduceMotion: true) }
+        #expect(renderer.root.children.count == count && renderer.renderedProgress == 1)
+        #expect(renderer.root.findEntity(named: "timing.circular.crossingPulse")?.isEnabled == false)
+        renderer.apply(nil, reduceMotion: false)
+        #expect(!renderer.root.isEnabled && renderer.displayedState == "hidden")
+    }
+    @Test func perfectRequiresCommittedCompleteRosterNotJustRingArrival() throws {
+        let (state, config) = try fixture(time: 4.4, judged: true)
+        for verdicts in [[PlayerID.player1: Judgement.clear], [.player1: .clear, .player2: .unavailable(.stale)], [.player1: .clear, .player2: .hit(.notAirborne)], [.player1: .clear, .player2: .clear]] {
+            for committed in [false, true] {
+                let e = state.encounters[0]
+                let s = LaserGameState(sessionGeneration: state.sessionGeneration, phase: .activity, gameTime: 4.4,
+                    activityProgress: 0, teamHealth: 5, teamScore: 0,
+                    encounters: [.init(encounter: e.encounter, judgements: verdicts, effectsCommitted: committed)])
+                let m = try #require(LaserTimingPresentation.make(state: s, configuration: config))
+                #expect((CircularTimingCueRenderer.state(for: m) == "perfect") == (committed && verdicts.count == 2 && verdicts.values.allSatisfy { $0 == .clear }))
+                #expect(s.teamScore == 0 && s.teamHealth == 5)
+            }
+        }
+    }
+
+    @Test func cleanBadgeUsesOneConnectedArcArrowAndSeparateLargeLabel() throws {
+        let renderer = CircularTimingCueRenderer()
+        #expect(renderer.progressMeshCount == 120)
+        #expect(renderer.root.findEntity(named: "timing.radial.0") == nil)
+        let arrow = try #require(renderer.root.findEntity(named: "timing.circular.icon.duck"))
+        let label = try #require(renderer.root.findEntity(named: "timing.circular.label.duck"))
+        #expect(arrow.position.y == 0 && label.position.y < -CircularTimingCueRenderer.diameter/2)
+        #expect(CircularTimingCueRenderer.actionLabel(for: "duck") == "DUCK")
+        #expect(CircularTimingCueRenderer.actionLabel(for: "jump") == "JUMP")
+        let first = CircularTimingCueRenderer.arcVertices(progress: 0.5)
+        #expect(first.count > 4)
+        #expect(abs(first[0].y - 0.18) < 0.00001)
+        #expect(abs(first[first.count-2].y + 0.18) < 0.00001)
     }
 
 }

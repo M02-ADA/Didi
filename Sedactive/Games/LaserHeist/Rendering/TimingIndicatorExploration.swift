@@ -2,16 +2,17 @@ import Foundation
 import RealityKit
 import UIKit
 
-/// Presentation only. Closing Gate is selected; the legacy bar is an internal fallback.
+/// Presentation only. Circular cue is selected; horizontal variants are comparison/fallback renderers.
 nonisolated enum TimingIndicatorVariant: String, CaseIterable, Sendable {
-    case approved, closing
+    case approved, circular, closing
     #if DEBUG
     case fill, sweep
     #endif
     var title: String {
         switch self {
         case .approved: "Legacy fallback"
-        case .closing: "Closing Gate"
+        case .circular: "Circular cue"
+        case .closing: "Closing Gate (comparison)"
         #if DEBUG
         case .fill: "A · Fill"
         case .sweep: "B · Sweep"
@@ -43,6 +44,7 @@ nonisolated struct LaserTimingPresentation: Equatable, Sendable {
     let remaining: Double
     let phase: Phase
     let verdicts: [PlayerID: Judgement]
+    let successCommitted: Bool
     var label: String {
         switch phase {
         case .approach: "APPROACH"
@@ -87,7 +89,8 @@ nonisolated struct LaserTimingPresentation: Equatable, Sendable {
             warningTime: target.warningTime, cueTime: cue, crossingTime: target.crossingTime,
             evidenceWindow: configuration.evidenceTiming.captureWindow(crossing: target.crossingTime),
             progress: min(1, max(0, (time - target.warningTime) / (target.crossingTime - target.warningTime))),
-            remaining: max(0, target.crossingTime - time), phase: phase, verdicts: results)
+            remaining: max(0, target.crossingTime - time), phase: phase, verdicts: results,
+            successCommitted: encounter.effectsCommitted && encounter.encounter.targets.allSatisfy { results[$0.playerID] == .clear })
     }
 
     /// Reduced Motion keeps a static phase diagram instead of sweeping/closing motion.
@@ -104,6 +107,8 @@ private extension Judgement {
 /// One reusable native subtree. Source-time transforms only; no timer or subscriptions.
 @MainActor final class TimingIndicatorRenderer {
     let root = Entity()
+    private let horizontal = Entity()
+    private let circular = CircularTimingCueRenderer()
     #if DEBUG
     private let fill: ModelEntity
     private let target: ModelEntity
@@ -124,7 +129,7 @@ private extension Judgement {
     private var lastTint: Int?
     private var lastCircleTint: Int?
     private(set) var model: LaserTimingPresentation?
-    private(set) var variant: TimingIndicatorVariant = .closing
+    private(set) var variant: TimingIndicatorVariant = .circular
     static let width: Float = 1.03
     static let circleDiameter: Float = 0.17
     static let haloDiameter: Float = 0.22
@@ -143,17 +148,18 @@ private extension Judgement {
             let e = ModelEntity(mesh: .generatePlane(width: width, height: height, cornerRadius: min(width, height)/2), materials: materials)
             e.name = name; return e
         }
-        let track = plane("timing.track", Self.width + 0.04, 0.12, [dark]); root.addChild(track)
+        root.addChild(horizontal); root.addChild(circular.root)
+        let track = plane("timing.track", Self.width + 0.04, 0.12, [dark]); horizontal.addChild(track)
         let outline = plane("timing.outline", Self.width + 0.06, 0.14, [UnlitMaterial(color: color(0xC8BEF4))])
-        outline.position.z = -0.001; root.addChild(outline)
+        outline.position.z = -0.001; horizontal.addChild(outline)
         #if DEBUG
         fill = plane("timing.fill", Self.width, 0.08, palette[0]); fill.position.z = 0.003
         target = plane("timing.crossing.target", 0.018, 0.12, palette[2]); target.position.z = 0.004
-        root.addChild(fill); root.addChild(target)
+        horizontal.addChild(fill); horizontal.addChild(target)
         #endif
         left = plane("timing.marker.left", Self.markerWidth, 0.13, palette[2]); left.position.z = 0.005
         right = plane("timing.marker.right", Self.markerWidth, 0.13, palette[2]); right.position.z = 0.005
-        root.addChild(left); root.addChild(right)
+        horizontal.addChild(left); horizontal.addChild(right)
         // Native rounded planes form a thick ring, dark core and dot. No texture/shader
         // generation for the target. Closing markers render above every ring/core layer.
         circle = plane("timing.circle", Self.circleDiameter, Self.circleDiameter, circlePalette[0])
@@ -163,20 +169,22 @@ private extension Judgement {
         let core = plane("timing.circle.core", 0.10, 0.10, [dark]); core.position.z = 0.002
         circle.addChild(core)
         dot = plane("timing.circle.dot", 0.024, 0.024, innerCirclePalette[0]); dot.position.z = 0.003
-        circle.addChild(dot); root.addChild(circle)
+        circle.addChild(dot); horizontal.addChild(circle)
         halo = plane("timing.circle.halo", Self.haloDiameter, Self.haloDiameter, circlePalette[2])
         halo.position.z = 0.006
         let haloCore = plane("timing.circle.halo.core", 0.198, 0.198, [dark]); haloCore.position.z = 0.001
-        halo.addChild(haloCore); root.addChild(halo)
+        halo.addChild(haloCore); horizontal.addChild(halo)
         halo.isEnabled = false
-        captions.position = [0, -0.165, 0.010]; root.addChild(captions)
+        captions.position = [0, -0.165, 0.010]; horizontal.addChild(captions)
         root.name = "timing.closingGate"; root.isEnabled = false
     }
 
     func apply(_ value: LaserTimingPresentation?, variant: TimingIndicatorVariant, reduceMotion: Bool) {
         self.model = value; self.variant = variant
         root.isEnabled = variant != .approved && value != nil
-        guard let value, root.isEnabled else { return }
+        horizontal.isEnabled = variant != .circular
+        circular.apply(variant == .circular ? value : nil, reduceMotion: reduceMotion)
+        guard let value, root.isEnabled, variant != .circular else { return }
         let p = Float(value.displayedProgress(reduceMotion: reduceMotion)), w = Self.width
         let tint = value.phase == .result ? (value.anyHit ? 4 : value.allClear ? 3 : 5)
             : value.phase == .paused || value.phase == .passed ? 5 : value.phase == .approach ? 0 : value.phase == .prepare ? 1 : 2
@@ -260,5 +268,141 @@ private extension Judgement {
             captions.addChild(face); captionFaces[cacheKey] = face
         }
         face.isEnabled = true
+    }
+}
+
+/// Presentation only: a clean arrow badge, continuous progress arc and separate
+/// Sketch-style action word. Cached geometry/art; original encounter time only.
+@MainActor final class CircularTimingCueRenderer {
+    let root = Entity()
+    static let diameter: Float = 0.36
+    static let progressSteps = 120
+    private let faces: [String: Entity]
+    private let progress: ModelEntity
+    private let meshes: [MeshResource]
+    private let pulse: ModelEntity
+    private let activeMaterial = UnlitMaterial(color: UIColor(red: 0.43, green: 0.84, blue: 1, alpha: 1))
+    private let successMaterial = UnlitMaterial(color: UIColor(red: 0.35, green: 1, blue: 0.63, alpha: 1))
+    private let hitMaterial = UnlitMaterial(color: UIColor(red: 1, green: 0.39, blue: 0.52, alpha: 1))
+    private let neutralMaterial = UnlitMaterial(color: .lightGray)
+    private var ringStyle: String?
+    private var meshIndex: Int?
+    private(set) var displayedState = "hidden"
+    private(set) var renderedProgress: Double = 0
+    var progressMeshCount: Int { meshes.count }
+
+    init() {
+        root.name = "timing.circularCue"
+        let dark = UnlitMaterial(color: UIColor(red: 0.085, green: 0.065, blue: 0.19, alpha: 1))
+        let track = ModelEntity(mesh: .generatePlane(width: Self.diameter, height: Self.diameter, cornerRadius: Self.diameter/2),
+            materials: [UnlitMaterial(color: UIColor(red: 0.37, green: 0.34, blue: 0.49, alpha: 1))])
+        track.position.z = -0.001; root.addChild(track)
+        let background = ModelEntity(mesh: .generatePlane(width: 0.321, height: 0.321, cornerRadius: 0.1605), materials: [dark])
+        background.name = "timing.circular.background"; root.addChild(background)
+        // One connected annular sector per cached progress step: no separate bars,
+        // gaps, texture regeneration or mesh creation during gameplay updates.
+        meshes = (1...Self.progressSteps).compactMap { i in
+            let vertices = Self.arcVertices(progress: Double(i)/Double(Self.progressSteps))
+            var descriptor = MeshDescriptor(name: "timing.arc.\(i)")
+            descriptor.positions = MeshBuffers.Positions(vertices)
+            descriptor.normals = MeshBuffers.Normals(Array(repeating: SIMD3<Float>(0,0,1), count: vertices.count))
+            var indices: [UInt32] = []
+            for j in 0..<(vertices.count/2-1) {
+                let n = UInt32(j*2)
+                indices += [n,n+1,n+2,n+2,n+1,n+3]
+            }
+            descriptor.primitives = .triangles(indices)
+            return try? MeshResource.generate(from: [descriptor])
+        }
+        progress = ModelEntity(mesh: meshes.last ?? .generatePlane(width: 0.001, height: 0.001), materials: [activeMaterial])
+        progress.name = "timing.circular.progress"; progress.position.z = 0.003; root.addChild(progress)
+        pulse = ModelEntity(mesh: .generatePlane(width: 0.374, height: 0.374, cornerRadius: 0.187), materials: [activeMaterial])
+        pulse.name = "timing.circular.crossingPulse"; pulse.position.z = -0.002
+        root.addChild(pulse); pulse.isEnabled = false
+        var cached: [String: Entity] = [:]
+        for key in ["duck", "jump", "perfect", "hit", "unavailable", "pending", "paused"] {
+            let group = Entity(); group.name = "timing.circular.\(key)"
+            let icon = ModelEntity(mesh: .generatePlane(width: 0.285, height: 0.285), materials: [Self.material(Self.icon(key))])
+            icon.name = "timing.circular.icon.\(key)"; icon.position.z = 0.005; group.addChild(icon)
+            let label = ModelEntity(mesh: .generatePlane(width: 0.66, height: 0.2053), materials: [Self.material(Self.label(key))])
+            label.name = "timing.circular.label.\(key)"; label.position = [0,-0.245,0.006]; group.addChild(label)
+            root.addChild(group); cached[key] = group
+        }
+        faces = cached; root.isEnabled = false
+    }
+
+    static func arcVertices(progress: Double) -> [SIMD3<Float>] {
+        let fraction = min(1, max(0, progress)), count = max(1, Int(ceil(fraction*96)))
+        return (0...count).flatMap { i -> [SIMD3<Float>] in
+            let angle = Float(Double(i)/Double(count)*fraction*2 * .pi)
+            return [SIMD3(sin(angle)*0.18, cos(angle)*0.18, 0),
+                    SIMD3(sin(angle)*0.161, cos(angle)*0.161, 0)]
+        }
+    }
+
+    static func state(for value: LaserTimingPresentation) -> String {
+        if value.phase == .result { return value.anyHit ? "hit" : value.successCommitted ? "perfect" : "unavailable" }
+        if value.phase == .paused { return "paused" }
+        if value.phase == .passed { return "pending" }
+        return value.move == .duck ? "duck" : "jump"
+    }
+
+    func apply(_ value: LaserTimingPresentation?, reduceMotion: Bool) {
+        root.isEnabled = value != nil
+        guard let value else { displayedState = "hidden"; pulse.isEnabled = false; return }
+        displayedState = Self.state(for: value)
+        for (key, face) in faces { face.isEnabled = key == displayedState }
+        let index = reduceMotion ? Self.progressSteps : Int((value.progress * Double(Self.progressSteps)).rounded(.down))
+        renderedProgress = Double(index)/Double(Self.progressSteps)
+        progress.isEnabled = index > 0 && meshes.count == Self.progressSteps
+        if meshIndex != index, progress.isEnabled {
+            meshIndex = index; progress.model?.mesh = meshes[index-1]
+        }
+        let style = value.phase == .result ? displayedState : value.phase == .passed || value.phase == .paused ? "neutral" : "active"
+        if ringStyle != style {
+            ringStyle = style
+            progress.model?.materials = [style == "perfect" ? successMaterial : style == "hit" ? hitMaterial : style == "active" ? activeMaterial : neutralMaterial]
+        }
+        let elapsed = value.gameTime - value.crossingTime
+        pulse.isEnabled = !reduceMotion && value.phase == .crossing && elapsed >= 0 && elapsed < 0.12
+        pulse.scale = .init(repeating: 1 + Float(sin(min(1, max(0, elapsed/0.12)) * .pi))*0.035)
+    }
+
+    static func actionLabel(for key: String) -> String {
+        key == "duck" ? "DUCK" : key == "jump" ? "JUMP" : key == "perfect" ? "PERFECT!" : key == "hit" ? "HIT" : key == "paused" ? "PAUSED" : key == "pending" ? "WAIT" : "NO DATA"
+    }
+    private static func tint(_ key: String) -> UIColor {
+        key == "perfect" ? UIColor(red: 0.45, green: 1, blue: 0.69, alpha: 1)
+            : key == "hit" ? UIColor(red: 1, green: 0.48, blue: 0.61, alpha: 1) : .white
+    }
+    private static func icon(_ key: String) -> CGImage? {
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: 384, height: 384), format: format).image { _ in
+            let name = key == "duck" ? "arrow.down" : key == "jump" ? "arrow.up" : key == "perfect" ? "checkmark" : key == "hit" ? "xmark" : key == "unavailable" ? "eye.slash" : key == "pending" ? "ellipsis" : "pause.fill"
+            let image = UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: 215, weight: .black))?.withTintColor(tint(key), renderingMode: .alwaysOriginal)
+            if let image { image.draw(at: CGPoint(x: (384-image.size.width)/2, y: (384-image.size.height)/2)) }
+        }.cgImage
+    }
+    /// The previous in-game cue's rounded Black face, hard drop shadow and soft halo,
+    /// now below the badge. Same visual language; no exclamation on action words.
+    private static func label(_ key: String) -> CGImage? {
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: 720, height: 224), format: format).image { context in
+            let font = UIFont.systemFont(ofSize: key == "perfect" || key == "unavailable" ? 115 : 137, weight: .black)
+            let rounded = font.fontDescriptor.withDesign(.rounded).map { UIFont(descriptor: $0, size: font.pointSize) } ?? font
+            let text = NSAttributedString(string: actionLabel(for: key), attributes: [.font: rounded, .foregroundColor: tint(key)])
+            let size = text.size(), origin = CGPoint(x: (720-size.width)/2, y: (224-size.height)/2)
+            let cg = context.cgContext
+            cg.saveGState(); cg.setShadow(offset: .zero, blur: 12, color: UIColor.black.withAlphaComponent(0.65).cgColor); text.draw(at: origin); cg.restoreGState()
+            cg.saveGState(); cg.setShadow(offset: CGSize(width: 5,height: 8), blur: 0, color: UIColor.black.withAlphaComponent(0.91).cgColor); text.draw(at: origin); cg.restoreGState()
+            text.draw(at: origin)
+        }.cgImage
+    }
+    private static func material(_ image: CGImage?) -> UnlitMaterial {
+        var result = UnlitMaterial(applyPostProcessToneMap: false)
+        if let image, let texture = try? TextureResource(image: image, options: .init(semantic: .color)) {
+            result.color = .init(tint: .white, texture: .init(texture)); result.blending = .transparent(opacity: 1.0)
+        }
+        return result
     }
 }
