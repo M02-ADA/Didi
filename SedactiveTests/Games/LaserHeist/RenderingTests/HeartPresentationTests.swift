@@ -33,4 +33,21 @@ import Testing
         #expect(first.phase == .retired && first.root.parent == nil)
         #expect(second.phase == .ready && host.children.count == 1)
     }
+    @Test(arguments: [false, true]) func idlePreservesPlacementAndRetiredInstancesCannotRestart(reduceMotion: Bool) async throws {
+        let art = try await HeartArt.load()
+        let heart = art.makeHeart(generation: UUID())
+        let other = art.makeHeart(generation: UUID())
+        heart.root.position = [0.5, 1.8, 0.1]
+        let placement = heart.root.transform
+        heart.showIdle(reduceMotion: reduceMotion)
+        heart.showIdle(reduceMotion: reduceMotion)
+        #expect(heart.phase == .idle && other.phase == .ready)
+        #expect(heart.root.transform == placement, "idle must never move the target root")
+        if reduceMotion {
+            #expect(abs(heart.root.visualBounds(relativeTo: heart.root).extents.y - 0.276855) < 0.001)
+        }
+        heart.retire(); heart.showIdle(reduceMotion: reduceMotion)
+        #expect(heart.phase == .retired)
+    }
+
 }
