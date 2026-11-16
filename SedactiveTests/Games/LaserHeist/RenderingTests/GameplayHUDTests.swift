@@ -33,6 +33,25 @@ struct GameplayHUDTests {
 
     // MARK: - HUD model
 
+    @Test func diamondTimeFramePulsesContinuouslyAndGetsStrongerAtTenAndFiveSeconds() {
+        func opacity(_ remaining: Double, reduceMotion: Bool = false) -> Double {
+            DiamondTimeRushFrame.opacity(secondsRemaining: remaining, reduceMotion: reduceMotion)
+        }
+        let early = 10 + 1.0 / 3
+        #expect(abs(opacity(early) - opacity(early + 2.0 / 3)) < 0.000001)
+        let middlePeak = 10 - 1 / (2 * 2.4)
+        let finalPeak = 5 - 1.0 / 6
+        #expect(abs(opacity(middlePeak) - opacity(middlePeak - 1 / 2.4)) < 0.000001)
+        #expect(abs(opacity(finalPeak) - opacity(finalPeak - 1.0 / 3)) < 0.000001)
+        #expect(abs(opacity(early) - 0.36) < 0.000001)
+        #expect(abs(opacity(middlePeak) - 0.62) < 0.000001)
+        #expect(abs(opacity(finalPeak) - 1) < 0.000001)
+        #expect(abs(opacity(5 - 1.0 / 3) - 0.30) < 0.000001)
+        #expect(opacity(4.96) > opacity(5) && opacity(finalPeak) > opacity(4.6))
+        #expect(opacity(4.9, reduceMotion: true) == opacity(4.5, reduceMotion: true))
+        #expect(opacity(0) == 0)
+    }
+
     @Test func showsTheAuthoritativeHealthScoreAndVaults() throws {
         let model = GameplayHUDModel(state: state(4, .activity, health: 3, score: 700, opened: 2), events: [],
                                      configuration: try configuration(), activityDuration: 300)
@@ -106,8 +125,8 @@ struct GameplayHUDTests {
                                      configuration: try configuration(), activityDuration: 300)
         #expect(model.diamondReached && model.fillEnd == GameplayHUDModel.fillFull)
         #expect(model.banner == .retrieveDiamonds)
-        // 103.2 + 10 configured seconds − 106.5 = 6.7 → 7 shown.
-        #expect(model.diamondSecondsLeft == 7)
+        // 103.2 + 20 configured seconds − 106.5 = 16.7 → 17 shown.
+        #expect(model.diamondSecondsLeft == 17)
         // No J05 source: no diamond count, and never a fixture label.
         #expect(model.diamondsCollected == nil && !model.diamondsAreFixture)
         // Without the authoritative phase-change event, no time is invented.

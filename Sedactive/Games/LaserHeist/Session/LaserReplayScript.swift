@@ -7,7 +7,7 @@ nonisolated struct LaserReplayScript: Sendable {
     let configuration: LaserRoundConfiguration
     let fullRound: LaserFullReplayPlan?
     var duration: Double { fullRound?.duration ?? (17 + configuration.vaultDuration + configuration.diamondTimeDuration + 1) }
-    var activityDuration: Double { fullRound == nil ? 17 + configuration.diamondTimeDuration : 310 }
+    var activityDuration: Double { (fullRound == nil ? 17 : configuration.activityDuration) + configuration.diamondTimeDuration }
 
     init(input: ReplayFixture, encounters: [LaserEncounter], configuration: LaserRoundConfiguration,
          fullRound: LaserFullReplayPlan? = nil) {

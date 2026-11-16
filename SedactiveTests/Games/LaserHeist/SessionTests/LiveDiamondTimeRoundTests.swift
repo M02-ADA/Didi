@@ -94,7 +94,7 @@ func wristForPaw(at position: LaserDiamondPosition, player: PlayerID,
         #expect(Set(rig.session.diamondTimePaws.keys) == Set(LaserContactHand.ordered))
         let before = rig.session.diamondStates.values.filter { $0.outcome == nil }
         #expect(before.count == 6)
-        #expect(before.allSatisfy { $0.interactionDeadline == start + 10 })
+        #expect(before.allSatisfy { $0.interactionDeadline == start + 20 })
         #expect(before.allSatisfy { $0.spawn.eligiblePlayers == Set(PlayerID.allCases) })
         let target = try #require(before.sorted { $0.spawn.id.uuidString < $1.spawn.id.uuidString }.first)
         let overlap = Dictionary(uniqueKeysWithValues: try LaserContactHand.ordered.map { hand in
@@ -104,7 +104,7 @@ func wristForPaw(at position: LaserDiamondPosition, player: PlayerID,
         })
 
         // The initial target is still collectible near the end of the phase.
-        for _ in 0..<200 where (rig.session.state?.gameTime ?? 0) < start + 8 { try await send() }
+        for _ in 0..<200 where (rig.session.state?.gameTime ?? 0) < start + 18 { try await send() }
         #expect(rig.session.diamondTimePaws.isEmpty)
         try await send(overlap)
         #expect(rig.session.diamondsCollected == 0, "a newly reacquired hand cannot collect from inside")
@@ -114,7 +114,7 @@ func wristForPaw(at position: LaserDiamondPosition, player: PlayerID,
         let active = rig.session.diamondStates.values.filter { $0.outcome == nil }
         #expect(active.count == 6)
         let replacement = try #require(active.first { candidate in !before.contains { $0.spawn.id == candidate.spawn.id } })
-        #expect(replacement.spawn.position != target.spawn.position && replacement.interactionDeadline == start + 10)
+        #expect(replacement.spawn.position != target.spawn.position && replacement.interactionDeadline == start + 20)
         #expect(LaserDiamondTimeBoard.distance(replacement.spawn.position, target.spawn.position)
                 >= LaserDiamondTimeBoard.spawnClearance)
 
@@ -123,7 +123,7 @@ func wristForPaw(at position: LaserDiamondPosition, player: PlayerID,
         let summary = try #require(rig.session.summary)
         #expect(summary.outcome == .completed && summary.vaultsOpened == 5)
         #expect(summary.diamondsCollected == 1 && summary.teamScore == score + 25)
-        #expect(summary.gameDuration == start + 10 && summary.activityDuration == 60)
+        #expect(summary.gameDuration == start + 20 && summary.activityDuration == 70)
         #expect(rig.session.diamondStates.values.filter { $0.outcome == nil }.isEmpty)
         await rig.session.stop()
         #expect(rig.session.summary == summary)

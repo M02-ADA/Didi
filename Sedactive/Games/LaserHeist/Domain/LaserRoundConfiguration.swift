@@ -24,7 +24,7 @@ nonisolated struct LaserEvidenceTiming: Equatable, Sendable {
 }
 
 nonisolated struct LaserRoundConfiguration: Equatable, Sendable {
-    static let defaultDiamondTimeDuration = 10.0
+    static let defaultDiamondTimeDuration = 20.0
     /// Task-owner decisions, 10 November 2026. Placement/reach still need review.
     static let approvedDiamondPoints = 25
     static let initialBonusDiamondCount = 4

@@ -2,7 +2,7 @@
 
 > **Status: Proposed — LH-01 review draft, updated 10 November 2026.**
 > Owner: Jevon. Reviewers: Theo (player instructions), Edo (body-input feasibility), Kevin (screen communication).
-> Product progression follows Jevon's instructions, including the 4 November duration revision: collection of approaching diamonds by wrist or avatar body, a 10-second Diamond Time with at most four active diamonds and collection-triggered replacements, and horizontal high/low lasers only. **Confirmed — task owner** records those instructions, not collaborator sign-off. Other policies remain **Proposed**; unresolved contracts remain **TBD**. Section G tracks outstanding decisions.
+> Product progression follows Jevon's instructions, including collection of approaching diamonds by wrist or avatar body, a 20-second Diamond Time with up to six live paw-board diamonds and collection-triggered replacements, and horizontal high/low lasers only. **Confirmed — task owner** records those instructions, not collaborator sign-off. Other policies remain **Proposed**; unresolved contracts remain **TBD**. Section G tracks outstanding decisions.
 
 ## A. Scope, sources and vocabulary
 
@@ -23,12 +23,12 @@ Each row's squat/jump target applies to **each player**, not the combined team. 
 | 2:00–3:00 | 6 | 4 | 14–16 | 10 |
 | 3:00–4:00 | 7 | 4 | 17–19 | 11 |
 | 4:00–5:00 | 8 | 4 | 20–22 | 12 |
-| 5:00–5:10 Diamond Time | 0 | 0 | No fixed total; at most 4 active for the team | 0 |
+| 5:00–5:20 Diamond Time | 0 | 0 | No fixed total; up to 6 active on the live paw board | 0 |
 | **Total / player** | **32** | **18** | **70–80 normal per team; finale collection count uncapped** | **50** |
 
 - At each minute boundary (1:00, 2:00, 3:00, 4:00 and 5:00), enter a Dual Key Vault. Its opening opportunity lasts **5 seconds**; failure to open ends the round regardless of remaining health.
 - Each side has **three virtual buttons**, located at the top, middle and bottom of its own side. Players may use either hand and activate them in any order; both sides must finish before timeout, without requiring simultaneous completion. Contact measurement details remain TBD in B4.
-- The activity progress bar **stops during vaults**. After the fifth vault opens, enter **10 seconds of Diamond Time**. Activity progression totals 300 + 10 = **310 seconds**; elapsed session time may be longer because vaults, setup, countdowns and pauses are separate.
+- The activity progress bar **stops during vaults**. After the fifth vault opens, enter **20 seconds of Diamond Time**. Activity progression totals 300 + 20 = **320 seconds**; elapsed session time may be longer because vaults, setup, countdowns and pauses are separate.
 - Normal diamonds approach the player like lasers and spawn within each minute's seeded count range. A pickup window can overlap a laser crossing so players may choose whether to reach, duck, or jump. A valid wrist entry or overlap with an eligible mascot's body during the passage collects the diamond. Once it has passed, it cannot be collected again. All normal diamonds finish before vault entry.
 - During Diamond Time, at most **4 diamonds are active simultaneously across the team**, at different positions. Each collected diamond triggers a new diamond at another position while the phase remains active. There is no fixed total collection/spawn quota: faster collection creates more replacement opportunities. No additional squat/jump quota is added during this phase.
 - Shared health is **5**. Each player's HIT removes one health, so two HITs in one encounter remove two. Five health is a team damage budget, not five guaranteed failed encounters or five failures for each player. **Confirmed — task owner:** all points accumulate in one shared team score; each CLEAR laser target contributes 100, so two CLEAR players contribute 200 for one encounter. A CLEAR player still contributes 100 when the partner is HIT. Diamond value remains proposed in B3/G14.
@@ -104,11 +104,11 @@ Store effects against logical encounter identity and attempt identity so duplica
 
 ### B4a. Diamond Time after the final vault
 
-**Confirmed — task owner:** Live Diamond Time starts after the final vault entry, lasts **10 active seconds**, and uses a shared 2D playfield against the vault background. The four tracked wrists control four independent paw cursors. Either player can collect a diamond by overlapping it with a visible, active paw. Standing calibration scales each player's motion, and a missing or stale hand cannot collect.
+**Confirmed — task owner:** Live Diamond Time starts after the final vault entry, lasts **20 active seconds**, and uses a shared 2D playfield against the vault background. The four tracked wrists control four independent paw cursors. Either player can collect a diamond by overlapping it with a visible, active paw. Standing calibration scales each player's motion, and a missing or stale hand cannot collect.
 
 The live paw board places up to **six diamonds** in Solo and Co-op at distinct, reachable positions away from active paws, other diamonds and the HUD. Each accepted pickup awards **25 team points** once. Refill happens after the pickup batch, with a vacancy held open when no safe location is available. A hand reacquired while already over a diamond must leave it before it can collect it. Uncollected diamonds persist until the phase ends.
 
-The GameClock holds during the entry cinematic and existing pauses. At the exact ten-second deadline, the game closes remaining targets and proceeds to Results. Both capture and arrival must precede that deadline. Replay fixtures retain their historical scripted inputs and pickups.
+The GameClock holds during the entry cinematic and existing pauses. At the exact twenty-second deadline, the game closes remaining targets and proceeds to Results. Both capture and arrival must precede that deadline. Replay fixtures retain their historical scripted inputs and pickups.
 
 ### B5. Warning, action cue and judgement window
 
@@ -122,12 +122,12 @@ Positive look-ahead means the verdict may remain PENDING after crossing. An impl
 
 ## C. Round lifecycle and recovery
 
-**Updated flow:** assignment → calibration → brief visual instructions → ready countdown → (activity minute → vault) × 5 → 10-second Diamond Time → terminal summary. **Confirmed — task owner:** no practice mode. Calibration and instructions are retained; they do not require completing unscored practice obstacles. Both calibrations and initial readiness are prerequisites. Countdowns do not consume activity progress.
+**Updated flow:** assignment → calibration → brief visual instructions → ready countdown → (activity minute → vault) × 5 → 20-second Diamond Time → terminal summary. **Confirmed — task owner:** no practice mode. Calibration and instructions are retained; they do not require completing unscored practice obstacles. Both calibrations and initial readiness are prerequisites. Countdowns do not consume activity progress.
 
 - Complete all five vaults and the final Diamond Time with positive health to win. The five-minute activity schedule provides 50 target obstacles per player; successful clears may be fewer. Do not add catch-up targets or an extension for HIT results and do not fail solely for an unmet success/rep count. Tracking pauses/recovery still follow their own rules. A vault timeout ends as **vault failed**, even at full health. No laser/activity target is scheduled inside a vault or Diamond Time.
 - Health reaching zero ends as **health depleted** immediately after atomic resolution. Resolve due laser effects before entering a vault or declaring completion; do not invent success from unresolved/unavailable evidence. Exact same-tick ordering of deadline/contact/end events requires G2/G11/G12 agreement.
 - `GameClock` remains the only gameplay time source. **Proposed phase timing:** it advances during activity, vault and Diamond Time and freezes on pause; activity progress accumulates only activity/Diamond Time deltas and remains fixed during vaults. A vault deadline is a phase deadline derived from the same clock, not a separate rendering timer. These are distinct values, not two independently advancing game clocks.
-- The progress bar represents 310 seconds of activity progression, with checkpoints at the five vaults. The vault's 5-second countdown must be visible separately while the bar is stopped. Pauses and vault duration make wall-clock time longer than 5:10. Do not shorten a later minute to compensate for time spent in a vault.
+- The progress bar represents 320 seconds of activity progression, with checkpoints at the five vaults. The vault's 5-second countdown must be visible separately while the bar is stopped. Pauses and vault duration make wall-clock time longer than 5:20. Do not shorten a later minute to compensate for time spent in a vault.
 - Player Stop/Exit ends as **aborted**, not defeated or completed; discard unresolved attempts. An unrecoverable input/service failure ends as **technical interruption**, without player blame. Manual pause and app interruption freeze gameplay.
 - End once, cancel pending encounters and emit one immutable summary. No score/health changes occur after termination. Summary includes outcome, active duration, health, score, finalized encounter counts and unavailable/withdrawn counts, with metric limitations from E.
 
@@ -194,7 +194,7 @@ No raw body recordings are required. MVP activity metrics count scheduled obstac
 
 | Metric | Definition | Stated limitation |
 |---|---|---|
-| Activity progress duration | Accumulated activity and Diamond Time deltas from `GameClock` | 310-second base grid; excludes vault/pause; no HIT catch-up extension; not exercise intensity |
+| Activity progress duration | Accumulated activity and Diamond Time deltas from `GameClock` | 320-second base grid; excludes vault/pause; no HIT catch-up extension; not exercise intensity |
 | Vault duration | Game-clock time spent in each vault opportunity | Separate from activity progress; pause excluded |
 | Team score | One authoritative sum of both players' committed laser contributions and team diamond awards | One combined HUD/results total; individual target outcomes are not separate score balances |
 | Team clear rate | CLEAR/CLEAR committed encounters ÷ all committed encounters | Excludes withdrawn/unavailable attempts; show unavailable count; no denominator displays “—”, not 100% |
@@ -218,12 +218,12 @@ Task-owner product values are labeled **Confirmed — task owner**. Other number
 | Parameter | Candidate | Constraint / review |
 |---|---|---|
 | Shared health | **5 — Confirmed, task owner** | -1 per HIT player, -2 for HIT/HIT; clamp at zero; vault timeout separately terminal |
-| Activity progression | **300 + 10 seconds — Confirmed, task owner** | 310 activity seconds; progress stops during five vault opportunities and pauses |
+| Activity progression | **300 + 20 seconds — Confirmed, task owner** | 320 activity seconds; progress stops during five vault opportunities and pauses |
 | Obstacle grid / player | **32 high/squat + 18 low/jump — Confirmed, task owner** | 50 scheduled targets; successful count may be lower; no catch-up extension |
 | Vault opportunity | **5 seconds, five vaults — Confirmed, task owner** | Three buttons per side; timeout ends round |
 | Diamond availability | **No fixed lifetime — Confirmed, task owner** | Wrist or avatar body collection only during approach's interaction-area crossing; cannot collect after passing; passage bounds/speed TBD |
 | Normal diamond spawns | **8–10 / 11–13 / 14–16 / 17–19 / 20–22** | Total team; seeded count and position; pickup windows may overlap lasers; all collected or passed before vault |
-| Diamond Time duration | **10 active seconds after the final vault — Confirmed, task owner** | No fixed total diamond spawn/collection quota |
+| Diamond Time duration | **20 active seconds after the final vault — Confirmed, task owner** | No fixed total diamond spawn/collection quota |
 | Active Diamond Time cap | **4 total-team diamonds — Confirmed, task owner** | Distinct positions; includes approaching/currently collectible diamonds |
 | Initial Diamond Time population | **4 diamonds — Confirmed, task owner, 10 Nov** | Exactly four in the initial reviewed plan; targets remain until collected or phase end |
 | Diamond Time replacement | **One new diamond per valid collection — Confirmed, task owner** | Another position; only while phase active; bonus targets persist until collection/phase end; normal misses are permanent |
@@ -284,7 +284,7 @@ Review examples for later deterministic fixtures (not executable tests in LH-01)
 - Verify each player's grid totals 32 high/squat and 18 low/jump targets; do not combine the two players into 50 team targets. Held crouches can CLEAR multiple high targets. Fewer successful clears do not cause catch-up, extension or failure if health remains and all vaults open.
 - Vault at each 60-second activity boundary, fifth vault before Diamond Time, stopped activity progress but advancing vault deadline, timeout at full health, and both-side button completion/deduplication.
 - Seeded normal total-team diamond ranges, approach trajectories, wrist contact only in the interaction area, no early or post-passage pickup, invalid/stale wrists, simultaneous two-wrist/player contacts and repeated frames cannot double-award. Normal passages finish before vault entry.
-- Diamond Time starts after the fifth vault, runs for 10 active seconds, has at most four active diamonds in distinct positions, and permits cumulative pickups above four without a fixed total quota. Each valid collection triggers one uniquely identified replacement at another position while the phase is active.
+- Diamond Time starts after the fifth vault, runs for 20 active seconds, has up to six active paw-board diamonds in distinct positions, and permits cumulative pickups above six without a fixed total quota. Each valid collection triggers one uniquely identified replacement at another position while the phase is active.
 - Simultaneous Diamond Time pickups/replacements preserve the cap; no instant pickup merely from spawn overlap, missed-slot policy remains explicit, and phase end blocks late pickups/replacements. Pause freezes passage and phase time; resume cannot resurrect missed diamonds or duplicate committed replacements.
 - Rolling-window boundaries, jump-spacing boundaries and tracking retry/resume demands cannot bypass caps; no eligible encounter yields a breather.
 - Free-order vault buttons accept either hand, both sides need completion but not simultaneously; interrupted vault retains completed buttons/remaining time; tracking-only recovery automatically starts countdown and never clears a manual pause.
@@ -312,7 +312,7 @@ No collaborator confirmation has been obtained in this document. Resolving an it
 | G9 | Approve activity definitions, exclusions, unavailable display and numeric tuning table | Jevon + Theo; Edo for observable facts | **Proposed** |
 | G10 | 50 scheduled obstacle targets/player (32 high, 18 low); held crouch allowed; actual physical-rep counting not required; HIT advances, success count may be lower, no catch-up extension | Jevon; Edo/Theo acknowledge metric meaning | **Resolved by task-owner clarification; no actual-rep contract required for MVP** |
 | G11 | Free-order/either-hand buttons, both sides before timeout, preserved paused progress. D09 v1 adds fresh outside→inside entry, no dwell/interpolation, strict capture/arrival deadline and post-batch phase transition. Producer fields, mapping/size/reach and physical validation remain open | Jevon + Edo + Theo + Kevin | **Product confirmed; D09 behavior approved by Edo; measurement/presentation acceptance pending** |
-| G12 | Approaching diamonds collected by wrist or avatar body, passage-only eligibility, clean vault entry and 10-second finale with four initial/max active, collection replacements, persistent uncollected bonus targets and no total quota. D09 v1 batch/deadline rules approved. Review exact field schema, radius/reach, mapping, trajectory/speed and seeded placement/separation | Jevon + Edo + Theo + Kevin | **Product updated by task owner, 10 Nov; D09 behavior approved; production measurement/scheduling/presentation pending** |
+| G12 | Approaching diamonds collected by wrist or avatar body, passage-only eligibility, clean vault entry and 20-second finale with up to six active paw-board diamonds, collection replacements, persistent uncollected bonus targets and no total quota. D09 v1 batch/deadline rules approved. Review exact field schema, radius/reach, mapping, trajectory/speed and seeded placement/separation | Jevon + Edo + Theo + Kevin | **Product updated by task owner, 10 Nov; D09 behavior approved; production measurement/scheduling/presentation pending** |
 | G13 | Validate 50-target/player five-minute grid against spacing, warnings, recovery and vaults; no retries/catch-up for HIT, no success-count failure or extension. Decide tracking-withdrawal retry accounting at minute boundaries | Jevon + Edo + Theo + Kevin | **Success rule resolved by task owner; schedule feasibility/tracking retry boundaries TBD** |
 | G14 | One combined team score, 100 per CLEAR laser target (+200 for both CLEAR, +100 for one CLEAR alongside HIT), and 25 per diamond are task-owner confirmed. Optional bonus exclusions remain for review; Kevin consumes the same score total in HUD/results | Jevon + Theo; Kevin for display | **Laser/diamond values and team score confirmed by task owner, updated 10 Nov; bonus exclusions Proposed** |
 | G15 | Agree capture backpressure, bounded Vision work, 0.6-second lost status, 0.4-second settling, invalid-evidence pause, watchdog, profile interface/device acceptance; tracking recovery automatically counts down once settled and other blockers clear | Edo + Jevon; Kevin for display/load | **Automatic tracking countdown confirmed by task owner; technical implementation Proposed/TBD** |

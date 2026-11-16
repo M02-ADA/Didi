@@ -40,7 +40,7 @@ struct CompleteReplayCoordinatorTests {
         #expect((normalCount + 4 ... normalCount + 8).contains(summary.diamondsCollected))
         #expect(summary.teamScore == 10_000 + 25 * summary.diamondsCollected)
         #expect(summary.diamondsCollected == session.diamondsCollected)
-        #expect(abs(summary.gameDuration - 316) < 1e-8 && abs(summary.activityDuration - 310) < 1e-8)
+        #expect(abs(summary.gameDuration - 326) < 1e-8 && abs(summary.activityDuration - 320) < 1e-8)
         #expect(session.diamondStates.values.filter { $0.outcome == .closed }.count == 4)
         #expect(session.inputStatus == .stopped)
         #expect(session.events.filter { if case .roundEnded = $0.kind { true } else { false } }.count == 1)
@@ -106,11 +106,11 @@ struct CompleteReplayCoordinatorTests {
         let script = try LaserReplayScript.complete(seed: 1)
         let session = try LaserReplayDriver.makeSession(script: script)
         try await session.start()
-        try await session.advance(to: 315)
+        try await session.advance(to: 325)
         #expect(session.state?.phase == .diamondTime)
         #expect(session.diamondStates.values.filter { $0.outcome == nil }.count == 4)
         let score = session.state?.teamScore
-        try await session.advance(to: 316)
+        try await session.advance(to: 326)
         #expect(session.summary?.teamScore == score)
         #expect(session.diamondStates.values.filter { $0.outcome == nil }.isEmpty)
     }
