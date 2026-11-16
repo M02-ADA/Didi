@@ -7,7 +7,7 @@ import RealityKit
 /// stays the sole source of screen positions and pickup outcomes.
 @MainActor @Observable
 final class PawBoardDiamondPresentation {
-    struct Placement {
+    struct Placement: Equatable {
         let position: SIMD3<Float>
         let rotation: simd_quatf
         let radius: Float
@@ -44,11 +44,14 @@ final class PawBoardDiamondPresentation {
     private(set) var renderedIDs: Set<UUID> = []
     var pickupLevels: [UUID: Int] = [:]
     var latestCrestID: UUID?
-    @ObservationIgnored private var shown: [UUID: Diamond] = [:]
+    @ObservationIgnored private var shown: [UUID: (diamond: Diamond, placement: Placement)] = [:]
+    @ObservationIgnored private var fullBurstEnds: [UUID: Double] = [:]
+    private static let fullBurstLimit = 2
 
     func update(states: [UUID: LaserDiamondState], time: Double, scene: LaserScene,
                 onCollected: ((UUID, SIMD3<Float>) -> Void)? = nil,
                 place: (LaserDiamondPosition) -> Placement?) {
+        fullBurstEnds = fullBurstEnds.filter { $0.value > time }
         var rendered: Set<UUID> = []
         for state in states.values {
             guard case .diamondTime = state.lifetime else { continue }
@@ -66,28 +69,36 @@ final class PawBoardDiamondPresentation {
             }
 
             guard let placement = place(spawn.position),
-                  let diamond = shown[spawn.id] ?? scene.makeDiamond(passage: true) else { continue }
+                  let diamond = shown[spawn.id]?.diamond ?? scene.makeDiamond(passage: true) else { continue }
             if shown[spawn.id] == nil {
                 diamond.root.name = "diamondTime.pawBoard.\(spawn.id)"
                 diamond.showIdle()
-                shown[spawn.id] = diamond
             }
-            diamond.placeOnScreen(at: placement.position, rotation: placement.rotation, radius: placement.radius)
-            diamond.updatePassagePose(age: age, glow: .collectible, cameraPosition: placement.cameraPosition)
+            if shown[spawn.id]?.placement != placement {
+                diamond.placeOnScreen(at: placement.position, rotation: placement.rotation, radius: placement.radius)
+                shown[spawn.id] = (diamond, placement)
+            }
+            if !pickedUp {
+                diamond.updatePassagePose(age: age, glow: .collectible, cameraPosition: placement.cameraPosition)
+            }
             if pickedUp, diamond.phase == .idle {
                 onCollected?(spawn.id, placement.position)
-                diamond.collect()
+                let fullBurst = fullBurstEnds.count < Self.fullBurstLimit
+                if fullBurst { fullBurstEnds[spawn.id] = time + Diamond.effectLifetime }
+                diamond.collect(fullBurst: fullBurst)
             }
             rendered.insert(spawn.id)
         }
         for id in Set(shown.keys).subtracting(rendered) {
-            shown.removeValue(forKey: id)?.retire()
+            shown.removeValue(forKey: id)?.diamond.retire()
+            fullBurstEnds[id] = nil
         }
         if renderedIDs != rendered { renderedIDs = rendered }
     }
 
     func clear() {
-        for diamond in shown.values { diamond.retire() }
+        for item in shown.values { item.diamond.retire() }
+        fullBurstEnds.removeAll()
         shown.removeAll()
         if !renderedIDs.isEmpty { renderedIDs = [] }
     }

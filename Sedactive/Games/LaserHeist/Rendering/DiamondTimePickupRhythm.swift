@@ -5,7 +5,7 @@ import Foundation
 nonisolated enum DiamondTimePickupRhythm {
     static let chainWindow = 0.7
     static let accentWindow = 0.10
-    static let shakeDuration = 0.20
+    static let shakeDuration = 0.24
 
     struct Beat {
         let start: Double
@@ -36,8 +36,9 @@ nonisolated enum DiamondTimePickupRhythm {
     }
 
     static func shake(age: Double, level: Int) -> Float {
-        guard level >= 3, age >= 0, age < shakeDuration else { return 0 }
+        guard level >= 1, age >= 0, age < shakeDuration else { return 0 }
         let progress = age / shakeDuration
-        return Float(sin(progress * 4 * .pi) * pow(1 - progress, 2)) * (level >= 5 ? 0.009 : 0.006)
+        let amplitude: Float = if level >= 5 { 0.019 } else if level >= 3 { 0.016 } else { 0.010 }
+        return Float(cos(progress * 3 * .pi) * pow(1 - progress, 2)) * amplitude
     }
 }
