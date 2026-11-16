@@ -57,7 +57,7 @@ struct DiamondTimePawOverlay: View {
         for hand in LaserContactHand.ordered {
             guard let position = paws[hand] else { continue }
             drawPaw(context, at: point(position, unit: unit), radius: unit * LaserDiamondTimeBoard.pawRadius,
-                    player: hand.playerID, pickupAge: pawPickupAges[hand])
+                    hand: hand, pickupAge: pawPickupAges[hand])
         }
         for pickup in pickups {
             drawPickup(context, at: pickup.center, radius: pickup.radius, age: pickup.age, player: pickup.player, canvas: size, renderInCanvas: pickup.renderInCanvas)
@@ -68,53 +68,30 @@ struct DiamondTimePawOverlay: View {
         CGPoint(x: position.x * unit, y: position.y * unit)
     }
 
-    private func drawPaw(_ context: GraphicsContext, at center: CGPoint, radius: CGFloat, player: PlayerID, pickupAge: Double?) {
-        func oval(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> Path {
-            Path(ellipseIn: CGRect(x: center.x + (x - w / 2) * radius, y: center.y + (y - h / 2) * radius,
-                                   width: w * radius, height: h * radius))
+    private func drawPaw(_ context: GraphicsContext, at center: CGPoint, radius: CGFloat,
+                         hand: LaserContactHand, pickupAge: Double?) {
+        let yellow = hand.playerID == .player1
+        let color = yellow ? "yellow" : "orange"
+        let side = hand.wrist == .left ? "left" : "right"
+        let sprite = context.resolve(Image("LaserHeistUI/paw-\(color)-\(side)"))
+        let scale = 2 * radius / max(sprite.size.width, sprite.size.height)
+        let size = CGSize(width: sprite.size.width * scale, height: sprite.size.height * scale)
+        let bounds = CGRect(x: center.x - size.width / 2, y: center.y - size.height / 2,
+                            width: size.width, height: size.height)
+        guard let pickupAge, pickupAge < (reduceMotion ? 0.12 : 0.30) else {
+            context.draw(sprite, in: bounds)
+            return
         }
-        let outline = Color(red: 0.29, green: 0.12, blue: 0.10)
-        let coat = player == .player1 ? Color(red: 1, green: 0.75, blue: 0.11) : Color(red: 1, green: 0.46, blue: 0.10)
-        let pad = Color(red: 1, green: 0.85, blue: 0.73)
-        let toeCenters: [(CGFloat, CGFloat)] = [(-0.62, -0.25), (-0.27, -0.60), (0.27, -0.60), (0.62, -0.25)]
-        let silhouette = oval(0, 0.22, 1.56, 1.43)
-        let toes = toeCenters.map { oval($0.0, $0.1, 0.66, 0.68) }
-        let shapes = [silhouette] + toes
-        let charge = pickupAge.map { pow(max(0, 1 - $0 / 0.30), 1.5) } ?? 0
-        let padLit = (pickupAge ?? .infinity) < 0.12
-        if !reduceMotion, charge > 0 {
-            // The aura follows this paw. Its silhouette and hitbox stay fixed.
-            var glow = context
-            glow.addFilter(.blur(radius: radius * 0.14))
-            for shape in shapes {
-                glow.stroke(shape, with: .color(coat.opacity(charge * 0.95)), lineWidth: radius * 0.32)
+
+        let strength = reduceMotion ? 1 : pow(max(0, 1 - pickupAge / 0.30), 1.5)
+        let glow = yellow ? Color(red: 1, green: 0.77, blue: 0.21) : Color(red: 1, green: 0.50, blue: 0.18)
+        context.drawLayer { highlight in
+            if !reduceMotion {
+                highlight.addFilter(.shadow(color: glow.opacity(0.95 * strength), radius: radius * 0.24))
             }
+            highlight.addFilter(.brightness(0.25 * strength))
+            highlight.draw(sprite, in: bounds)
         }
-        for shape in shapes {
-            context.stroke(shape, with: .color(outline), lineWidth: 0.115 * radius)
-        }
-        for shape in shapes {
-            context.fill(shape, with: .color(coat))
-            if !reduceMotion, charge > 0 {
-                context.fill(shape, with: .color(.white.opacity(0.40 * charge)))
-            }
-        }
-        for (x, y) in toeCenters {
-            context.fill(oval(x, y, 0.36, 0.40), with: .color(padLit ? .white : pad))
-        }
-        let centralPad = Path { path in
-            func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-                CGPoint(x: center.x + radius * x, y: center.y + radius * y)
-            }
-            path.move(to: p(0, -0.19))
-            path.addCurve(to: p(0.49, 0.39), control1: p(0.28, -0.19), control2: p(0.49, 0.12))
-            path.addQuadCurve(to: p(0, 0.61), control: p(0.5, 0.69))
-            path.addQuadCurve(to: p(-0.49, 0.39), control: p(-0.5, 0.69))
-            path.addCurve(to: p(0, -0.19), control1: p(-0.49, 0.12), control2: p(-0.28, -0.19))
-            path.closeSubpath()
-        }
-        context.fill(centralPad, with: .color(padLit ? .white : pad))
-        context.fill(oval(-0.21, 0.07, 0.18, 0.10), with: .color(.white.opacity(0.92)))
     }
 
     private func drawDiamond(_ context: GraphicsContext, at center: CGPoint, radius: CGFloat) {
