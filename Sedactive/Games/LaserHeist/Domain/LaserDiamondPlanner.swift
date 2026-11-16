@@ -63,7 +63,8 @@ nonisolated struct LaserDiamondPlanner: Sendable {
                                      spawnedAt: time, entry: entry, exit: exit)
     }
 
-    mutating func normalMinute(_ minute: Int, from start: Double, until boundary: Double) throws -> [LaserDiamondSpawn] {
+    mutating func normalMinute(_ minute: Int, from start: Double, until boundary: Double,
+                               visualLead: Double? = nil) throws -> [LaserDiamondSpawn] {
         try requireLaserValue((0..<5).contains(minute) && start.isFinite && boundary.isFinite && start >= 0
             && boundary - start > approachLead + passageDuration, "normal diamond segment")
         var next = self
@@ -71,12 +72,20 @@ nonisolated struct LaserDiamondPlanner: Sendable {
         let minimum = 8 + minute * 3
         let count = minimum + Int(next.random() % 3)
         let available = boundary - start - approachLead - passageDuration
+        let spacing = available / Double(count + 1)
+        // Keep each live diamond on its own slot, including during approach. The
+        // shortened debug rounds may have less room between passages than production.
+        let requestedLead = visualLead ?? approachLead
+        try requireLaserValue(requestedLead.isFinite && requestedLead >= approachLead, "diamond visual lead")
+        let lead = max(approachLead, min(requestedLead, spacing * Double(placements.count) - passageDuration - 1e-6))
         var result: [LaserDiamondSpawn] = []
         for index in 0..<count {
             let time = start + available * Double(index + 1) / Double(count + 1)
-            result.append(try next.makeSpawn(at: time, entry: time + approachLead,
-                exit: time + approachLead + passageDuration,
-                excluding: result.filter { $0.exit > time }.map(\.position)))
+            let entry = time + approachLead
+            let spawn = lead == approachLead ? time : max(start, entry - lead)
+            result.append(try next.makeSpawn(at: spawn, entry: entry,
+                exit: entry + passageDuration,
+                excluding: result.filter { $0.exit > spawn }.map(\.position)))
         }
         self = next
         return result

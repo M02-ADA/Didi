@@ -189,7 +189,9 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
             planned.append((moved.targets[0].warningTime, .register(moved)))
         }
         let boundary = time + segmentLength
-        for spawn in try planner.normalMinute(minute, from: time, until: boundary) {
+        // Show gems about 22 metres away at the default corridor speed
+        // (3.7 s to entry plus half of the one-second pickup window).
+        for spawn in try planner.normalMinute(minute, from: time, until: boundary, visualLead: 3.7) {
             planned.append((spawn.spawnedAt, .normalDiamond(spawn, boundary: boundary)))
         }
         pending = planned.enumerated().sorted {
