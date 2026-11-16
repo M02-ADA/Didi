@@ -92,4 +92,33 @@ import Testing
         #expect(replacement.phase == .ready && replacement.target != collected.target)
     }
 
+    @Test func previewStopRetryAndReplacementLeaveNoOldVisuals() async throws {
+        let scene = LaserScene()
+        let preview = HeartAnimationPreview()
+        let firstGeneration = UUID()
+        try await preview.start(scene: scene, generation: firstGeneration)
+        let old = try #require(preview.heart)
+        preview.collect(now: 1, reduceMotion: false)
+        preview.collect(now: 1.01)
+        #expect(preview.collections == 1)
+        preview.showAnother(reduceMotion: true)
+        let replacement = try #require(preview.heart)
+        #expect(old.phase == .retired && old.root.parent == nil)
+        #expect(replacement.target != old.target)
+        preview.update(now: 2)
+        #expect(replacement.phase == .idle, "old retirement must not remove a replacement")
+        preview.stop(); preview.collect(now: 3); preview.update(now: 4)
+        #expect(replacement.phase == .retired && replacement.root.parent == nil)
+        #expect(preview.heart == nil && preview.status == "Stopped")
+        #expect(!scene.root.children.contains { $0.name.hasPrefix("heart.") })
+        let newGeneration = UUID()
+        try await preview.start(scene: scene, generation: newGeneration)
+        #expect(preview.generation == newGeneration && preview.collections == 0)
+        #expect(preview.heart?.generation != old.generation)
+        preview.collect(now: 5, reduceMotion: true)
+        preview.update(now: 5 + HeartCollectible.effectLifetime)
+        #expect(preview.heart == nil && preview.status == "Retired")
+        preview.stop()
+    }
+
 }

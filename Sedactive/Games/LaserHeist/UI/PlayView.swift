@@ -57,6 +57,7 @@ private struct ReplayRoundView: View {
     /// The per-frame host-clock tick: live cutout expiry and live avatars.
     @State private var frameRefresh: EventSubscription?
     #if DEBUG
+    @State private var heartPreview = HeartAnimationPreview()
     @State private var diamondReadout = DebugDiamondVisualReadout()
     @State private var preview = LaserApproachPreview()
     @State private var environmentPreview = EnvironmentPreview()
@@ -100,6 +101,7 @@ private struct ReplayRoundView: View {
                 scene?.refreshLiveCutouts(now: now)
                 scene?.refreshLiveAvatars(now: now)
                 #if DEBUG
+                heartPreview.update(now: now)
                 MaskBenchmark.recorder.renderTick(now) // no-op without `-maskBench`
                 #endif
             }
@@ -180,6 +182,15 @@ private struct ReplayRoundView: View {
             // Optional world-construction guides. Replay body markers live in the presentation adapter.
             #if DEBUG
             let arguments = ProcessInfo.processInfo.arguments
+            if HeartAnimationPreview.isRequested {
+                do {
+                    let input = try LaserReplayScript.load().input.configuration
+                    _ = try await installAvatars(calibrations: input.calibrations, layout: input.playerPlaneLayout)
+                    guard !Task.isCancelled else { return }
+                    try await heartPreview.start(scene: scene, generation: generation)
+                } catch { startupError = String(describing: error) }
+                return // No replay coordinator, gameplay clock, body input or reward events.
+            }
             if arguments.contains("-showWorldGuides") {
                 content.add(PoseDebugOverlay.make(for: scene))
             }
@@ -438,6 +449,9 @@ private struct ReplayRoundView: View {
         }
         .overlay(alignment: .bottom) {
             #if DEBUG
+            if HeartAnimationPreview.isRequested {
+                HeartAnimationPreviewControls(preview: heartPreview, retry: retry)
+            }
             if let session, session.isDebugWristPreview, session.summary == nil {
                 DebugWristDiamondControls(session:session,readout:diamondReadout).padding(.bottom,100)
             }
@@ -458,7 +472,9 @@ private struct ReplayRoundView: View {
         .overlay(alignment: .bottomTrailing) {
             GeometryReader { geometry in
                 VStack { Spacer(); HStack { Spacer()
-                    TimingIndicatorControls(session: session, scene: scene, retry: retry, viewport: geometry.size)
+                    if !HeartAnimationPreview.isRequested {
+                        TimingIndicatorControls(session: session, scene: scene, retry: retry, viewport: geometry.size)
+                    }
                 } }
             }.ignoresSafeArea()
         }
@@ -497,6 +513,7 @@ private struct ReplayRoundView: View {
             // before this scene is replaced (Retry).
             scene.detachLiveAvatars()
             #if DEBUG
+            heartPreview.stop()
             MaskBenchmark.recorder.suspend(reason: "view closed")
             cutoutFeed?.stop()
             cutoutFeed = nil
