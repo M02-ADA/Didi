@@ -350,18 +350,26 @@ private struct ReplayRoundView: View {
                 presentation.start(on: content, scene: scene, session: replay)
             } catch { startupError = String(describing: error) }
         }
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: { presentation.pawBoardDiamonds.viewportFrame = $0 }
         .ignoresSafeArea()
         .background(.black)
         .overlay {
-            if let session, session.showsDiamondTimePaws {
-                DiamondTimePawOverlay(session: session)
-            }
-        }
-        .overlay {
-            // One HUD at a time: the Sketch gameplay HUD, or (Debug, `-replayDebugHUD`)
-            // Jevon's text HUD for replay diagnostics. Results replaces either.
-            if let session, session.summary == nil, !Self.showsReplayDebugHUD, let model = hudModel(session) {
-                GameplayHUD(model: model, actions: hudActions(session))
+            if let session {
+                let model = session.summary == nil ? hudModel(session) : nil
+                ZStack {
+                    if let seconds = model?.diamondTimeRemaining, seconds > 0 {
+                        DiamondTimeRushFrame(secondsRemaining: seconds)
+                    }
+                    if session.showsDiamondTimePaws {
+                        DiamondTimePawOverlay(session: session, presentation: presentation.pawBoardDiamonds)
+                    }
+                    // The debug HUD takes the place of the normal HUD.
+                    if let model, !Self.showsReplayDebugHUD {
+                        GameplayHUD(model: model, actions: hudActions(session))
+                    }
+                }
             }
         }
         .overlay {

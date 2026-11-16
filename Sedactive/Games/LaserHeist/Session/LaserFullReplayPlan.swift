@@ -22,7 +22,7 @@ nonisolated struct LaserFullReplayPlan: Sendable {
     let bonusStart: Double
     let normalDiamondCount: Int
     let plannerAfterNormal: LaserDiamondPlanner
-    var duration: Double { bonusStart + 10 }
+    var duration: Double { bonusStart + LaserRoundConfiguration.defaultDiamondTimeDuration }
 
     /// Positions and times are test/demo inputs, not approved camera mapping or comfortable reach.
     /// The complete round's rules: evidence windows, clearance, diamond points and scheduling.

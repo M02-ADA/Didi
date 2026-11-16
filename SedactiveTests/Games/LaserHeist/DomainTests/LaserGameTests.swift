@@ -129,7 +129,7 @@ nonisolated struct LaserGameTests {
         #expect(game.teamScore == (prune ? 200 : 0))
     }
 
-    @Test func fiveVaultsLeadToTenSecondBonusThenExactlyOneRoundEnd() throws {
+    @Test func fiveVaultsLeadToTwentySecondBonusThenExactlyOneRoundEnd() throws {
         let (scenario, initial) = try setup()
         var game = initial
         for index in 0..<5 {
@@ -140,9 +140,9 @@ nonisolated struct LaserGameTests {
         #expect(game.roundPhase == .diamondTime)
         #expect(game.roundOutcome == nil)
         let bonusStart = game.gameTime
-        try game.advance(to: bonusStart + 9.999999)
+        try game.advance(to: bonusStart + 19.999999)
         #expect(game.roundOutcome == nil)
-        try game.advance(to: bonusStart + 10)
+        try game.advance(to: bonusStart + 20)
         #expect(game.roundOutcome == .completed)
         try game.advance(to: 30)
         game.exit()

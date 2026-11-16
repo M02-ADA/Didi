@@ -1,0 +1,261 @@
+#usda 1.0
+(
+    defaultPrim = "Brilliant"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Brilliant"
+{
+    def Mesh "FacetedGem" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        float3[] extent = [(-0.15, -0.12715, -0.15), (0.15, 0.12715, 0.15)]
+        int[] faceVertexCounts = [12, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]
+        int[] faceVertexIndices = [11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 13, 12, 11, 0, 12, 12, 13, 24, 1, 14, 13, 0, 1, 13, 13, 14, 24, 2, 15, 14, 1, 2, 14, 14, 15, 24, 3, 16, 15, 2, 3, 15, 15, 16, 24, 4, 17, 16, 3, 4, 16, 16, 17, 24, 5, 18, 17, 4, 5, 17, 17, 18, 24, 6, 19, 18, 5, 6, 18, 18, 19, 24, 7, 20, 19, 6, 7, 19, 19, 20, 24, 8, 21, 20, 7, 8, 20, 20, 21, 24, 9, 22, 21, 8, 9, 21, 21, 22, 24, 10, 23, 22, 9, 10, 22, 22, 23, 24, 11, 12, 23, 10, 11, 23, 23, 12, 24]
+        point3f[] points = [(0.088200, 0.127150, 0.023633), (0.064567, 0.127150, 0.064567), (0.023633, 0.127150, 0.088200), (-0.023633, 0.127150, 0.088200), (-0.064567, 0.127150, 0.064567), (-0.088200, 0.127150, 0.023633), (-0.088200, 0.127150, -0.023633), (-0.064567, 0.127150, -0.064567), (-0.023633, 0.127150, -0.088200), (0.023633, 0.127150, -0.088200), (0.064567, 0.127150, -0.064567), (0.088200, 0.127150, -0.023633), (0.150000, 0.046000, 0.000000), (0.129904, 0.046000, 0.075000), (0.075000, 0.046000, 0.129904), (0.000000, 0.046000, 0.150000), (-0.075000, 0.046000, 0.129904), (-0.129904, 0.046000, 0.075000), (-0.150000, 0.046000, 0.000000), (-0.129904, 0.046000, -0.075000), (-0.075000, 0.046000, -0.129904), (-0.000000, 0.046000, -0.150000), (0.075000, 0.046000, -0.129904), (0.129904, 0.046000, -0.075000), (0.000000, -0.127150, 0.000000)]
+        uniform token subdivisionScheme = "none"
+        uniform token subsetFamily:materialBind:familyType = "partition"
+        rel material:binding = </Brilliant/Materials/Facet0>
+        normal3f[] normals = [(0.000000, 1.000000, 0.000000), (0.806086, 0.550975, 0.215990), (0.795567, 0.605866, -0.000000), (0.740787, -0.641744, 0.198493), (0.590096, 0.550975, 0.590096), (0.688981, 0.605866, 0.397783), (0.542293, -0.641744, 0.542293), (0.215990, 0.550975, 0.806086), (0.397783, 0.605866, 0.688981), (0.198493, -0.641744, 0.740787), (-0.215990, 0.550975, 0.806086), (0.000000, 0.605866, 0.795567), (-0.198493, -0.641744, 0.740787), (-0.590096, 0.550975, 0.590096), (-0.397783, 0.605866, 0.688981), (-0.542293, -0.641744, 0.542293), (-0.806086, 0.550975, 0.215990), (-0.688981, 0.605866, 0.397783), (-0.740787, -0.641744, 0.198493), (-0.806086, 0.550975, -0.215990), (-0.795567, 0.605866, 0.000000), (-0.740787, -0.641744, -0.198493), (-0.590096, 0.550975, -0.590096), (-0.688981, 0.605866, -0.397783), (-0.542293, -0.641744, -0.542293), (-0.215990, 0.550975, -0.806086), (-0.397783, 0.605866, -0.688981), (-0.198493, -0.641744, -0.740787), (0.215990, 0.550975, -0.806086), (-0.000000, 0.605866, -0.795567), (0.198493, -0.641744, -0.740787), (0.590096, 0.550975, -0.590096), (0.397783, 0.605866, -0.688981), (0.542293, -0.641744, -0.542293), (0.806086, 0.550975, -0.215990), (0.688981, 0.605866, -0.397783), (0.740787, -0.641744, -0.198493)] (interpolation = "uniform")
+
+        def GeomSubset "Facet0" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [0]
+            rel material:binding = </Brilliant/Materials/Facet0>
+        }
+
+        def GeomSubset "Facet1" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [1, 7, 13, 19, 25, 31]
+            rel material:binding = </Brilliant/Materials/Facet1>
+        }
+
+        def GeomSubset "Facet2" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [4, 10, 16, 22, 28, 34]
+            rel material:binding = </Brilliant/Materials/Facet2>
+        }
+
+        def GeomSubset "Facet3" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [2, 11, 14, 23, 26, 35]
+            rel material:binding = </Brilliant/Materials/Facet3>
+        }
+
+        def GeomSubset "Facet4" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [5, 17, 29]
+            rel material:binding = </Brilliant/Materials/Facet4>
+        }
+
+        def GeomSubset "Facet5" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [8, 20, 32]
+            rel material:binding = </Brilliant/Materials/Facet5>
+        }
+
+        def GeomSubset "Facet6" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [3, 15, 27]
+            rel material:binding = </Brilliant/Materials/Facet6>
+        }
+
+        def GeomSubset "Facet7" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [6, 12, 18, 24, 30, 36]
+            rel material:binding = </Brilliant/Materials/Facet7>
+        }
+
+        def GeomSubset "Facet8" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [9, 21, 33]
+            rel material:binding = </Brilliant/Materials/Facet8>
+        }
+    }
+
+    def Scope "Materials"
+    {
+        def Material "Facet0"
+        {
+            token outputs:surface.connect = </Brilliant/Materials/Facet0/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0, 0, 0)
+                color3f inputs:emissiveColor = (0.361307, 0.473531, 1.000000)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
+                float inputs:clearcoat = 0
+                token outputs:surface
+            }
+        }
+        def Material "Facet1"
+        {
+            token outputs:surface.connect = </Brilliant/Materials/Facet1/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0, 0, 0)
+                color3f inputs:emissiveColor = (0.242281, 0.346704, 1.000000)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
+                float inputs:clearcoat = 0
+                token outputs:surface
+            }
+        }
+        def Material "Facet2"
+        {
+            token outputs:surface.connect = </Brilliant/Materials/Facet2/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0, 0, 0)
+                color3f inputs:emissiveColor = (0.296138, 0.428690, 1.000000)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
+                float inputs:clearcoat = 0
+                token outputs:surface
+            }
+        }
+        def Material "Facet3"
+        {
+            token outputs:surface.connect = </Brilliant/Materials/Facet3/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0, 0, 0)
+                color3f inputs:emissiveColor = (0.097587, 0.187821, 0.921582)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
+                float inputs:clearcoat = 0
+                token outputs:surface
+            }
+        }
+        def Material "Facet4"
+        {
+            token outputs:surface.connect = </Brilliant/Materials/Facet4/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0, 0, 0)
+                color3f inputs:emissiveColor = (0.177888, 0.296138, 1.000000)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
+                float inputs:clearcoat = 0
+                token outputs:surface
+            }
+        }
+        def Material "Facet5"
+        {
+            token outputs:surface.connect = </Brilliant/Materials/Facet5/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0, 0, 0)
+                color3f inputs:emissiveColor = (0.132868, 0.238398, 0.973445)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
+                float inputs:clearcoat = 0
+                token outputs:surface
+            }
+        }
+        def Material "Facet6"
+        {
+            token outputs:surface.connect = </Brilliant/Materials/Facet6/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0, 0, 0)
+                color3f inputs:emissiveColor = (0.093059, 0.191202, 0.863157)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
+                float inputs:clearcoat = 0
+                token outputs:surface
+            }
+        }
+        def Material "Facet7"
+        {
+            token outputs:surface.connect = </Brilliant/Materials/Facet7/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0, 0, 0)
+                color3f inputs:emissiveColor = (0.066626, 0.141263, 0.791298)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
+                float inputs:clearcoat = 0
+                token outputs:surface
+            }
+        }
+        def Material "Facet8"
+        {
+            token outputs:surface.connect = </Brilliant/Materials/Facet8/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0, 0, 0)
+                color3f inputs:emissiveColor = (0.045186, 0.099899, 0.637597)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
+                float inputs:clearcoat = 0
+                token outputs:surface
+            }
+        }
+    }
+}

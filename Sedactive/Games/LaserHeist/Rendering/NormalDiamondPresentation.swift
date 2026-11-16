@@ -42,12 +42,6 @@ struct NormalDiamond: Equatable, Identifiable {
 /// Distinct from `DiamondTimePresentation`'s persistent targets. Keeps no clock:
 /// everything follows the state's game time.
 ///
-/// Visual acceptance is BLOCKED (see `Docs/LaserHeist-K06-Readiness-Handoff.md`):
-/// the domain spawns normal diamonds only 0.5 s before interaction, so they
-/// first appear about 5 m ahead instead of down the corridor, and the replay
-/// plan's placements sit behind the mascots. PENDING Jevon (visual lead) and
-/// Kevin + Theo + Edo (placement and reach). This view draws what the domain
-/// says exists and never shows a diamond earlier than its spawn.
 @MainActor
 final class NormalDiamondPresentation {
     /// The domain's normal diamonds now, or `nil` with no source (shows nothing).
@@ -101,6 +95,9 @@ final class NormalDiamondPresentation {
         let nearCamera = scene.layout.cameraPosition.z - GameplayScenePresenter.cameraClearance
         for item in wanted {
             let z = depth(of: item, at: time)
+            let glow: Diamond.PassageGlow = if item.outcome != .pending || time >= item.exit { .passed }
+                else if time >= item.entry { .collectible }
+                else { .approaching }
             if var entry = shown[item.id] {
                 if entry.outcome == .pending {
                     switch item.outcome {
@@ -117,20 +114,26 @@ final class NormalDiamondPresentation {
                     }
                     entry.outcome = item.outcome
                 }
-                entry.diamond.root.position.z = z
+                if entry.outcome != .collected {
+                    entry.diamond.root.position.z = z
+                    entry.diamond.updatePassagePose(age: time - item.spawnedAt, glow: glow,
+                                                      cameraPosition: scene.layout.cameraPosition)
+                }
                 shown[item.id] = entry
                 // A passed diamond leaves before it reaches the camera.
-                if z > nearCamera { remove(item.id) }
+                if entry.outcome != .collected, z > nearCamera { remove(item.id) }
                 continue
             }
             // First seen: only a pending diamond that has spawned and is in the corridor.
             guard item.outcome == .pending, time >= item.spawnedAt, z >= horizonZ, z <= nearCamera,
-                  let diamond = scene.makeDiamond() else { continue }
+                  let diamond = scene.makeDiamond(passage: true) else { continue }
             var position = scene.mapping.playerPosition(item.lane, heightAboveFloor: item.heightAboveFloor)
             position.x += item.offsetX * scene.mapping.metersPerGameUnit
             position.z = z
             diamond.root.position = position
             diamond.showIdle()
+            diamond.updatePassagePose(age: time - item.spawnedAt, glow: glow,
+                                      cameraPosition: scene.layout.cameraPosition)
             shown[item.id] = Shown(diamond: diamond, item: item, outcome: .pending)
         }
         for (id, entry) in shown {

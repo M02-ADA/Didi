@@ -112,6 +112,8 @@ The **producer** defines each contract type once. Consumers import it and do not
 
 ## G. Decisions
 
+- **Confirmed — task owner, 16 November 2026:** Diamond Time lasts **20 active seconds** in Solo and Co-op. This supersedes the earlier ten-second duration. The live paw board supports six active diamonds initially, eight at ten seconds remaining, and ten at five seconds remaining.
+
 - **Confirmed — task owner (Kevin), 11 November 2026 (evening):** head-top estimate fix and setup framing.
   - **Head-top (`AnatomicalCandidatePolicyV1`):**
     - The "nothing above the head" check now tests columns outside the ears by 25 % of the ear span. Previously it tested the ear columns themselves; real ears lie on the head's outline, so every real head was refused, as a synthetic test against the committed code shows.
