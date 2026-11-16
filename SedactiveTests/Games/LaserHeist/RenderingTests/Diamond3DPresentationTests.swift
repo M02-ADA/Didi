@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import RealityKit
 import Testing
@@ -192,6 +193,71 @@ import Testing
         }
         diamond.collect(reduceMotion: true)
         #expect(!aura.isEnabled)
+    }
+
+    @Test func pawBoardProjectionAlignsDifferentSlotsAtOneCameraDepth() throws {
+        let projection = PawBoardDiamondPresentation.Projection(
+            board: .init(x: 140, y: 250, width: 720, height: 400),
+            viewport: .init(x: 20, y: 35, width: 1000, height: 720),
+            cameraPosition: [0, 1.05, 3.1],
+            rotation: simd_quatf(angle: -0.18, axis: [1, 0, 0]), verticalFieldOfView: 64)
+        let left = try LaserDiamondPosition(x: 0.22, y: 0.16)
+        let right = try LaserDiamondPosition(x: 1.58, y: 0.84)
+        let leftPlacement = try #require(projection.placement(for: left))
+        let rightPlacement = try #require(projection.placement(for: right))
+        #expect(leftPlacement.radius == rightPlacement.radius)
+        for (placement, expectedX, expectedY) in [(leftPlacement, 228.0, 314.0), (rightPlacement, 772.0, 586.0)] {
+            let local = projection.rotation.inverse.act(placement.position - projection.cameraPosition)
+            #expect(abs(local.z + 1.65) < 0.0001)
+            let pixelsPerMeter = Float(projection.viewport.height) / (2 * -local.z * tan(32 * .pi / 180))
+            let screenX = projection.viewport.midX + Double(local.x * pixelsPerMeter)
+            let screenY = projection.viewport.midY - Double(local.y * pixelsPerMeter)
+            #expect(abs(screenX - expectedX) < 0.001)
+            #expect(abs(screenY - expectedY) < 0.001)
+            #expect(abs(placement.radius * pixelsPerMeter - 20.8) < 0.001)
+        }
+    }
+
+    @Test func pawBoardDisplaysShared3DGemsAtFixedSizeAndRetiresPickupEffects() async throws {
+        let scene = LaserScene()
+        scene.installDiamondArt(try #require(await LaserScene.loadDiamondArtwork()))
+        let board = PawBoardDiamondPresentation()
+        let slots = try [LaserDiamondPosition(x: 0.22, y: 0.16), LaserDiamondPosition(x: 1.58, y: 0.84)]
+        let targets = try slots.map { slot in
+            let spawn = try LaserDiamondSpawn(id: UUID(), position: slot, eligiblePlayers: [.player1, .player2],
+                                            spawnedAt: 1, entry: 1, exit: 11)
+            return LaserDiamondState(spawn: spawn, lifetime: .diamondTime(deadline: 11))
+        }
+        var states = Dictionary(uniqueKeysWithValues: targets.map { ($0.spawn.id, $0) })
+        func place(_ slot: LaserDiamondPosition) -> PawBoardDiamondPresentation.Placement {
+            .init(position: [Float(slot.x), Float(slot.y), -1], rotation: simd_quatf(angle: 0, axis: [0, 1, 0]),
+                  radius: 0.073, cameraPosition: [0, 1, 2])
+        }
+        board.update(states: states, time: 1.1, scene: scene, place: place)
+        #expect(board.renderedIDs == Set(states.keys))
+        for target in targets {
+            let root = try #require(scene.root.findEntity(named: "diamondTime.pawBoard.\(target.spawn.id)"))
+            #expect(simd_distance(root.position(relativeTo: nil), place(target.spawn.position).position) < 0.0001)
+            #expect(abs(root.scale.x * 0.15 - 0.073) < 0.0001)
+            #expect(root.findEntity(named: "PassageGem") != nil)
+            #expect(root.findEntity(named: "diamond.passageAura")?.isEnabled == true)
+        }
+
+        let id = targets[0].spawn.id
+        states[id]?.outcome = .collected(hand: .init(playerID: .player2, wrist: .right), at: 1.2)
+        var pickups: [UUID] = []
+        for time in [1.2, 1.25] {
+            board.update(states: states, time: time, scene: scene, onCollected: { id, _ in pickups.append(id) },
+                         place: place)
+        }
+        #expect(pickups == [id])
+        let collected = try #require(scene.root.findEntity(named: "diamondTime.pawBoard.\(id)"))
+        #expect(collected.findEntity(named: "diamond.passageAura")?.isEnabled == false)
+        board.update(states: states, time: 1.2 + Diamond.effectLifetime + 0.01, scene: scene, place: place)
+        #expect(!board.renderedIDs.contains(id))
+        #expect(collected.parent == nil)
+        board.clear()
+        #expect(board.renderedIDs.isEmpty)
     }
 
     @Test func passageBurstUsesEightShardsAndResetsCleanly() async throws {

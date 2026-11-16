@@ -18,6 +18,7 @@ final class LaserReplayPresentation {
     private var busy = false
     private var presenter: GameplayScenePresenter?
     private var liveAttachment: LaserLiveFrameAttachment?
+    let pawBoardDiamonds = PawBoardDiamondPresentation()
     #if DEBUG
     private var dropoutProbe = LiveEvidenceDropoutProbe()
     #endif
@@ -153,6 +154,7 @@ final class LaserReplayPresentation {
                                                       phase: "\(session.phase)") { print(line) }
                 #endif
                 self.render(scene: scene, session: session)
+                self.renderPawBoard(on: content, scene: scene, session: session)
                 session.collectAvatarDiamondContacts(self.avatarDiamondContacts(scene: scene, session: session),
                                                      frameHost: attachment)
                 return
@@ -207,6 +209,8 @@ final class LaserReplayPresentation {
     #endif
 
     func stop() {
+        pawBoardDiamonds.clear()
+        pawBoardDiamonds.boardFrame = .zero
         pawPickupsHeard = nil
         diamondFlights?.clear()
         subscription?.cancel()
@@ -244,6 +248,28 @@ final class LaserReplayPresentation {
             }
         }
         return contacts
+    }
+
+    private func renderPawBoard(on content: RealityViewCameraContent, scene: LaserScene,
+                                session: GameSessionCoordinator) {
+        guard session.showsDiamondTimePaws, let state = session.state,
+              let camera = scene.root.findEntity(named: "camera") as? PerspectiveCamera else {
+            pawBoardDiamonds.clear()
+            return
+        }
+        let projection = PawBoardDiamondPresentation.Projection(
+            board: pawBoardDiamonds.boardFrame, viewport: pawBoardDiamonds.viewportFrame,
+            cameraPosition: camera.position(relativeTo: nil), rotation: camera.orientation(relativeTo: nil),
+            verticalFieldOfView: camera.camera.fieldOfViewInDegrees)
+        let space: NamedCoordinateSpace = .named(DiamondHUDFlightModel.space)
+        pawBoardDiamonds.update(states: session.diamondStates, time: state.gameTime, scene: scene,
+                               onCollected: { [weak self] id, world in
+            guard let bonusID = Int(id.uuidString.suffix(12), radix: 16) else { return }
+            self?.diamondFlights?.collect(.bonus(bonusID), generation: state.sessionGeneration, world: world,
+                                         reduceMotion: UIAccessibility.isReduceMotionEnabled) {
+                content.project(point: $0, to: space)
+            }
+        }, place: projection.placement)
     }
 
     private var pawPickupsHeard: Int?

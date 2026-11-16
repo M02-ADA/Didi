@@ -3,11 +3,13 @@ import SwiftUI
 /// One flat playfield for the session's paw positions, targets, and confirmed pickups.
 struct DiamondTimePawOverlay: View {
     let session: GameSessionCoordinator
+    let presentation: PawBoardDiamondPresentation
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let time = session.state?.gameTime ?? 0
         let paws = session.diamondTimePaws
+        let renderedIDs = presentation.renderedIDs
         let diamonds = session.diamondStates.values.filter {
             if case .diamondTime = $0.lifetime { true } else { false }
         }.sorted { $0.spawn.id.uuidString < $1.spawn.id.uuidString }
@@ -22,9 +24,12 @@ struct DiamondTimePawOverlay: View {
             let unit = min(availableWidth / LaserDiamondTimeBoard.width, availableHeight / LaserDiamondTimeBoard.height)
             if unit > 0 {
                 Canvas { context, size in
-                    draw(context, size: size, unit: unit, time: time, diamonds: diamonds, paws: paws)
+                    draw(context, size: size, unit: unit, time: time, diamonds: diamonds, paws: paws, renderedIDs: renderedIDs)
                 }
                 .frame(width: unit * LaserDiamondTimeBoard.width, height: unit * LaserDiamondTimeBoard.height)
+                .onGeometryChange(for: CGRect.self) {
+                    $0.frame(in: .global)
+                } action: { presentation.boardFrame = $0 }
                 .position(x: left + availableWidth / 2, y: top + availableHeight / 2)
             }
         }
@@ -33,19 +38,19 @@ struct DiamondTimePawOverlay: View {
     }
 
     private func draw(_ context: GraphicsContext, size: CGSize, unit: CGFloat, time: Double,
-                      diamonds: [LaserDiamondState], paws: [LaserContactHand: LaserDiamondPosition]) {
+                      diamonds: [LaserDiamondState], paws: [LaserContactHand: LaserDiamondPosition], renderedIDs: Set<UUID>) {
         var pawPickupAges: [LaserContactHand: Double] = [:]
-        var pickups: [(center: CGPoint, radius: CGFloat, age: Double, player: PlayerID)] = []
+        var pickups: [(center: CGPoint, radius: CGFloat, age: Double, player: PlayerID, renderInCanvas: Bool)] = []
         for diamond in diamonds {
             let center = point(diamond.spawn.position, unit: unit)
             let radius = unit * LaserDiamondTimeBoard.diamondRadius
             if diamond.outcome == nil {
-                drawDiamond(context, at: center, radius: radius)
+                if !renderedIDs.contains(diamond.spawn.id) { drawDiamond(context, at: center, radius: radius) }
             } else if case let .collected(hand, collectedAt) = diamond.outcome {
                 let age = time - collectedAt
                 if age >= 0, age < LaserDiamondTimeBoard.pickupEffectDuration {
                     pawPickupAges[hand] = min(pawPickupAges[hand] ?? age, age)
-                    pickups.append((center, radius, age, hand.playerID))
+                    pickups.append((center, radius, age, hand.playerID, !renderedIDs.contains(diamond.spawn.id)))
                 }
             }
         }
@@ -55,7 +60,7 @@ struct DiamondTimePawOverlay: View {
                     player: hand.playerID, pickupAge: pawPickupAges[hand])
         }
         for pickup in pickups {
-            drawPickup(context, at: pickup.center, radius: pickup.radius, age: pickup.age, player: pickup.player, canvas: size)
+            drawPickup(context, at: pickup.center, radius: pickup.radius, age: pickup.age, player: pickup.player, canvas: size, renderInCanvas: pickup.renderInCanvas)
         }
     }
 
@@ -124,12 +129,12 @@ struct DiamondTimePawOverlay: View {
     }
 
     private func drawPickup(_ context: GraphicsContext, at center: CGPoint, radius: CGFloat, age: Double,
-                            player: PlayerID, canvas: CGSize) {
+                            player: PlayerID, canvas: CGSize, renderInCanvas: Bool) {
         let duration = LaserDiamondTimeBoard.pickupEffectDuration
         let accent = player == .player1
             ? Color(red: 1, green: 0.83, blue: 0.28)
             : Color(red: 1, green: 0.57, blue: 0.26)
-        if !reduceMotion {
+        if !reduceMotion, renderInCanvas {
             let pulse = min(1, age / 0.22)
             if pulse < 1 {
                 let spread = 1 - pow(1 - pulse, 3)

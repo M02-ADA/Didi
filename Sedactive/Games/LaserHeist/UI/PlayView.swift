@@ -346,11 +346,14 @@ private struct ReplayRoundView: View {
                 presentation.start(on: content, scene: scene, session: replay)
             } catch { startupError = String(describing: error) }
         }
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: { presentation.pawBoardDiamonds.viewportFrame = $0 }
         .ignoresSafeArea()
         .background(.black)
         .overlay {
             if let session, session.showsDiamondTimePaws {
-                DiamondTimePawOverlay(session: session)
+                DiamondTimePawOverlay(session: session, presentation: presentation.pawBoardDiamonds)
             }
         }
         .overlay {

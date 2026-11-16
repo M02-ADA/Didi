@@ -224,6 +224,12 @@ final class Diamond {
         passageGlow = (glow, frame)
     }
 
+    func placeOnScreen(at position: SIMD3<Float>, rotation: simd_quatf, radius: Float) {
+        root.setPosition(position, relativeTo: nil)
+        root.setOrientation(rotation, relativeTo: nil)
+        root.scale = .init(repeating: radius / contactRadius)
+    }
+
     var collectionWorldPosition: SIMD3<Float> { gem.visualBounds(relativeTo: nil).center }
 
     /// Use the visible gem, excluding sparkles and the HUD flight.
