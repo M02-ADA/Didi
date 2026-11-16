@@ -396,8 +396,8 @@ nonisolated struct LaserGame: Sendable {
               let deadline = diamondTimeDeadline else {
             throw LaserDataError.invalidValue("paw board refill outside Diamond Time")
         }
-        try diamondField.spawn(spawns, at: gameTime, before: deadline,
-                               maximumActive: LaserDiamondTimeBoard.maximumActiveDiamonds, bonusDeadline: deadline)
+        let limit = LaserDiamondTimeBoard.activeDiamondLimit(secondsRemaining: deadline - gameTime)
+        try diamondField.spawn(spawns, at: gameTime, before: deadline, maximumActive: limit, bonusDeadline: deadline)
         bonusDiamondsStarted = true
     }
 

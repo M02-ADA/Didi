@@ -60,28 +60,35 @@ struct LaserDiamondTimeBoardTests {
         let placements = positions.map { LaserDiamondPlacement(position: $0, eligiblePlayers: roster) }
         var planner = try LaserDiamondPlanner(seed: 42, placements: placements, approachLead: 1, passageDuration: 1)
         var duplicate = planner
-        let blocked = try planner.refillPawBoard(at: 0, deadline: 10, roster: roster,
+        let blocked = try planner.refillPawBoard(at: 0, deadline: 20, roster: roster,
                                                 active: [], recent: [], paws: positions)
         #expect(blocked.isEmpty)
 
         let avoid = Array(positions.prefix(4))
         let recent = [positions[20]]
-        let first = try planner.refillPawBoard(at: 1, deadline: 10, roster: roster,
+        let first = try planner.refillPawBoard(at: 1, deadline: 20, roster: roster,
                                               active: [], recent: recent, paws: avoid)
-        let second = try duplicate.refillPawBoard(at: 1, deadline: 10, roster: roster,
+        let second = try duplicate.refillPawBoard(at: 1, deadline: 20, roster: roster,
                                                  active: [], recent: recent, paws: avoid)
         #expect(first == second && first.count == 6)
-        let capped = try planner.refillPawBoard(at: 2, deadline: 10, roster: roster,
+        let capped = try planner.refillPawBoard(at: 2, deadline: 20, roster: roster,
                                                active: first, recent: recent, paws: avoid)
         #expect(capped.isEmpty)
-        let refilled = try planner.refillPawBoard(at: 2, deadline: 10, roster: roster,
+        let refilled = try planner.refillPawBoard(at: 2, deadline: 20, roster: roster,
                                                  active: Array(first.dropLast()), recent: recent, paws: avoid)
         #expect(refilled.count == 1)
-        for (index, spawn) in first.enumerated() {
-            #expect(spawn.eligiblePlayers == roster && spawn.entry == 1 && spawn.exit == 10)
+        let middle = try planner.refillPawBoard(at: 10, deadline: 20, roster: roster,
+                                               active: first, recent: recent, paws: avoid)
+        #expect(middle.count == 2)
+        let final = try planner.refillPawBoard(at: 15, deadline: 20, roster: roster,
+                                              active: first + middle, recent: recent, paws: avoid)
+        #expect(final.count == 2)
+        let all = first + middle + final
+        for (index, spawn) in all.enumerated() {
+            #expect(spawn.eligiblePlayers == roster && spawn.entry == spawn.spawnedAt && spawn.exit == 20)
             #expect(!recent.contains(spawn.position))
             #expect(avoid.allSatisfy { board.distance($0, spawn.position) >= board.spawnClearance })
-            #expect(first.prefix(index).allSatisfy {
+            #expect(all.prefix(index).allSatisfy {
                 board.distance($0.position, spawn.position) >= board.interDiamondSpacing
             })
         }

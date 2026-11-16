@@ -95,11 +95,12 @@ nonisolated struct LaserDiamondPlanner: Sendable {
     mutating func refillPawBoard(at time: Double, deadline: Double, roster: Set<PlayerID>,
                                 active: [LaserDiamondSpawn], recent: [LaserDiamondPosition],
                                 paws: [LaserDiamondPosition]) throws -> [LaserDiamondSpawn] {
-        guard active.count < LaserDiamondTimeBoard.maximumActiveDiamonds else { return [] }
+        let limit = LaserDiamondTimeBoard.activeDiamondLimit(secondsRemaining: deadline - time)
+        guard active.count < limit else { return [] }
         var occupied = active.map(\.position)
         var spawns: [LaserDiamondSpawn] = []
         let positions = LaserDiamondTimeBoard.positions(solo: roster.count == 1)
-        while occupied.count < LaserDiamondTimeBoard.maximumActiveDiamonds {
+        while occupied.count < limit {
             let safe = positions.filter { candidate in
                 !recent.contains(candidate)
                     && occupied.allSatisfy { LaserDiamondTimeBoard.distance($0, candidate) >= LaserDiamondTimeBoard.interDiamondSpacing }
