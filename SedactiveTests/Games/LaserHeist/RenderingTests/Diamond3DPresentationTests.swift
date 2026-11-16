@@ -109,6 +109,38 @@ import Testing
         #expect(diamonds.dropFirst().allSatisfy { $0.phase == .idle })
         for d in diamonds { d.retire() }
     }
+    @Test func passageGemShowsItsSideAndKeepsItsContactRadius() async throws {
+        let diamond = try await art().makeDiamond(passage: true)
+        let gem = try #require(diamond.root.findEntity(named: "Gem"))
+        diamond.showIdle(reduceMotion: false)
+        let initial = diamond.bodyContactSphere
+        diamond.updatePassagePose(age: 0, reduceMotion: false)
+        #expect(abs(gem.orientation.angle) > 0.7)
+        let turned = gem.orientation
+        diamond.updatePassagePose(age: 1.2, reduceMotion: false)
+        #expect(simd_length(gem.orientation.vector - turned.vector) > 0.5)
+        #expect(simd_distance(diamond.bodyContactSphere.center, initial.center) < 0.0001)
+        #expect(abs(diamond.bodyContactSphere.radius - initial.radius) < 0.0001)
+        diamond.updatePassagePose(age: 1.2, reduceMotion: true)
+        #expect(abs(gem.orientation.angle) < 0.0001)
+        diamond.collect(reduceMotion: true)
+        #expect(diamond.root.findEntity(named: "diamond.passageBurst") == nil)
+    }
+
+    @Test func passageBurstUsesEightShardsAndResetsCleanly() async throws {
+        let art = try await art()
+        let passage = art.makeDiamond(passage: true)
+        let bonus = art.makeDiamond()
+        passage.collect(reduceMotion: false)
+        bonus.collect(reduceMotion: false)
+        let burst = try #require(passage.root.findEntity(named: "diamond.passageBurst"))
+        #expect(burst.children.filter { $0.name == "diamond.pickupShard" }.count == 8)
+        #expect(burst.findEntity(named: "diamond.pickupRing") != nil)
+        #expect(bonus.root.findEntity(named: "diamond.passageBurst") == nil)
+        passage.reset()
+        #expect(passage.root.findEntity(named: "diamond.passageBurst") == nil)
+    }
+
     @Test func reduceMotionHasNoFlashAndRetirementCannotRevive() async throws {
         let diamond = try await art().makeDiamond()
         diamond.showIdle(reduceMotion: true)
