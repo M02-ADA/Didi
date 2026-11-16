@@ -40,6 +40,10 @@ final class Diamond {
     private let passage: Bool
     private let contactRadius: Float
     private var burst: Entity?
+    private let passageRim: Entity?
+    private let passageAura: ModelEntity?
+    private var passageGlow: (phase: PassageGlow, glintFrame: Int)?
+    enum PassageGlow { case approaching, collectible, passed }
 
     fileprivate init(gem: Entity, passage: Bool, sparkles: [Entity]) {
         self.gem = gem; self.sparkles = sparkles
@@ -51,12 +55,72 @@ final class Diamond {
         flash.name = "diamond.flash"
         Self.flashMaterial(flash)
         flash.isEnabled = false
+        passageRim = passage ? Self.makePassageRim(from: gem) : nil
+        passageAura = passage ? Self.auraTemplate?.clone(recursive: false) : nil
         root.name = "diamond"
         root.addChild(body); body.addChild(gem); body.addChild(flash)
+        if let passageRim { body.addChild(passageRim) }
+        if let passageAura { body.addChild(passageAura) }
         for sparkle in sparkles {
             sparkle.transform = .identity; sparkle.isEnabled = false; root.addChild(sparkle)
         }
     }
+
+    /// Back faces of slightly expanded copies form a silhouette rim. Every
+    /// layer shares the gem's pivot, so flank views cannot separate the light.
+    private static func makePassageRim(from gem: Entity) -> Entity? {
+        guard let mesh = gem.findEntity(named: "FacetedGem") as? ModelEntity,
+              let model = mesh.model else { return nil }
+        let rim = Entity()
+        rim.name = "diamond.passageRim"
+        rim.isEnabled = false
+        let layers: [(name: String, scale: Float, color: UIColor, opacity: Float)] = [
+            ("diamond.rimCore", 1.065, UIColor(red: 0.77, green: 0.96, blue: 1, alpha: 1), 0.94),
+            ("diamond.rimSpill", 1.16, UIColor(red: 0.33, green: 0.77, blue: 1, alpha: 1), 0.27)
+        ]
+        for layer in layers {
+            var light = UnlitMaterial(applyPostProcessToneMap: false)
+            light.color = .init(tint: layer.color)
+            light.blending = .transparent(opacity: .init(floatLiteral: layer.opacity))
+            light.faceCulling = .front
+            let glow = ModelEntity(mesh: model.mesh,
+                                   materials: Array(repeating: light, count: model.materials.count))
+            glow.name = layer.name
+            glow.scale = .init(repeating: layer.scale)
+            rim.addChild(glow)
+        }
+        return rim
+    }
+
+    private static let auraTemplate: ModelEntity? = {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let size = CGSize(width: 128, height: 128)
+        let colors = [
+            UIColor(red: 0.92, green: 0.99, blue: 1, alpha: 0.63).cgColor,
+            UIColor(red: 0.54, green: 0.89, blue: 1, alpha: 0.35).cgColor,
+            UIColor(red: 0.29, green: 0.70, blue: 1, alpha: 0.095).cgColor,
+            UIColor(red: 0.29, green: 0.70, blue: 1, alpha: 0).cgColor
+        ]
+        guard let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
+                                        colors: colors as CFArray, locations: [0, 0.37, 0.70, 1]) else { return nil }
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { renderer in
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
+            renderer.cgContext.drawRadialGradient(gradient, startCenter: center, startRadius: 0,
+                                                 endCenter: center, endRadius: size.width / 2, options: [])
+        }
+        guard let pixels = image.cgImage,
+              let texture = try? TextureResource(image: pixels, withName: "diamond.passageAura",
+                                                 options: .init(semantic: .color)) else { return nil }
+        var material = UnlitMaterial(applyPostProcessToneMap: false)
+        material.color = .init(tint: .white, texture: .init(texture))
+        material.blending = .transparent(opacity: 1.0)
+        material.faceCulling = .none
+        let aura = ModelEntity(mesh: .generatePlane(width: 0.78, height: 0.78), materials: [material])
+        aura.name = "diamond.passageAura"
+        aura.isEnabled = false
+        return aura
+    }()
 
     private static func flashMaterial(_ entity: Entity, color: UIColor = UIColor(red: 0.7, green: 0.95, blue: 1, alpha: 1)) {
         if let model = entity as? ModelEntity {
@@ -80,17 +144,84 @@ final class Diamond {
 
     /// Expose the crown and side facets without presenting an edge-on silhouette.
     /// Driven by game time so a paused diamond holds its orientation.
-    func updatePassagePose(age: Double, reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled) {
+    func updatePassagePose(age: Double, glow: PassageGlow = .approaching,
+                           cameraPosition: SIMD3<Float>? = nil, reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled) {
         guard passage, phase == .idle else { return }
-        guard !reduceMotion else {
+        updateFacetGlint(age: age, glow: glow, reduceMotion: reduceMotion)
+        if reduceMotion {
             gem.orientation = simd_quatf(angle: 0, axis: [0, 1, 0])
+        } else {
+            let angle = Float(age) * 2 * .pi / 2.4
+            let turn = simd_quatf(angle: 0.76 * cos(angle), axis: [0, 1, 0])
+            let tilt = simd_quatf(angle: 0.24 + 0.14 * sin(angle), axis: [1, 0, 0])
+            // Turn around the centred culet before tilting toward the camera.
+            gem.orientation = tilt * turn
+        }
+        if let passageRim {
+            passageRim.transform = gem.transform
+            passageRim.isEnabled = glow != .passed
+            let strength: Float = glow == .collectible ? 1 : 0.83
+            if passageRim.components[OpacityComponent.self]?.opacity != strength {
+                passageRim.components.set(OpacityComponent(opacity: strength))
+            }
+        }
+        updatePassageAura(glow: glow, cameraPosition: cameraPosition)
+    }
+
+    private func updatePassageAura(glow: PassageGlow, cameraPosition: SIMD3<Float>?) {
+        guard let passageAura else { return }
+        guard glow != .passed, let cameraPosition else {
+            passageAura.isEnabled = false
             return
         }
-        let angle = Float(age) * 2 * .pi / 2.4
-        let turn = simd_quatf(angle: 0.76 * cos(angle), axis: [0, 1, 0])
-        let tilt = simd_quatf(angle: 0.24 + 0.14 * sin(angle), axis: [1, 0, 0])
-        // Turn around the centred culet before tilting toward the camera.
-        gem.orientation = tilt * turn
+        let center = gem.position
+        let towardCamera = body.convert(position: cameraPosition, from: nil) - center
+        guard simd_length_squared(towardCamera) > 0.0001 else {
+            passageAura.isEnabled = false
+            return
+        }
+        let ray = simd_normalize(towardCamera)
+        // Move back along the camera ray through the gem, not the corridor's
+        // Z axis. The aura and gem then project to the same screen centre.
+        passageAura.position = center - ray * 0.29
+        passageAura.orientation = simd_quatf(from: [0, 0, 1], to: ray)
+        passageAura.isEnabled = true
+        let strength: Float = glow == .collectible ? 1 : 0.78
+        if passageAura.components[OpacityComponent.self]?.opacity != strength {
+            passageAura.components.set(OpacityComponent(opacity: strength))
+        }
+    }
+
+    private func updateFacetGlint(age: Double, glow: PassageGlow, reduceMotion: Bool) {
+        // Briefly accent two material groups on the mesh itself. Limit
+        // material writes while keeping the visible turn at render rate.
+        let cycle = 1.0
+        let frame = !reduceMotion && glow != .passed
+            ? Int(age.truncatingRemainder(dividingBy: cycle) * 24) : -1
+        guard passageGlow?.phase != glow || passageGlow?.glintFrame != frame,
+              let mesh = gem.findEntity(named: "FacetedGem") as? ModelEntity, var model = mesh.model else { return }
+        let base: Float = switch glow {
+        case .approaching: 1.38
+        case .collectible: 1.76
+        case .passed: 1.08
+        }
+        let count = model.materials.count
+        let leadingFacet = frame < 0 || count < 2 ? -1 : (frame / 8 * 3) % count
+        let trailingFacet = leadingFacet < 0 ? -1 : (leadingFacet + count / 2) % count
+        let progress = Float(max(0, frame) % 8) / 8
+        let glint = sin(.pi * progress)
+        model.materials = model.materials.enumerated().map { index, material in
+            guard var facet = material as? PhysicallyBasedMaterial else { return material }
+            let highlight: Float = switch index {
+            case leadingFacet: 1.08 * glint
+            case trailingFacet: 0.54 * glint
+            default: 0
+            }
+            facet.emissiveIntensity = base + highlight
+            return facet
+        }
+        mesh.model = model
+        passageGlow = (glow, frame)
     }
 
     var collectionWorldPosition: SIMD3<Float> { gem.visualBounds(relativeTo: nil).center }
@@ -109,6 +240,8 @@ final class Diamond {
     func collect(reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled) {
         guard phase == .ready || phase == .idle else { return }
         phase = .collected
+        passageRim?.isEnabled = false
+        passageAura?.isEnabled = false
         // Preserve the visible float offset when idle stops; the target root never moves.
         body.stopAllAnimations(); gem.stopAllAnimations()
         if !passage { gem.transform = .identity }
@@ -187,6 +320,8 @@ final class Diamond {
     func remove() {
         guard phase == .ready || phase == .idle else { return }
         phase = .removed
+        passageRim?.isEnabled = false
+        passageAura?.isEnabled = false
         body.stopAllAnimations(); gem.stopAllAnimations()
         fade(gem, from: 1, to: 0, duration: 0.2)
     }
@@ -197,6 +332,9 @@ final class Diamond {
         root.stopAllAnimations(recursive: true)
         burst?.removeFromParent()
         burst = nil
+        passageGlow = nil
+        passageRim?.isEnabled = false
+        passageAura?.isEnabled = false
         body.transform = .identity
         gem.transform = .identity
         gem.components.remove(OpacityComponent.self)

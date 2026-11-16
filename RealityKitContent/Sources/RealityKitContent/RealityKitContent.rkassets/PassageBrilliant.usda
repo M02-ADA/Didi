@@ -121,10 +121,10 @@ def Xform "Brilliant"
             {
                 uniform token info:id = "UsdPreviewSurface"
                 color3f inputs:diffuseColor = (0, 0, 0)
-                color3f inputs:emissiveColor = (0.234551, 0.332452, 1.000000)
+                color3f inputs:emissiveColor = (0.361307, 0.473531, 1.000000)
                 int inputs:useSpecularWorkflow = 1
-                color3f inputs:specularColor = (0, 0, 0)
-                float inputs:roughness = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
                 float inputs:clearcoat = 0
                 token outputs:surface
             }
@@ -137,10 +137,10 @@ def Xform "Brilliant"
             {
                 uniform token info:id = "UsdPreviewSurface"
                 color3f inputs:diffuseColor = (0, 0, 0)
-                color3f inputs:emissiveColor = (0.171441, 0.258183, 1.000000)
+                color3f inputs:emissiveColor = (0.242281, 0.346704, 1.000000)
                 int inputs:useSpecularWorkflow = 1
-                color3f inputs:specularColor = (0, 0, 0)
-                float inputs:roughness = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
                 float inputs:clearcoat = 0
                 token outputs:surface
             }
@@ -153,10 +153,10 @@ def Xform "Brilliant"
             {
                 uniform token info:id = "UsdPreviewSurface"
                 color3f inputs:diffuseColor = (0, 0, 0)
-                color3f inputs:emissiveColor = (0.223228, 0.323143, 1.000000)
+                color3f inputs:emissiveColor = (0.296138, 0.428690, 1.000000)
                 int inputs:useSpecularWorkflow = 1
-                color3f inputs:specularColor = (0, 0, 0)
-                float inputs:roughness = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
                 float inputs:clearcoat = 0
                 token outputs:surface
             }
@@ -169,10 +169,10 @@ def Xform "Brilliant"
             {
                 uniform token info:id = "UsdPreviewSurface"
                 color3f inputs:diffuseColor = (0, 0, 0)
-                color3f inputs:emissiveColor = (0.066626, 0.119538, 0.838799)
+                color3f inputs:emissiveColor = (0.097587, 0.187821, 0.921582)
                 int inputs:useSpecularWorkflow = 1
-                color3f inputs:specularColor = (0, 0, 0)
-                float inputs:roughness = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
                 float inputs:clearcoat = 0
                 token outputs:surface
             }
@@ -185,10 +185,10 @@ def Xform "Brilliant"
             {
                 uniform token info:id = "UsdPreviewSurface"
                 color3f inputs:diffuseColor = (0, 0, 0)
-                color3f inputs:emissiveColor = (0.124772, 0.205079, 0.921582)
+                color3f inputs:emissiveColor = (0.177888, 0.296138, 1.000000)
                 int inputs:useSpecularWorkflow = 1
-                color3f inputs:specularColor = (0, 0, 0)
-                float inputs:roughness = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
                 float inputs:clearcoat = 0
                 token outputs:surface
             }
@@ -201,10 +201,10 @@ def Xform "Brilliant"
             {
                 uniform token info:id = "UsdPreviewSurface"
                 color3f inputs:diffuseColor = (0, 0, 0)
-                color3f inputs:emissiveColor = (0.097587, 0.162029, 0.838799)
+                color3f inputs:emissiveColor = (0.132868, 0.238398, 0.973445)
                 int inputs:useSpecularWorkflow = 1
-                color3f inputs:specularColor = (0, 0, 0)
-                float inputs:roughness = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
                 float inputs:clearcoat = 0
                 token outputs:surface
             }
@@ -217,10 +217,10 @@ def Xform "Brilliant"
             {
                 uniform token info:id = "UsdPreviewSurface"
                 color3f inputs:diffuseColor = (0, 0, 0)
-                color3f inputs:emissiveColor = (0.068478, 0.132868, 0.723055)
+                color3f inputs:emissiveColor = (0.093059, 0.191202, 0.863157)
                 int inputs:useSpecularWorkflow = 1
-                color3f inputs:specularColor = (0, 0, 0)
-                float inputs:roughness = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
                 float inputs:clearcoat = 0
                 token outputs:surface
             }
@@ -233,10 +233,10 @@ def Xform "Brilliant"
             {
                 uniform token info:id = "UsdPreviewSurface"
                 color3f inputs:diffuseColor = (0, 0, 0)
-                color3f inputs:emissiveColor = (0.048172, 0.097587, 0.617207)
+                color3f inputs:emissiveColor = (0.066626, 0.141263, 0.791298)
                 int inputs:useSpecularWorkflow = 1
-                color3f inputs:specularColor = (0, 0, 0)
-                float inputs:roughness = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
                 float inputs:clearcoat = 0
                 token outputs:surface
             }
@@ -249,10 +249,10 @@ def Xform "Brilliant"
             {
                 uniform token info:id = "UsdPreviewSurface"
                 color3f inputs:diffuseColor = (0, 0, 0)
-                color3f inputs:emissiveColor = (0.029557, 0.070360, 0.520996)
+                color3f inputs:emissiveColor = (0.045186, 0.099899, 0.637597)
                 int inputs:useSpecularWorkflow = 1
-                color3f inputs:specularColor = (0, 0, 0)
-                float inputs:roughness = 1
+                color3f inputs:specularColor = (0.16, 0.25, 0.35)
+                float inputs:roughness = 0.27
                 float inputs:clearcoat = 0
                 token outputs:surface
             }

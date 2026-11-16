@@ -95,6 +95,9 @@ final class NormalDiamondPresentation {
         let nearCamera = scene.layout.cameraPosition.z - GameplayScenePresenter.cameraClearance
         for item in wanted {
             let z = depth(of: item, at: time)
+            let glow: Diamond.PassageGlow = if item.outcome != .pending || time >= item.exit { .passed }
+                else if time >= item.entry { .collectible }
+                else { .approaching }
             if var entry = shown[item.id] {
                 if entry.outcome == .pending {
                     switch item.outcome {
@@ -113,7 +116,8 @@ final class NormalDiamondPresentation {
                 }
                 if entry.outcome != .collected {
                     entry.diamond.root.position.z = z
-                    entry.diamond.updatePassagePose(age: time - item.spawnedAt)
+                    entry.diamond.updatePassagePose(age: time - item.spawnedAt, glow: glow,
+                                                      cameraPosition: scene.layout.cameraPosition)
                 }
                 shown[item.id] = entry
                 // A passed diamond leaves before it reaches the camera.
@@ -128,7 +132,8 @@ final class NormalDiamondPresentation {
             position.z = z
             diamond.root.position = position
             diamond.showIdle()
-            diamond.updatePassagePose(age: time - item.spawnedAt)
+            diamond.updatePassagePose(age: time - item.spawnedAt, glow: glow,
+                                      cameraPosition: scene.layout.cameraPosition)
             shown[item.id] = Shown(diamond: diamond, item: item, outcome: .pending)
         }
         for (id, entry) in shown {

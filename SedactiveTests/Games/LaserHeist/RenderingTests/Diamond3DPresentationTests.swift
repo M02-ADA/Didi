@@ -134,6 +134,66 @@ import Testing
         #expect(diamond.root.findEntity(named: "diamond.passageBurst") == nil)
     }
 
+    @Test func facetGlintUsesTheGemMaterialsAndRespectsReduceMotion() async throws {
+        let diamond = try await art().makeDiamond(passage: true)
+        diamond.showIdle(reduceMotion: false)
+        let mesh = try #require(diamond.root.findEntity(named: "FacetedGem") as? ModelEntity)
+        func intensities() -> [Float] {
+            (mesh.model?.materials ?? []).compactMap { ($0 as? PhysicallyBasedMaterial)?.emissiveIntensity }
+        }
+        diamond.updatePassagePose(age: 0.18, reduceMotion: true)
+        let steady = intensities()
+        #expect(steady.count > 2)
+        diamond.updatePassagePose(age: 0.18, reduceMotion: false)
+        let glint = intensities()
+        #expect(zip(glint, steady).filter { $0 > $1 }.count == 2)
+        diamond.updatePassagePose(age: 0.55, reduceMotion: true)
+        #expect(intensities() == steady)
+    }
+
+    @Test func luminousRimSharesTheGemPivotThroughRotationAndStopsOnPickup() async throws {
+        let art = try await art()
+        let diamond = art.makeDiamond(passage: true)
+        let gem = try #require(diamond.root.findEntity(named: "PassageGem"))
+        let rim = try #require(diamond.root.findEntity(named: "diamond.passageRim"))
+        #expect(art.makeDiamond().root.findEntity(named: "diamond.passageRim") == nil)
+        diamond.root.position = [1.4, 1.2, -4]
+        diamond.showIdle(reduceMotion: false)
+        diamond.updatePassagePose(age: 0.27, glow: .approaching, reduceMotion: false)
+        #expect(rim.isEnabled)
+        #expect(rim.transform.rotation == gem.transform.rotation)
+        #expect(rim.transform.translation == gem.transform.translation)
+        let approach = try #require(rim.components[OpacityComponent.self]).opacity
+        diamond.updatePassagePose(age: 0.64, glow: .collectible, reduceMotion: false)
+        #expect(rim.transform.rotation == gem.transform.rotation)
+        #expect(try #require(rim.components[OpacityComponent.self]).opacity > approach)
+        diamond.collect(reduceMotion: true)
+        #expect(!rim.isEnabled)
+    }
+
+    @Test func softAuraStaysBehindTheGemOnTheCameraSightline() async throws {
+        let asset = try await art()
+        let diamond = asset.makeDiamond(passage: true)
+        let aura = try #require(diamond.root.findEntity(named: "diamond.passageAura") as? ModelEntity)
+        let gem = try #require(diamond.root.findEntity(named: "PassageGem"))
+        #expect(asset.makeDiamond().root.findEntity(named: "diamond.passageAura") == nil)
+        let auraWidth = aura.visualBounds(relativeTo: aura).extents.x
+        #expect(auraWidth > 0.30 && auraWidth < 0.80)
+        diamond.showIdle(reduceMotion: false)
+        let camera: SIMD3<Float> = [0, 1.05, 3.1]
+        for side: Float in [-1.4, 1.4] {
+            diamond.root.position = [side, 1.2, 0.1]
+            diamond.updatePassagePose(age: 0.4, glow: .collectible, cameraPosition: camera, reduceMotion: false)
+            let gemRay = gem.position(relativeTo: nil) - camera
+            let auraRay = aura.position(relativeTo: nil) - camera
+            #expect(aura.isEnabled)
+            #expect(simd_length(auraRay) > simd_length(gemRay))
+            #expect(simd_length(simd_cross(simd_normalize(gemRay), simd_normalize(auraRay))) < 0.0001)
+        }
+        diamond.collect(reduceMotion: true)
+        #expect(!aura.isEnabled)
+    }
+
     @Test func passageBurstUsesEightShardsAndResetsCleanly() async throws {
         let art = try await art()
         let passage = art.makeDiamond(passage: true)
