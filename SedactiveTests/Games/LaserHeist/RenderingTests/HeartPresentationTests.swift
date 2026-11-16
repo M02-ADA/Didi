@@ -50,4 +50,46 @@ import Testing
         #expect(heart.phase == .retired)
     }
 
+    @Test(arguments: [false, true]) func collectionIsIdentityFencedOnceAndRetiresAfterEffects(reduceMotion: Bool) async throws {
+        let art = try await HeartArt.load()
+        let generation = UUID()
+        let heart = art.makeHeart(generation: generation)
+        let other = art.makeHeart(generation: generation)
+        let host = Entity(); host.addChild(heart.root); host.addChild(other.root)
+        heart.showIdle(reduceMotion: reduceMotion)
+        #expect(!heart.collect(generation: UUID(), target: heart.target, now: 1))
+        #expect(!heart.collect(generation: generation, target: UUID(), now: 1))
+        #expect(!heart.collect(generation: generation, target: heart.target, now: .nan))
+        #expect(heart.phase == .idle)
+        #expect(heart.collect(generation: generation, target: heart.target, now: 1, reduceMotion: reduceMotion))
+        #expect(!heart.collect(generation: generation, target: heart.target, now: 1.01))
+        #expect(other.phase == .ready)
+        #expect(heart.root.findEntity(named: "heart.flash")?.isEnabled == !reduceMotion)
+        let stars = heart.root.children.filter { $0.name.hasPrefix("heart.sparkle.") }
+        #expect(stars.count == 6 && stars.allSatisfy { $0.isEnabled == !reduceMotion })
+        heart.update(now: 0.9, generation: generation)
+        heart.update(now: 1 + HeartCollectible.effectLifetime - 0.001, generation: generation)
+        #expect(heart.phase == .collected && heart.root.parent != nil)
+        heart.update(now: 1 + HeartCollectible.effectLifetime, generation: generation)
+        #expect(heart.phase == .retired && heart.root.parent == nil)
+        #expect(!heart.collect(generation: generation, target: heart.target, now: 2))
+        heart.showIdle()
+        #expect(heart.phase == .retired && host.children.count == 1)
+    }
+
+    @Test func generationCutoverInvalidatesIdleAndCollectedVisuals() async throws {
+        let art = try await HeartArt.load()
+        let generation = UUID()
+        let idle = art.makeHeart(generation: generation)
+        let collected = art.makeHeart(generation: generation)
+        idle.showIdle()
+        collected.collect(generation: generation, target: collected.target, now: 0)
+        for heart in [idle, collected] {
+            heart.update(now: 0.1, generation: UUID())
+            #expect(heart.phase == .retired && heart.root.parent == nil)
+        }
+        let replacement = art.makeHeart(generation: UUID())
+        #expect(replacement.phase == .ready && replacement.target != collected.target)
+    }
+
 }
