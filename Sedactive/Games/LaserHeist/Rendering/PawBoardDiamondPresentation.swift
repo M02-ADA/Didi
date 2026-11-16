@@ -42,6 +42,8 @@ final class PawBoardDiamondPresentation {
     @ObservationIgnored var boardFrame: CGRect = .zero
     @ObservationIgnored var viewportFrame: CGRect = .zero
     private(set) var renderedIDs: Set<UUID> = []
+    var pickupLevels: [UUID: Int] = [:]
+    var latestCrestID: UUID?
     @ObservationIgnored private var shown: [UUID: Diamond] = [:]
 
     func update(states: [UUID: LaserDiamondState], time: Double, scene: LaserScene,

@@ -10,6 +10,8 @@ struct DiamondTimePawOverlay: View {
         let time = session.state?.gameTime ?? 0
         let paws = session.diamondTimePaws
         let renderedIDs = presentation.renderedIDs
+        let pickupLevels = presentation.pickupLevels
+        let latestCrestID = presentation.latestCrestID
         let diamonds = session.diamondStates.values.filter {
             if case .diamondTime = $0.lifetime { true } else { false }
         }.sorted { $0.spawn.id.uuidString < $1.spawn.id.uuidString }
@@ -24,7 +26,8 @@ struct DiamondTimePawOverlay: View {
             let unit = min(availableWidth / LaserDiamondTimeBoard.width, availableHeight / LaserDiamondTimeBoard.height)
             if unit > 0 {
                 Canvas { context, size in
-                    draw(context, size: size, unit: unit, time: time, diamonds: diamonds, paws: paws, renderedIDs: renderedIDs)
+                    draw(context, size: size, unit: unit, time: time, diamonds: diamonds, paws: paws, renderedIDs: renderedIDs,
+                         pickupLevels: pickupLevels, latestCrestID: latestCrestID)
                 }
                 .frame(width: unit * LaserDiamondTimeBoard.width, height: unit * LaserDiamondTimeBoard.height)
                 .onGeometryChange(for: CGRect.self) {
@@ -38,9 +41,11 @@ struct DiamondTimePawOverlay: View {
     }
 
     private func draw(_ context: GraphicsContext, size: CGSize, unit: CGFloat, time: Double,
-                      diamonds: [LaserDiamondState], paws: [LaserContactHand: LaserDiamondPosition], renderedIDs: Set<UUID>) {
-        var pawPickupAges: [LaserContactHand: Double] = [:]
-        var pickups: [(center: CGPoint, radius: CGFloat, age: Double, player: PlayerID, renderInCanvas: Bool)] = []
+                      diamonds: [LaserDiamondState], paws: [LaserContactHand: LaserDiamondPosition], renderedIDs: Set<UUID>,
+                      pickupLevels: [UUID: Int], latestCrestID: UUID?) {
+        var pawPickups: [LaserContactHand: (age: Double, level: Int)] = [:]
+        var pickups: [(center: CGPoint, radius: CGFloat, age: Double, player: PlayerID,
+                       renderInCanvas: Bool, level: Int, crest: Bool)] = []
         for diamond in diamonds {
             let center = point(diamond.spawn.position, unit: unit)
             let radius = unit * LaserDiamondTimeBoard.diamondRadius
@@ -49,17 +54,24 @@ struct DiamondTimePawOverlay: View {
             } else if case let .collected(hand, collectedAt) = diamond.outcome {
                 let age = time - collectedAt
                 if age >= 0, age < LaserDiamondTimeBoard.pickupEffectDuration {
-                    pawPickupAges[hand] = min(pawPickupAges[hand] ?? age, age)
-                    pickups.append((center, radius, age, hand.playerID, !renderedIDs.contains(diamond.spawn.id)))
+                    let id = diamond.spawn.id
+                    let level = pickupLevels[id] ?? 1
+                    if age < (pawPickups[hand]?.age ?? .infinity) { pawPickups[hand] = (age, level) }
+                    pickups.append((center, radius, age, hand.playerID, !renderedIDs.contains(id),
+                                    level, id == latestCrestID))
                 }
             }
         }
         for hand in LaserContactHand.ordered {
             guard let position = paws[hand] else { continue }
             drawPaw(context, at: point(position, unit: unit), radius: unit * LaserDiamondTimeBoard.pawRadius,
-                    hand: hand, pickupAge: pawPickupAges[hand])
+                    hand: hand, pickup: pawPickups[hand])
         }
         for pickup in pickups {
+            if pickup.crest, !reduceMotion {
+                drawChainAccent(context, at: pickup.center, radius: pickup.radius, age: pickup.age,
+                                player: pickup.player, level: pickup.level)
+            }
             drawPickup(context, at: pickup.center, radius: pickup.radius, age: pickup.age, player: pickup.player, canvas: size, renderInCanvas: pickup.renderInCanvas)
         }
     }
@@ -69,7 +81,7 @@ struct DiamondTimePawOverlay: View {
     }
 
     private func drawPaw(_ context: GraphicsContext, at center: CGPoint, radius: CGFloat,
-                         hand: LaserContactHand, pickupAge: Double?) {
+                         hand: LaserContactHand, pickup: (age: Double, level: Int)?) {
         let yellow = hand.playerID == .player1
         let color = yellow ? "yellow" : "orange"
         let side = hand.wrist == .left ? "left" : "right"
@@ -78,19 +90,41 @@ struct DiamondTimePawOverlay: View {
         let size = CGSize(width: sprite.size.width * scale, height: sprite.size.height * scale)
         let bounds = CGRect(x: center.x - size.width / 2, y: center.y - size.height / 2,
                             width: size.width, height: size.height)
-        guard let pickupAge, pickupAge < (reduceMotion ? 0.12 : 0.30) else {
+        let duration = reduceMotion ? 0.12 : 0.30 + 0.025 * Double((pickup?.level ?? 1) - 1)
+        guard let pickup, pickup.age < duration else {
             context.draw(sprite, in: bounds)
             return
         }
 
-        let strength = reduceMotion ? 1 : pow(max(0, 1 - pickupAge / 0.30), 1.5)
+        let strength = reduceMotion ? 1 : pow(max(0, 1 - pickup.age / duration), 1.5)
+        let intensity = reduceMotion ? 1 : 1 + 0.17 * Double(pickup.level - 1)
         let glow = yellow ? Color(red: 1, green: 0.77, blue: 0.21) : Color(red: 1, green: 0.50, blue: 0.18)
         context.drawLayer { highlight in
             if !reduceMotion {
-                highlight.addFilter(.shadow(color: glow.opacity(0.95 * strength), radius: radius * 0.24))
+                highlight.addFilter(.shadow(color: glow.opacity(0.95 * strength), radius: radius * 0.24 * intensity))
             }
-            highlight.addFilter(.brightness(0.25 * strength))
+            highlight.addFilter(.brightness(0.25 * strength * intensity))
             highlight.draw(sprite, in: bounds)
+        }
+    }
+
+    private func drawChainAccent(_ context: GraphicsContext, at center: CGPoint, radius: CGFloat,
+                                 age: Double, player: PlayerID, level: Int) {
+        guard age < 0.28 else { return }
+        let progress = age / 0.28
+        let spread = 1 - pow(1 - progress, 3)
+        let reach = radius * ((level >= 5 ? 3.6 : 3.0) * spread + 0.85)
+        let accent: Color = player == .player1 ? .yellow : .orange
+        var burst = context
+        burst.opacity = pow(1 - progress, 2) * 0.82
+        let ring = Path(ellipseIn: CGRect(x: center.x - reach, y: center.y - reach,
+                                         width: 2 * reach, height: 2 * reach))
+        burst.stroke(ring, with: .color(accent), lineWidth: max(2, radius * 0.15))
+        for index in 0..<6 {
+            let angle = Double(index) * .pi / 3 + .pi / 6
+            let point = CGPoint(x: center.x + cos(angle) * reach, y: center.y + sin(angle) * reach)
+            burst.draw(Text(Image(systemName: "sparkle")).font(.system(size: radius * 0.76, weight: .bold))
+                .foregroundStyle(index.isMultiple(of: 2) ? .white : accent), at: point)
         }
     }
 

@@ -51,6 +51,8 @@ Effects are edits of the Pixabay sources listed in [LICENSES.md](LICENSES.md) (P
 | `lh-vault-warning` | Warning Notification (199277) | 0.04–0.56 s |
 | `lh-diamond-time` | Game Bonus (144751) | 0.14–1.45 s |
 | `lh-diamond-collect-1…3` | Diamond found (190255) | 0–0.55 s at pitch ×1, ×1.06, ×0.95 |
+| `lh-diamond-chain-rise`, `lh-diamond-chain-crest` | Diamond found (190255), from the bundled first pickup variation | Raised by 3 and 6 semitones, then faded out within 0.42 s |
+| `lh-diamond-chain-bass` | Synthesized for Didi | 0.20 s descending sine with a second harmonic and a short decay |
 | `lh-round-success` | Victory Fanfare (152480) | 0.06–3.10 s |
 | `lh-round-failure` | Playful Failure (310480) | 0.10–1.10 s |
 
