@@ -111,11 +111,18 @@ import Testing
     }
     @Test func passageGemShowsItsSideAndKeepsItsContactRadius() async throws {
         let diamond = try await art().makeDiamond(passage: true)
-        let gem = try #require(diamond.root.findEntity(named: "Gem"))
+        let gem = try #require(diamond.root.findEntity(named: "PassageGem"))
+        let bounds = gem.visualBounds(relativeTo: gem)
+        #expect(abs(bounds.extents.x - 0.30) < 0.001)
+        #expect(abs(bounds.extents.y - 0.2543) < 0.001)
+        #expect(abs(bounds.extents.z - bounds.extents.x) < 0.001, "the front and side share the same width")
+        #expect(length(bounds.center) < 0.001)
         diamond.showIdle(reduceMotion: false)
         let initial = diamond.bodyContactSphere
         diamond.updatePassagePose(age: 0, reduceMotion: false)
         #expect(abs(gem.orientation.angle) > 0.7)
+        #expect(abs(gem.orientation.act([0, -1, 0]).x) < 0.0001)
+        #expect(abs(initial.radius - 0.15) < 0.001)
         let turned = gem.orientation
         diamond.updatePassagePose(age: 1.2, reduceMotion: false)
         #expect(simd_length(gem.orientation.vector - turned.vector) > 0.5)

@@ -1,20 +1,23 @@
 import RealityKit
 import UIKit
 
-/// Loaded once by LaserScene. Gem references the approved static 3D asset; Sparkle remains
-/// the original artwork template. Clones share meshes/materials, never load on collection.
+/// Loaded once by LaserScene. Each gem uses its authored mesh, with a shared sparkle template.
+/// Clones share meshes and materials, and never load assets on collection.
 @MainActor
 final class DiamondArt {
     private let gem: Entity
+    private let passageGem: Entity
     private let sparkle: Entity
     init?(artwork: Entity) {
         guard let diamond = artwork.findEntity(named: "Diamond"),
-              let gem = diamond.findEntity(named: "Gem"), let sparkle = diamond.findEntity(named: "Sparkle")
+              let gem = diamond.findEntity(named: "Gem"),
+              let passageGem = diamond.findEntity(named: "PassageGem"),
+              let sparkle = diamond.findEntity(named: "Sparkle")
         else { return nil }
-        self.gem = gem; self.sparkle = sparkle
+        self.gem = gem; self.passageGem = passageGem; self.sparkle = sparkle
     }
     func makeDiamond(passage: Bool = false) -> Diamond {
-        Diamond(gem: gem.clone(recursive: true), passage: passage, sparkles: (0..<4).map { _ in sparkle.clone(recursive: true) })
+        Diamond(gem: (passage ? passageGem : gem).clone(recursive: true), passage: passage, sparkles: (0..<4).map { _ in sparkle.clone(recursive: true) })
     }
 }
 
@@ -84,8 +87,10 @@ final class Diamond {
             return
         }
         let angle = Float(age) * 2 * .pi / 2.4
-        gem.orientation = simd_quatf(angle: 0.76 * cos(angle), axis: [0, 1, 0])
-            * simd_quatf(angle: 0.24 + 0.14 * sin(angle), axis: [1, 0, 0])
+        let turn = simd_quatf(angle: 0.76 * cos(angle), axis: [0, 1, 0])
+        let tilt = simd_quatf(angle: 0.24 + 0.14 * sin(angle), axis: [1, 0, 0])
+        // Turn around the centred culet before tilting toward the camera.
+        gem.orientation = tilt * turn
     }
 
     var collectionWorldPosition: SIMD3<Float> { gem.visualBounds(relativeTo: nil).center }
