@@ -119,11 +119,10 @@ struct ContentView: View {
           }
           #if DEBUG
           // DEBUG test round controls (Kevin): from the round's start to its Results, above the
-          // setup stage too, so a tracking pause never hides them. Top right, under the HUD.
+          // setup stage too, so a tracking pause never hides them. They place themselves under the
+          // HUD's pause button, clear of both players' gate consoles.
           if let session = flow.session, session.hasLiveRoundPlan, session.state != nil, session.summary == nil {
             DebugRoundControls(session: session)
-              .padding(.trailing, 16).padding(.top, 130)
-              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
           }
           #endif
         }

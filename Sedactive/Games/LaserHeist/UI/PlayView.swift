@@ -550,6 +550,11 @@ private struct ReplayRoundView: View {
         .overlay(alignment: .topLeading) {
             if MaskBenchmark.configuration.map({ $0.overlay || $0.script }) == true { MaskBenchmarkOverlay() }
         }
+        .overlay {
+            // `-replay -debugRoundControlsPreview`: the live round's DEBUG card over the replay, to
+            // review its placement in the Simulator (no camera). A replay offers no skips: both stay off.
+            if let session, session.summary == nil, DebugRoundControls.previewRequested { DebugRoundControls(session: session) }
+        }
         #endif
         .onChange(of: session?.summary?.sessionGeneration) { _, final in
             if final != nil { presentation.stop() }
