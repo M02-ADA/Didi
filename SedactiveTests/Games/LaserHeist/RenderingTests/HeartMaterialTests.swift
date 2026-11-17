@@ -22,7 +22,8 @@ import UIKit
             #expect(m.roughness.scale == 0.6 && m.metallic.scale == 0)
             #expect(m.specular.scale == 0.5)
             let emission = try #require(m.emissiveColor.color.cgColor.components)
-            #expect(emission.prefix(3).allSatisfy { abs($0) < 0.00001 })
+            for channel in 0..<3 { #expect(abs(emission[channel] - color[channel]) < 0.00001) }
+            #expect(m.emissiveIntensity == HeartCollectible.shadowFill)
             print("HEART_PBR \(index) color=\(color) roughness=\(m.roughness.scale) specular=\(m.specular.scale) emissionColor=\(m.emissiveColor.color.cgColor) intensity=\(m.emissiveIntensity)")
         }
         #expect(heart.root.findEntity(named: "heart.flash")?.isEnabled == false)

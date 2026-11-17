@@ -32,6 +32,7 @@ final class HeartArt {
 @MainActor
 final class HeartCollectible {
     enum Phase { case ready, idle, collected, retired }
+    static let shadowFill: Float = 0.24
     static let idleCycle: TimeInterval = 1.8
     static let floatHeight: Float = 0.018
     static let popDuration: TimeInterval = 0.08
@@ -54,6 +55,7 @@ final class HeartCollectible {
 
     fileprivate init(artwork: Entity, generation: UUID, target: UUID) {
         self.artwork = artwork
+        Self.fillUnlitShadows(artwork)
         flash = artwork.clone(recursive: true)
         flash.name = "heart.flash"
         Self.tintFlash(flash)
@@ -77,10 +79,41 @@ final class HeartCollectible {
             root.components.set(ImageBasedLightComponent(source: .single(environment)))
             body.components.set(ImageBasedLightReceiverComponent(imageBasedLight: root))
         }
-        // Preserve all authored asset transforms, dimensions, pivot and materials.
+        // Preserve authored transforms, dimensions, pivot and base colors; only shadow fill is added.
+    }
+
+    private static func fillUnlitShadows(_ entity: Entity) {
+        if let mesh = entity as? ModelEntity, var model = mesh.model {
+            model.materials = model.materials.map { material in
+                guard var pbr = material as? PhysicallyBasedMaterial else { return material }
+                // A small material-coloured floor for faces turned away from the scene lights.
+                // It preserves the four PBR regions and does not rely on bloom.
+                pbr.emissiveColor = .init(color: pbr.baseColor.tint)
+                pbr.emissiveIntensity = shadowFill
+                return pbr
+            }
+            mesh.model = model
+        }
+        for child in entity.children { fillUnlitShadows(child) }
     }
 
     #if DEBUG
+    func compareTipShading(unlit: Bool) {
+        func apply(_ entity: Entity) {
+            if let mesh = entity as? ModelEntity, var model = mesh.model {
+                model.materials = model.materials.map { material in
+                    guard var pbr = material as? PhysicallyBasedMaterial else { return material }
+                    if unlit { return UnlitMaterial(color: pbr.baseColor.tint) }
+                    pbr.emissiveColor = .init(color: .black)
+                    pbr.emissiveIntensity = 1
+                    return pbr
+                }
+                mesh.model = model
+            }
+            for child in entity.children { apply(child) }
+        }
+        apply(artwork)
+    }
     /// Matched actual-scene comparison only; production always uses the neutral fill above.
     func useDefaultEnvironmentForComparison() {
         body.components.remove(ImageBasedLightReceiverComponent.self)

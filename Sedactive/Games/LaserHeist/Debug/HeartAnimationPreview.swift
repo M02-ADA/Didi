@@ -54,6 +54,12 @@ final class HeartAnimationPreview {
         scene.root.addChild(next.root)
         heart = next
         let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-heartTipBefore") { next.compareTipShading(unlit: false) }
+        if arguments.contains("-heartTipUnlit") { next.compareTipShading(unlit: true) }
+        if let i = arguments.firstIndex(of: "-heartAngle"), arguments.indices.contains(i + 1) {
+            let angle: Float = arguments[i + 1] == "side" ? .pi / 2 : .pi / 4
+            next.root.orientation = simd_quatf(angle: angle, axis: [0, 1, 0])
+        }
         if arguments.contains("-heartColorBefore") { next.useDefaultEnvironmentForComparison() }
         next.showIdle(reduceMotion: reduceMotion || arguments.contains("-heartColorStill"))
         status = "Idle"
