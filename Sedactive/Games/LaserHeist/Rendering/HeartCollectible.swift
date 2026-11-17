@@ -103,9 +103,10 @@ final class HeartCollectible {
     private static func buildGlow(_ glow: Entity, around artwork: Entity) {
         func visit(_ entity: Entity) {
             if let mesh = entity as? ModelEntity, let model = mesh.model {
-                for (index, layer) in [(Float(1.035), Float(0.30)), (1.075, 0.12), (1.12, 0.045)].enumerated() {
+                for (index, layer) in [(Float(1.035), Float(0.16), UInt32(0xEB6A44)),
+                                       (1.075, 0.07, 0xE23941), (1.12, 0.02, 0xE23941)].enumerated() {
                     var material = UnlitMaterial(applyPostProcessToneMap: false)
-                    material.color = .init(tint: color(0xFF2943))
+                    material.color = .init(tint: color(layer.2))
                     material.blending = .transparent(opacity: .init(floatLiteral: layer.1))
                     material.faceCulling = .front
                     let shell = ModelEntity(mesh: model.mesh,
@@ -144,6 +145,19 @@ final class HeartCollectible {
             "FrontCoral": Self.color(0xF03242), "Shoulder": Self.color(0xE82B3D),
             "EdgeRose": Self.color(0xDB2637), "Back": Self.color(0xCD2637)
         ])
+    }
+    func usePreviousGlowForComparison() {
+        let opacity: [Float] = [0.30, 0.12, 0.045]
+        for (index, entity) in glow.children.enumerated() {
+            guard let mesh = entity as? ModelEntity, var model = mesh.model else { continue }
+            model.materials = model.materials.map { value in
+                guard var material = value as? UnlitMaterial else { return value }
+                material.color = .init(tint: Self.color(0xFF2943))
+                material.blending = .transparent(opacity: .init(floatLiteral: opacity[index]))
+                return material
+            }
+            mesh.model = model
+        }
     }
     func hideGlowForComparison() { showsGlow = false; glow.isEnabled = false }
     func useAuthoredPaletteForComparison() {

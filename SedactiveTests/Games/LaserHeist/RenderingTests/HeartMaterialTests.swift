@@ -57,9 +57,20 @@ import UIKit
         #expect(glow.isEnabled && glow.children.count == 3)
         let mesh = try #require(heart.root.findEntity(named: "GEO_LH_Heart"))
         #expect(abs(mesh.visualBounds(relativeTo: mesh).extents.x - 0.3) < 0.001)
-        for shell in glow.children {
+        for (index, shell) in glow.children.enumerated() {
             let model = try #require((shell as? ModelEntity)?.model)
             #expect(model.materials.allSatisfy { ($0 as? UnlitMaterial)?.faceCulling == .front })
+            for value in model.materials {
+                let material = try #require(value as? UnlitMaterial)
+                let expected = index == 0 ? [235.0, 106, 68] : [226.0, 57, 65]
+                let actual = try #require(material.color.tint.cgColor.converted(
+                    to: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!, intent: .relativeColorimetric, options: nil)?.components)
+                for channel in 0..<3 {
+                    let srgb = expected[channel] / 255
+                    let linear = srgb <= 0.04045 ? srgb / 12.92 : pow((srgb + 0.055) / 1.055, 2.4)
+                    #expect(abs(actual[channel] - linear) < 0.00001)
+                }
+            }
             #expect(shell.scale.x >= 1 && shell.scale.x <= 1.12)
         }
         heart.collect(generation: heart.generation, target: heart.target, now: 1, reduceMotion: reduceMotion)
