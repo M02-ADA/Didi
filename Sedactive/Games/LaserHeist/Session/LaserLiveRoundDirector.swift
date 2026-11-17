@@ -37,6 +37,19 @@ nonisolated enum LaserLiveRoundGeometryV1 {
                                       eligiblePlayers: [player])
         }
     }
+
+    /// Normal pickups stay between the waist and chest of a standing mascot.
+    /// Lateral offsets let players steer into them with both feet on the board.
+    static func passagePlacements(player: PlayerID, lane: Double, height: Double) throws -> [LaserDiamondPlacement] {
+        let shares: [(x: Double, y: Double)] = [
+            (-0.26, 0.44), (0.26, 0.44), (-0.33, 0.60), (0.33, 0.60),
+            (-0.42, 0.46), (0.42, 0.46), (-0.44, 0.68), (0.44, 0.68),
+        ]
+        return try shares.map {
+            try LaserDiamondPlacement(position: .init(x: lane + $0.x * height, y: $0.y * height),
+                                      eligiblePlayers: [player])
+        }
+    }
     /// Vault buttons, outward from the player's own body centre: (outward, height) shares of their
     /// standing height. One stack on the player's outer side, at HIGH (head/upper shoulder), MIDDLE
     /// (chest) and LOW (upper thigh) reaches, 0.215 h apart (more than two radii: no overlap).
@@ -83,6 +96,7 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
         case register(LaserEncounter)
         /// Spawn exactly at `spawn.spawnedAt`, before the minute's vault.
         case normalDiamond(LaserDiamondSpawn, boundary: Double)
+        case heart(LaserDiamondSpawn, boundary: Double)
         case openVault(UUID, zones: [LaserVaultZone])
     }
 
@@ -100,6 +114,7 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
     private let minutes: [[LaserEncounter]]
     private let vaultZones: [PlayerID: [LaserVaultButton: (position: LaserDiamondPosition, radius: Double)]]
     private(set) var planner: LaserDiamondPlanner
+    private var heartPlanner: LaserDiamondPlanner
     /// Each player's lane and accepted standing height: what the round's boards are steered from.
     let boardReferences: [PlayerID: LaserBoardField.Reference]
     private(set) var minute = 0
@@ -157,6 +172,7 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
         baseEncounters = self.minutes.flatMap { $0 }
         var heights: [PlayerID: Double] = [:]
         var placements: [LaserDiamondPlacement] = []
+        var passagePlacements: [LaserDiamondPlacement] = []
         var zones: [PlayerID: [LaserVaultButton: (LaserDiamondPosition, Double)]] = [:]
         for player in roster {
             let h = LaserLiveRoundGeometryV1.standingHeight(calibrations[player]!, layout: layout)
@@ -165,6 +181,7 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
             let lane = layout.centerX(for: player)
             placements += try LaserLiveRoundGeometryV1.diamondPlacements(player: player, lane: lane,
                                                                          height: h)
+            passagePlacements += try LaserLiveRoundGeometryV1.passagePlacements(player: player, lane: lane, height: h)
             for (button, share) in LaserLiveRoundGeometryV1.vaultShares {
                 let x = lane + LaserLiveRoundGeometryV1.outward(player) * share.out * h
                 zones[player, default: [:]][button] = (try .init(x: x, y: share.y * h),
@@ -177,7 +194,10 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
         })
         // One radius for the round's diamonds: the shorter player's, so neither gets a bigger target.
         diamondRadius = LaserLiveRoundGeometryV1.diamondRadiusShare * (heights.values.min() ?? 0)
-        planner = try LaserDiamondPlanner(seed: seed, placements: placements, approachLead: 0.5, passageDuration: 1)
+        planner = try LaserDiamondPlanner(seed: seed, placements: placements, approachLead: 0.5, passageDuration: 1,
+                                          passagePlacements: passagePlacements)
+        heartPlanner = try LaserDiamondPlanner(seed: seed ^ 0x4845415254, placements: passagePlacements,
+                                               approachLead: 0.5, passageDuration: 1)
     }
 
     /// The round's hoverboards as game state, at rest on their lanes (`LaserGame.configureBoards`).
@@ -220,6 +240,13 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
         // (3.7 s to entry plus half of the one-second pickup window).
         for spawn in try planner.normalMinute(minute, from: time, until: boundary, visualLead: 3.7) {
             planned.append((spawn.spawnedAt, .normalDiamond(spawn, boundary: boundary)))
+        }
+        let diamonds = planned.compactMap { item -> LaserDiamondSpawn? in
+            if case .normalDiamond(let spawn, _) = item.1 { return spawn }
+            return nil
+        }
+        for heart in try heartPlanner.normalHearts(minute: minute, from: time, until: boundary, avoiding: diamonds) {
+            planned.append((heart.spawnedAt, .heart(heart, boundary: boundary)))
         }
         pending = planned.enumerated().sorted {
             $0.element.0 == $1.element.0 ? $0.offset < $1.offset : $0.element.0 < $1.element.0
@@ -286,6 +313,7 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
             switch item.action {
             case .register: lasers += 1
             case .normalDiamond: diamonds += 1
+            case .heart: break
             case .openVault: break
             }
         }
@@ -320,11 +348,12 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
                 case .register(let encounter):
                     let next = try shifted(encounter, by: delta, attempt: encounter.attemptID)
                     moved.append((item.time + delta, .register(next)))
-                case .normalDiamond(let spawn, let boundary):
+                case .normalDiamond(let spawn, let boundary), .heart(let spawn, let boundary):
                     let next = try LaserDiamondSpawn(id: spawn.id, position: spawn.position,
                         eligiblePlayers: spawn.eligiblePlayers, spawnedAt: spawn.spawnedAt + delta,
                         entry: spawn.entry + delta, exit: spawn.exit + delta)
-                    moved.append((item.time + delta, .normalDiamond(next, boundary: boundary + delta)))
+                    if case .heart = item.action { moved.append((item.time + delta, .heart(next, boundary: boundary + delta))) }
+                    else { moved.append((item.time + delta, .normalDiamond(next, boundary: boundary + delta))) }
                 case .openVault:
                     moved.append(item)
                 }

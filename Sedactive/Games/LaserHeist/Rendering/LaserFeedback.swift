@@ -42,7 +42,7 @@ final class LaserFeedback {
         cue.addChild(renderer.root)
         return renderer
     }()
-    private(set) var timingVariant: TimingIndicatorVariant = .circular
+    private(set) var timingVariant: TimingIndicatorVariant = .converging
     private(set) var timingModel: LaserTimingPresentation?
     private var timingPaused = false
     private var approvedCue: (Move?, Float?) = (nil, nil)
@@ -74,9 +74,10 @@ final class LaserFeedback {
         let move: Move = model.move == .duck ? .duck : .jump
         if shownCue?.move != move || shownCue?.acting != true { showCue(move, acting: true) }
         countdown.isEnabled = false
-        for panel in cuePanels.values { panel.isEnabled = timingVariant != .circular && panel == cuePanels[move] }
-        timingRenderer.root.position.y = timingVariant == .circular ? 0.045 : -0.215
-        if timingVariant == .circular {
+        let replacesPanel = timingVariant == .circular || timingVariant == .converging
+        for panel in cuePanels.values { panel.isEnabled = !replacesPanel && panel == cuePanels[move] }
+        timingRenderer.root.position.y = replacesPanel ? 0.045 : -0.215
+        if replacesPanel {
             cue.stopAllAnimations(); cue.scale = .one
             cue.components.set(OpacityComponent(opacity: 1))
         }
