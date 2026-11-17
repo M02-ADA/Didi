@@ -14,6 +14,8 @@ final class LaserReplayPresentation {
     /// The replay's frame-update signal (TEAM_ALIGNMENT §C), one per generation.
     private var flightScenePhase: LaserRoundPhase?
     var diamondFlights: DiamondHUDFlightModel?
+    /// The team's PERFECT!/ZAPPED! overlay (`LaserTeamCalloutView`), raised by the presenter.
+    var teamCallouts: LaserTeamCalloutModel?
     private var frameClock = ReplayFrameClock()
     private var busy = false
     private var presenter: GameplayScenePresenter?
@@ -116,6 +118,9 @@ final class LaserReplayPresentation {
         }
         // Sound follows what the presenter shows; the round's music joins in.
         presenter?.onSound = { AudioService.shared.play($0) }
+        teamCallouts?.clear()
+        presenter?.onTeamCallout = { [weak self] callout, cueShown in self?.teamCallouts?.show(callout.kind, compact: cueShown) }
+        presenter?.onCueShownChanged = { [weak self] shown in self?.teamCallouts?.cueShownChanged(shown) }
         AudioService.shared.preloadEffects()
         AudioService.shared.setMusic(.mission)
         if session.isCompleteReplay || session.hasWristDiamondPlan {
@@ -221,6 +226,7 @@ final class LaserReplayPresentation {
         liveAttachment = nil
         presenter?.stop()
         presenter = nil
+        teamCallouts?.clear()
         session = nil
         #if DEBUG
         debugDiamondReadout?.clear()

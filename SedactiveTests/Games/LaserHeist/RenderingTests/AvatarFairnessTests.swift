@@ -441,7 +441,8 @@ struct AvatarFairnessTests {
         let layer = RobotAvatarLayer(scene: scene, players: Set(PlayerID.allCases), templates: try await RobotAvatarLayer.sharedTemplates())
         scene.robotAvatars = layer
         for player in PlayerID.allCases {
-            scene.presentOutcome(.hit, for: player, band: 1.45...1.5)
+            // The one per-player badge left (UNAVAILABLE; CLEAR/HIT are the team callout's).
+            scene.presentOutcome(.unavailable, for: player, band: 1.45...1.5)
             let badge = try #require(scene.root.findEntity(named: "laserFeedback.badge.\(player.rawValue)"))
             let head = try #require(layer.extremityPoints(of: player)).headTop.y
             #expect(badge.isEnabled && badge.position(relativeTo: nil).y > head + 0.2, "\(player)")
