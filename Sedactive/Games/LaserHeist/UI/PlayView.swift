@@ -67,6 +67,7 @@ private struct ReplayRoundView: View {
     @State private var cutoutFeed: SyntheticCutoutFeed?
     @State private var directorPreview = DirectorLaserPreview()
     @State private var verticalLaserPreview: VerticalLaserPreview?
+    @State private var verticalLaserReplay: VerticalLaserReplay?
     @State private var robotDemo = RobotDemoDriver()
     @State private var robotDemoActive = false
     /// The demo's K03 attachment (`-avatarPackets`); revoked on teardown.
@@ -246,6 +247,23 @@ private struct ReplayRoundView: View {
                     // Solo: Tangerine's lane is hidden, as in a live Solo Test.
                     if solo { scene.players[.player2]?.isEnabled = false }
                     finalVaultPreview.start(on: content, scene: scene, solo: solo, heldAt: heldAt)
+                } catch { startupError = String(describing: error) }
+                return
+            }
+            // Launch with `-replay -verticalLaserReplay [clear|hit|unavailable] [solo] [reduced] [seconds]` for
+            // one vertical laser driven by mock authoritative board positions and a scripted verdict.
+            if VerticalLaserReplay.isRequested {
+                do {
+                    let input = try LaserReplayScript.load().input
+                    let request = VerticalLaserReplay.requested
+                    let calibrations = input.configuration.calibrations.filter { !request.solo || $0.key == .player1 }
+                    guard let robots = try await installAvatars(calibrations: calibrations,
+                                                                layout: input.configuration.playerPlaneLayout) else { return }
+                    if request.solo { scene.players[.player2]?.isEnabled = false }
+                    scene.isLaserVisible = false
+                    let replay = VerticalLaserReplay(scene: scene, robots: robots, request: request)
+                    verticalLaserReplay = replay
+                    replay.start(on: content)
                 } catch { startupError = String(describing: error) }
                 return
             }
@@ -585,7 +603,7 @@ private struct ReplayRoundView: View {
         }
         #endif
         return GameplayHUDModel(state: session.state, events: session.events, configuration: configuration,
-                                activityDuration: session.activityDuration,
+                                activityDuration: session.activityDuration, stageProgress: session.stageProgress,
                                 diamondsCollected: collected, diamondsAreFixture: fixture,
                                 enteringFinalVault: session.finalVaultEntry.map { !$0.isComplete } ?? false)
     }

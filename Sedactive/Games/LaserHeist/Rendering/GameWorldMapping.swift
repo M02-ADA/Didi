@@ -74,6 +74,16 @@ struct GameWorldMapping {
         return ([laneCenterX[player, default: 0] + Float((laneCenter - x) * k), Float(y * k)], Float(k))
     }
 
+    /// The corridor's lateral axis, shared by the boards' steering and vertical laser beams: game
+    /// units in the orientation the players see (+ toward displayed right, P1's lane negative), so
+    /// the boards' non-overlap holds where they are drawn. PROPOSED (vertical laser contract,
+    /// 16 November 2026; needs Edo's and Jevon's agreement). This is the one conversion between it
+    /// and the world; a corridor X is never mirrored again.
+    func worldX(corridorX: Double) -> Float { Float(corridorX) * metersPerGameUnit }
+    func corridorX(worldX: Float) -> Double { Double(worldX / metersPerGameUnit) }
+    /// A player's lane centre on the corridor axis (where the board starts).
+    func laneCorridorX(_ player: PlayerID) -> Double { corridorX(worldX: laneCenterX[player, default: 0]) }
+
     /// The centre of a laser beam at a game-space height and a world depth.
     func laserPosition(heightAboveFloor: Float, worldZ: Float) -> SIMD3<Float> {
         [0, heightAboveFloor * metersPerGameUnit, worldZ]

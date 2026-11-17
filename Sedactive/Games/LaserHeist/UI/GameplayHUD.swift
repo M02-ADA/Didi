@@ -63,6 +63,13 @@ struct GameplayHUDModel: Equatable {
     /// five vaults each marker is a vault; a round with another vault count
     /// (the one-vault replay slice) shows the same five as stages of its progress.
     var markerStates: [MarkerState] {
+        // Five vaults: a marker is done exactly when its gate has opened (the fill reaches a
+        // marker while its gate is still shut, and starts the next stage from it).
+        if checkpoints == Self.markerCount {
+            return (0..<Self.markerCount).map { index in
+                diamondReached || index < vaultsOpened ? .completed : index == vaultsOpened ? .current : .upcoming
+            }
+        }
         var foundCurrent = false
         return Self.checkpointPositions(count: Self.markerCount).map { x in
             if diamondReached || x < fillEnd - 0.005 { return .completed }
@@ -81,13 +88,17 @@ struct GameplayHUDModel: Equatable {
 
     /// - Parameters:
     ///   - activityDuration: the round's planned activity length (seconds of game
-    ///     time), for the continuous part of the progress fill.
+    ///     time), for the continuous part of the progress fill when no `stageProgress` is given.
+    ///   - stageProgress: how far the current stage has run toward its gate (0…1, the session's
+    ///     `stageProgress`). With five vaults the fill then runs through each stage's own track
+    ///     segment: from the last opened checkpoint (or the start) to the next one, reaching it as
+    ///     the stage's activity ends and holding there until that gate opens.
     ///   - diamondsCollected: J05's committed count when it exists; until then `nil`.
     ///   - enteringFinalVault: the team is still entering the final vault (the session's
     ///     `finalVaultEntry`, on held game time): Diamond Time's title and seconds wait for it.
     init(state: LaserGameState?, events: [GameEvent], configuration: LaserRoundConfiguration,
-         activityDuration: Double, diamondsCollected: Int? = nil, diamondsAreFixture: Bool = false,
-         enteringFinalVault: Bool = false) {
+         activityDuration: Double, stageProgress: Double? = nil, diamondsCollected: Int? = nil,
+         diamondsAreFixture: Bool = false, enteringFinalVault: Bool = false) {
         maxHealth = configuration.initialTeamHealth
         health = state?.teamHealth ?? configuration.initialTeamHealth
         score = state?.teamScore ?? 0
@@ -112,6 +123,13 @@ struct GameplayHUDModel: Equatable {
             fillEnd = Self.fillFull
         } else if state.phase == .vault, state.vault?.opened != true, vaultsOpened < dots.count {
             fillEnd = dots[vaultsOpened]
+        } else if let stageProgress, dots.count == Self.markerCount, vaultsOpened < dots.count {
+            // STAGE PROGRESS (17 November 2026): each stage fills its own segment, so the fill moves
+            // all through every stage and meets the checkpoint as that stage's activity ends. (The
+            // whole-round share below ran across the diamond's segment too, so it ran ahead of the
+            // checkpoints and stopped short of each from stage 3 on, then jumped at the gate.)
+            let floor = vaultsOpened > 0 ? dots[vaultsOpened - 1] : Self.fillStart
+            fillEnd = floor + (dots[vaultsOpened] - floor) * min(1, max(0, stageProgress))
         } else {
             let share = activityDuration > 0 ? min(1, max(0, state.activityProgress / activityDuration)) : 0
             let continuous = Self.fillStart + share * (Self.fillFull - Self.fillStart)

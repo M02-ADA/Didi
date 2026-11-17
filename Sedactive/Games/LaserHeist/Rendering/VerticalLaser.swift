@@ -205,7 +205,9 @@ final class VerticalLaser {
 
     /// Puts the obstacle at a lateral world X and depth. Far away it emerges from the corridor's
     /// haze like a horizontal gate; past the players it resolves the same way (`LaserHazard`).
-    func setPlacement(x: Float, worldZ: Float) {
+    /// `appearance` (0…1) fades the whole obstacle in where it first stands
+    /// (`VerticalLaserTrack.appearDuration`), so it never pops in or jumps sideways.
+    func setPlacement(x: Float, worldZ: Float, appearance: Float = 1) {
         self.x = x
         self.worldZ = worldZ
         root.position = [x, 0, worldZ]
@@ -213,7 +215,7 @@ final class VerticalLaser {
         let haze = CorridorDepth.haze(atDistance: viewDistance)
         let past = worldZ - interactionPlaneZ
         let t = Self.clamp((past - LaserHazard.resolveStart) / (LaserHazard.resolveEnd - LaserHazard.resolveStart))
-        opacity = (1 - haze) * (1 - Self.smooth(t))
+        opacity = (1 - haze) * (1 - Self.smooth(t)) * Self.clamp(appearance)
         if opacity > 0.999 {
             root.components.remove(OpacityComponent.self)
         } else {

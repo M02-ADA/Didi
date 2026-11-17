@@ -26,6 +26,7 @@ import Testing
             director = try LaserLiveRoundDirector(calibrations: input.calibrations, layout: input.playerPlaneLayout,
                 configuration: configuration, seed: 3, segmentLength: segment)
             game = try LaserGame(configuration: configuration, context: context, historyCapacityPerPlayer: 120)
+            game.configureBoards(try director.boards())
         }
 
         /// The coordinator's order: each due action at its own exact time, then advance.
@@ -76,7 +77,10 @@ import Testing
         let minute = rig.director.baseEncounters.filter { $0.targets[0].crossingTime < 60 }
         #expect(rig.registered.count == minute.count)
         for (time, encounter) in rig.registered {
-            #expect(abs(time - encounter.targets[0].warningTime) < 1e-9, "registered at its own warning time")
+            // At its own warning time; one with a LEAN target 1 s earlier, when its beam is placed (vertical lasers).
+            #expect(abs(time - LaserLiveRoundDirector.registrationTime(encounter)) < 1e-9, "registered at its own time")
+            #expect(LaserLiveRoundDirector.registrationTime(encounter) == (encounter.targets.contains { $0.requiredMove == .lean }
+                ? encounter.targets[0].crossingTime - LaserBoardGeometry.revealLead : encounter.targets[0].warningTime))
         }
         #expect(rig.vault == nil && rig.game.roundPhase == .activity)
         try rig.run(to: 61)

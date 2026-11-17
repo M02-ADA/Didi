@@ -174,12 +174,15 @@ import Testing
             }.min { $0.1.crossingTime < $1.1.crossingTime }
         }
         var found: (UUID, LaserTarget)?
-        for _ in 0..<1800 where found == nil { try await rig.send(time); time += 1.0 / 30; found = duckTarget() }
+        for _ in 0..<1800 where found == nil {
+            try await rig.send(time, bodySamples: try rig.leaningOutOfLeanBeams(rig.fixture.players)); time += 1.0 / 30
+            found = duckTarget()
+        }
         let (id, target) = try #require(found, "a P1 DUCK is scheduled")
         var verdict: Judgement?
         for _ in 0..<900 where verdict == nil {
             let now = session.state?.gameTime ?? 0
-            var samples = try Self.hiddenWrists(rig, [.player1])
+            var samples = try rig.leaningOutOfLeanBeams(try Self.hiddenWrists(rig, [.player1]))
             if abs(now - target.crossingTime) < 0.6, let s = samples[.player1] {
                 let low = try EstimatedScalar(value: target.beam.lowerY - configuration.clearanceMargin - 0.05, validity: .valid)
                 samples[.player1] = PlayerBodySample(playerID: .player1, calibrationRevision: s.calibrationRevision,

@@ -53,6 +53,14 @@ final class GameSessionCoordinator {
         }
     }
     private(set) var state: LaserGameState?
+    /// How far the current stage has run toward its gate, 0…1, for the HUD's continuous progress
+    /// (`GameplayHUDModel`); nil outside a stage's activity and gate. From the live director's own
+    /// stage timeline on game time (a DEBUG skip shortens it, a pause holds it), or in replay from
+    /// activity time since the stage began over a 60 s stage. Never decreases within a stage (a
+    /// recovery that delays the timeline holds it), resets when the gate opens. Display only:
+    /// stages advance only when their gate opens, never from this value.
+    var stageProgress: Double? { stageProgressTracker.value }
+    private var stageProgressTracker = LaserStageProgress()
     private(set) var summary: RoundSummary?
     private(set) var results: [ReplayTargetResult] = []
     private(set) var latestSnapshot: BodySnapshot?
@@ -386,6 +394,9 @@ final class GameSessionCoordinator {
                 }
                 var engine = try LaserGame(configuration: configuration, context: context,
                                           historyCapacityPerPlayer: 120)
+                // The hoverboards as game state, from the replay's own references.
+                engine.configureBoards(try LaserBoardField.make(calibrations: inputConfiguration.calibrations
+                    .filter { inputConfiguration.roster.contains($0.key) }, layout: inputConfiguration.playerPlaneLayout))
                 if replayDriver?.script.fullRound == nil {
                     for encounter in encounters { try engine.register(encounter) }
                 }
@@ -1056,7 +1067,12 @@ final class GameSessionCoordinator {
                         try requireLaserValue(replacement.allSatisfy { game?.hasUsedAttempt($0.attemptID) == false },
                                               "recovery attempt identity already used in round")
                         approvedRecovery = replacement
-                    } catch { recoveryNeedsPlan = true; phase = .paused; return }
+                    } catch {
+                        #if DEBUG
+                        print("[LaserRecovery] recovery plan refused: \(error)")
+                        #endif
+                        recoveryNeedsPlan = true; phase = .paused; return
+                    }
                 }
                 try requireLaserValue(Set(encounters.map(\.id)).count == encounters.count
                     && Set(encounters.map(\.attemptID)).count == encounters.count
@@ -1082,6 +1098,15 @@ final class GameSessionCoordinator {
                     initial.soloPracticePlayer = inputConfiguration.soloPlayer
                     #endif
                     initial.poseFirstCandidate = poseFirstCandidate
+                    // The hoverboards as game state, from the round's accepted references.
+                    if let director = liveDirector {
+                        initial.configureBoards(try director.boards())
+                    } else if let plan = wristDiamondConfiguration, !plan.standingHeights.isEmpty {
+                        initial.configureBoards(try LaserBoardField(references: Dictionary(uniqueKeysWithValues:
+                            plan.standingHeights.map { player, height in
+                                (player, LaserBoardField.Reference(planeLaneX: plan.layout.centerX(for: player), standingHeight: height))
+                            })))
+                    }
                     #if DEBUG
                     print("[LaserCandidate] round starts · tracking rules: \(poseFirstCandidate ? "POSE-FIRST (default)" : "previous baseline (-trackingBaseline)")")
                     #endif
@@ -1095,7 +1120,8 @@ final class GameSessionCoordinator {
                     var resumed = game!
                     resumed.resume()
                     let replacements = approvedRecovery ?? []
-                    for encounter in replacements { try resumed.register(encounter) }
+                    var placed: [LaserEncounter] = []
+                    for encounter in replacements { placed.append(try resumed.register(encounter)) }
                     for old in withdrawnLiveEncounters {
                         for target in old.targets {
                             resumed.remove(LaserTargetKey(encounterID: old.id, attemptID: old.attemptID,
@@ -1103,7 +1129,7 @@ final class GameSessionCoordinator {
                         }
                         committed.remove(old.id)
                     }
-                    for replacement in replacements {
+                    for replacement in placed {
                         if let index = encounters.firstIndex(where: { $0.id == replacement.id }) { encounters[index] = replacement }
                     }
                     game = resumed
@@ -1125,12 +1151,23 @@ final class GameSessionCoordinator {
                 // Planned work that has come due: each at its own exact game time, in order.
                 // The director's own state (minute start, planner) is kept even when nothing is due.
                 if var director = stagedDirector {
+                    stagedGame.vaultApproachBoundary = director.vaultBoundary
                     while let due = try director.nextDue(through: readiness.gameTime, game: stagedGame) {
                         try stagedGame.advance(to: max(stagedGame.gameTime, due.time))
                         guard stagedGame.roundOutcome == nil else { break }
                         switch due.action {
                         case .register(let encounter):
-                            try stagedGame.register(encounter); stagedRegistered.append(encounter)
+                            let placed = try stagedGame.register(encounter)
+                            stagedRegistered.append(placed)
+                            #if DEBUG
+                            for target in placed.targets {
+                                guard let beam = target.lean else { continue }
+                                print(String(format: "[LaserLean] %@ crossing %.2f · board %+.3f · beam %@ · way out %@",
+                                    target.playerID.rawValue, target.crossingTime, stagedGame.boardReadings[target.playerID]?.x ?? .nan,
+                                    beam.centerX.map { String(format: "%+.3f", $0) } ?? "-",
+                                    beam.voided ? "VOIDED (boxed in)" : (beam.escape == 1 ? "right" : "left")))
+                            }
+                            #endif
                         case .normalDiamond(let spawn, let boundary):
                             try stagedGame.spawnNormalDiamonds([spawn], beforeVaultAt: boundary)
                         case .openVault(let id, let zones):
@@ -1367,7 +1404,9 @@ final class GameSessionCoordinator {
     private func refresh(at time: Double) {
         guard let game else { return }
         var encounterStates: [LaserEncounterState] = []
-        for encounter in encounters {
+        for planned in encounters {
+            // As registered: with any LEAN beam placed by the game (the replay driver registers the plan's).
+            let encounter = game.registeredEncounter(attemptID: planned.attemptID) ?? planned
             var verdicts: [PlayerID: Judgement] = [:]
             for target in encounter.targets {
                 let key = LaserTargetKey(encounterID: encounter.id, attemptID: encounter.attemptID, playerID: target.playerID)
@@ -1395,5 +1434,46 @@ final class GameSessionCoordinator {
         state?.missionTarget = game.missionTarget
         state?.playerStats = game.playerStats
         state?.vault = game.vault
+        state?.boards = game.boardReadings
+        var tracker = stageProgressTracker
+        tracker.update(game: game, directorFraction: liveDirector?.stageFraction(at: game.gameTime))
+        if tracker != stageProgressTracker { stageProgressTracker = tracker }
+    }
+}
+
+/// The HUD's continuous stage progress (`GameSessionCoordinator.stageProgress`), from the round's
+/// own state: how far the current stage has run toward its gate, 0…1. Live rounds give the
+/// director's stage timeline (`LaserLiveRoundDirector.stageFraction`); without one (replay) it is
+/// activity time since the stage began over `replayStageLength`. It never decreases within a stage
+/// (a recovery that delays the timeline holds it), is 1 while the stage's gate waits, resets to 0
+/// when the gate opens, and is nil outside a stage (Diamond Time, the end). Keeps no clock.
+nonisolated struct LaserStageProgress: Equatable, Sendable {
+    /// Activity seconds per stage in the complete replay (`LaserFullReplayPlan`: a vault per minute).
+    static let replayStageLength = 60.0
+    private(set) var value: Double?
+    private var gates = -1, activityStart = 0.0, high = 0.0
+
+    mutating func update(game: LaserGame, directorFraction: Double?) {
+        update(phase: game.roundPhase, ended: game.roundOutcome != nil, vaultOpened: game.vault?.opened == true,
+               gates: game.missionProgress, activityProgress: game.activityProgress, directorFraction: directorFraction)
+    }
+
+    mutating func update(phase: LaserRoundPhase, ended: Bool, vaultOpened: Bool, gates: Int, activityProgress: Double,
+                         directorFraction: Double?) {
+        if gates != self.gates {
+            self.gates = gates; activityStart = activityProgress; high = 0
+        }
+        let raw: Double?
+        switch phase {
+        case .activity where !ended:
+            raw = directorFraction ?? (activityProgress - activityStart) / Self.replayStageLength
+        case .vault where !vaultOpened && !ended:
+            raw = 1
+        default:
+            raw = nil
+        }
+        guard let raw else { value = nil; return }
+        high = max(high, min(1, max(0, raw)))
+        value = high
     }
 }

@@ -1,0 +1,133 @@
+{
+  "note": "Emission looks per state. The USDZ ships Idle. The game sets these on the materials of EmitterCore and EmitterRing_Outer/Inner at runtime (RealityKit PhysicallyBasedMaterial emissiveColor + emissiveIntensity). usdEmissiveColor = emission colour x strength, which is what Blender writes into UsdPreviewSurface.emissiveColor. Hit and Destroyed are suggestions built from the same materials; no gameplay is attached.",
+  "parts": {
+    "core": "EmitterCore",
+    "rings": [
+      "EmitterRing_Outer",
+      "EmitterRing_Inner"
+    ],
+    "ringsSpinAxis": "local +Z of EmitterRings (the firing axis, toward the camera)"
+  },
+  "Idle": {
+    "core": {
+      "baseColorLinear": [
+        0.89,
+        0.0509,
+        0.1473
+      ],
+      "emissionColorLinear": [
+        1.0,
+        0.055,
+        0.1626
+      ],
+      "emissionStrength": 1.6,
+      "usdEmissiveColor": [
+        1.6,
+        0.088,
+        0.2602
+      ]
+    },
+    "rings": {
+      "baseColorLinear": [
+        0.2633,
+        0.01,
+        0.055
+      ],
+      "emissionColorLinear": [
+        1.0,
+        0.0397,
+        0.1473
+      ],
+      "emissionStrength": 1.2,
+      "usdEmissiveColor": [
+        1.2,
+        0.0476,
+        0.1768
+      ]
+    }
+  },
+  "Charging": {
+    "core": {
+      "baseColorLinear": [
+        1.0,
+        0.0732,
+        0.214
+      ],
+      "emissionColorLinear": [
+        1.0,
+        0.0732,
+        0.233
+      ],
+      "emissionStrength": 9.0,
+      "usdEmissiveColor": [
+        9.0,
+        0.6592,
+        2.0972
+      ]
+    },
+    "rings": {
+      "baseColorLinear": [
+        0.448,
+        0.0134,
+        0.0835
+      ],
+      "emissionColorLinear": [
+        1.0,
+        0.0732,
+        0.233
+      ],
+      "emissionStrength": 5.0,
+      "usdEmissiveColor": [
+        5.0,
+        0.3662,
+        1.1651
+      ]
+    },
+    "suggestion": "ramp core strength Idle -> Charging over the warning time; rings spin up"
+  },
+  "Firing": {
+    "core": {
+      "baseColorLinear": [
+        1.0,
+        0.7106,
+        0.8276
+      ],
+      "emissionColorLinear": [
+        1.0,
+        0.6739,
+        0.7874
+      ],
+      "emissionStrength": 24.0,
+      "usdEmissiveColor": [
+        24.0,
+        16.1726,
+        18.8979
+      ]
+    },
+    "rings": {
+      "baseColorLinear": [
+        0.7874,
+        0.0732,
+        0.214
+      ],
+      "emissionColorLinear": [
+        1.0,
+        0.2633,
+        0.448
+      ],
+      "emissionStrength": 10.0,
+      "usdEmissiveColor": [
+        10.0,
+        2.6327,
+        4.4799
+      ]
+    },
+    "suggestion": "beam is separate (not in this asset); core scale 1.0 -> 1.15 while firing"
+  },
+  "Hit": {
+    "suggestion": "flash M_Ivory emission white for ~0.1 s, small root shake; materials unchanged"
+  },
+  "Destroyed": {
+    "suggestion": "core and rings emission to 0; detach Armor_*, LeftAntenna/RightAntenna and Left/RightSideModule entities with their pivots; MainBody stays as the core. Detached armour is single-sided: render its material double-sided (faceCulling .none) while it tumbles."
+  }
+}

@@ -6,8 +6,11 @@
 import Foundation
 
 /// River-raft steering of the mascots' hoverboards across the corridor (approved movement
-/// contract, owner, 12 November 2026). Presentation only (TEAM_ALIGNMENT §C): it moves what is
-/// drawn, on RealityKit frame time; nothing judged reads it.
+/// contract, owner, 12 November 2026). GAME STATE since the vertical lasers (16 November 2026):
+/// `LaserBoardField` runs it on GameClock time from the players' LEAN evidence, and the LEAN judge
+/// reads where it puts each board; the renderer draws exactly that (`RobotAvatarLayer.authoritativeBoardX`).
+/// Rendering still runs its own copy where no round is played (previews, DEBUG Test Move). Units
+/// are corridor metres (`GameWorldMapping.worldX(corridorX:)`): + toward displayed right, P1 left.
 ///
 /// - A lean is a lateral SPEED (`RobotRetargeter.steerSpeed`): held, the board keeps moving;
 ///   upright, it brakes to a stop and stays where it is (no recentring, no lane snapping); the
@@ -20,9 +23,9 @@ import Foundation
 ///   Simultaneous inward motion is resolved deterministically: the overlap goes back to each in
 ///   proportion to how far it moved inward this step, so neither is pushed back past where it was.
 ///   A blocked board loses only its inward velocity.
-struct LateralSteering: Equatable {
+nonisolated struct LateralSteering: Equatable, Sendable {
     /// How the boards respond (`LeanSteeringTuning`; the lean side lives in `RobotRetargeter`).
-    struct Tuning: Equatable {
+    struct Tuning: Equatable, Sendable {
         /// Speed cap (m/s).
         var maximumSpeed: Float
         /// Speeding up toward a lean (m/s²), and braking when it eases or reverses (m/s²).
@@ -45,11 +48,11 @@ struct LateralSteering: Equatable {
     static let wallClearance: Float = 0.05
 
     /// What limited a board this step (DEBUG telemetry).
-    enum Constraint: String, Equatable {
+    enum Constraint: String, Equatable, Sendable {
         case free, leftLimit = "left limit", rightLimit = "right limit", partner
     }
 
-    struct Rider: Equatable {
+    struct Rider: Equatable, Sendable {
         /// The lane centre's world X (the mascot's starting place).
         let laneX: Float
         /// Steering travel from the lane centre (world metres).
@@ -61,7 +64,7 @@ struct LateralSteering: Equatable {
 
     /// One rider's input for a step: its lean speed and the hip shift shown this frame (lane metres),
     /// which the board also carries.
-    struct Input: Equatable {
+    struct Input: Equatable, Sendable {
         var targetSpeed: Float = 0
         var sway: Float = 0
     }
@@ -98,6 +101,17 @@ struct LateralSteering: Equatable {
     /// A board centre's world X.
     func boardX(_ player: PlayerID) -> Float? {
         riders[player].map { $0.laneX + $0.travel + (sways[player] ?? 0) }
+    }
+
+    /// Puts a rider's board centre exactly at world `x` (an authoritative board position from game
+    /// state, `RobotAvatarLayer.authoritativeBoardX`), carrying its current hip shift, at rest.
+    /// Nothing is clamped: the source owns the bounds and the partner rule.
+    mutating func place(_ player: PlayerID, boardX x: Float) {
+        guard var r = riders[player], x.isFinite else { return }
+        r.travel = x - r.laneX - (sways[player] ?? 0)
+        r.velocity = 0
+        r.constraint = .free
+        riders[player] = r
     }
 
     /// Advances every rider by `dt` seconds of frame time.

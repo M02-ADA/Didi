@@ -93,6 +93,10 @@ final class GameplayScenePresenter {
     let normalDiamonds: NormalDiamondPresentation
     /// The final vault at the end of the corridor, the scripted entry and the room inside.
     let finalVault: FinalVaultPresentation
+    /// LEAN targets' vertical lasers (`VerticalLaser`), from game state like the horizontal gates.
+    let verticalLasers: VerticalLaserLayer
+    /// When each LEAN attempt was first seen in game state: its laser fades in from there.
+    private var leanFirstSeen: [UUID: Double] = [:]
     /// Game time of the authoritative `phaseChanged(.diamondTime)` event, if seen.
     private(set) var diamondTimeStartedAt: Double?
 
@@ -126,6 +130,9 @@ final class GameplayScenePresenter {
         diamondTime = DiamondTimePresentation(scene: scene)
         normalDiamonds = NormalDiamondPresentation(scene: scene)
         finalVault = FinalVaultPresentation(scene: scene)
+        verticalLasers = VerticalLaserLayer(scene: scene)
+        // The verdict feedback comes from the presenter's own `targetJudged` events, for every move.
+        verticalLasers.reportsOutcomes = false
         debug.name = "gameplay.debug"
         debug.isEnabled = showsDebugMarkers
         scene.isLaserVisible = false
@@ -149,7 +156,8 @@ final class GameplayScenePresenter {
         var result: [PlayerID: Int] = [:]
         for player in PlayerID.allCases {
             var edges: [(time: Double, step: Int)] = []
-            for target in encounters.flatMap(\.targets) where target.playerID == player {
+            // Horizontal gates only: LEAN targets are drawn by the vertical laser layer.
+            for target in encounters.flatMap(\.targets) where target.playerID == player && target.requiredMove != .lean {
                 let end = configuration.evidenceTiming.finalizationTime(crossing: target.crossingTime) + tail
                 edges.append((min(target.warningTime, target.crossingTime - approachLead), 1))
                 edges.append((end, -1))
@@ -206,9 +214,11 @@ final class GameplayScenePresenter {
         if collected > diamondsHeard { onSound?(.diamondCollect) }
         diamondsHeard = collected
         updateHazards(state: state, at: time)
+        updateVerticalLasers(state: state, at: time)
+        updateBoards(state: state)
         updateCue(state: state, at: time)
         scene.setTimingPresentation(endedAt == nil && scene.timingVariant != .approved ? LaserTimingPresentation.make(state: state,
-            configuration: configuration, withdrawn: Set(withdrawnAt.keys)) : nil)
+            configuration: configuration, withdrawn: Set(withdrawnAt.keys)).flatMap { Self.timingFits($0, state) ? $0 : nil } : nil)
         if let snapshot, snapshot.sessionGeneration == state.sessionGeneration { present(snapshot) }
         updateBandEdges()
     }
@@ -228,6 +238,8 @@ final class GameplayScenePresenter {
     /// Hides everything this presenter shows; called when the session stops.
     func stop() {
         showPawBoard(false)
+        verticalLasers.update([], at: 0)
+        scene.robotAvatars?.authoritativeBoardX = [:]
         for key in Array(slots.keys) { release(key) }
         scene.setMoveCue(nil, actionRemaining: nil)
         scene.clearLaserFeedback()
@@ -240,6 +252,8 @@ final class GameplayScenePresenter {
 
     private func reset() {
         showPawBoard(false)
+        verticalLasers.update([], at: 0)
+        leanFirstSeen = [:]
         for key in Array(slots.keys) { release(key) }
         scene.clearLaserFeedback()
         travelDistance = 0
@@ -303,6 +317,11 @@ final class GameplayScenePresenter {
                 #if DEBUG
                 print(String(format: "[LaserJumpTiming] %@ %@ crossing %.3f · verdict %@ at %+.3f s", player.rawValue,
                              target.requiredMove.rawValue, target.crossingTime, "\(judgement)", event.gameTime - target.crossingTime))
+                // Crossing → verdict (game) → shown (this frame's game time); the zap's first visible
+                // frame is the next avatar render (`RobotAvatarLayer.advanceHit`, no lead-in).
+                print(String(format: "[LaserZapTiming] %@ %@ %@ · crossing %.3f · verdict %+.3f s · shown %+.3f s", player.rawValue,
+                             target.requiredMove.rawValue, "\(judgement)".prefix(5).description, target.crossingTime,
+                             event.gameTime - target.crossingTime, state.gameTime - target.crossingTime))
                 #endif
                 let outcome: LaserFeedback.Outcome? = switch judgement {
                 case .clear: .clear
@@ -383,7 +402,8 @@ final class GameplayScenePresenter {
         let tail = 2 * LaserGate.longestTransition
         var wanted: [(key: LaserTargetKey, target: LaserTarget, status: Status)] = []
         for encounter in state.encounters {
-            for target in encounter.encounter.targets where time >= target.warningTime || isInView(target, at: time) {
+            for target in encounter.encounter.targets where target.requiredMove != .lean
+                && (time >= target.warningTime || isInView(target, at: time)) {
                 let key = LaserTargetKey(encounterID: encounter.encounter.id, attemptID: encounter.encounter.attemptID,
                                          playerID: target.playerID)
                 let judgement = encounter.judgements[target.playerID]
@@ -422,15 +442,14 @@ final class GameplayScenePresenter {
         }
         let keys = Set(kept.map(\.key))
         for key in Array(slots.keys) where !keys.contains(key) { release(key) }
-        let pairs = sharedPairs(kept)
-        // A whole shared beam takes the more urgent of its two players' looks
+        let beams = horizontalBeams(kept)
+        // A whole shared beam takes the more urgent of its players' looks
         // (decided before showing, so its state never flips within a frame).
         var sharedLooks: [LaserTargetKey: (state: LaserGate.VisualState, warningProgress: Float?)] = [:]
-        for pair in pairs where pair.coincide {
-            let looks = [visual(for: pair.p1.target, status: pair.p1.status, at: time),
-                         visual(for: pair.p2.target, status: pair.p2.status, at: time)]
+        for beam in beams where !beam.others.isEmpty {
+            let looks = ([beam.lead] + beam.others).map { visual(for: $0.target, status: $0.status, at: time) }
             let urgent = looks.max { Self.urgency($0.state) < Self.urgency($1.state) }!
-            sharedLooks[pair.p1.key] = (urgent.state, urgent.state == .warning ? looks.compactMap(\.warningProgress).max() : nil)
+            sharedLooks[beam.lead.key] = (urgent.state, urgent.state == .warning ? looks.compactMap(\.warningProgress).max() : nil)
         }
         for (key, target, status) in kept {
             let hazard = slots[key]?.hazard ?? acquire(key, target)
@@ -440,7 +459,7 @@ final class GameplayScenePresenter {
             if Self.isPending(status), drawn >= scene.mapping.interactionPlaneZ { traceCrossing(key, target, at: time) }
             #endif
         }
-        joinSharedBeams(pairs)
+        drawFullWidth(beams)
         // Invariant check: every pending hazard got a gate.
         diagnostics.droppedHazards += wanted.filter { Self.isPending($0.status) && slots[$0.key] == nil }.count
         anchors = anchors.filter { keys.contains($0.key) }
@@ -539,67 +558,84 @@ final class GameplayScenePresenter {
 
     private typealias Kept = (key: LaserTargetKey, target: LaserTarget, status: Status)
 
-    /// Both players' members of one attempt crossing together, and whether
-    /// their drawn bands coincide (one beam) or differ (two joined halves).
-    private func sharedPairs(_ kept: [Kept]) -> [(p1: Kept, p2: Kept, coincide: Bool)] {
-        Dictionary(grouping: kept, by: { $0.key.attemptID }).values.compactMap { members in
-            guard members.count == 2,
-                  let p1 = members.first(where: { $0.key.playerID == .player1 }),
-                  let p2 = members.first(where: { $0.key.playerID == .player2 }),
-                  abs(p1.target.crossingTime - p2.target.crossingTime) < 0.02 else { return nil }
-            // In the mascots' normalized space a shared attempt is always one beam: its bands
-            // are the same shares of each player's height (rounding of the judge's margin aside).
-            if normalizationScale(for: .player1) != nil, normalizationScale(for: .player2) != nil {
-                return (p1, p2, true)
+    /// ONE HORIZONTAL LASER, ONE BEAM (17 November 2026). Every horizontal laser is drawn as one
+    /// continuous beam across the whole corridor, never as two lane halves: a DUCK or JUMP laser is
+    /// one obstacle for both players (`LaserEncounter`: one move per encounter). The members of one
+    /// attempt crossing together share it: one gate (`lead`) draws the whole beam and the others are
+    /// hidden; a lone member (Solo Test, or a partner already powered down) still spans the corridor.
+    ///
+    /// The beam's height: with the mascots' normalized bands (`normalizationScale`, gameplay with
+    /// mascots) every member's band is the same, and P1's gate draws it. Without them (pictograms in
+    /// Release, `-judgedLaserBands`, a mascot without its scale yet) each player's judged band is in
+    /// game units and differs with their height; drawing each half at its own height read as one
+    /// side HIGH and the other LOW. The beam is then drawn at the MOST DEMANDING member's band (the
+    /// lowest for a DUCK, the highest for a JUMP): a single height, and following it clears every
+    /// player's own band. Display only: targets, judgments, verdicts and badges stay per player.
+    private func horizontalBeams(_ kept: [Kept]) -> [(lead: Kept, others: [Kept])] {
+        let normalized = normalizationScale(for: .player1) != nil || normalizationScale(for: .player2) != nil
+        var groups: [[Kept]] = []
+        for member in kept.sorted(by: { $0.key.playerID.rawValue < $1.key.playerID.rawValue }) {
+            if let index = groups.firstIndex(where: { group in
+                group[0].key.attemptID == member.key.attemptID && group[0].target.requiredMove == member.target.requiredMove
+                    && abs(group[0].target.crossingTime - member.target.crossingTime) < 0.02 }) {
+                groups[index].append(member)
+            } else {
+                groups.append([member])
             }
-            let a = displayedBand(p1.target), b = displayedBand(p2.target)
-            let coincide = abs(a.lowerBound - b.lowerBound) <= Self.sharedBeamTolerance
-                && abs(a.upperBound - b.upperBound) <= Self.sharedBeamTolerance
-            return (p1, p2, coincide)
+        }
+        return groups.map { members in
+            var lead = members[0]
+            if members.count > 1 {
+                let bands = members.map { displayedBand($0.target) }
+                let coincide = normalized || bands.allSatisfy {
+                    abs($0.lowerBound - bands[0].lowerBound) <= Self.sharedBeamTolerance
+                        && abs($0.upperBound - bands[0].upperBound) <= Self.sharedBeamTolerance }
+                if coincide {
+                    lead = members.first { $0.key.playerID == .player1 } ?? members[0]
+                } else if members[0].target.requiredMove == .duck {
+                    lead = members.min { displayedBand($0.target).lowerBound < displayedBand($1.target).lowerBound }!
+                } else {
+                    lead = members.max { displayedBand($0.target).upperBound < displayedBand($1.target).upperBound }!
+                }
+            }
+            return (lead, members.filter { $0.key != lead.key })
         }
     }
 
-    /// One laser, one beam. When both players face the same attempt at the
-    /// same crossing:
-    /// - If their drawn bands coincide (with the mascots' normalized bands,
-    ///   players of any height do), P1's gate draws the whole beam from wall to
-    ///   wall at P1's band and P2's gate is hidden. One gate means one core, one
-    ///   glow and one set of animations, so no seam can open at the lane
-    ///   boundary. It shows the more urgent of the two players' looks (set in
-    ///   `updateHazards`): either player's HIT flares it.
-    /// - Otherwise the two lane halves join at the boundary, each at its own
-    ///   band, stepping between them in the gap between the lanes.
-    /// Display only: targets, verdicts and badges stay per player.
-    private func joinSharedBeams(_ pairs: [(p1: Kept, p2: Kept, coincide: Bool)]) {
-        var joined: Set<LaserTargetKey> = []
+    /// Draws each horizontal beam from wall to wall with both walls' emitters: the lead gate shows
+    /// the whole beam (its look the most urgent of its members', set in `updateHazards`), the
+    /// other members' gates are hidden. One gate means one core, one glow and one set of
+    /// animations, so no seam can open at the lane boundary; either player's HIT flares it.
+    private func drawFullWidth(_ beams: [(lead: Kept, others: [Kept])]) {
         var leads: Set<LaserTargetKey> = []
-        for pair in pairs {
-            guard let lead = slots[pair.p1.key]?.hazard, let partner = slots[pair.p2.key]?.hazard else { continue }
-            joined.formUnion([pair.p1.key, pair.p2.key])
-            guard pair.coincide else {
-                lead.setJoin(partnerBand: displayedBand(pair.p2.target))
-                partner.setJoin(partnerBand: displayedBand(pair.p1.target))
-                continue
-            }
+        drawnBy = [:]
+        for beam in beams {
+            guard let lead = slots[beam.lead.key]?.hazard else { continue }
+            for member in [beam.lead] + beam.others { drawnBy[member.key] = beam.lead.key }
             if lead.span != scene.fullLaserSpan { lead.setSpan(scene.fullLaserSpan) }
             lead.setEmitters(left: true, right: true)
             lead.setJoin(partnerBand: nil)
-            lead.root.isEnabled = lead.root.isEnabled || partner.root.isEnabled
-            partner.root.isEnabled = false
-            leads.insert(pair.p1.key)
-        }
-        // Every other gate is its own lane half, with only its own wall's emitter.
-        for (key, slot) in slots where !leads.contains(key) {
-            let lane = scene.laneSpan(for: key.playerID)
-            if slot.hazard.span != lane { slot.hazard.setSpan(lane) }
-            slot.hazard.setEmitters(left: key.playerID == .player1, right: key.playerID == .player2)
-            if !joined.contains(key) { slot.hazard.setJoin(partnerBand: nil) }
+            for other in beam.others {
+                guard let partner = slots[other.key]?.hazard else { continue }
+                lead.root.isEnabled = lead.root.isEnabled || partner.root.isEnabled
+                partner.root.isEnabled = false
+                partner.setJoin(partnerBand: nil)
+            }
+            leads.insert(beam.lead.key)
         }
         sharedBeams = leads
     }
 
-    /// The P1 gates drawing a whole shared beam this frame (tests and debugging).
+    /// The gates drawing a whole horizontal beam this frame (tests and debugging).
     private(set) var sharedBeams: Set<LaserTargetKey> = []
+    /// Each shown horizontal target → the gate drawing its beam this frame.
+    private var drawnBy: [LaserTargetKey: LaserTargetKey] = [:]
+
+    /// The gate that draws this target's horizontal beam this frame: its own, or the shared beam's
+    /// lead (tests and debugging). Every pending target is drawn by exactly one enabled gate.
+    func drawingGate(for key: LaserTargetKey) -> LaserHazard? {
+        drawnBy[key].flatMap { slots[$0]?.hazard }
+    }
 
     private static func urgency(_ state: LaserGate.VisualState) -> Int {
         switch state {
@@ -675,7 +711,11 @@ final class GameplayScenePresenter {
                 attempt = encounter.encounter.attemptID
             }
         }
-        guard let next else {
+        // One shared cue only when every player crossing then has the same horizontal move: a LEAN
+        // beam shows its own way, and a combined encounter asks each player for something else.
+        let together = next.map { next in state.encounters.flatMap(\.encounter.targets)
+            .filter { abs($0.crossingTime - next.crossingTime) < 0.02 } } ?? []
+        guard let next, next.requiredMove != .lean, together.allSatisfy({ $0.requiredMove == next.requiredMove }) else {
             scene.setMoveCue(nil, actionRemaining: nil)
             return
         }
@@ -688,6 +728,58 @@ final class GameplayScenePresenter {
         if time >= cue, let attempt, cuedAttempts.insert("\(attempt)-\(move)").inserted {
             onSound?(move == .duck ? .cueDuck : .cueJump)
         }
+    }
+
+    // MARK: - Vertical lasers and boards
+
+    /// The timing cue names one DUCK or JUMP for everyone: it is not shown for a LEAN target (the
+    /// vertical beam shows its own way) or for a combined encounter (each player has their own move).
+    private static func timingFits(_ timing: LaserTimingPresentation, _ state: LaserGameState) -> Bool {
+        guard timing.move != .lean,
+              let encounter = state.encounters.first(where: { $0.encounter.attemptID == timing.attemptID }) else { return false }
+        return encounter.encounter.targets.allSatisfy { $0.requiredMove == timing.move }
+    }
+
+    /// Each LEAN target's vertical laser: placed where game state fixed its beam, phased by the
+    /// same warning, cue and verdict as a horizontal gate; it fades in where it is first seen.
+    private func updateVerticalLasers(state: LaserGameState, at time: Double) {
+        var cues: [VerticalLaserCue] = []
+        for encounter in state.encounters {
+            for target in encounter.encounter.targets {
+                // A voided beam (no guaranteed way out) is never drawn: it is not judged either.
+                guard let beam = target.lean, let center = beam.centerX, !beam.voided else { continue }
+                let key = LaserTargetKey(encounterID: encounter.encounter.id, attemptID: encounter.encounter.attemptID,
+                                         playerID: target.playerID)
+                let seen = leanFirstSeen[encounter.encounter.attemptID] ?? time
+                leanFirstSeen[encounter.encounter.attemptID] = seen
+                let outcome: VerticalLaserCue.Outcome
+                if let judgement = encounter.judgements[target.playerID], !judgement.isPending {
+                    let at = judgedAt[key] ?? time
+                    judgedAt[key] = at
+                    outcome = switch judgement {
+                    case .clear: .clear(at: at)
+                    case .hit: .hit(at: at)
+                    default: .unavailable(at: at)
+                    }
+                } else if let stopped = withdrawnAt[key.attemptID] ?? endedAt {
+                    outcome = .withdrawn(at: stopped)
+                } else {
+                    outcome = .pending
+                }
+                if let at = outcome.time, time > at + 2 { continue }
+                cues.append(VerticalLaserCue(id: "\(key.attemptID.uuidString)-\(target.playerID.rawValue)", player: target.playerID,
+                    beamX: center, halfWidth: beam.halfWidth, placedAt: seen,
+                    warningTime: target.warningTime, cueTime: cueTime(for: target), crossingTime: target.crossingTime,
+                    outcome: outcome))
+            }
+        }
+        verticalLasers.update(cues, at: time)
+    }
+
+    /// The boards as game state places them: the renderer draws exactly the positions LEAN is judged on.
+    private func updateBoards(state: LaserGameState) {
+        guard let avatars = scene.robotAvatars else { return }
+        avatars.authoritativeBoardX = state.boards.mapValues { Float(scene.mapping.worldX(corridorX: $0.x)) }
     }
 
     // MARK: - Body

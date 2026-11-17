@@ -1646,6 +1646,16 @@ final class RobotAvatarLayer {
             steerTargets[player] = inputs[player]?.targetSpeed ?? 0
         }
         steering.step(dt: dt, inputs: inputs)
+        // Authoritative board positions (game state) replace the presentation steering for their
+        // riders; the others steer as before.
+        for (player, x) in authoritativeBoardX where robots[player] != nil { steering.place(player, boardX: x) }
+        #if DEBUG
+        if let a = authoritativeBoardX[.player1], let b = authoritativeBoardX[.player2],
+           b - a < steering.minimumSeparation - 1e-3 {
+            print(String(format: "[VerticalLaser] authoritative boards overlap: P1 %+.3f P2 %+.3f (minimum %.2f)",
+                         a, b, steering.minimumSeparation))
+        }
+        #endif
         self.steering = steering
         for player in robots.keys {
             guard let x = steering.boardX(player) else { continue }
@@ -1671,6 +1681,10 @@ final class RobotAvatarLayer {
 
     /// Lean steering: the riders' travel, velocity and limits (nil without boards).
     private(set) var steering: LateralSteering?
+    /// Board centres' world X from game state (vertical laser contract, PROPOSED 16 November 2026),
+    /// set each frame by the caller. A rider listed here is drawn exactly there and its lean does not
+    /// move it; an empty map (today's gameplay) keeps the presentation steering. Display only.
+    var authoritativeBoardX: [PlayerID: Float] = [:]
     private var lastSteer: Double?
 
     /// A mascot's tracked root X on its lane (metres from the lane centre), before any scripted move.
