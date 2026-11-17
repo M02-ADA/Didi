@@ -13,6 +13,7 @@ import Testing
         var director: LaserLiveRoundDirector
         var game: LaserGame
         var registered: [(time: Double, encounter: LaserEncounter)] = []
+        var hearts: [LaserDiamondSpawn] = []
         var vault: (time: Double, id: UUID, zones: [LaserVaultZone])?
 
         init(segment: Double = 60) throws {
@@ -37,6 +38,9 @@ import Testing
                 while let due = try director.nextDue(through: time, game: game) {
                     try game.advance(to: max(game.gameTime, due.time))
                     switch due.action {
+                    case .heart(let spawn, let boundary):
+                        try game.spawnHeart(spawn, beforeVaultAt: boundary)
+                        hearts.append(spawn)
                     case .register(let encounter):
                         try game.register(encounter); registered.append((game.gameTime, encounter))
                     case .normalDiamond(let spawn, let boundary):
@@ -83,9 +87,11 @@ import Testing
                 ? encounter.targets[0].crossingTime - LaserBoardGeometry.revealLead : encounter.targets[0].warningTime))
         }
         #expect(rig.vault == nil && rig.game.roundPhase == .activity)
+        #expect(rig.hearts.count == 1 && rig.hearts.allSatisfy { $0.spawnedAt > 0 && $0.exit < 60 })
         try rig.run(to: 61)
         let vault = try #require(rig.vault)
         #expect(vault.time >= 60 && rig.game.roundPhase == .vault)
+        #expect(rig.game.heart == nil)
         #expect(rig.game.pendingCrossingCount == 0, "the vault never withdraws a laser")
         // No body evidence was delivered: every verdict is UNAVAILABLE, nothing cleared or hit.
         #expect(rig.game.playerStats.values.allSatisfy { $0.cleared == 0 && $0.hit == 0 })
@@ -119,6 +125,26 @@ import Testing
         var rig = try Rig()
         try rig.run(to: 70)
         #expect(rig.game.roundOutcome == .vaultFailed && rig.game.summary != nil)
+    }
+
+    @Test func fullLiveRoundSchedulesElevenHeartsWithoutOverlappingPassages() throws {
+        var rig = try Rig()
+        var stageStart = 0.0
+        for expected in [1, 2, 2, 3, 3] {
+            let previousCount = rig.hearts.count
+            try rig.run(to: stageStart + 60)
+            let vault = try #require(rig.vault)
+            let hearts = rig.hearts.dropFirst(previousCount)
+            #expect(hearts.count == expected)
+            #expect(hearts.allSatisfy { $0.spawnedAt > stageStart && $0.exit < vault.time })
+            for (first, second) in zip(hearts, hearts.dropFirst()) {
+                #expect(first.exit < second.spawnedAt)
+            }
+            stageStart = vault.time + 1
+            try rig.pressAllButtons(at: stageStart)
+        }
+        #expect(rig.hearts.count == 11 && Set(rig.hearts.map(\.id)).count == 11)
+        #expect(rig.game.roundPhase == .diamondTime && rig.game.heart == nil)
     }
 
     @Test func recoveryKeepsMoveBeamAndWarningAndShiftsTheRestOfTheMinute() throws {

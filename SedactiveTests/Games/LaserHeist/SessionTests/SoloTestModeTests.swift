@@ -209,6 +209,7 @@ import Testing
             while let due = try director.nextDue(through: time, game: game) {
                 try game.advance(to: max(game.gameTime, due.time))
                 switch due.action {
+                    case .heart: break
                 case .register(let encounter): try game.register(encounter); registered += 1
                 case .normalDiamond(let spawn, let boundary):
                     try game.spawnNormalDiamonds([spawn], beforeVaultAt: boundary); diamonds.append(spawn)
@@ -276,6 +277,7 @@ import Testing
             while let due = try director.nextDue(through: time, game: game) {
                 try game.advance(to: max(game.gameTime, due.time))
                 switch due.action {
+                    case .heart: break
                 case .register(let e): try game.register(e)
                 case .normalDiamond(let s, let b): try game.spawnNormalDiamonds([s], beforeVaultAt: b)
                 case .openVault(let id, _): try game.openVault(id: id, at: game.gameTime); if stopAtVault { return time }
@@ -356,6 +358,7 @@ import Testing
                 while let due = try director.nextDue(through: time, game: game) {
                     try game.advance(to: max(game.gameTime, due.time))
                     switch due.action {
+                    case .heart: break
                     case .register(let e): try game.register(e); registered += 1
                     case .normalDiamond(let s, let b): try game.spawnNormalDiamonds([s], beforeVaultAt: b)
                     case .openVault(let id, _): try game.openVault(id: id, at: game.gameTime); return (id, game.gameTime)

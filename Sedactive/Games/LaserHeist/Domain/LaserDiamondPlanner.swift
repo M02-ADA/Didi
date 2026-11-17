@@ -115,6 +115,32 @@ nonisolated struct LaserDiamondPlanner: Sendable {
         return spawns
     }
 
+    /// Separate seeded stream in the live director so heart draws do not shift diamond draws.
+    mutating func normalHearts(minute: Int, from start: Double, until boundary: Double,
+                               avoiding diamonds: [LaserDiamondSpawn]) throws -> [LaserDiamondSpawn] {
+        let counts = [1, 2, 2, 3, 3]
+        try requireLaserValue(counts.indices.contains(minute), "heart minute")
+        let count = counts[minute]
+        let slot = (boundary - start) / Double(count)
+        // Each heart finishes before the next slot. Short debug stages use a shorter approach.
+        let lead = min(3.7, (slot - passageDuration) / 2)
+        try requireLaserValue(lead.isFinite && lead > 0, "heart schedule")
+        let slack = slot - lead - passageDuration
+        return try (0..<count).map { index in
+            let fraction = Double(random() % 1000 + 1) / 1001
+            let time = start + slot * Double(index) + slack * fraction
+            let entry = time + lead
+            let exit = entry + passageDuration
+            let occupied = diamonds.filter { $0.exit > time && $0.spawnedAt < exit }.map(\.position)
+            let pickupOverlap = diamonds.filter { $0.exit > entry && $0.entry < exit }.map(\.position)
+            let excluded: [LaserDiamondPosition]
+            if placements.contains(where: { !occupied.contains($0.position) }) { excluded = occupied }
+            else if placements.contains(where: { !pickupOverlap.contains($0.position) }) { excluded = pickupOverlap }
+            else { excluded = [] }
+            return try makeSpawn(at: time, entry: entry, exit: exit, excluding: excluded)
+        }
+    }
+
     mutating func bonusInitial(at time: Double, deadline: Double) throws -> [LaserDiamondSpawn] {
         var next = self
         var result: [LaserDiamondSpawn] = []
