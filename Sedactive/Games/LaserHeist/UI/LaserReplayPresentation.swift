@@ -252,9 +252,12 @@ final class LaserReplayPresentation {
         guard let spawn = session.activeHeart else {
             if let heart = shownHeart, let pickup = session.lastHeartPickup, pickup.id == heart.target {
                 let world = heart.collectionWorldPosition
-                if heart.collect(generation: state.sessionGeneration, target: heart.target, now: time), pickup.restored {
-                    diamondFlights?.collect(.heart(heart.target), generation: state.sessionGeneration, world: world,
-                                            reduceMotion: UIAccessibility.isReduceMotionEnabled, project: project)
+                if heart.collect(generation: state.sessionGeneration, target: heart.target, now: time) {
+                    AudioService.shared.play(.healthPickup)
+                    if pickup.restored {
+                        diamondFlights?.collect(.heart(heart.target), generation: state.sessionGeneration, world: world,
+                                                reduceMotion: UIAccessibility.isReduceMotionEnabled, project: project)
+                    }
                 }
                 heart.update(now: time, generation: state.sessionGeneration)
             } else {
