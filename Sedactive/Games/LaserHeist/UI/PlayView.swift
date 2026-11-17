@@ -435,8 +435,8 @@ private struct ReplayRoundView: View {
         .overlay {
             if let final = session?.summary { ResultsView(summary: final, onRetry: retry, onHome: homeAction) }
         }
-        .overlayPreferenceValue(DiamondScoreAnchorKey.self) { anchor in
-            DiamondHUDFlightOverlay(model: diamondFlights, scoreAnchor: anchor)
+        .overlayPreferenceValue(PickupHUDAnchorKey.self) { anchors in
+            DiamondHUDFlightOverlay(model: diamondFlights, scoreAnchor: anchors[.score], healthAnchor: anchors[.health])
         }
         .coordinateSpace(name: DiamondHUDFlightModel.space)
         .safeAreaInset(edge: .bottom) {

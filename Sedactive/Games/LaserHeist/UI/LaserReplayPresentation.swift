@@ -163,7 +163,9 @@ final class LaserReplayPresentation {
                                                       phase: "\(session.phase)") { print(line) }
                 #endif
                 self.render(scene: scene, session: session)
-                self.updateHeart(scene: scene, session: session, frameHost: attachment)
+                self.updateHeart(scene: scene, session: session, frameHost: attachment) { world in
+                    content.project(point: world, to: .named(DiamondHUDFlightModel.space))
+                }
                 self.renderPawBoard(on: content, scene: scene, session: session)
                 session.collectAvatarDiamondContacts(self.avatarDiamondContacts(scene: scene, session: session),
                                                      frameHost: attachment)
@@ -239,7 +241,8 @@ final class LaserReplayPresentation {
         #endif
     }
 
-    private func updateHeart(scene: LaserScene, session: GameSessionCoordinator, frameHost: LaserLiveFrameAttachment) {
+    private func updateHeart(scene: LaserScene, session: GameSessionCoordinator, frameHost: LaserLiveFrameAttachment,
+                             project: (SIMD3<Float>) -> CGPoint?) {
         guard let state = session.state, state.phase == .activity else {
             shownHeart?.retire()
             shownHeart = nil
@@ -247,8 +250,12 @@ final class LaserReplayPresentation {
         }
         let time = state.gameTime
         guard let spawn = session.activeHeart else {
-            if let heart = shownHeart, let pickup = session.lastHeartPickup, pickup.id == heart.target, pickup.restored {
-                heart.collect(generation: state.sessionGeneration, target: heart.target, now: time)
+            if let heart = shownHeart, let pickup = session.lastHeartPickup, pickup.id == heart.target {
+                let world = heart.collectionWorldPosition
+                if heart.collect(generation: state.sessionGeneration, target: heart.target, now: time), pickup.restored {
+                    diamondFlights?.collect(.heart(heart.target), generation: state.sessionGeneration, world: world,
+                                            reduceMotion: UIAccessibility.isReduceMotionEnabled, project: project)
+                }
                 heart.update(now: time, generation: state.sessionGeneration)
             } else {
                 shownHeart?.retire()
