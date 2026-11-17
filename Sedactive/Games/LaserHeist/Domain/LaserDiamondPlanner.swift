@@ -11,10 +11,12 @@ nonisolated struct LaserDiamondPlanner: Sendable {
     private var randomState: UInt64
     private var sequence: UInt64 = 0
     let placements: [LaserDiamondPlacement]
+    private let passagePlacements: [LaserDiamondPlacement]
     let approachLead: Double
     let passageDuration: Double
 
-    init(seed: UInt64, placements: [LaserDiamondPlacement], approachLead: Double, passageDuration: Double) throws {
+    init(seed: UInt64, placements: [LaserDiamondPlacement], approachLead: Double, passageDuration: Double,
+         passagePlacements: [LaserDiamondPlacement]? = nil) throws {
         try requireLaserValue(placements.count >= 5 && placements.allSatisfy { !$0.eligiblePlayers.isEmpty }
             && approachLead.isFinite && approachLead > 0 && passageDuration.isFinite && passageDuration > 0,
                               "diamond planner configuration")
@@ -24,6 +26,10 @@ nonisolated struct LaserDiamondPlanner: Sendable {
         }
         self.randomState = seed
         self.placements = placements
+        let passage = passagePlacements ?? placements
+        try requireLaserValue(passage.count >= 5 && passage.allSatisfy { !$0.eligiblePlayers.isEmpty }
+            && Set(passage.map { [$0.position.x, $0.position.y] }).count == passage.count, "passage placements")
+        self.passagePlacements = passage
         self.approachLead = approachLead
         self.passageDuration = passageDuration
     }
@@ -39,8 +45,9 @@ nonisolated struct LaserDiamondPlanner: Sendable {
     /// IDs are monotonic within this round. The domain can reject retired IDs without retaining all of them.
     private mutating func makeSpawn(at time: Double, entry: Double, exit: Double,
                                    excluding positions: [LaserDiamondPosition],
-                                   avoiding wrists: (points: [LaserDiamondPosition], radius: Double)? = nil) throws -> LaserDiamondSpawn {
-        let available = placements.filter { !positions.contains($0.position) }
+                                   avoiding wrists: (points: [LaserDiamondPosition], radius: Double)? = nil,
+                                   passage: Bool = false) throws -> LaserDiamondSpawn {
+        let available = (passage ? passagePlacements : placements).filter { !positions.contains($0.position) }
         try requireLaserValue(!available.isEmpty && sequence < 0xffffffffffff, "placement/identity exhausted")
         let preferred = wrists.map { wrists in
             available.filter { placement in
@@ -77,7 +84,7 @@ nonisolated struct LaserDiamondPlanner: Sendable {
         // shortened debug rounds may have less room between passages than production.
         let requestedLead = visualLead ?? approachLead
         try requireLaserValue(requestedLead.isFinite && requestedLead >= approachLead, "diamond visual lead")
-        let lead = max(approachLead, min(requestedLead, spacing * Double(placements.count) - passageDuration - 1e-6))
+        let lead = max(approachLead, min(requestedLead, spacing * Double(passagePlacements.count) - passageDuration - 1e-6))
         var result: [LaserDiamondSpawn] = []
         for index in 0..<count {
             let time = start + available * Double(index + 1) / Double(count + 1)
@@ -85,7 +92,7 @@ nonisolated struct LaserDiamondPlanner: Sendable {
             let spawn = lead == approachLead ? time : max(start, entry - lead)
             result.append(try next.makeSpawn(at: spawn, entry: entry,
                 exit: entry + passageDuration,
-                excluding: result.filter { $0.exit > spawn }.map(\.position)))
+                excluding: result.filter { $0.exit > spawn }.map(\.position), passage: true))
         }
         self = next
         return result
@@ -134,10 +141,10 @@ nonisolated struct LaserDiamondPlanner: Sendable {
             let occupied = diamonds.filter { $0.exit > time && $0.spawnedAt < exit }.map(\.position)
             let pickupOverlap = diamonds.filter { $0.exit > entry && $0.entry < exit }.map(\.position)
             let excluded: [LaserDiamondPosition]
-            if placements.contains(where: { !occupied.contains($0.position) }) { excluded = occupied }
-            else if placements.contains(where: { !pickupOverlap.contains($0.position) }) { excluded = pickupOverlap }
+            if passagePlacements.contains(where: { !occupied.contains($0.position) }) { excluded = occupied }
+            else if passagePlacements.contains(where: { !pickupOverlap.contains($0.position) }) { excluded = pickupOverlap }
             else { excluded = [] }
-            return try makeSpawn(at: time, entry: entry, exit: exit, excluding: excluded)
+            return try makeSpawn(at: time, entry: entry, exit: exit, excluding: excluded, passage: true)
         }
     }
 

@@ -55,7 +55,15 @@ nonisolated struct LaserFullReplayPlan: Sendable {
             return try LaserLiveRoundGeometryV1.diamondPlacements(player: player, lane: layout.centerX(for: player),
                 height: LaserLiveRoundGeometryV1.standingHeight(calibration, layout: layout))
         }
-        var planner = try LaserDiamondPlanner(seed: seed, placements: placements, approachLead: 0.5, passageDuration: 1)
+        let passagePlacements = try PlayerID.allCases.flatMap { player in
+            guard let calibration = base.configuration.calibrations[player] else {
+                throw LaserDataError.invalidValue("missing replay calibration for diamond placement")
+            }
+            return try LaserLiveRoundGeometryV1.passagePlacements(player: player, lane: layout.centerX(for: player),
+                height: LaserLiveRoundGeometryV1.standingHeight(calibration, layout: layout))
+        }
+        var planner = try LaserDiamondPlanner(seed: seed, placements: placements, approachLead: 0.5, passageDuration: 1,
+                                             passagePlacements: passagePlacements)
         var steps: [Step] = [], encounters: [LaserEncounter] = []
         var diamondCount = 0
         let standing = scenario == .healthDepleted

@@ -37,6 +37,19 @@ nonisolated enum LaserLiveRoundGeometryV1 {
                                       eligiblePlayers: [player])
         }
     }
+
+    /// Normal pickups stay between the waist and chest of a standing mascot.
+    /// Lateral offsets let players steer into them with both feet on the board.
+    static func passagePlacements(player: PlayerID, lane: Double, height: Double) throws -> [LaserDiamondPlacement] {
+        let shares: [(x: Double, y: Double)] = [
+            (-0.26, 0.44), (0.26, 0.44), (-0.33, 0.60), (0.33, 0.60),
+            (-0.42, 0.46), (0.42, 0.46), (-0.44, 0.68), (0.44, 0.68),
+        ]
+        return try shares.map {
+            try LaserDiamondPlacement(position: .init(x: lane + $0.x * height, y: $0.y * height),
+                                      eligiblePlayers: [player])
+        }
+    }
     /// Vault buttons, outward from the player's own body centre: (outward, height) shares of their
     /// standing height. One stack on the player's outer side, at HIGH (head/upper shoulder), MIDDLE
     /// (chest) and LOW (upper thigh) reaches, 0.215 h apart (more than two radii: no overlap).
@@ -159,6 +172,7 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
         baseEncounters = self.minutes.flatMap { $0 }
         var heights: [PlayerID: Double] = [:]
         var placements: [LaserDiamondPlacement] = []
+        var passagePlacements: [LaserDiamondPlacement] = []
         var zones: [PlayerID: [LaserVaultButton: (LaserDiamondPosition, Double)]] = [:]
         for player in roster {
             let h = LaserLiveRoundGeometryV1.standingHeight(calibrations[player]!, layout: layout)
@@ -167,6 +181,7 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
             let lane = layout.centerX(for: player)
             placements += try LaserLiveRoundGeometryV1.diamondPlacements(player: player, lane: lane,
                                                                          height: h)
+            passagePlacements += try LaserLiveRoundGeometryV1.passagePlacements(player: player, lane: lane, height: h)
             for (button, share) in LaserLiveRoundGeometryV1.vaultShares {
                 let x = lane + LaserLiveRoundGeometryV1.outward(player) * share.out * h
                 zones[player, default: [:]][button] = (try .init(x: x, y: share.y * h),
@@ -179,8 +194,10 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
         })
         // One radius for the round's diamonds: the shorter player's, so neither gets a bigger target.
         diamondRadius = LaserLiveRoundGeometryV1.diamondRadiusShare * (heights.values.min() ?? 0)
-        planner = try LaserDiamondPlanner(seed: seed, placements: placements, approachLead: 0.5, passageDuration: 1)
-        heartPlanner = try LaserDiamondPlanner(seed: seed ^ 0x4845415254, placements: placements, approachLead: 0.5, passageDuration: 1)
+        planner = try LaserDiamondPlanner(seed: seed, placements: placements, approachLead: 0.5, passageDuration: 1,
+                                          passagePlacements: passagePlacements)
+        heartPlanner = try LaserDiamondPlanner(seed: seed ^ 0x4845415254, placements: passagePlacements,
+                                               approachLead: 0.5, passageDuration: 1)
     }
 
     /// The round's hoverboards as game state, at rest on their lanes (`LaserGame.configureBoards`).
