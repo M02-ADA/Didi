@@ -68,3 +68,6 @@ Cut points were chosen from measured loudness envelopes and pitch, not by ear. A
 - Missing files are logged once and skipped.
 - Music and effects switches persist in `UserDefaults` (`audio.musicEnabled`, `audio.effectsEnabled`). No Sketch screen has a place for them yet; Debug launch arguments `-muteMusic` / `-muteEffects`.
 - Trace: `log stream --level debug --predicate 'subsystem == "Sedactive" AND category == "audio"'`.
+
+### Heart pickup
+`lh-health-pickup.caf` uses “Health Pickup” by KeshaFilm, from the [creator's CC0 Freesound listing](https://freesound.org/people/KeshaFilm/sounds/471834/), also listed on [Pixabay](https://pixabay.com/sound-effects/film-special-effects-health-pickup-6860/). The high-quality preview was converted to 44.1 kHz mono PCM CAF. The game plays it once when a heart pickup is committed, including when team health is already full.

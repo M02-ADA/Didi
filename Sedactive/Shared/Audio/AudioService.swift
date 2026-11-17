@@ -22,6 +22,7 @@ enum SoundCue: String, CaseIterable {
     case vaultWarning = "vault-warning"
     case diamondTime = "diamond-time"
     case diamondCollect = "diamond-collect"
+    case healthPickup = "health-pickup"
     case diamondChainRise = "diamond-chain-rise"
     case diamondChainCrest = "diamond-chain-crest"
     case diamondChainBass = "diamond-chain-bass"

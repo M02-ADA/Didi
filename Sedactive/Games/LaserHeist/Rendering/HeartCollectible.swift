@@ -209,6 +209,11 @@ final class HeartCollectible {
     /// No HUD reward is emitted here; an authoritative pickup contract is still required.
     var collectionWorldPosition: SIMD3<Float> { artwork.visualBounds(relativeTo: nil).center }
 
+    var bodyContactSphere: (center: SIMD3<Float>, radius: Float) {
+        let bounds = artwork.visualBounds(relativeTo: nil)
+        return (bounds.center, max(bounds.extents.x, bounds.extents.y, bounds.extents.z) / 2)
+    }
+
     func showIdle(reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled) {
         guard phase == .ready else { return }
         phase = .idle

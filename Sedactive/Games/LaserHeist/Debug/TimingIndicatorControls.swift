@@ -9,7 +9,7 @@ struct TimingIndicatorControls: View {
     let retry: () -> Void
     var viewport: CGSize = .zero
     @State private var clearance = ""
-    @State private var selected: TimingIndicatorVariant = launchVariant ?? .circular
+    @State private var selected: TimingIndicatorVariant = launchVariant ?? .converging
     @State private var busy = false
     @State private var error: String?
     static var isComparison: Bool { ProcessInfo.processInfo.arguments.contains("-timingComparison") }

@@ -120,6 +120,30 @@ nonisolated struct LaserGame: Sendable {
     func registeredEncounter(attemptID: UUID) -> LaserEncounter? { placedEncounters[attemptID] }
 
     var diamonds: [UUID: LaserDiamondState] { diamondField.states }
+    private(set) var heart: LaserDiamondSpawn?
+    private(set) var lastHeartPickup: (id: UUID, restored: Bool)?
+    private var highestHeartID: String?
+    private var maximumTeamHealth = 5
+
+    mutating func spawnHeart(_ spawn: LaserDiamondSpawn, beforeVaultAt boundary: Double) throws {
+        try requireLaserValue(roundPhase == .activity && !blocked && !exited && roundOutcome == nil
+            && spawn.spawnedAt == gameTime && spawn.exit <= boundary
+            && (highestHeartID.map { spawn.id.uuidString > $0 } ?? true), "heart spawn")
+        heart = spawn
+        highestHeartID = spawn.id.uuidString
+    }
+
+    mutating func collectHeart(id: UUID, players: Set<PlayerID>) {
+        guard roundPhase == .activity, !blocked, !exited, roundOutcome == nil, context.isActive,
+              let heart, heart.id == id, gameTime >= heart.entry, gameTime < heart.exit,
+              heart.eligiblePlayers.contains(where: { players.contains($0) && (context.calibrationRevisions[$0] ?? 0) > 0 })
+        else { return }
+        let restored = teamHealth < maximumTeamHealth
+        if restored { teamHealth += 1 }
+        lastHeartPickup = (id, restored)
+        self.heart = nil
+    }
+
     var activeDiamonds: [LaserDiamondSpawn] { diamondField.active }
     var diamondsCollected: Int { diamondField.collectedCount }
 
@@ -138,6 +162,7 @@ nonisolated struct LaserGame: Sendable {
         try self.init(timing: configuration.evidenceTiming, context: context,
                       historyCapacityPerPlayer: historyCapacityPerPlayer, clearanceMargin: configuration.clearanceMargin)
         teamHealth = configuration.initialTeamHealth
+        maximumTeamHealth = configuration.initialTeamHealth
         clearPoints = configuration.clearTargetPoints
         missionTarget = configuration.missionGateTarget
         vaultDuration = configuration.vaultDuration
@@ -416,6 +441,7 @@ nonisolated struct LaserGame: Sendable {
         try requireLaserValue(activeDiamonds.isEmpty, "normal diamonds must finish before vault")
         withdraw()
         vault = LaserVaultState(id: id, deadline: time + vaultDuration, buttons: [.player1: [], .player2: []])
+        heart = nil
         roundPhase = .vault
         emit(.phaseChanged(.vault), at: time)
     }
@@ -492,6 +518,7 @@ nonisolated struct LaserGame: Sendable {
         withdraw()
         diamondField.close()
         if let open = vault, !open.opened { consumedVaults.insert(open.id); vault = nil }
+        heart = nil
         roundPhase = .diamondTime
         bonusDeadline = gameTime + bonusDuration
         emit(.phaseChanged(.diamondTime), at: gameTime)
@@ -570,6 +597,7 @@ nonisolated struct LaserGame: Sendable {
         guard roundOutcome == nil else { return }
         roundOutcome = outcome
         moveTime(to: time)
+        heart = nil
         roundPhase = .ended(outcome)
         if let vault, !vault.opened {
             coopResults.append(LaserCoopRoundResult(gateID: vault.id,

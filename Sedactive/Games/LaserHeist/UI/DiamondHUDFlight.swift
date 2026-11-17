@@ -2,10 +2,13 @@ import SwiftUI
 import RealityKit
 import Observation
 
-struct DiamondScoreAnchorKey: PreferenceKey {
-    static var defaultValue: Anchor<CGRect>? { nil }
-    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
-        value = nextValue() ?? value
+enum PickupHUDDestination: Hashable { case score, health }
+
+struct PickupHUDAnchorKey: PreferenceKey {
+    static var defaultValue: [PickupHUDDestination: Anchor<CGRect>] { [:] }
+    static func reduce(value: inout [PickupHUDDestination: Anchor<CGRect>],
+                       nextValue: () -> [PickupHUDDestination: Anchor<CGRect>]) {
+        value.merge(nextValue()) { _, new in new }
     }
 }
 
@@ -13,12 +16,16 @@ struct DiamondScoreAnchorKey: PreferenceKey {
 struct DiamondFlightLayout: Equatable {
     var viewport: CGRect
     var score: CGRect?
+    var health: CGRect? = nil
 }
 
 @MainActor @Observable final class DiamondHUDFlightModel {
     static let space = "laserheist.diamondHUD"
     static let duration = 0.55
-    enum Target: Hashable { case normal(UUID), bonus(Int) }
+    enum Target: Hashable {
+        case normal(UUID), bonus(Int), heart(UUID)
+        var isHeart: Bool { if case .heart = self { true } else { false } }
+    }
     struct Flight: Identifiable {
         let id = UUID()
         let generation: UUID
@@ -29,6 +36,7 @@ struct DiamondFlightLayout: Equatable {
     private(set) var generation: UUID?
     private(set) var flights: [Flight] = []
     private(set) var arrivalSerial = 0
+    private(set) var heartArrivalSerial = 0
     private(set) var started = 0
     private(set) var arrivals = 0
     private var running = false
@@ -52,23 +60,27 @@ struct DiamondFlightLayout: Equatable {
         guard running, self.generation == generation, seen.insert(target).inserted else { return }
         order.append(target)
         if order.count > 128 { seen.remove(order.removeFirst()) }
-        guard let layout, let score = layout.score, Self.valid(score), Self.valid(layout.viewport),
-              layout.viewport.intersects(score) else { return }
-        if reduceMotion { arrivalSerial += 1; arrivals += 1; return }
+        guard let layout, let destination = target.isHeart ? layout.health : layout.score,
+              Self.valid(destination), Self.valid(layout.viewport), layout.viewport.intersects(destination) else { return }
+        if reduceMotion { registerArrival(target); return }
         guard world.x.isFinite, world.y.isFinite, world.z.isFinite,
               let point = project(world), point.x.isFinite, point.y.isFinite,
               layout.viewport.contains(point) else { return }
         // Bounded cosmetic work; dropping the oldest visual never changes a domain outcome.
         if flights.count == 16 { flights.removeFirst() }
         flights.append(Flight(generation: generation, target: target, start: point,
-                              end: CGPoint(x: score.midX, y: score.midY)))
+                              end: CGPoint(x: destination.midX, y: destination.midY)))
         started += 1
     }
     func arrived(_ flight: Flight) {
         guard running, generation == flight.generation,
               flights.contains(where: { $0.id == flight.id }) else { return }
         flights.removeAll { $0.id == flight.id }
-        arrivalSerial += 1; arrivals += 1
+        registerArrival(flight.target)
+    }
+    private func registerArrival(_ target: Target) {
+        if target.isHeart { heartArrivalSerial += 1 } else { arrivalSerial += 1 }
+        arrivals += 1
     }
     func clear() { flights = []; running = false }
     private static func valid(_ rect: CGRect) -> Bool {
@@ -102,8 +114,10 @@ private struct FlyingDiamondToken: View {
     let arrived: () -> Void
     @State private var progress = 0.0
     var body: some View {
-        Image("LaserHeistUI/diamond").resizable().aspectRatio(contentMode: .fit)
-            .frame(width: 26, height: 26).shadow(color: .cyan.opacity(0.85), radius: 6)
+        Image(flight.target.isHeart ? "LaserHeistHUD/heart" : "LaserHeistUI/diamond")
+            .resizable().aspectRatio(contentMode: .fit)
+            .frame(width: flight.target.isHeart ? 38 : 26, height: flight.target.isHeart ? 38 : 26)
+            .shadow(color: (flight.target.isHeart ? Color.pink : .cyan).opacity(0.85), radius: 6)
             .modifier(DiamondFlightMotion(progress: progress, flight: flight, origin: origin))
             .onAppear {
                 withAnimation(.easeInOut(duration: DiamondHUDFlightModel.duration),
@@ -115,13 +129,23 @@ private struct FlyingDiamondToken: View {
 struct DiamondHUDFlightOverlay: View {
     let model: DiamondHUDFlightModel
     let scoreAnchor: Anchor<CGRect>?
+    var healthAnchor: Anchor<CGRect>? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         GeometryReader { proxy in
             let viewport = proxy.frame(in: .named(DiamondHUDFlightModel.space))
             let score = scoreAnchor.map { proxy[$0].offsetBy(dx: viewport.minX, dy: viewport.minY) }
-            let layout = DiamondFlightLayout(viewport: viewport, score: score)
+            let health = healthAnchor.map { proxy[$0].offsetBy(dx: viewport.minX, dy: viewport.minY) }
+            let layout = DiamondFlightLayout(viewport: viewport, score: score, health: health)
             ZStack {
+                if let health {
+                    Capsule().stroke(.pink, lineWidth: 4).shadow(color: .pink, radius: 10)
+                        .frame(width: health.width, height: health.height)
+                        .phaseAnimator([0.0, 1.0, 0.0], trigger: model.heartArrivalSerial) { view, value in
+                            view.opacity(value).scaleEffect(reduceMotion ? 1 : 1 + value * 0.05)
+                        } animation: { _ in .easeOut(duration: 0.24) }
+                        .position(x: health.midX - viewport.minX, y: health.midY - viewport.minY)
+                }
                 if let score {
                     Capsule().stroke(.cyan, lineWidth: 2).shadow(color: .cyan, radius: 6)
                         .frame(width: score.width, height: score.height)
