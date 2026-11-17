@@ -307,6 +307,7 @@ final class LaserReplayPresentation {
         let crossedCrest = beat.level >= 3 && (newAccent || lastPawAccentLevel < 3)
         if newAccent {
             lastPawAccent = beat.start
+            pawShake = (time, beat.level)
             switch beat.level {
             case 1: AudioService.shared.play(.diamondCollect)
             case 2: AudioService.shared.play(.diamondChainRise)

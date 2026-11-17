@@ -21,13 +21,14 @@ struct DiamondTimePickupRhythmTests {
         #expect(rhythm.map { $0.ids.count } == [3, 1, 1, 1, 1])
     }
 
-    @Test func shakeOnlyRunsAtTheCrestAndDecaysBackToZero() {
-        #expect(DiamondTimePickupRhythm.shake(age: 0.025, level: 2) == 0)
+    @Test func everyAccentMovesTheBackdropAndStreaksIncreaseItsStrength() {
+        let first = DiamondTimePickupRhythm.shake(age: 0, level: 1)
+        let crest = DiamondTimePickupRhythm.shake(age: 0, level: 3)
+        #expect(first == 0.010 && crest == 0.016)
+        #expect(DiamondTimePickupRhythm.shake(age: 0, level: 5) > crest)
+        #expect(DiamondTimePickupRhythm.shake(age: 0.08, level: 3) < 0)
+        #expect(abs(DiamondTimePickupRhythm.shake(age: 0.18, level: 3)) < crest)
         #expect(DiamondTimePickupRhythm.shake(age: -0.025, level: 3) == 0)
-        let crest = DiamondTimePickupRhythm.shake(age: 0.025, level: 3)
-        #expect(crest > 0 && crest < 0.006)
-        #expect(DiamondTimePickupRhythm.shake(age: 0.025, level: 5) > crest)
-        #expect(abs(DiamondTimePickupRhythm.shake(age: 0.125, level: 3)) < crest)
-        #expect(DiamondTimePickupRhythm.shake(age: 0.20, level: 5) == 0)
+        #expect(DiamondTimePickupRhythm.shake(age: 0.24, level: 5) == 0)
     }
 }

@@ -260,6 +260,36 @@ import Testing
         #expect(board.renderedIDs.isEmpty)
     }
 
+    @Test func simultaneousPawPickupsKeepAllConfirmationsAndLimitFullBursts() async throws {
+        let scene = LaserScene()
+        scene.installDiamondArt(try #require(await LaserScene.loadDiamondArtwork()))
+        let board = PawBoardDiamondPresentation()
+        let hand = LaserContactHand(playerID: .player1, wrist: .left)
+        let targets = try (0..<4).map { index in
+            let spawn = try LaserDiamondSpawn(id: UUID(), position: .init(x: Double(index), y: 0.5),
+                                            eligiblePlayers: [.player1], spawnedAt: 0, entry: 0, exit: 20)
+            return LaserDiamondState(spawn: spawn, lifetime: .diamondTime(deadline: 20),
+                                     outcome: .collected(hand: hand, at: 1))
+        }
+        let states = Dictionary(uniqueKeysWithValues: targets.map { ($0.spawn.id, $0) })
+        var confirmed: Set<UUID> = []
+        board.update(states: states, time: 1, scene: scene, onCollected: { id, _ in confirmed.insert(id) }) { position in
+            .init(position: [Float(position.x), 1, -1], rotation: simd_quatf(angle: 0, axis: [0, 1, 0]),
+                  radius: 0.08, cameraPosition: [0, 1, 2])
+        }
+        #expect(confirmed == Set(states.keys))
+        let bursts = targets.compactMap { target in
+            scene.root.findEntity(named: "diamondTime.pawBoard.\(target.spawn.id)")?
+                .findEntity(named: "diamond.passageBurst")
+        }
+        #expect(bursts.count == 2)
+        #expect(bursts.allSatisfy { burst in
+            burst.children.filter { $0.name == "diamond.pickupShard" }.allSatisfy {
+                ($0 as? ModelEntity)?.model?.materials.count == 1
+            }
+        })
+    }
+
     @Test func passageBurstUsesEightShardsAndResetsCleanly() async throws {
         let art = try await art()
         let passage = art.makeDiamond(passage: true)

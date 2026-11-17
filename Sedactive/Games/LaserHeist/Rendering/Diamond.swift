@@ -122,13 +122,13 @@ final class Diamond {
         return aura
     }()
 
-    private static func flashMaterial(_ entity: Entity, color: UIColor = UIColor(red: 0.7, green: 0.95, blue: 1, alpha: 1)) {
+    private static func flashMaterial(_ entity: Entity) {
         if let model = entity as? ModelEntity {
             model.model?.materials = model.model?.materials.map { _ in
-                UnlitMaterial(color: color)
+                UnlitMaterial(color: UIColor(red: 0.7, green: 0.95, blue: 1, alpha: 1))
             } ?? []
         }
-        for child in entity.children { flashMaterial(child, color: color) }
+        for child in entity.children { flashMaterial(child) }
     }
 
     func showIdle(reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled) {
@@ -243,7 +243,7 @@ final class Diamond {
         return (bounds.center, max(bounds.extents.x, bounds.extents.y, bounds.extents.z) / 2)
     }
 
-    func collect(reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled) {
+    func collect(reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled, fullBurst: Bool = true) {
         guard phase == .ready || phase == .idle else { return }
         phase = .collected
         passageRim?.isEnabled = false
@@ -261,6 +261,7 @@ final class Diamond {
         var halo = contactPose; halo.scale = .init(repeating: passage ? 1.35 : 1.08)
         flash.transform = halo
         fade(flash, from: 0.65, to: 0, duration: 0.10)
+        guard fullBurst else { return }
         for (sparkle, direction) in zip(sparkles, [SIMD2<Float>(1, 1), [-1, 1], [1, -1], [-1, -1]]) {
             var start = Transform.identity; start.scale = .init(repeating: passage ? 0.48 : 0.25)
             var end = Transform.identity; end.scale = .init(repeating: 0.08)
@@ -289,6 +290,20 @@ final class Diamond {
         return try? MeshResource.generate(from: [ring])
     }()
 
+    /// One shared, single-material mesh instead of cloning the nine-facet gem per shard.
+    private static let shardMesh: MeshResource? = {
+        var shard = MeshDescriptor(name: "diamond.pickupShard")
+        shard.positions = MeshBuffers.Positions([
+            [0, 0.15, 0], [0.11, 0.025, 0], [0, 0.025, 0.09],
+            [-0.11, 0.025, 0], [0, 0.025, -0.09], [0, -0.14, 0]
+        ])
+        shard.primitives = .triangles([
+            0, 2, 1, 0, 3, 2, 0, 4, 3, 0, 1, 4,
+            5, 1, 2, 5, 2, 3, 5, 3, 4, 5, 4, 1
+        ])
+        return try? MeshResource.generate(from: [shard])
+    }()
+
     private func showPassageBurst() {
         let effect = Entity()
         effect.name = "diamond.passageBurst"
@@ -304,13 +319,11 @@ final class Diamond {
             fade(ring, from: 0.95, to: 0, duration: 0.26)
         }
 
+        guard let mesh = Self.shardMesh else { return }
         let colors: [UIColor] = [.systemCyan, .white, .systemYellow, .systemPink]
         for index in 0..<8 {
-            let shard = gem.clone(recursive: true)
-            shard.stopAllAnimations(recursive: true)
-            shard.components.remove(OpacityComponent.self)
+            let shard = ModelEntity(mesh: mesh, materials: [UnlitMaterial(color: colors[index % colors.count])])
             shard.name = "diamond.pickupShard"
-            Self.flashMaterial(shard, color: colors[index % colors.count])
             effect.addChild(shard)
             let angle = Float(index) * .pi / 4 + .pi / 8
             let direction = SIMD3<Float>(cos(angle), sin(angle), 0.18 + 0.09 * Float(index % 3))
