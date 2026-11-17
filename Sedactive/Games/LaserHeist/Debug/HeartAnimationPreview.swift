@@ -2,6 +2,7 @@
 import Foundation
 import Observation
 import RealityKit
+import RealityKitContent
 import SwiftUI
 
 /// Explicit visual-only corridor fixture. It creates no game session, input or reward events.
@@ -16,6 +17,7 @@ final class HeartAnimationPreview {
     @ObservationIgnored private var art: HeartArt?
     @ObservationIgnored private weak var scene: LaserScene?
     @ObservationIgnored private var request: UUID?
+    @ObservationIgnored private var approvedReference: Entity?
 
     func start(scene: LaserScene, generation: UUID) async throws {
         stop()
@@ -29,17 +31,31 @@ final class HeartAnimationPreview {
         self.generation = generation
         collections = 0
         scene.isLaserVisible = false
-        showAnother()
+        if ProcessInfo.processInfo.arguments.contains("-heartColorSource") {
+            // Direct approved resource, without HeartArt/HeartCollectible wrappers or overrides.
+            let reference = try await Entity(named: "Heart3D.usdz", in: realityKitContentBundle)
+            guard !Task.isCancelled, request == token else { return }
+            reference.position = [0, 1.8, 0.1]
+            scene.root.addChild(reference)
+            approvedReference = reference
+            status = "Original approved asset"
+        } else {
+            showAnother()
+        }
     }
 
     func showAnother(reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled) {
         guard let art, let scene, let generation else { return }
+        approvedReference?.removeFromParent()
+        approvedReference = nil
         heart?.retire()
         let next = art.makeHeart(generation: generation)
         next.root.position = [0, 1.8, 0.1]
         scene.root.addChild(next.root)
         heart = next
-        next.showIdle(reduceMotion: reduceMotion)
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-heartColorBefore") { next.useDefaultEnvironmentForComparison() }
+        next.showIdle(reduceMotion: reduceMotion || arguments.contains("-heartColorStill"))
         status = "Idle"
     }
 
@@ -61,6 +77,8 @@ final class HeartAnimationPreview {
 
     func stop() {
         request = nil
+        approvedReference?.removeFromParent()
+        approvedReference = nil
         heart?.retire()
         heart = nil
         art = nil

@@ -48,6 +48,9 @@ final class HeartCollectible {
     private let flash: Entity
     private let sparkles: [ModelEntity]
     private var collectedAt: TimeInterval?
+    // Use the same neutral fill as the PBR mascots, not RealityView's bright default IBL.
+    // Cache the immutable environment; each Heart retains its own receiver/light ownership.
+    private static let neutralEnvironment = RobotAvatarLayer.neutralEnvironment()
 
     fileprivate init(artwork: Entity, generation: UUID, target: UUID) {
         self.artwork = artwork
@@ -70,8 +73,20 @@ final class HeartCollectible {
         body.addChild(artwork)
         body.addChild(flash)
         for sparkle in sparkles { root.addChild(sparkle) }
+        if let environment = Self.neutralEnvironment {
+            root.components.set(ImageBasedLightComponent(source: .single(environment)))
+            body.components.set(ImageBasedLightReceiverComponent(imageBasedLight: root))
+        }
         // Preserve all authored asset transforms, dimensions, pivot and materials.
     }
+
+    #if DEBUG
+    /// Matched actual-scene comparison only; production always uses the neutral fill above.
+    func useDefaultEnvironmentForComparison() {
+        body.components.remove(ImageBasedLightReceiverComponent.self)
+        root.components.remove(ImageBasedLightComponent.self)
+    }
+    #endif
 
     /// Future HUD projection starts from the rendered heart, never physical wrist coordinates.
     /// No HUD reward is emitted here; an authoritative pickup contract is still required.

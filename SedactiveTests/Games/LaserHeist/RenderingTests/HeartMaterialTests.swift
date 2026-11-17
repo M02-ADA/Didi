@@ -1,0 +1,48 @@
+import Foundation
+import RealityKit
+import Testing
+import UIKit
+@testable import Sedactive
+
+@MainActor struct HeartMaterialTests {
+    @Test func approvedPaletteRemainsPBRWithFourDistinctAuthoredColors() async throws {
+        let heart = try await HeartArt.load().makeHeart(generation: UUID())
+        let mesh = try #require(heart.root.findEntity(named: "GEO_LH_Heart") as? ModelEntity)
+        let expected: [[CGFloat]] = [
+            [0.887923, 0.068478, 0.088656], [0.830770, 0.052861, 0.070360],
+            [0.737910, 0.039546, 0.063010], [0.658375, 0.043735, 0.066626]
+        ]
+        let materials = try #require(mesh.model).materials
+        #expect(materials.count == 4)
+        for (index, value) in materials.enumerated() {
+            let m = try #require(value as? PhysicallyBasedMaterial)
+            let color = try #require(m.baseColor.tint.cgColor.converted(
+                to: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!, intent: .relativeColorimetric, options: nil)?.components)
+            for channel in 0..<3 { #expect(abs(color[channel] - expected[index][channel]) < 0.00001) }
+            #expect(m.roughness.scale == 0.6 && m.metallic.scale == 0)
+            #expect(m.specular.scale == 0.5)
+            let emission = try #require(m.emissiveColor.color.cgColor.components)
+            #expect(emission.prefix(3).allSatisfy { abs($0) < 0.00001 })
+            print("HEART_PBR \(index) color=\(color) roughness=\(m.roughness.scale) specular=\(m.specular.scale) emissionColor=\(m.emissiveColor.color.cgColor) intensity=\(m.emissiveIntensity)")
+        }
+        #expect(heart.root.findEntity(named: "heart.flash")?.isEnabled == false)
+    }
+
+    @Test func neutralFillIsScopedToEachHeartAndDoesNotLeakToOtherEntities() async throws {
+        let art = try await HeartArt.load()
+        let a = art.makeHeart(generation: UUID()), b = art.makeHeart(generation: UUID())
+        let host = Entity(); host.addChild(a.root); host.addChild(b.root)
+        let first = try #require(a.root.findEntity(named: "heart.body"))
+        let second = try #require(b.root.findEntity(named: "heart.body"))
+        #expect(a.root.components[ImageBasedLightComponent.self] != nil)
+        #expect(b.root.components[ImageBasedLightComponent.self] != nil)
+        #expect(try #require(first.components[ImageBasedLightReceiverComponent.self]).imageBasedLight === a.root)
+        #expect(try #require(second.components[ImageBasedLightReceiverComponent.self]).imageBasedLight === b.root)
+        #expect(host.components[ImageBasedLightReceiverComponent.self] == nil)
+        a.useDefaultEnvironmentForComparison()
+        #expect(first.components[ImageBasedLightReceiverComponent.self] == nil)
+        #expect(second.components[ImageBasedLightReceiverComponent.self] != nil)
+        a.retire()
+        #expect(a.root.parent == nil && b.root.parent === host)
+    }
+}
