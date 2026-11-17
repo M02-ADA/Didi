@@ -67,6 +67,8 @@ final class VaultPresentation {
         var sideCompletions = 0
         /// Vaults that began while the previous opened door was still in view.
         var handoffs = 0
+        /// Approach glides started by a time left that dropped faster than game time (`glide`).
+        var catchUps = 0
         /// Pop animations played (none with Reduce Motion).
         var pops = 0
     }
@@ -289,6 +291,7 @@ final class VaultPresentation {
     /// Forgets the current vault, e.g. for a new session generation.
     func reset() {
         hideAll()
+        corridorCatchUp = 0
         vaultID = nil
         anchor = nil
         openedID = nil
@@ -387,7 +390,7 @@ final class VaultPresentation {
     private func approach(state: LaserGameState, upcomingVaultIn lead: Double?) -> Bool {
         guard state.phase == .activity, let lead, lead > 0 else { return false }
         // Eased like the corridor's own travel (`GateTravelEase`): it slows to a stop at the gate.
-        let distance = min(GateTravelEase.distance(lead: lead, speed: scene.layout.travelSpeed), approachDistance)
+        let target = min(GateTravelEase.distance(lead: lead, speed: scene.layout.travelSpeed), approachDistance)
         // The previous vault's opened door must have passed out of view first:
         // there is one door.
         if let vault = state.vault, !(vault.id == vaultID && openedID == vaultID && (approaching || scene.vaultDoorDepth == nil)) {
@@ -400,7 +403,11 @@ final class VaultPresentation {
             scene.resetVaultDoor()
             scene.showVaultDoorOpaque()
             diagnostics.approaches += 1
+            approachLead = nil
+            catchUp = nil
+            catchUpGap = 0
         }
+        let distance = target + glide(lead: lead, target: target, at: state.gameTime)
         scene.setVaultDoorDepth(doorStopZ - distance)
         // The wall consoles (all red) come in with the door, a fixed distance in front of it; nothing
         // is judged until the gate opens.
@@ -408,6 +415,61 @@ final class VaultPresentation {
         consoleRide(-distance)
         if consoleMode { scene.robotAvatars?.docksActive = lead <= Self.dockLead }
         return true
+    }
+
+    // MARK: Lead jumps (gate pop-in)
+
+    /// GATE POP-IN (iPad, 14 November 2026): the door is placed from the activity time left before its
+    /// vault (`approach`), so it moves exactly with the corridor while that time runs down with game
+    /// time. When the time left drops faster than game time — DEBUG "Skip to Next Gate" shortens the
+    /// minute, 56 s → 5 s in one frame — the door had jumped from the corridor's far end to ~25 m
+    /// away. Now the jump is covered: the door keeps its place and closes the gap over `catchUp`'s
+    /// eased glide, and the corridor (walls, ribs, floor) travels the same distance at the same moment
+    /// (`corridorCatchUp`), so the door stays fixed in the corridor and the team fast-forwards to it.
+    /// Lasers, diamonds and every judged position are untouched (they never read this distance), and
+    /// the gate still starts exactly at its time: the glide ends before `catchUpLeadShare` of the time left.
+    static let catchUpSkip: Double = 0.25
+    static let catchUpSpeed: Float = 45
+    static let catchUpDuration: ClosedRange<Double> = 0.6...1.2
+    static let catchUpLeadShare: Double = 0.6
+
+    /// The last approach frame's time left and game time.
+    private var approachLead: (lead: Double, time: Double)?
+    /// The running glide: the gap it started with, when, and for how long.
+    private var catchUp: (from: Float, start: Double, duration: Double)?
+    /// The gap shown on the last frame (m): how much further than its time-left place the door stands.
+    private var catchUpGap: Float = 0
+    /// Cosmetic corridor travel the glides have added (m); the presenter adds it to the corridor's travel.
+    private(set) var corridorCatchUp: Float = 0
+
+    /// This frame's gap: a new glide when the time left dropped faster than game time, then eased to 0
+    /// (smoothstep: the corridor speeds up and slows down again). The gap closed this frame is added
+    /// to `corridorCatchUp`. Reduce Motion: no glide (the door is placed at once, as before).
+    private func glide(lead: Double, target: Float, at time: Double) -> Float {
+        defer { approachLead = (lead, time) }
+        if let last = approachLead, !reducesMotion() {
+            let expected = last.lead - max(0, time - last.time)
+            if expected - lead > Self.catchUpSkip {
+                let jump = min(GateTravelEase.distance(lead: expected, speed: scene.layout.travelSpeed), approachDistance) - target
+                if jump > 0.01 {
+                    let from = catchUpGap + jump
+                    let duration = min(max(Double(from / Self.catchUpSpeed), Self.catchUpDuration.lowerBound),
+                                       Self.catchUpDuration.upperBound, lead * Self.catchUpLeadShare)
+                    catchUp = (from, time, duration)
+                    catchUpGap = from
+                    diagnostics.catchUps += 1
+                }
+            }
+        }
+        var gap: Float = 0
+        if let glide = catchUp {
+            let e = Float(min(max((time - glide.start) / max(glide.duration, 1e-3), 0), 1))
+            gap = glide.from * (1 - e * e * (3 - 2 * e))
+            if e >= 1 { catchUp = nil }
+        }
+        corridorCatchUp += max(0, catchUpGap - gap)
+        catchUpGap = gap
+        return gap
     }
 
     private func revealConsolesEarly() {

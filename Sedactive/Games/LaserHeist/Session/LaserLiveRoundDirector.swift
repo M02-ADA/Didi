@@ -100,6 +100,8 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
     private let minutes: [[LaserEncounter]]
     private let vaultZones: [PlayerID: [LaserVaultButton: (position: LaserDiamondPosition, radius: Double)]]
     private(set) var planner: LaserDiamondPlanner
+    /// Each player's lane and accepted standing height: what the round's boards are steered from.
+    let boardReferences: [PlayerID: LaserBoardField.Reference]
     private(set) var minute = 0
     /// Game time at which the current minute began, or nil before it begins.
     private(set) var minuteStart: Double?
@@ -109,6 +111,15 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
 
     /// The current minute's vault time, once the minute has begun.
     var vaultBoundary: Double? { minuteStart.map { $0 + segmentLength } }
+
+    /// How far the current stage (minute) has run toward its gate at game time `time`, 0…1: the
+    /// HUD's continuous progress, from this director's own timeline (a DEBUG skip shortens it, a
+    /// recovery delays it). 0 before the minute begins and once its vault has been opened (the
+    /// next minute begins on the next due check); 1 from the boundary until the vault opens.
+    func stageFraction(at time: Double) -> Double {
+        guard let start = minuteStart, !vaultOpened, segmentLength > 0 else { return 0 }
+        return min(1, max(0, (time - start) / segmentLength))
+    }
     var isFinishedPlanning: Bool { minute >= minutes.count }
 
     /// - Parameters:
@@ -140,7 +151,7 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
             guard timing.finalizationTime(crossing: crossing - Double(index) * 60) < segmentLength else { continue }
             minutes[index].append(encounter)
         }
-        self.minutes = minutes.map { $0.sorted { $0.targets[0].warningTime < $1.targets[0].warningTime } }
+        self.minutes = minutes.map { $0.sorted { Self.registrationTime($0) < Self.registrationTime($1) } }
         try requireLaserValue(self.minutes.allSatisfy { !$0.isEmpty }, "every minute has encounters")
         self.configuration = configuration; self.layout = layout; self.segmentLength = segmentLength
         baseEncounters = self.minutes.flatMap { $0 }
@@ -161,10 +172,16 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
             }
         }
         vaultZones = zones
+        boardReferences = Dictionary(uniqueKeysWithValues: roster.map { player in
+            (player, LaserBoardField.Reference(planeLaneX: layout.centerX(for: player), standingHeight: heights[player]!))
+        })
         // One radius for the round's diamonds: the shorter player's, so neither gets a bigger target.
         diamondRadius = LaserLiveRoundGeometryV1.diamondRadiusShare * (heights.values.min() ?? 0)
         planner = try LaserDiamondPlanner(seed: seed, placements: placements, approachLead: 0.5, passageDuration: 1)
     }
+
+    /// The round's hoverboards as game state, at rest on their lanes (`LaserGame.configureBoards`).
+    func boards() throws -> LaserBoardField { try LaserBoardField(references: boardReferences) }
 
     /// Fresh, round-unique attempt identities for rebased or recovered encounters.
     private mutating func nextAttempt() -> UUID {
@@ -173,11 +190,21 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
     }
 
     private func shifted(_ encounter: LaserEncounter, by delta: Double, attempt: UUID) throws -> LaserEncounter {
-        try LaserEncounter(id: encounter.id, attemptID: attempt, targets: encounter.targets.map {
-            try LaserTarget(playerID: $0.playerID, calibrationRevision: $0.calibrationRevision,
-                            requiredMove: $0.requiredMove, beam: $0.beam,
-                            warningTime: $0.warningTime + delta, crossingTime: $0.crossingTime + delta)
-        }, roster: Set(encounter.targets.map(\.playerID)))
+        try LaserEncounter(id: encounter.id, attemptID: attempt, targets: encounter.targets.map { try $0.shifted(by: delta) },
+                           roster: Set(encounter.targets.map(\.playerID)))
+    }
+
+    /// When an encounter is registered: at its warning, or for one with a LEAN target
+    /// `LaserBoardGeometry.revealLead` before its crossing, when its beam is placed and first shown.
+    /// A combined encounter's full-width horizontal laser is registered with its vertical layer
+    /// (`layerGap` earlier, at the layer's reveal), so both hazards are on screen together from the
+    /// start of the sequence: it waits armed and unpowered behind the vertical beam until its own
+    /// warning. Its warning, cue, crossing and judgment are unchanged.
+    static func registrationTime(_ encounter: LaserEncounter) -> Double {
+        let own = encounter.targets.map { $0.requiredMove == .lean ? $0.crossingTime - LaserBoardGeometry.revealLead : $0.warningTime }.min()!
+        guard LaserWaveBeat.layeredHorizontalIDs.contains(encounter.id) else { return own }
+        let layerReveal = encounter.targets.map(\.crossingTime).min()! - LaserWaveBeat.layerGap - LaserBoardGeometry.revealLead
+        return min(own, layerReveal)
     }
 
     /// Begins the current minute at `time`: rebases its encounters and plans its diamonds.
@@ -186,7 +213,7 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
         var planned: [(Double, Action)] = []
         for encounter in minutes[minute] {
             let moved = try shifted(encounter, by: time - base, attempt: nextAttempt())
-            planned.append((moved.targets[0].warningTime, .register(moved)))
+            planned.append((max(time, Self.registrationTime(moved)), .register(moved)))
         }
         let boundary = time + segmentLength
         // Show gems about 22 metres away at the default corridor speed

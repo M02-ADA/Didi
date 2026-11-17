@@ -807,8 +807,43 @@ final class RobotAvatarLayer {
         hits = [:]
         unreactedJoints = [:]
         for zap in zaps.values { zap.hide() }
-        for player in players { applyScripted(player) }
+        for player in players { applyScripted(player); restoreBodyMaterials(player) }
     }
+
+    /// Each struck mascot's own materials as authored, kept while a HIT tints them.
+    private var restMaterials: [PlayerID: [any RealityKit.Material]] = [:]
+    /// The (flash, charge) last applied, so an unchanged tint is not re-assigned.
+    private var shownCharge: [PlayerID: SIMD2<Float>] = [:]
+
+    /// The zap ON the mascot: its own surface emits the impact flash, then the coral charge
+    /// (`LaserHitZap.bodyTint`), over its authored colours. Only the emission changes, so
+    /// Lemon and Tangerine stay recognisable; the authored materials come back exactly after.
+    private func showBodyCharge(_ player: PlayerID, robot: Robot, frame: LaserHitReaction.Frame) {
+        guard frame.bodyFlash > 0.002 || frame.charge > 0.002 else { restoreBodyMaterials(player); return }
+        guard var model = robot.model.model else { return }
+        let value = SIMD2(frame.bodyFlash, frame.charge)
+        if let shown = shownCharge[player], simd_distance(shown, value) < 0.004 { return }
+        let authored = restMaterials[player] ?? model.materials
+        restMaterials[player] = authored
+        shownCharge[player] = value
+        let tint = LaserHitZap.bodyTint(flash: frame.bodyFlash, charge: frame.charge)
+        model.materials = authored.map { material in
+            guard var surface = material as? PhysicallyBasedMaterial else { return material }
+            surface.emissiveColor = .init(color: tint.color)
+            surface.emissiveIntensity = tint.intensity
+            return surface
+        }
+        robot.model.model = model
+    }
+
+    private func restoreBodyMaterials(_ player: PlayerID) {
+        shownCharge[player] = nil
+        guard let authored = restMaterials.removeValue(forKey: player) else { return }
+        robots[player]?.model.model?.materials = authored
+    }
+
+    /// Whether a mascot's own surface is tinted by a HIT now (tests).
+    func isBodyCharged(_ player: PlayerID) -> Bool { restMaterials[player] != nil }
 
     /// The render time each mascot was last presented at (the reaction's clock).
     private var lastPresented: [PlayerID: Double] = [:]
@@ -824,6 +859,7 @@ final class RobotAvatarLayer {
             hits[player] = nil
             unreactedJoints[player] = nil
             zaps[player]?.hide()
+            restoreBodyMaterials(player)
             return nil
         }
         hit.frame = hit.reaction.frame(at: tau)
@@ -1543,7 +1579,10 @@ final class RobotAvatarLayer {
         var consoles: [PlayerID: LaserGateConsole] = [:]
         for player in players {
             consoles[player] = LaserGateConsole(player: player, arm: arm, visibleHalfWidth: visible,
-                                                wallHalfWidth: layout.corridorWidth / 2, planeZ: scene.mapping.interactionPlaneZ)
+                                                // A free-standing unit on the corridor floor; its face (and the dock)
+                                                // stays where the camera's view puts it, inside the walls.
+                                                wallHalfWidth: layout.environmentWidth / 2, planeZ: scene.mapping.interactionPlaneZ,
+                                                floorY: layout.corridorFloorY)
         }
         return consoles
     }
@@ -1607,6 +1646,16 @@ final class RobotAvatarLayer {
             steerTargets[player] = inputs[player]?.targetSpeed ?? 0
         }
         steering.step(dt: dt, inputs: inputs)
+        // Authoritative board positions (game state) replace the presentation steering for their
+        // riders; the others steer as before.
+        for (player, x) in authoritativeBoardX where robots[player] != nil { steering.place(player, boardX: x) }
+        #if DEBUG
+        if let a = authoritativeBoardX[.player1], let b = authoritativeBoardX[.player2],
+           b - a < steering.minimumSeparation - 1e-3 {
+            print(String(format: "[VerticalLaser] authoritative boards overlap: P1 %+.3f P2 %+.3f (minimum %.2f)",
+                         a, b, steering.minimumSeparation))
+        }
+        #endif
         self.steering = steering
         for player in robots.keys {
             guard let x = steering.boardX(player) else { continue }
@@ -1632,6 +1681,10 @@ final class RobotAvatarLayer {
 
     /// Lean steering: the riders' travel, velocity and limits (nil without boards).
     private(set) var steering: LateralSteering?
+    /// Board centres' world X from game state (vertical laser contract, PROPOSED 16 November 2026),
+    /// set each frame by the caller. A rider listed here is drawn exactly there and its lean does not
+    /// move it; an empty map (today's gameplay) keeps the presentation steering. Display only.
+    var authoritativeBoardX: [PlayerID: Float] = [:]
     private var lastSteer: Double?
 
     /// A mascot's tracked root X on its lane (metres from the lane centre), before any scripted move.
@@ -1802,7 +1855,10 @@ final class RobotAvatarLayer {
         if showsFairnessMarkers { updateFairnessMarkers(player) }
         #endif
         applyScripted(player)
-        if let hit { showZap(player, robot: robot, reaction: hit.0, frame: hit.1, tau: hit.2) }
+        if let hit {
+            showZap(player, robot: robot, reaction: hit.0, frame: hit.1, tau: hit.2)
+            showBodyCharge(player, robot: robot, frame: hit.1)
+        }
         #if DEBUG
         logSteering(player, time: time, trunk: t.lean, bank: hoverboards[player]?.motion.bank ?? 0, tracked: r.isAvailable)
         #endif
@@ -1918,6 +1974,7 @@ final class RobotAvatarLayer {
         #endif
         hits = [:]
         unreactedJoints = [:]
+        for player in Array(restMaterials.keys) { restoreBodyMaterials(player) }
         for zap in zaps.values { zap.root.removeFromParent() }
         zaps = [:]
         robots = [:]

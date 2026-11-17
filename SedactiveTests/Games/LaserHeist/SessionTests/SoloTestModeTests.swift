@@ -190,6 +190,7 @@ import Testing
             calibrationRevisions: [.player1: calibration.revision], cutovers: [:], isActive: true, wristContact: nil)
         var game = try LaserGame(configuration: configuration, context: context, historyCapacityPerPlayer: 120)
         game.soloPracticePlayer = .player1
+        game.configureBoards(try director.boards())
         return (director, game, context, calibration.revision)
     }
 

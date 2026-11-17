@@ -22,6 +22,16 @@ struct LaserWorldLayout {
     // the camera) down to `corridorFarZ`. The corridor floor sits below the
     // game floor (y = 0, the players' feet) so the hoverboard can hover.
     var corridorWidth: Float = 6.3
+    /// How much wider the visible corridor is than `corridorWidth`: 1.4, 8.82 m (Kevin, 14 November
+    /// 2026: the corridor read too narrow for two players dodging sideways; 1.4 chosen by the team
+    /// over 1.25 for room to dodge vertical lasers). Presentation only: the walls,
+    /// ribs, floor, ceiling, runway lights, haze, laser mounts and beams and the vault doors'
+    /// surrounds use `environmentWidth`. `corridorWidth` stays the playfield the gameplay-coupled
+    /// pieces were built for (lean steering bounds, the wall consoles, the lanes, the final vault's
+    /// art and room), so no movement range or judgment changes. Temporary tuning value, from
+    /// Simulator frames; DEBUG builds take `-corridorWidthScale <factor>` to compare.
+    var environmentWidthScale: Float = Self.defaultEnvironmentWidthScale
+    var environmentWidth: Float { corridorWidth * environmentWidthScale }
     var corridorHeight: Float = 3.14
     var corridorFloorY: Float = -0.45
     var corridorNearZ: Float = 6
@@ -73,6 +83,17 @@ struct LaserWorldLayout {
     // Where a vault door halts in front of the players. The authored
     // `VaultDoorStop` anchor overrides this fallback.
     var vaultDoorStopZ: Float = -7.5
+
+    static var defaultEnvironmentWidthScale: Float {
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if let index = arguments.firstIndex(of: "-corridorWidthScale"), index + 1 < arguments.count,
+           let scale = Float(arguments[index + 1]), scale >= 1 {
+            return scale
+        }
+        #endif
+        return 1.4
+    }
 }
 
 /// Builds and owns the LaserHeist RealityKit world: camera, corridor, player
@@ -157,7 +178,7 @@ final class LaserScene {
         self.layout = layout
         self.mapping = mapping
         // Laser mounts sit just off the walls, matching the authored `LaserMount_*` anchors.
-        let mountX = layout.corridorWidth / 2 - LaserGate.wallInset
+        let mountX = layout.environmentWidth / 2 - LaserGate.wallInset
         laserSpan = -mountX...mountX
         let band = (layout.laserHeightAboveFloor - layout.laserCoreThickness / 2)...(layout.laserHeightAboveFloor + layout.laserCoreThickness / 2)
         laser = LaserHazard(name: "laser", span: laserSpan, band: band, mapping: mapping,
@@ -233,6 +254,7 @@ final class LaserScene {
             if !keepEditorPreviews {
                 authored.findEntity(named: Self.editorPreviewsName)?.removeFromParent()
             }
+            CorridorWidening.widen(authored, from: layout.corridorWidth, to: layout.environmentWidth)
             applyAnchors(from: authored)
             liveCutouts?.setMapping(mapping)
             travel = authored.findEntity(named: "Travel")
@@ -488,7 +510,8 @@ final class LaserScene {
     // MARK: - Vault door and diamonds
 
     func installVaultDoor(_ artwork: Entity?) {
-        guard vaultDoor == nil, let artwork, let door = VaultDoor(artwork: artwork) else { return }
+        guard vaultDoor == nil, let artwork, let door = VaultDoor(artwork: artwork, wallHalfWidth: layout.environmentWidth / 2)
+        else { return }
         vaultButtonArt = Self.vaultButtonTemplates(in: artwork)
         vaultDoor = door
         door.root.name = "vaultDoor"
@@ -746,10 +769,27 @@ final class LaserScene {
         return camera
     }
 
+    // MARK: - Camera dolly
+
+    /// How far the scene camera stands from its gameplay pose (`layout.cameraPosition`), keeping
+    /// its aim: a pure translation. Zero in gameplay. Only the final vault's push through the
+    /// doorway moves it (`FinalVaultPresentation`, 14 November 2026), and it is zero again before
+    /// Diamond Time starts. Presentation only: gameplay never reads the camera.
+    private(set) var cameraDolly: SIMD3<Float> = .zero
+
+    /// Where the scene camera is now (world).
+    var cameraWorldPosition: SIMD3<Float> { layout.cameraPosition + cameraDolly }
+
+    func setCameraDolly(_ offset: SIMD3<Float>) {
+        guard offset != cameraDolly, let camera = root.findEntity(named: "camera") else { return }
+        cameraDolly = offset
+        camera.setPosition(layout.cameraPosition + offset, relativeTo: nil)
+    }
+
     private func makeCorridor() -> Entity {
         let corridor = Entity()
         corridor.name = "corridor"
-        let width = layout.corridorWidth
+        let width = layout.environmentWidth
         let floorY = layout.corridorFloorY
         let height = layout.corridorHeight - floorY
         let middleY = (layout.corridorHeight + floorY) / 2
@@ -788,7 +828,7 @@ final class LaserScene {
     private func makeFixtureRing(atZ z: Float) -> Entity {
         let ring = Entity()
         ring.position.z = z
-        let width = layout.corridorWidth
+        let width = layout.environmentWidth
         let floorY = layout.corridorFloorY
         let height = layout.corridorHeight - floorY
         let rib = MeshResource.generateBox(size: [0.07, height, 0.07])

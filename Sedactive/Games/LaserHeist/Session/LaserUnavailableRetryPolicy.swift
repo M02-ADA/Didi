@@ -40,6 +40,11 @@ nonisolated struct LaserUnavailableRetryPolicy: Sendable {
             case .clear, .hit:
                 reviewed.insert(key)
                 consecutive[player] = 0
+            case .unavailable(.noSafePlacement):
+                // A LEAN beam with no guaranteed way out: the level's doing, not tracking. Unscored and
+                // final, never counted toward a pause (`LaserLeanPlacement`).
+                reviewed.insert(key)
+                forgiven.insert(key.encounterID)
             case .unavailable(let reason):
                 reviewed.insert(key)
                 consecutive[player, default: 0] += 1

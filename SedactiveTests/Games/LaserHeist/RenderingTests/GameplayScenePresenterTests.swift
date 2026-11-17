@@ -49,7 +49,10 @@ struct GameplayScenePresenterTests {
 
     // MARK: - Per-player lasers
 
-    @Test func eachPlayerSeesTheirOwnBandInTheirOwnLane() throws {
+    /// Each player's target keeps its own judged band, but one laser is ONE beam (17 November 2026):
+    /// without the mascots' normalized bands it is drawn once, wall to wall, at the most demanding
+    /// band (a DUCK's lowest), never as two lane halves at two heights.
+    @Test func eachPlayersTargetKeepsItsBandAndOneBeamIsDrawn() throws {
         let scene = LaserScene()
         let laser = try encounter(1, crossing: [.player1: 10, .player2: 10])
         let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [laser])
@@ -60,13 +63,11 @@ struct GameplayScenePresenterTests {
         #expect(presenter.visibleHazardCount == 2)
         #expect(abs(p1.band.lowerBound - 1.60) < 1e-5 && abs(p1.band.upperBound - 1.62) < 1e-5)
         #expect(abs(p2.band.lowerBound - 1.10) < 1e-5 && abs(p2.band.upperBound - 1.12) < 1e-5)
-        // The solid core is centred on each player's own band.
-        #expect(abs(p1.root.position.y - 1.61) < 1e-4 && abs(p2.root.position.y - 1.11) < 1e-4)
-        // P1 covers the left lane up to the boundary, P2 the right; inner emitters hidden.
-        #expect(p1.span.upperBound == p2.span.lowerBound)
-        #expect(p1.span.lowerBound < scene.mapping.playerPosition(.player1).x && p2.span.upperBound > scene.mapping.playerPosition(.player2).x)
-        #expect(p1.emittersShown.left && !p1.emittersShown.right)
-        #expect(!p2.emittersShown.left && p2.emittersShown.right)
+        // One beam: P2's gate (the lower DUCK band) spans the corridor with both walls' emitters.
+        #expect(presenter.drawingGate(for: key(laser, .player1)) === p2 && presenter.drawingGate(for: key(laser, .player2)) === p2)
+        #expect(p2.root.isEnabled && !p1.root.isEnabled)
+        #expect(abs(p2.root.position.y - 1.11) < 1e-4)
+        #expect(p2.span == scene.fullLaserSpan && p2.emittersShown.left && p2.emittersShown.right && p2.joinedBand == nil)
         // Gameplay hides the shared preview laser.
         #expect(!scene.isLaserVisible)
     }
@@ -225,7 +226,9 @@ struct GameplayScenePresenterTests {
                       event(2, 10.35, .targetJudged(encounterID: laser.id, playerID: .player2, judgement: .clear))]
         presenter.apply(state: state(10.4, [laser], judged: judged), events: events, snapshot: nil)
         #expect(presenter.hazard(for: key(laser, .player1))?.state == .hit)
-        #expect(presenter.hazard(for: key(laser, .player2))?.state == .disabled)
+        // One beam for both: its look is the most urgent of the two (P1's HIT flares it).
+        #expect(presenter.drawingGate(for: key(laser, .player2))?.state == .hit)
+        #expect(presenter.drawingGate(for: key(laser, .player1)) === presenter.drawingGate(for: key(laser, .player2)))
         presenter.apply(state: state(10.65, [laser], judged: judged), events: events, snapshot: nil)
         #expect(presenter.hazard(for: key(laser, .player1))?.state == .disabled)
         // Hidden once powered down.
@@ -359,36 +362,49 @@ struct GameplayScenePresenterTests {
         // two 5 s spacings, so three can be in view per player, plus headroom.
         let capacity = GameplayScenePresenter.capacity(for: schedule.encounters, configuration: configuration,
                                                        approachLead: GameplayScenePresenter.approachLead(in: LaserScene()))
-        #expect(capacity == [.player1: 4, .player2: 4])
+        // Horizontal gates only (LEAN beams are the vertical laser layer's): at most two in view per
+        // player in the five-stage script, plus headroom. The pool still grows if ever needed.
+        #expect(capacity == [.player1: 3, .player2: 3])
         // And the director really gives the two players different bands.
-        let first = try #require(schedule.encounters.first)
+        let first = try #require(schedule.encounters.first { $0.targets[0].requiredMove != .lean })
         #expect(first.targets[0].beam != first.targets[1].beam)
     }
 
     /// UNAVAILABLE is neither a pass nor a hit: a calm badge, no spark, and the gate powers down.
     // MARK: - One continuous beam (display only)
 
-    /// Both players facing one laser see one beam from wall to wall: each lane
-    /// half stays at its own player's band and joins the partner's at the
-    /// boundary, stepping between them. No band is moved and no emitter stands mid-corridor.
-    @Test func aSharedLaserJoinsIntoOneBeamAtEachPlayersOwnBand() throws {
+    /// Both players facing one laser see ONE continuous beam from wall to wall at one height: no
+    /// stepped halves (they read as HIGH on one side and LOW on the other). Following the drawn beam
+    /// clears both players' own bands: a DUCK is drawn at the lowest band, a JUMP at the highest.
+    @Test func aSharedLaserIsOneFullBeamAtTheMostDemandingBand() throws {
         let scene = LaserScene()
         let laser = try encounter(1, crossing: [.player1: 10, .player2: 10])
         let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [laser])
         presenter.apply(state: state(7.5, [laser]), events: [], snapshot: nil)
         let p1 = try #require(presenter.hazard(for: key(laser, .player1)))
         let p2 = try #require(presenter.hazard(for: key(laser, .player2)))
-        #expect(p1.root.isEnabled && p2.root.isEnabled)
+        #expect(!p1.root.isEnabled && p2.root.isEnabled, "one gate draws the laser")
         #expect(abs(p1.band.lowerBound - 1.60) < 1e-5 && abs(p2.band.lowerBound - 1.10) < 1e-5, "each band is the judged band")
-        #expect(p1.joinedBand == p2.band && p2.joinedBand == p1.band)
-        #expect(p1.span.upperBound == p2.span.lowerBound, "the halves meet at the lane boundary")
-        #expect(p1.emittersShown.left && !p1.emittersShown.right && !p2.emittersShown.left && p2.emittersShown.right)
-        #expect(p1.dangerSide == .above && p2.dangerSide == .above, "a DUCK's danger lies above the band")
+        #expect(presenter.sharedBeams == [key(laser, .player2)])
+        #expect(p2.span == scene.fullLaserSpan && p2.joinedBand == nil && p1.joinedBand == nil)
+        #expect(p2.emittersShown.left && p2.emittersShown.right)
+        #expect(p2.dangerSide == .above, "a DUCK's danger lies above the band")
         // Judgement stays per player: the targets themselves are unchanged.
         #expect(laser.targets.first { $0.playerID == .player1 }?.beam.lowerY == 1.60)
+
+        // A JUMP: the highest band.
+        let jump = try LaserEncounter(id: UUID(), attemptID: UUID(), targets: PlayerID.allCases.map { player in
+            let upper = player == .player1 ? 0.05 : 0.03
+            return try LaserTarget(playerID: player, calibrationRevision: 1, requiredMove: .jump,
+                                   beam: LaserBeamBand(lowerY: upper - 0.02, upperY: upper), warningTime: 17, crossingTime: 20)
+        })
+        let jumping = GameplayScenePresenter(scene: LaserScene(), configuration: try configuration(), encounters: [jump])
+        jumping.apply(state: state(17.5, [jump]), events: [], snapshot: nil)
+        let lead = try #require(jumping.drawingGate(for: key(jump, .player2)))
+        #expect(lead === jumping.hazard(for: key(jump, .player1)) && abs(lead.band.upperBound - 0.05) < 1e-5)
     }
 
-    /// Lasers that don't cross together can't be one beam: each half keeps a free inner end.
+    /// Lasers that don't cross together are not one laser: each is its own full beam, never joined.
     @Test func lasersCrossingApartAreNotJoined() throws {
         let scene = LaserScene()
         let laser = try encounter(1, crossing: [.player1: 10, .player2: 10.5])

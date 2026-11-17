@@ -37,7 +37,7 @@ import Testing
         players[.player2] = PlayerBodySample(playerID: s.playerID, calibrationRevision: s.calibrationRevision,
             trackingStatus: s.trackingStatus, geometry: .init(crownY: g.crownY, leftWristY: g.leftWristY,
                 rightWristY: g.rightWristY, leftSoleY: try EstimatedScalar(value: nil, validity: .missingLandmarks),
-                rightSoleY: g.rightSoleY, centerX: g.centerX), jumpState: s.jumpState)
+                rightSoleY: g.rightSoleY, centerX: g.centerX, trunkLeanX: g.trunkLeanX), jumpState: s.jumpState)
         return players
     }
 
@@ -75,7 +75,8 @@ import Testing
         while time < start + 30 {
             frames += 1
             let flicker = frames % 30 == 0
-            try await rig.send(time, bodySamples: flicker ? try Self.footDropout(rig) : nil); time += Self.step
+            let players = flicker ? try Self.footDropout(rig) : rig.fixture.players
+            try await rig.send(time, bodySamples: try rig.leaningOutOfLeanBeams(players)); time += Self.step
             if session.phase == .running { runningFrames += 1 }
             if previous != .paused, session.phase == .paused { pauses += 1 }
             previous = session.phase

@@ -29,13 +29,27 @@ nonisolated struct FullRoundReplayScenario: Sendable {
     let configuration: LaserRoundConfiguration
     let steps: [Step]
 
+    /// This engine-lifecycle harness answers DUCK and JUMP only, so it plays the five-stage script
+    /// with every LEAN demand as a DUCK (same times, IDs and JUMPs). The LEAN round itself is covered
+    /// through the real replay plan (`FiveStageLeanRoundTests`).
+    static func horizontalScript() -> [LaserWaveBeat] {
+        LaserWaveBeat.fiveMinuteScript().map { beat in
+            // A LEAN (layer or not, near one player or both) becomes a full-width DUCK for both.
+            let demands = Dictionary(uniqueKeysWithValues: PlayerID.allCases.map { player in
+                (player, beat.demand(for: player).map { $0.move == .lean ? LaserBeatDemand.duck : $0 } ?? .duck)
+            })
+            return LaserWaveBeat(id: beat.id, move: demands[.player1]!.move, nominalCrossingTime: beat.nominalCrossingTime,
+                                 segmentEnd: beat.segmentEnd, demands: demands, followsLayer: beat.followsLayer)
+        }
+    }
+
     static func make(_ mode: FullRoundReplayCase, base: ReplayFixture) throws -> Self {
-        let settings = try LaserSchedulingConfiguration(players: [.player1: .conservativeCandidate, .player2: .conservativeCandidate],
+        let settings = try LaserSchedulingConfiguration(players: [.player1: .fiveStageCandidate, .player2: .fiveStageCandidate],
                                                        searchStep: 0.25, maximumSearchSteps: 2000)
         let config = try LaserRoundConfiguration(evidenceTiming: LaserEvidenceTiming(windowBefore: 0.35, windowAfter: 0.25,
                                                                                    deliveryAllowance: 0.1),
                                                 clearanceMargin: 0.005, diamondPoints: nil, scheduling: settings)
-        let plan = try LaserWaveDirector().schedule(script: LaserWaveBeat.fiveMinuteScript(),
+        let plan = try LaserWaveDirector().schedule(script: Self.horizontalScript(),
             calibrations: base.configuration.calibrations, layout: base.configuration.playerPlaneLayout, configuration: config)
         try requireLaserValue(plan.deferred.isEmpty && plan.encounters.count == 50, "full-round plan must fit")
         var steps: [Step] = []

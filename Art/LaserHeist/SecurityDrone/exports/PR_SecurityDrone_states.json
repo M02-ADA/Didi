@@ -1,0 +1,221 @@
+{
+  "note": "The USDZ ships Idle. To change state, set emission on the five emitter materials at runtime: RealityKit loads each as a PhysicallyBasedMaterial; set emissiveColor = emissionColorLinear and emissiveIntensity = strength (or emissiveColor = usdEmissiveColor with intensity 1, which is how the USDZ stores Idle). Base colours never change. All other lights are constant across states. This is emission only: glow halos and spill are geometry with dim emissive materials, and no bloom is baked or implied (bloom would be a renderer post-process).",
+  "materials": {
+    "M_EmitterCore": "EmitterCore, slot 0 (magenta lens)",
+    "M_EmitterCoreHot": "EmitterCore, slot 1 (lens centre)",
+    "M_EmitterRing": "EmitterRing_Outer and EmitterRing_Inner",
+    "M_EmitterGlow": "FrontEmitterHousing, slot 1 (recess floor)",
+    "M_EmitterSpill": "FrontEmitterHousing, slot 2 (housing inner wall)"
+  },
+  "ringsSpinAxis": "local +Z of EmitterRings (the firing axis, toward the camera)",
+  "states": {
+    "Idle": {
+      "M_EmitterCore": {
+        "emissionColorLinear": [
+          1.0,
+          0.0331,
+          0.214
+        ],
+        "strength": 2.0,
+        "usdEmissiveColor": [
+          2.0,
+          0.0662,
+          0.428
+        ]
+      },
+      "M_EmitterCoreHot": {
+        "emissionColorLinear": [
+          1.0,
+          0.2633,
+          0.5705
+        ],
+        "strength": 3.2,
+        "usdEmissiveColor": [
+          3.2,
+          0.8426,
+          1.8256
+        ]
+      },
+      "M_EmitterRing": {
+        "emissionColorLinear": [
+          1.0,
+          0.0272,
+          0.196
+        ],
+        "strength": 1.1,
+        "usdEmissiveColor": [
+          1.1,
+          0.0299,
+          0.2156
+        ]
+      },
+      "M_EmitterGlow": {
+        "emissionColorLinear": [
+          0.89,
+          0.022,
+          0.196
+        ],
+        "strength": 0.4,
+        "usdEmissiveColor": [
+          0.356,
+          0.0088,
+          0.0784
+        ]
+      },
+      "M_EmitterSpill": {
+        "emissionColorLinear": [
+          0.7874,
+          0.0331,
+          0.2633
+        ],
+        "strength": 0.1,
+        "usdEmissiveColor": [
+          0.0787,
+          0.0033,
+          0.0263
+        ]
+      }
+    },
+    "Charging": {
+      "M_EmitterCore": {
+        "emissionColorLinear": [
+          1.0,
+          0.047,
+          0.2633
+        ],
+        "strength": 4.5,
+        "usdEmissiveColor": [
+          4.5,
+          0.2115,
+          1.1848
+        ]
+      },
+      "M_EmitterCoreHot": {
+        "emissionColorLinear": [
+          1.0,
+          0.3424,
+          0.6383
+        ],
+        "strength": 8.0,
+        "usdEmissiveColor": [
+          8.0,
+          2.7392,
+          5.1064
+        ]
+      },
+      "M_EmitterRing": {
+        "emissionColorLinear": [
+          1.0,
+          0.055,
+          0.2957
+        ],
+        "strength": 4.0,
+        "usdEmissiveColor": [
+          4.0,
+          0.22,
+          1.1828
+        ]
+      },
+      "M_EmitterGlow": {
+        "emissionColorLinear": [
+          0.89,
+          0.0331,
+          0.233
+        ],
+        "strength": 1.3,
+        "usdEmissiveColor": [
+          1.157,
+          0.043,
+          0.3029
+        ]
+      },
+      "M_EmitterSpill": {
+        "emissionColorLinear": [
+          0.7874,
+          0.047,
+          0.2957
+        ],
+        "strength": 0.35,
+        "usdEmissiveColor": [
+          0.2756,
+          0.0164,
+          0.1035
+        ]
+      }
+    },
+    "Firing": {
+      "M_EmitterCore": {
+        "emissionColorLinear": [
+          1.0,
+          0.0637,
+          0.3424
+        ],
+        "strength": 8.5,
+        "usdEmissiveColor": [
+          8.5,
+          0.5415,
+          2.9104
+        ]
+      },
+      "M_EmitterCoreHot": {
+        "emissionColorLinear": [
+          1.0,
+          0.7484,
+          0.89
+        ],
+        "strength": 32.0,
+        "usdEmissiveColor": [
+          32.0,
+          23.9488,
+          28.48
+        ]
+      },
+      "M_EmitterRing": {
+        "emissionColorLinear": [
+          1.0,
+          0.0946,
+          0.3931
+        ],
+        "strength": 6.0,
+        "usdEmissiveColor": [
+          6.0,
+          0.5676,
+          2.3586
+        ]
+      },
+      "M_EmitterGlow": {
+        "emissionColorLinear": [
+          0.89,
+          0.0637,
+          0.2957
+        ],
+        "strength": 3.2,
+        "usdEmissiveColor": [
+          2.848,
+          0.2038,
+          0.9462
+        ]
+      },
+      "M_EmitterSpill": {
+        "emissionColorLinear": [
+          0.7874,
+          0.0732,
+          0.3424
+        ],
+        "strength": 1.0,
+        "usdEmissiveColor": [
+          0.7874,
+          0.0732,
+          0.3424
+        ]
+      }
+    }
+  },
+  "motion": {
+    "Idle": "core strength breathes +/-10 % on a 2.4 s sine loop; rings turn slowly (about 20 deg/s)",
+    "Charging": "ease-in (accelerating) ramp from Idle to Charging over the warning time; ring spin accelerates to about 180 deg/s; optional EmitterCore scale 1.0 -> 1.08",
+    "Firing": "front-loaded: reach Firing in 60-80 ms with ease-out, hold while the beam is on, then release to Idle over about 250 ms ease-in-out; EmitterCore scale punch 1.12 -> 1.0",
+    "Hit": "flash M_Ivory emission white for about 0.1 s and shake the root slightly; no material swap",
+    "Destroyed": "emitter materials to strength 0; detach Armor_*, LeftAntenna/RightAntenna and Left/RightSideModule with their pivots. Detached armour is single-sided: render it double-sided (faceCulling .none) while it tumbles."
+  }
+}

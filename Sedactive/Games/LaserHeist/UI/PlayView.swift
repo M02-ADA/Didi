@@ -66,10 +66,16 @@ private struct ReplayRoundView: View {
     @State private var gateConsolePreview = GateConsolePreview()
     @State private var cutoutFeed: SyntheticCutoutFeed?
     @State private var directorPreview = DirectorLaserPreview()
+    @State private var verticalLaserPreview: VerticalLaserPreview?
+    @State private var verticalLaserReplay: VerticalLaserReplay?
     @State private var robotDemo = RobotDemoDriver()
     @State private var robotDemoActive = false
     /// The demo's K03 attachment (`-avatarPackets`); revoked on teardown.
     @State private var demoAvatars: LiveAvatarPresenter?
+    #endif
+
+    #if DEBUG
+    private static let landscapePreview = ProcessInfo.processInfo.arguments.contains("-landscape")
     #endif
 
     var body: some View {
@@ -244,6 +250,40 @@ private struct ReplayRoundView: View {
                 } catch { startupError = String(describing: error) }
                 return
             }
+            // Launch with `-replay -verticalLaserReplay [clear|hit|unavailable] [solo] [reduced] [seconds]` for
+            // one vertical laser driven by mock authoritative board positions and a scripted verdict.
+            if VerticalLaserReplay.isRequested {
+                do {
+                    let input = try LaserReplayScript.load().input
+                    let request = VerticalLaserReplay.requested
+                    let calibrations = input.configuration.calibrations.filter { !request.solo || $0.key == .player1 }
+                    guard let robots = try await installAvatars(calibrations: calibrations,
+                                                                layout: input.configuration.playerPlaneLayout) else { return }
+                    if request.solo { scene.players[.player2]?.isEnabled = false }
+                    scene.isLaserVisible = false
+                    let replay = VerticalLaserReplay(scene: scene, robots: robots, request: request)
+                    verticalLaserReplay = replay
+                    replay.start(on: content)
+                } catch { startupError = String(describing: error) }
+                return
+            }
+            // Launch with `-replay -verticalLaserPreview [solo] [center|left|right|outer|sweep] [parked] [reduced] [seconds]`
+            // to review the vertical laser prototype (no gameplay).
+            if VerticalLaserPreview.isRequested {
+                do {
+                    let input = try LaserReplayScript.load().input
+                    let request = VerticalLaserPreview.requested
+                    let calibrations = input.configuration.calibrations.filter { !request.solo || $0.key == .player1 }
+                    guard try await installAvatars(calibrations: calibrations,
+                                                   layout: input.configuration.playerPlaneLayout) != nil else { return }
+                    if request.solo { scene.players[.player2]?.isEnabled = false }
+                    scene.isLaserVisible = false
+                    let preview = VerticalLaserPreview(scene: scene, request: request)
+                    verticalLaserPreview = preview
+                    preview.start(on: content, scene: scene)
+                } catch { startupError = String(describing: error) }
+                return
+            }
             // Launch with `-directorLaserPreview` to drive the gameplay presenter from
             // real LaserWaveDirector output (per-player bands, offsets, overlap).
             if DirectorLaserPreview.isRequested {
@@ -350,6 +390,15 @@ private struct ReplayRoundView: View {
                 presentation.start(on: content, scene: scene, session: replay)
             } catch { startupError = String(describing: error) }
         }
+        #if DEBUG
+        // Launch with `-landscape` to frame the 3D view at the narrowest landscape iPad's aspect
+        // (4:3) on a Simulator that cannot be rotated: the camera then composes exactly as in
+        // landscape (composition reviews only).
+        .frame(width: Self.landscapePreview ? UIScreen.main.bounds.width : nil,
+               height: Self.landscapePreview ? UIScreen.main.bounds.width * 3 / 4 : nil)
+        .clipped()
+        #endif
+        // After the DEBUG framing, so the paw board maps onto the 3D view as framed.
         .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .global)
         } action: { presentation.pawBoardDiamonds.viewportFrame = $0 }
@@ -563,7 +612,7 @@ private struct ReplayRoundView: View {
         }
         #endif
         return GameplayHUDModel(state: session.state, events: session.events, configuration: configuration,
-                                activityDuration: session.activityDuration,
+                                activityDuration: session.activityDuration, stageProgress: session.stageProgress,
                                 diamondsCollected: collected, diamondsAreFixture: fixture,
                                 enteringFinalVault: session.finalVaultEntry.map { !$0.isComplete } ?? false)
     }

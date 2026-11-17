@@ -5,8 +5,9 @@
 
 import simd
 
-/// Each player's vault-button console, mounted on that player's corridor wall at the players'
-/// plane, and the stop where the mascot docks beside it (owner Option A: stop before the wall and
+/// Each player's vault-button console, standing on the floor on that player's wall side at the
+/// players' plane (a compact housing on a pedestal, `housingDepth`), and the stop where the mascot
+/// docks beside it (owner Option A: stop before the wall and
 /// reach the button with the mascot's own hand).
 ///
 /// Why a console and not buttons on the bare wall (measured, `LaserGateConsoleTests`):
@@ -64,23 +65,41 @@ struct LaserGateConsole: Equatable {
     let faceX: Float
     let wallX: Float
     let buttons: [LaserVaultButton: Button]
-    /// The housing: centre, size (wall-to-face × column length × width) and its lean about the
+    /// The housing: centre, size (face-to-back × column length × width) and its lean about the
     /// corridor's X axis (radians; top toward the camera).
     let housing: (center: SIMD3<Float>, size: SIMD3<Float>, tilt: Float)
+    /// The floor pedestal the housing stands on (centre, size), outside the docked board's reach.
+    let pedestal: (center: SIMD3<Float>, size: SIMD3<Float>)
 
-    /// The housing's axis-aligned bounds (clearance checks).
+    /// A free-standing unit (Kevin, 14 November 2026). Until then the housing was one block from the
+    /// button face to the corridor wall; widening the corridor to 1.4 (8.82 m) stretched that block
+    /// from 0.97 m to 2.23 m (iPad: a long shelf jutting from each wall). The housing now has a fixed
+    /// depth, deeper than the camera shows of it at the players' plane on 4:3 (`visibleDepth`), so the
+    /// docked view is unchanged; it stands on a pedestal on the corridor floor instead of reaching a wall.
+    static let housingDepth: Float = 0.5
+    /// The pedestal's post (square, metres), its inner face's distance from the button face (clear of
+    /// the docked board, which reaches ≈0.15 m under the housing), and the floor plate under it.
+    static let postSize: Float = 0.16
+    static let postInset: Float = 0.28
+    static let basePlate: SIMD3<Float> = [0.30, 0.03, 0.34]
+
+    /// The housing's and the pedestal's axis-aligned bounds (clearance checks): housing first.
     var blocks: [(center: SIMD3<Float>, size: SIMD3<Float>)] {
         let c = cos(housing.tilt), s = abs(sin(housing.tilt))
         return [(center: housing.center, size: [housing.size.x, housing.size.y * c + housing.size.z * s,
-                                                 housing.size.z * c + housing.size.y * s])]
+                                                 housing.size.z * c + housing.size.y * s]),
+                pedestal]
     }
 
     static func == (a: Self, b: Self) -> Bool {
         a.player == b.player && a.dockX == b.dockX && a.faceX == b.faceX && a.buttons == b.buttons
             && a.housing.center == b.housing.center && a.housing.size == b.housing.size && a.housing.tilt == b.housing.tilt
+            && a.pedestal.center == b.pedestal.center && a.pedestal.size == b.pedestal.size
     }
 
-    init(player: PlayerID, arm: Arm, visibleHalfWidth: Float, wallHalfWidth: Float, planeZ: Float) {
+    /// - Parameter floorY: the corridor floor the pedestal stands on (`LaserWorldLayout.corridorFloorY`).
+    init(player: PlayerID, arm: Arm, visibleHalfWidth: Float, wallHalfWidth: Float, planeZ: Float,
+         floorY: Float = LaserWorldLayout().corridorFloorY) {
         self.player = player
         side = player == .player1 ? -1 : 1
         let inward = SIMD3<Float>(-side, 0, 0)
@@ -103,7 +122,10 @@ struct LaserGateConsole: Equatable {
         let tilt = atan2(Self.lean, 2 * Self.spacing)
         let ring = Self.radius + Self.bezel
         let length = (2 * Self.spacing) / cos(tilt) + 2 * (ring + Self.margin)
-        housing = (center: [(faceX + wallX) / 2, low + Self.spacing, planeZ + Self.lean / 2],
-                   size: [abs(wallX - faceX), length, 2 * (ring + Self.margin)], tilt: tilt)
+        let center = SIMD3<Float>(faceX + side * Self.housingDepth / 2, low + Self.spacing, planeZ + Self.lean / 2)
+        housing = (center: center, size: [Self.housingDepth, length, 2 * (ring + Self.margin)], tilt: tilt)
+        // The post rises from the floor into the housing (its top hidden inside, at the housing's centre).
+        let postX = faceX + side * (Self.postInset + Self.postSize / 2), top = center.y
+        pedestal = (center: [postX, (floorY + top) / 2, center.z], size: [Self.postSize, top - floorY, Self.postSize])
     }
 }

@@ -74,6 +74,16 @@ enum LaserGateArt {
         let across = 1 - smoothstep(0.35, 1, abs(v - 0.5) * 2)
         return (hot, along * across)
     }
+    /// The beam's path before it powers on (`LaserGate.trace`): a cold mauve, the powered-down lens's
+    /// violet a little toward the beam's coral (so it reads as a laser line, not the corridor's violet
+    /// ribs), flat and unlit, with no hot core or glow: installed and unpowered, never a live beam.
+    static let traceColor = off.mix(coral, 0.4)
+    static let trace: UnlitMaterial = {
+        var material = UnlitMaterial(applyPostProcessToneMap: false)
+        material.color = .init(tint: traceColor.uiColor)
+        material.blending = .transparent(opacity: 1.0)
+        return material
+    }()
     /// The hit flash over the core.
     static let flash: UnlitMaterial = {
         var material = UnlitMaterial(applyPostProcessToneMap: false)
@@ -141,6 +151,13 @@ enum LaserGateArt {
     static let barrelMesh = MeshResource.generateBox(width: 1, height: 0.12, depth: 0.12, cornerRadius: 0.02)
 
     // MARK: Building
+
+    /// Also used by `VerticalLaser` for its own hardware colours.
+    static func flat(_ color: RGB) -> UnlitMaterial {
+        var material = UnlitMaterial(applyPostProcessToneMap: false)
+        material.color = .init(tint: color.uiColor)
+        return material
+    }
 
     private static func material(_ name: String, width: Int, height: Int, opaque: Bool = false,
                                  _ shade: (Float, Float) -> (RGB, Float)) -> UnlitMaterial {

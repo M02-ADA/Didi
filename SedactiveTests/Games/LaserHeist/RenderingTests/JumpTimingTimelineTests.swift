@@ -103,8 +103,20 @@ import Testing
                         jump = .init(phase: lift > 0.03 * height ? .airborne : .grounded, validity: .valid)
                     }
                 }
+                // LEAN (vertical lasers): lean toward the way out of this player's next placed beam,
+                // from 0.4 s after its warning until the board is well clear of it; upright otherwise.
+                var lean = 0.0
+                if let state = session.state, let x = state.boards[s.playerID]?.x,
+                   let target = state.encounters.flatMap(\.encounter.targets).filter({
+                       $0.playerID == s.playerID && $0.requiredMove == .lean && $0.crossingTime > g && g >= $0.warningTime + 0.4
+                   }).min(by: { $0.crossingTime < $1.crossingTime }),
+                   let beam = target.lean, let center = beam.centerX, let e = beam.escape,
+                   abs(x - center) < LaserLeanPlacement.clearance(halfWidth: beam.halfWidth, margin: configuration.clearanceMargin) + 0.1 {
+                    lean = -Double(e) * 0.08 * height
+                }
                 return PlayerBodySample(playerID: s.playerID, calibrationRevision: s.calibrationRevision, trackingStatus: .reliable,
-                    geometry: .init(crownY: crown, leftWristY: lw, rightWristY: rw, leftSoleY: ls, rightSoleY: rs, centerX: center),
+                    geometry: .init(crownY: crown, leftWristY: lw, rightWristY: rw, leftSoleY: ls, rightSoleY: rs, centerX: center,
+                                    trunkLeanX: try EstimatedScalar(value: lean, validity: .valid)),
                     jumpState: jump)
             }
         }
@@ -118,14 +130,16 @@ import Testing
                     var row = rows[key] ?? Row(stage: stage(of: target.crossingTime), move: target.requiredMove,
                                                warning: target.warningTime, cue: Self.cueTime(target, configuration), crossing: target.crossingTime)
                     row.late = key == lateKey
-                    if let hazard = presenter.hazard(for: key) {
-                        if hazard.root.isEnabled || presenter.sharedBeams.contains(LaserTargetKey(encounterID: key.encounterID,
-                            attemptID: key.attemptID, playerID: .player1)) {
-                            row.shown = row.shown ?? t
-                        }
+                    if let own = presenter.hazard(for: key) {
+                        // Every horizontal laser is one full-width beam (17 November 2026): the gate
+                        // drawing this target's beam may be its partner's.
+                        let hazard = presenter.drawingGate(for: key) ?? own
+                        if hazard.root.isEnabled { row.shown = row.shown ?? t }
                         if hazard.state == .warning { row.warned = row.warned ?? t }
                         if hazard.state == .active { row.active = row.active ?? t }
-                        if Self.isPending(encounter.judgements[target.playerID]) {
+                        // Until its drawn crossing is seen: a verdict may now arrive in the very frame it
+                        // crosses (early verdicts), and a judged gate stays pinned to the moving corridor.
+                        if Self.isPending(encounter.judgements[target.playerID]) || row.visualCrossing == nil {
                             let z = hazard.root.position.z
                             if let previous = lastZ[key], previous.z < plane, z >= plane, row.visualCrossing == nil {
                                 row.visualCrossing = previous.time + (t - previous.time) * Double((plane - previous.z) / (z - previous.z))
@@ -225,14 +239,17 @@ import Testing
         var worst = 0.0
         for (key, row) in judged {
             let where_ = "stage \(row.stage) \(row.move) \(key.playerID) at \(row.crossing)"
-            // Visual crossing: the drawn laser meets the players' plane at the authoritative crossing.
-            let visual = try #require(row.visualCrossing, "\(where_): the laser was drawn crossing")
-            worst = max(worst, abs(visual - row.crossing))
-            #expect(abs(visual - row.crossing) < 1e-3, "\(where_): drawn crossing \(visual)")
-            // The whole warning and the action cue are shown, after gates too.
-            #expect((row.shown ?? .infinity) <= row.warning + Self.dt + 1e-6, "\(where_): shown at \(row.shown ?? -1), warning \(row.warning)")
-            #expect((row.warned ?? .infinity) <= row.warning + Self.dt + 1e-6, "\(where_): warning look at \(row.warned ?? -1)")
-            #expect(abs((row.active ?? .infinity) - row.cue) <= Self.dt + 1e-6, "\(where_): action cue at \(row.active ?? -1), due \(row.cue)")
+            // Horizontal gates (a LEAN target is drawn by the vertical laser layer, `VerticalLaserTrack`).
+            if row.move != .lean {
+                // Visual crossing: the drawn laser meets the players' plane at the authoritative crossing.
+                let visual = try #require(row.visualCrossing, "\(where_): the laser was drawn crossing")
+                worst = max(worst, abs(visual - row.crossing))
+                #expect(abs(visual - row.crossing) < 1e-3, "\(where_): drawn crossing \(visual)")
+                // The whole warning and the action cue are shown, after gates too.
+                #expect((row.shown ?? .infinity) <= row.warning + Self.dt + 1e-6, "\(where_): shown at \(row.shown ?? -1), warning \(row.warning)")
+                #expect((row.warned ?? .infinity) <= row.warning + Self.dt + 1e-6, "\(where_): warning look at \(row.warned ?? -1)")
+                #expect(abs((row.active ?? .infinity) - row.cue) <= Self.dt + 1e-6, "\(where_): action cue at \(row.active ?? -1), due \(row.cue)")
+            }
             // The verdict: at or after the crossing, by the judge's finalization deadline.
             let verdict = row.verdict!
             #expect(verdict.time >= row.crossing - 1e-6 && verdict.time <= timing.finalizationTime(crossing: row.crossing) + Self.dt + 1e-6,

@@ -34,11 +34,14 @@ struct CompleteReplayCoordinatorTests {
         let normalCount = try #require(script.fullRound?.normalDiamondCount)
         #expect(session.isCompleteReplay && session.phase == .finished)
         #expect(summary.outcome == .completed && summary.remainingTeamHealth == 5 && summary.vaultsOpened == 5)
-        #expect(summary.targets.allSatisfy { $0.scheduled == 50 && $0.cleared == 50 })
-        #expect(session.results.count == 100 && session.results.allSatisfy { $0.judgement == .clear })
+        // 50 encounter slots; a vertical beam near one player is that player's target only (48 each).
+        let perPlayer = PlayerID.allCases.map { player in script.encounters.filter { $0.targets.contains { $0.playerID == player } }.count }
+        #expect(perPlayer == [48, 48])
+        #expect(summary.targets.allSatisfy { $0.scheduled == 48 && $0.cleared == 48 })
+        #expect(session.results.count == 96 && session.results.allSatisfy { $0.judgement == .clear })
         #expect((70...80).contains(normalCount))
         #expect((normalCount + 4 ... normalCount + 8).contains(summary.diamondsCollected))
-        #expect(summary.teamScore == 10_000 + 25 * summary.diamondsCollected)
+        #expect(summary.teamScore == 9_600 + 25 * summary.diamondsCollected)
         #expect(summary.diamondsCollected == session.diamondsCollected)
         #expect(abs(summary.gameDuration - 326) < 1e-8 && abs(summary.activityDuration - 320) < 1e-8)
         #expect(session.diamondStates.values.filter { $0.outcome == .closed }.count == 4)

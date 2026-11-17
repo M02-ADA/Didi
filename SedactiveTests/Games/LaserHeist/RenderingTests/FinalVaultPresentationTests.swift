@@ -30,6 +30,7 @@ struct FinalVaultPresentationTests {
         let timeline = LaserFinalVaultTimeline(roster: PlayerID.allCases)
         let wall = try entity(scene, "finalVault.wall"), closed = try entity(scene, "finalVault.closed")
         let open = try entity(scene, "finalVault.open"), inside = try entity(scene, "finalVault.inside")
+        let mechanism = try entity(scene, "finalVault.mechanism")
         #expect(vault.hasArt && !wall.isEnabled)
 
         // Approach: from deep in the corridor to the stop, the corridor moving with it.
@@ -37,35 +38,140 @@ struct FinalVaultPresentationTests {
         #expect(wall.isEnabled && scene.isCorridorShown)
         #expect(abs(wall.position.z - (FinalVaultPresentation.stopZ - FinalVaultPresentation.approachDistance)) < 1e-4)
         var last: Float = 0
-        for step in 1...30 {
+        for step in 1...30 where LaserFinalVaultTimeline.approach.upperBound * Double(step) / 30 < FinalVaultDoorMotion.start {
             let travelled = vault.update(.entry(timeline, elapsed: LaserFinalVaultTimeline.approach.upperBound * Double(step) / 30))
             #expect(travelled >= last)
             last = travelled
         }
+        // Asset 42 whole while it comes up the corridor in the haze.
+        #expect(closed.isEnabled && !mechanism.isEnabled && !open.isEnabled && !inside.isEnabled)
+        last = vault.update(.entry(timeline, elapsed: LaserFinalVaultTimeline.approach.upperBound))
         #expect(abs(last - FinalVaultPresentation.approachDistance) < 1e-4)
         #expect(abs(wall.position.z - FinalVaultPresentation.stopZ) < 1e-4)
         // Leaves the vault's stop at the team's travel speed: no jump in pace.
         let early = FinalVaultPresentation.approachTravel(at: 0.01, speed: scene.layout.travelSpeed) / 0.01
         #expect(abs(early - scene.layout.travelSpeed) < 0.3)
-        // Closed (Asset 42) until the door opens; then the open art (Asset 43) with the room behind.
-        #expect(closed.isEnabled && !open.isEnabled && !inside.isEnabled)
+        // At rest the door is its mechanism (it still looks like Asset 42); the room comes behind it
+        // as it opens.
+        #expect(!closed.isEnabled && mechanism.isEnabled && open.isEnabled && !inside.isEnabled)
         vault.update(.entry(timeline, elapsed: LaserFinalVaultTimeline.open.upperBound + 0.01))
-        #expect(!closed.isEnabled && open.isEnabled && inside.isEnabled)
+        #expect(!closed.isEnabled && mechanism.isEnabled && open.isEnabled && inside.isEnabled)
         #expect(inside.position.z < wall.position.z)
-        // Through the doorway into the room: corridor and wall go, the room fills the view.
+        // The push moves the camera, not the wall.
         vault.update(.entry(timeline, elapsed: timeline.push.upperBound))
-        #expect(!wall.isEnabled && !scene.isCorridorShown && inside.isEnabled)
+        #expect(wall.isEnabled && abs(wall.position.z - FinalVaultPresentation.stopZ) < 1e-4 && scene.cameraDolly.z < -1)
+        // Through the doorway into the room: corridor and wall go, the room fills the view, and
+        // the camera is the gameplay camera again.
+        vault.update(.entry(timeline, elapsed: timeline.total))
+        #expect(!wall.isEnabled && !scene.isCorridorShown && inside.isEnabled && scene.cameraDolly == .zero)
         #expect(inside.position.z < scene.mapping.interactionPlaneZ)
         vault.update(.hidden)
-        #expect(!wall.isEnabled && !inside.isEnabled && scene.isCorridorShown)
+        #expect(!wall.isEnabled && !inside.isEnabled && scene.isCorridorShown && scene.cameraDolly == .zero)
+    }
+
+    /// 14 November 2026: the door used to fade from Asset 42 to Asset 43 (growing 4 %), so nothing
+    /// turned or moved and it read as a transparent doorway appearing. Now the wheel turns half a
+    /// turn (with a counter-turn first and a click back into its detent), the bolt slides home
+    /// into the door, and the door sinks and swings in on its hinges until it is out of sight;
+    /// the frame never moves, and nothing fades or scales.
+    @Test func theWheelTurnsTheBoltSlidesHomeAndTheDoorSwingsIn() async throws {
+        let scene = try await scene()
+        let vault = FinalVaultPresentation(scene: scene)
+        let timeline = LaserFinalVaultTimeline(roster: PlayerID.allCases)
+        let wall = try entity(scene, "finalVault.wall"), frame = try entity(scene, "finalVault.wallFront")
+        let jamb = try entity(scene, "finalVault.open"), door = try entity(scene, "finalVault.door")
+        let wheel = try entity(scene, "finalVault.wheel"), bolt = try entity(scene, "finalVault.bolt")
+        let hinge = try entity(scene, "finalVault.hinge")
+        let unlock = LaserFinalVaultTimeline.unlock.lowerBound
+        typealias Motion = FinalVaultDoorMotion
+
+        // At rest the parts sit exactly where Asset 42 draws them.
+        vault.update(.entry(timeline, elapsed: Motion.start))
+        #expect(Motion.at(Motion.start) == .rest && Motion.at(Motion.start - 0.2) == .rest)
+        let frameAt = frame.transformMatrix(relativeTo: nil), jambAt = jamb.transformMatrix(relativeTo: nil)
+        let doorAt = door.transformMatrix(relativeTo: nil), boltAt = bolt.position(relativeTo: nil)
+        func angle(_ e: Entity) -> Float {   // signed turn about the door's normal
+            let q = e.orientation
+            return 2 * atan2(q.imag.z, q.real)
+        }
+
+        var lastWheel: Float = 0, lastSwing: Float = 0, maxWheelStep: Float = 0, lowestWheel: Float = 0
+        var swingStarted: Double?, boltHome: Double?
+        let dt = 1.0 / 60
+        for step in 0...Int((Motion.end - Motion.start + 0.2) / dt) {
+            let t = Motion.start + Double(step) * dt
+            vault.update(.entry(timeline, elapsed: t))
+            let m = Motion.at(t)
+            // The frame and the jamb never move; nothing fades or scales.
+            #expect(simd_almost_equal_elements(frame.transformMatrix(relativeTo: nil), frameAt, 1e-6), "frame moved at \(t)")
+            #expect(simd_almost_equal_elements(jamb.transformMatrix(relativeTo: nil), jambAt, 1e-6), "jamb moved at \(t)")
+            #expect(wall.components[OpacityComponent.self] == nil && simd_distance(door.scale(relativeTo: nil), SIMD3(repeating: 1)) < 1e-4,
+                    "fade or scale at \(t)")
+            // The wheel is readable: under half a spoke spacing (22.5°) per frame at 60 Hz.
+            let turn = angle(wheel)
+            maxWheelStep = max(maxWheelStep, abs(turn - lastWheel))
+            lowestWheel = min(lowestWheel, turn)
+            lastWheel = turn
+            // The swing only opens, and only once the bolt is home.
+            #expect(m.swing >= lastSwing - 1e-6, "door closes again at \(t)")
+            if m.swing > 0, swingStarted == nil { swingStarted = t }
+            if m.bolt == 1, boltHome == nil { boltHome = t }
+            lastSwing = m.swing
+            // The door never comes in front of the frame (toward the mascots and the camera).
+            #expect(door.visualBounds(relativeTo: wall).max.z <= FinalVaultDoorRig.frameZ, "door in front of the frame at \(t)")
+        }
+        #expect(lowestWheel < -5 * .pi / 180, "the wheel winds up first")
+        #expect(abs(lastWheel - .pi) < 1e-3, "half a turn: \(lastWheel)")
+        #expect(maxWheelStep < .pi / 8, "wheel step \(maxWheelStep)")
+        let started = try #require(swingStarted), home = try #require(boltHome)
+        #expect(home <= started && started > unlock && Motion.end <= LaserFinalVaultTimeline.firstJump)
+        // The bolt went home into the door (its right end inside the doorway, behind the face) and is
+        // carried with it.
+        let metre = scene.layout.corridorWidth / FinalVaultDoorArtwork.size.x
+        let doorRadius = FinalVaultDoorArtwork.radius * metre
+        #expect(abs(-bolt.position.x - FinalVaultDoorArtwork.boltTravel * metre) < 1e-5)
+        #expect(bolt.visualBounds(relativeTo: door).max.x < doorRadius && bolt.position.z < 0)
+        #expect(bolt.parent === door && wheel.parent === door && door.parent === hinge)
+        // Open: the door hangs in, beyond the doorway's left edge, out of the corridor camera's view.
+        let doorNow = door.transformMatrix(relativeTo: nil)
+        #expect(!simd_almost_equal_elements(doorNow, doorAt, 1e-3))
+        #expect(abs(lastSwing - Motion.openAngle) < 1e-4)
+        let camera = scene.layout.cameraPosition
+        // The door's outline, front and back, in the world.
+        let outline = (0..<48).flatMap { i -> [SIMD3<Float>] in
+            let a = Float(i) / 48 * 2 * .pi
+            return [0, -FinalVaultDoorRig.thickness].map { door.convert(position: [doorRadius * cos(a), doorRadius * sin(a), $0], to: nil) }
+        }
+        let doorwayCenterY = wall.convert(position: [0, (0.5 - FinalVaultDoorArtwork.center.y / FinalVaultDoorArtwork.size.y) * scene.layout.corridorWidth / FinalVaultArt.closedAspect, 0], to: nil).y
+        for corner in outline {
+            // Where the line of sight to this point meets the wall plane: outside the doorway.
+            let k = (FinalVaultPresentation.stopZ - camera.z) / (corner.z - camera.z)
+            let onWall = camera + (corner - camera) * k
+            #expect(corner.x < 0 && simd_distance(SIMD2(onWall.x, onWall.y), SIMD2(0, doorwayCenterY)) > doorRadius,
+                    "door point \(corner) seen through the doorway")
+        }
+        // At the end of the push (the camera just inside the room) the door is out of its field of view
+        // (the widest iPad screen: 1.6 wide).
+        let end = camera + [0, 0, -vault.pushDistance]
+        let halfWidth = tan(scene.layout.cameraVerticalFieldOfView / 2 * .pi / 180) * 1.6
+        for corner in outline {
+            let depth = end.z - corner.z
+            #expect(depth <= 0 || abs(corner.x - end.x) / depth > halfWidth, "door point \(corner) in view at the end of the push")
+        }
+        // Replaying the entry shows the same opening.
+        vault.update(.hidden)
+        vault.update(.entry(timeline, elapsed: Motion.start))
+        #expect(simd_almost_equal_elements(door.transformMatrix(relativeTo: nil), doorAt, 1e-6) && abs(angle(wheel)) < 1e-6)
+        #expect(simd_distance(bolt.position(relativeTo: nil), boltAt) < 1e-6)
     }
 
     /// The doorway's measured place in Asset 43 lines up with the corridor, and each arc
     /// carries the mascot's middle through it, not through the wall.
     /// 14 November 2026 regression: with the backdrop behind the mascots' landing, the corridor's
     /// floor and ceiling showed through the doorway. The sleeve lines that gap with the room art as
-    /// the backdrop projects onto it (on screen it is the backdrop), stays under the wall's top edge
-    /// (the corridor above the wall stays the corridor), and only exists while the doorway shows.
+    /// the backdrop projects onto it from the room's camera (from there it is the backdrop), stays
+    /// behind the wall and under its top edge (the corridor above the wall stays the corridor), and
+    /// exists from when the doorway shows; inside it stays, so nothing changes on screen.
     @Test func theRoomSleeveIsTheBackdropSeenNearerAndStaysBehindTheWall() async throws {
         let scene = try await scene()
         let vault = FinalVaultPresentation(scene: scene)
@@ -76,7 +182,7 @@ struct FinalVaultPresentationTests {
         #expect(!sleeve.isEnabled, "closed door: no room behind it")
         let wallTop = { wall.position.y + scene.layout.corridorWidth / FinalVaultArt.closedAspect / 2 }
         for t in [LaserFinalVaultTimeline.open.upperBound, timeline.push.lowerBound,
-                  (timeline.push.lowerBound + timeline.push.upperBound) / 2, timeline.push.upperBound - 0.02] {
+                  (timeline.push.lowerBound + timeline.push.upperBound) / 2, timeline.total - 0.02] {
             vault.update(.entry(timeline, elapsed: t))
             #expect(sleeve.isEnabled && inside.isEnabled, "t \(t)")
             let bounds = sleeve.visualBounds(relativeTo: nil)
@@ -90,8 +196,8 @@ struct FinalVaultPresentationTests {
                         "t \(t) \(local): \(uv)")
             }
         }
-        vault.update(.entry(timeline, elapsed: timeline.push.upperBound))
-        #expect(!sleeve.isEnabled, "inside: the room backdrop alone")
+        vault.update(.inside(timeline))
+        #expect(sleeve.isEnabled && inside.isEnabled, "inside: the same room")
         vault.update(.hidden)
         #expect(!sleeve.isEnabled)
     }
@@ -220,13 +326,12 @@ struct FinalVaultPresentationTests {
         let robots = try #require(scene.robotAvatars)
         let vault = FinalVaultPresentation(scene: scene)
         let timeline = LaserFinalVaultTimeline(roster: roster)
-        let camera = scene.layout.cameraPosition
-        // Position as drawn; the move's own size and opacity (the layer also dims an untracked
+        // Position as drawn, relative to the camera (it moves in the push); the move's own size and opacity (the layer also dims an untracked
         // mascot, and the take-off's crouch-to-stretch is a change of shape, not of size).
         func rendered(_ player: PlayerID) throws -> (position: SIMD3<Float>, scale: Float, opacity: Float) {
             let container = try #require(robots.robots[player]?.container)
             let move = robots.scriptedMoves[player] ?? .none
-            return (container.position(relativeTo: nil), move.scale, container.isEnabled ? move.opacity : 0)
+            return (container.position(relativeTo: nil) - scene.cameraWorldPosition, move.scale, container.isEnabled ? move.opacity : 0)
         }
         var last: [PlayerID: (position: SIMD3<Float>, scale: Float, opacity: Float)] = [:]
         let dt = 1.0 / 120
@@ -240,12 +345,12 @@ struct FinalVaultPresentationTests {
                 if let before = last[player] {
                     #expect(simd_distance(now.position, before.position) < 0.12, "\(player) jumps \(simd_distance(now.position, before.position)) m at \(t)")
                     // On-screen size (scale over distance from the camera) changes smoothly.
-                    let size = now.scale / (camera.z - now.position.z), sizeBefore = before.scale / (camera.z - before.position.z)
+                    let size = now.scale / -now.position.z, sizeBefore = before.scale / -before.position.z
                     #expect(abs(size / sizeBefore - 1) < 0.05, "\(player) size step \(size / sizeBefore) at \(t)")
                 }
                 // While the wall shows, the mascot is never in front of it.
                 if let wall = scene.root.findEntity(named: "finalVault.wall"), wall.isEnabled, t > jump.upperBound {
-                    #expect(now.position.z < wall.position(relativeTo: nil).z, "\(player) behind the wall at \(t)")
+                    #expect(now.position.z + scene.cameraWorldPosition.z < wall.position(relativeTo: nil).z, "\(player) behind the wall at \(t)")
                 }
                 last[player] = now
             }
@@ -261,6 +366,61 @@ struct FinalVaultPresentationTests {
         vault.update(.inside(timeline))
         let after = try roster.map { try rendered($0).position }
         #expect(zip(before, after).allSatisfy { simd_distance($0, $1) < 1e-4 })
+    }
+
+    /// 14 November 2026: the push used to slide the wall toward a still camera while the room stayed
+    /// locked to the screen, so the doorway grew around a room that did not (it read as zooming out).
+    /// Now the gate stands still and the camera dollies forward through its doorway, leaving and
+    /// arriving at rest; at the end the camera and the room move back together, so the picture of
+    /// the gameplay camera inside is exactly the picture at the end of the push.
+    @Test(arguments: [false, true]) func theCameraMovesThroughTheStillGateIntoTheRoom(solo: Bool) async throws {
+        let roster: [PlayerID] = solo ? [.player1] : PlayerID.allCases
+        let scene = try await scene(robots: true, players: Set(roster))
+        let vault = FinalVaultPresentation(scene: scene)
+        let timeline = LaserFinalVaultTimeline(roster: roster)
+        let wall = try entity(scene, "finalVault.wall"), camera = try entity(scene, "camera")
+        let backdrop = try entity(scene, "finalVault.inside"), sleeve = try entity(scene, "finalVault.sleeve")
+        let gameplay = scene.layout.cameraPosition
+        vault.update(.entry(timeline, elapsed: timeline.push.lowerBound))
+        let gate = wall.transformMatrix(relativeTo: nil)
+        #expect(scene.cameraDolly == .zero)
+
+        var last = gameplay, steps: [Float] = [], crossed: SIMD3<Float>?
+        let dt = 1.0 / 120
+        for step in 1...Int((timeline.total - timeline.push.lowerBound) / dt) {
+            let t = timeline.push.lowerBound + Double(step) * dt
+            guard t < timeline.total else { break }
+            vault.update(.entry(timeline, elapsed: t))
+            // The gate never moves or scales.
+            let now = wall.transformMatrix(relativeTo: nil)
+            #expect(simd_almost_equal_elements(now, gate, 1e-5), "gate moved at \(t)")
+            // The camera itself moves: straight ahead, never back.
+            let eye = camera.position(relativeTo: nil)
+            #expect(simd_distance(eye, scene.cameraWorldPosition) < 1e-4)
+            #expect(abs(eye.x - gameplay.x) < 1e-5 && abs(eye.y - gameplay.y) < 1e-5)
+            #expect(eye.z <= last.z + 1e-6, "camera pulled back at \(t)")
+            if crossed == nil, eye.z < wall.position(relativeTo: nil).z { crossed = eye }
+            steps.append(last.z - eye.z)
+            last = eye
+        }
+        // Through the doorway (well inside its circle), not the wall, and into the room.
+        let crossing = try #require(crossed, "the camera passes the wall")
+        #expect(simd_distance(SIMD2(crossing.x, crossing.y), SIMD2(0, vault.doorwayY)) < vault.doorwayRadius * 0.2)
+        #expect(abs(last.z - (gameplay.z - vault.pushDistance)) < 0.01)
+        // Leaves and arrives at rest, with no jolt between frames.
+        let peak = try #require(steps.max())
+        #expect(steps.first! < peak * 0.05 && steps.last! < peak * 0.05)
+        #expect(zip(steps, steps.dropFirst()).allSatisfy { abs($1 - $0) < peak * 0.05 })
+
+        // The end of the push and the gameplay camera inside show the same picture.
+        func relative(_ e: Entity) -> simd_float4x4 { camera.transformMatrix(relativeTo: nil).inverse * e.transformMatrix(relativeTo: nil) }
+        vault.update(.entry(timeline, elapsed: timeline.total - 1e-6))
+        let before = (relative(backdrop), relative(sleeve))
+        vault.update(.inside(timeline))
+        #expect(scene.cameraDolly == .zero && simd_distance(camera.position(relativeTo: nil), gameplay) < 1e-5)
+        #expect(simd_almost_equal_elements(relative(backdrop), before.0, 1e-4) && simd_almost_equal_elements(relative(sleeve), before.1, 1e-4))
+        vault.update(.hidden)
+        #expect(scene.cameraDolly == .zero)
     }
 
     /// The jump hands over to its continuation with the same position and velocity, and comes

@@ -31,6 +31,8 @@ nonisolated struct LaserGameState: Equatable, Sendable {
     var missionTarget: Int = 5
     var playerStats: [PlayerID: LaserPlayerTargetCounts] = [:]
     var vault: LaserVaultState? = nil
+    /// The hoverboards as game state (corridor metres): what LEAN is judged on and what is drawn.
+    var boards: [PlayerID: LaserBoardReading] = [:]
 }
 
 nonisolated enum LaserVaultButton: String, CaseIterable, Hashable, Sendable { case top, middle, bottom }

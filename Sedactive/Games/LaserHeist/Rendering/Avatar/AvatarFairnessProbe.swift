@@ -61,6 +61,8 @@ enum AvatarFairness {
         switch move {
         case .duck: band.lowerY - extremities.highestY
         case .jump: extremities.lowestSoleY - band.upperY
+        // A vertical beam is judged on the board's position, not a height margin.
+        case .lean: .nan
         }
     }
 
@@ -74,6 +76,8 @@ enum AvatarFairness {
         case .jump:
             guard let left = geometry.leftSoleY.value, let right = geometry.rightSoleY.value else { return nil }
             return min(left, right) - band.upperY
+        case .lean:
+            return nil
         }
     }
 
@@ -84,11 +88,12 @@ enum AvatarFairness {
                         extremities: AvatarExtremities, displayedBand: ClosedRange<Float>? = nil) -> Comparison {
         let drawn = displayedBand.flatMap { try? LaserBeamBand(lowerY: Double($0.lowerBound), upperY: Double($0.upperBound)) } ?? target.beam
         let shown = shownMargin(move: target.requiredMove, band: drawn, extremities: extremities)
-        let agreement: Agreement = switch authoritative {
+        var agreement: Agreement = switch authoritative {
         case .clear?: shown > 0 ? .agrees : .avatarLooksHit
         case .hit?: shown > 0 ? .avatarLooksClear : .agrees
         default: .notJudged
         }
+        if target.requiredMove == .lean { agreement = .notJudged }
         return Comparison(move: target.requiredMove, authoritative: authoritative,
                           humanMargin: geometry.flatMap { humanMargin(move: target.requiredMove, band: target.beam, geometry: $0) },
                           shownMargin: shown, agreement: agreement)

@@ -66,6 +66,8 @@ struct LiveLaserPresentationTests {
         case .jump:
             // Just above the mascot's soles: a valid jump lifts the feet over it.
             #expect(a.lowerBound > 0 && a.upperBound < 0.05 * mascot, "\(a)")
+        case .lean:
+            Issue.record("horizontal gate test given a LEAN move")
         }
         // Judged bands are still each player's own (the child's are lower).
         #expect(abs(p1.beam.lowerY - p2.beam.lowerY) > 0.0005)

@@ -57,7 +57,59 @@ struct LaserHitReactionTests {
         #expect(r.frame(at: 0.1).glow > 0.2 && r.frame(at: 0).flash > 0.4)
     }
 
+    @Test func theBodyFlashesOnceThenCarriesASoftChargeThatEndsBeforeTheSettle() {
+        let r = R(region: .lower, side: -1, reduceMotion: false, seed: 5)
+        // The impact frame: the body's own surface is white-hot through the hit-stop.
+        #expect(r.frame(at: 0).bodyFlash == 1 && r.frame(at: R.hitStop - 0.001).bodyFlash > 0.8)
+        #expect(r.frame(at: 0.1).bodyFlash == 0, "one flash, gone by 100 ms")
+        // The charge swells (never drops below 65 % of its envelope: a charge, not a strobe).
+        let charge = stride(from: 0.07, to: 0.3, by: 1.0 / 240).map { R.charge($0) }
+        #expect(charge.allSatisfy { $0 >= 0.6 }, "\(charge.min() ?? 0)")
+        #expect(r.frame(at: 0.46).charge == 0 && r.frame(at: 0.5).charge == 0)
+        // Reduce Motion: no white frame, one soft tint.
+        let gentle = (0...Int(R.duration * 240)).map { R(region: .upper, side: 1, reduceMotion: true).frame(at: Double($0) / 240) }
+        #expect(gentle.allSatisfy { $0.bodyFlash == 0 && $0.charge <= 0.55 } && gentle.contains { $0.charge > 0.3 })
+    }
+
+    @Test func theBodyTintBrightensWithoutReplacingTheMascotsColour() {
+        let impact = LaserHitZap.bodyTint(flash: 1, charge: 0), charge = LaserHitZap.bodyTint(flash: 0, charge: 1)
+        #expect(impact.intensity > charge.intensity && charge.intensity < 1, "emission adds to the authored colour")
+        #expect(LaserHitZap.bodyTint(flash: 0, charge: 0).intensity == 0)
+    }
+
     // MARK: - On the mascots
+
+    /// The emission of the mascot's own (skinned) model's materials.
+    private func emission(_ layer: RobotAvatarLayer, _ scene: LaserScene, _ player: PlayerID) throws -> [Float] {
+        let model = try #require(RobotAvatarLayer.skinnedModel(in: try container(scene, player)))
+        return (model.model?.materials ?? []).compactMap { ($0 as? PhysicallyBasedMaterial)?.emissiveIntensity }
+    }
+
+    @Test func eachStruckMascotsOwnSurfaceIsChargedAndRestoredExactly() async throws {
+        let (scene, layer) = try await layer()
+        let authored = try emission(layer, scene, .player1), authored2 = try emission(layer, scene, .player2)
+        #expect(!authored.isEmpty, "the mascots' materials are physically based")
+        scene.setLaserBand(lowerEdge: 1.239, upperEdge: 1.261)
+        // Both struck at once: each charges on its own.
+        scene.presentOutcome(.hit, for: .player1)
+        scene.presentOutcome(.hit, for: .player2)
+        layer.render(now: 5)
+        #expect(layer.isBodyCharged(.player1) && layer.isBodyCharged(.player2))
+        #expect(try emission(layer, scene, .player1).allSatisfy { $0 > 1 }, "the impact frame is hot")
+        layer.render(now: 5.2)
+        #expect(try emission(layer, scene, .player1) != authored)
+        // Done: the authored materials, exactly.
+        layer.render(now: 5.7)
+        #expect(!layer.isBodyCharged(.player1) && !layer.isBodyCharged(.player2))
+        #expect(try emission(layer, scene, .player1) == authored && emission(layer, scene, .player2) == authored2)
+        // A stop mid-reaction restores them too.
+        scene.presentOutcome(.hit, for: .player2)
+        layer.render(now: 6)
+        #expect(layer.isBodyCharged(.player2))
+        scene.clearLaserFeedback()
+        #expect(!layer.isBodyCharged(.player2))
+        #expect(try emission(layer, scene, .player2) == authored2)
+    }
 
     private func layer() async throws -> (LaserScene, RobotAvatarLayer) {
         let scene = LaserScene()

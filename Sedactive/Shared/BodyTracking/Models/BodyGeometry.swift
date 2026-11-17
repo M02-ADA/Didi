@@ -48,7 +48,14 @@ nonisolated struct BodyGeometry: Equatable, Sendable, Codable {
     let leftSoleY: EstimatedScalar
     let rightSoleY: EstimatedScalar
     let centerX: EstimatedScalar
-    var measurements: [EstimatedScalar] { [crownY, leftWristY, rightWristY, leftSoleY, rightSoleY, centerX] }
+    /// LEAN evidence (vertical lasers, 16 November 2026): how far the trunk leans sideways, in the
+    /// same UNMIRRORED player-plane units as `centerX`: the shoulders' centre past the hips' centre,
+    /// confirmed by the head (`BodyMeasurementExtractor.trunkLean`), + toward image +X. Nil in
+    /// recordings made before it existed (decoded as absent, never as upright).
+    var trunkLeanX: EstimatedScalar? = nil
+    var measurements: [EstimatedScalar] {
+        [crownY, leftWristY, rightWristY, leftSoleY, rightSoleY, centerX] + (trunkLeanX.map { [$0] } ?? [])
+    }
 }
 
 nonisolated struct PlayerPlaneLayout: Equatable, Sendable, Codable {

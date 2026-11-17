@@ -20,8 +20,9 @@ import Testing
         #expect(abs(trace.summary.gameDuration - 326) < 1e-8) // 300 activity + 6 vault + 20 bonus.
         #expect(abs(trace.summary.activityDuration - 320) < 1e-8)
         for player in trace.summary.playerResults {
-            #expect(player.successfulHighAvoidances == 32)
-            #expect(player.successfulLowAvoidances == 18)
+            // The lifecycle harness plays LEAN beats as DUCKs (`FullRoundReplayScenario.horizontalScript`).
+            #expect(player.successfulHighAvoidances == 41)
+            #expect(player.successfulLowAvoidances == 9)
             #expect(player.validatedJumpCycles == nil)
             #expect(abs(try #require(player.movementChallengeSeconds) - 70) < 1e-8)
         }

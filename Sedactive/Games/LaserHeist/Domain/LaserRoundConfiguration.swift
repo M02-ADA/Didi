@@ -97,6 +97,16 @@ nonisolated struct LaserPlayerDifficulty: Equatable, Sendable {
         clearanceReserveShare: 0.1, maximumJumpsInWindow: 3, jumpWindow: 30,
         minimumJumpSpacing: 8, maximumConsecutiveJumps: 1, minimumTargetSpacing: 5,
         warningLead: 3, cueLead: 1.4, crossingOffset: 0)
+
+    /// The five-stage level design's profile: `conservativeCandidate`, but stages 4-5 may put
+    /// DUCK and LEAN crossings 4.5 s apart (16 November 2026, vertical lasers). Every other recovery rule
+    /// (and the JUMP limits) is unchanged; the script itself keeps the longer gaps
+    /// (`LaserWaveBeat.fiveStages`). Not device/playtest validated.
+    static let fiveStageCandidate = Self(requestedCrownDropShare: 0.08, requestedSoleLiftShare: 0.02,
+        beamThicknessShare: 0.01, maximumCrownDropShare: 0.10, maximumSoleLiftShare: 0.04,
+        clearanceReserveShare: 0.1, maximumJumpsInWindow: 3, jumpWindow: 30,
+        minimumJumpSpacing: 8, maximumConsecutiveJumps: 1, minimumTargetSpacing: 4.5,
+        warningLead: 3, cueLead: 1.4, crossingOffset: 0)
 }
 
 nonisolated struct LaserSchedulingConfiguration: Equatable, Sendable {

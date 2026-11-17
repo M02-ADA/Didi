@@ -18,7 +18,14 @@ nonisolated struct WristGameplayFixture {
         let script = try LaserReplayScenarios.make()[0]
         let g = generation ?? script.input.configuration.sessionGeneration
         input = LiveVisionFixtures.configuration(g)
-        players = try #require(script.input.records.first?.snapshot?.players)
+        // The recorded players predate LEAN evidence; the producer now measures each standing
+        // player's trunk lean, so these synthetic upright players carry a valid upright (0) lean.
+        players = try #require(script.input.records.first?.snapshot?.players).mapValues { s in
+            var geometry = s.geometry
+            geometry.trunkLeanX = try EstimatedScalar(value: 0, validity: .valid)
+            return PlayerBodySample(playerID: s.playerID, calibrationRevision: s.calibrationRevision,
+                                    trackingStatus: s.trackingStatus, geometry: geometry, jumpState: s.jumpState)
+        }
         let authority = WristContactContextV1(sourceEpoch: binding?.source.context.epoch ?? UUID(),
             controlRevision: binding?.source.controlRevision ?? 2, bindingRequestID: binding?.requestID ?? UUID(),
             bindingFrameID: binding?.source.frameID ?? 1, bindingCapturedAt: binding?.source.capturedAt ?? 0,

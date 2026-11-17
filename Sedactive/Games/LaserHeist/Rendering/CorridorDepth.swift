@@ -44,7 +44,7 @@ final class CorridorDepth {
     init(layout: LaserWorldLayout) {
         cameraZ = layout.cameraPosition.z
         root.name = "corridorDepth"
-        let width = layout.corridorWidth, floorY = layout.corridorFloorY
+        let width = layout.environmentWidth, floorY = layout.corridorFloorY
         let height = layout.corridorHeight - floorY, middleY = (layout.corridorHeight + floorY) / 2
         let near = layout.corridorNearZ, far = layout.corridorFarZ
         let length = near - far, centerZ = (near + far) / 2
@@ -101,7 +101,7 @@ final class CorridorDepth {
             for side: Float in [-1, 1] {
                 let dash = ModelEntity(mesh: mesh, materials: [material])
                 dash.name = "corridorDepth.runway"
-                dash.position = [side * (layout.corridorWidth / 2 - 0.42), layout.corridorFloorY + 0.012, z]
+                dash.position = [side * (layout.environmentWidth / 2 - 0.42), layout.corridorFloorY + 0.012, z]
                 lights.append(dash)
             }
         }
