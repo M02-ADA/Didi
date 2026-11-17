@@ -6,6 +6,13 @@ import CoreGraphics
 /// A DEBUG launch flag is consumed once per process, never once per Retry generation.
 @MainActor enum LeanFTUEPreviewLaunch {
     private static var resetConsumed = false
+    private static var manualReplayRequested = false
+    static func requestManualReplay() { manualReplayRequested = true }
+    static func cancelManualReplay() { manualReplayRequested = false }
+    static func consumeManualReplay() -> Bool {
+        let pending = manualReplayRequested; manualReplayRequested = false
+        return pending
+    }
     static func applyReset(to tutorial: LeanTutorial) {
         guard !resetConsumed else { return }
         resetConsumed = true

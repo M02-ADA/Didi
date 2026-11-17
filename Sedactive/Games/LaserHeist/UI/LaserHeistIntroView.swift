@@ -28,7 +28,15 @@ struct LaserHeistIntroView: View {
         ZStack {
             switch screen {
             case .home:
-                HomeView(bestScore: nil) { show(.introVideo) }
+                HomeView(bestScore: nil, onStart: {
+                    flow.cancelLeanTutorialReplay()
+                    show(.introVideo)
+                }, onReplayTutorial: {
+                    guard flow.requestLeanTutorialReplay() else { return }
+                    // The actual corridor/FTUE needs accepted setup. Help skips the story detour,
+                    // not mode selection, camera binding, calibration or readiness.
+                    show(.setup(.holdIPad))
+                })
                     .overlay(alignment: .bottom) { homeOptions }
                     .transition(.opacity)
             case .introVideo:
@@ -49,6 +57,10 @@ struct LaserHeistIntroView: View {
         .background(LaserHeistDesign.night)
         .preferredColorScheme(.dark)
         .onAppear { AudioService.shared.setMusic(.menu) }
+        .onChange(of: flow.tutorialReplayRequested) { _, pending in
+            if !pending, flow.route == .selection { screen = .home }
+        }
+        .onDisappear { flow.cancelLeanTutorialReplay() }
     }
 
     private func show(_ next: Screen) {
@@ -57,6 +69,7 @@ struct LaserHeistIntroView: View {
     }
 
     private func back(from step: SetupInstructionView.Step) {
+        if step == .holdIPad { flow.cancelLeanTutorialReplay() }
         show(step == .holdIPad ? .home : .setup(.holdIPad))
     }
 
@@ -64,6 +77,15 @@ struct LaserHeistIntroView: View {
         guard step == .standIPadOnFloor else { return show(.setup(.standIPadOnFloor)) }
         guard flow.canStartLive else { return }
         AudioService.shared.play(.uiTap)
+        #if DEBUG
+        // Explicit Simulator visual QA only. Reuse the existing synthetic FTUE fixture;
+        // production always follows the real setup path below.
+        if ProcessInfo.processInfo.arguments.contains("-homeHelpFTUEPreview"), flow.tutorialReplayRequested {
+            LeanFTUEPreviewLaunch.requestManualReplay()
+            flow.showReplay()
+            return
+        }
+        #endif
         // In the mode chosen on Home (TEMPORARY selector; always co-op in Release).
         Task { await flow.startSelectedSetup() }
     }

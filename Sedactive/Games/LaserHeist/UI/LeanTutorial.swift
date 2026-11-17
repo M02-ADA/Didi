@@ -16,6 +16,7 @@ final class LeanTutorial {
     private(set) var isSuspended = false
     private(set) var headTopFraction: CGFloat?
     @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private var replayForVisit = false
     @ObservationIgnored private var introVisible = false
     @ObservationIgnored private var visiblePractice: Stage?
     @ObservationIgnored private var activation = Double.infinity
@@ -33,14 +34,15 @@ final class LeanTutorial {
         guard self.generation == generation, value.isFinite, value > 0, value < 1 else { return }
         if headTopFraction != value { headTopFraction = value }
     }
-    func prepare(generation: UUID, roster: [PlayerID] = PlayerID.allCases) {
-        self.generation = generation; self.roster = roster
+    /// Explicit replay overrides completion for this generation without clearing its saved record.
+    func prepare(generation: UUID, roster: [PlayerID] = PlayerID.allCases, replayRequested: Bool = false) {
+        self.generation = generation; self.roster = roster; replayForVisit = replayRequested
         headTopFraction = nil; isSuspended = false; introVisible = false
         clearPractice(); context = nil; lastSource = nil
-        stage = isCompleted ? .completed : .notStarted
+        stage = isCompleted && !replayForVisit ? .completed : .notStarted
     }
     func beginIfEligible(generation: UUID, eligible: Bool) {
-        guard self.generation == generation, eligible, !roster.isEmpty, stage == .notStarted, !isCompleted else { return }
+        guard self.generation == generation, eligible, !roster.isEmpty, stage == .notStarted, (!isCompleted || replayForVisit) else { return }
         stage = .introduction
     }
     func introductionVisible(_ visible: Bool, generation: UUID) {
@@ -105,9 +107,10 @@ final class LeanTutorial {
         }
         guard Set(roster).isSubset(of: demonstrated) else { return }
         if stage == .practiceLeft { stage = .practiceRight; clearPractice() }
-        else { stage = .completed; defaults.set(true, forKey: Self.completionKey); clearPractice() }
+        else { stage = .completed; replayForVisit = false; defaults.set(true, forKey: Self.completionKey); clearPractice() }
     }
     func abandon() {
+        replayForVisit = false
         generation = nil; stage = .notStarted; isSuspended = false; introVisible = false
         clearPractice(); context = nil; lastSource = nil
     }

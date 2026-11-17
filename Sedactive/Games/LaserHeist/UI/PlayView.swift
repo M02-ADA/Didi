@@ -82,7 +82,9 @@ private struct ReplayRoundView: View {
         if leanPreview.stage == .completed, session?.state != nil { return "SYNTHETIC replay · tutorial complete" }
         return "Preparing synthetic corridor…"
     }
-    private var isLeanPreview: Bool { ProcessInfo.processInfo.arguments.contains("-leanFTUEPreview") }
+    private var isLeanPreview: Bool {
+        ProcessInfo.processInfo.arguments.contains("-leanFTUEPreview") || ProcessInfo.processInfo.arguments.contains("-homeHelpFTUEPreview")
+    }
     private var isLeanPreviewSolo: Bool { ProcessInfo.processInfo.arguments.contains("-leanFTUESolo") }
     @State private var heartPreview = HeartAnimationPreview()
     @State private var diamondReadout = DebugDiamondVisualReadout()
@@ -279,7 +281,12 @@ private struct ReplayRoundView: View {
                     }
                     LeanFTUEPreviewLaunch.applyReset(to: leanPreview)
                     leanPreview.freezesIntroductionForLayout = leanHeldStage == .introduction
-                    leanPreview.prepare(generation: generation, roster: inputSource.roster)
+                    // Isolated returning-player review; never resets production first-play storage.
+                    let manualReplay = LeanFTUEPreviewLaunch.consumeManualReplay()
+                    if manualReplay {
+                        UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.completionKey)
+                    }
+                    leanPreview.prepare(generation: generation, roster: inputSource.roster, replayRequested: manualReplay)
                     leanPreview.beginIfEligible(generation: generation, eligible: true)
                     if let held = leanHeldStage, held != .introduction {
                         leanPreview.showPracticeForLayout(held, generation: generation)
@@ -714,6 +721,7 @@ private struct ReplayRoundView: View {
             #if DEBUG
             leanPreviewTask?.cancel(); leanPreviewTask = nil
             leanPreviewInput?.stop(); leanPreviewInput = nil; leanPreviewStart = nil
+            if isLeanPreview { LeanFTUEPreviewLaunch.cancelManualReplay() }
             leanPreview.abandon()
             heartPreview.stop()
             MaskBenchmark.recorder.suspend(reason: "view closed")

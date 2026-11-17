@@ -12,6 +12,15 @@ final class LaserInputFlow {
     private(set) var message: String?
     let leanTutorial: LeanTutorial
     private var operation: UUID?
+    /// Explicit Home intent, consumed by exactly one setup generation; never persisted.
+    private(set) var tutorialReplayRequested = false
+    @discardableResult func requestLeanTutorialReplay() -> Bool {
+        guard canStartLive, !tutorialReplayRequested else { return false }
+        tutorialReplayRequested = true
+        return true
+    }
+    func cancelLeanTutorialReplay() { tutorialReplayRequested = false }
+
 
     /// Observe existing readiness, never make it ready. The countdown hold is set before start.
     func presentLeanTutorialIfReady() {
@@ -85,6 +94,7 @@ final class LaserInputFlow {
 
     func showReplay() {
         guard route == .selection, !isStarting, !isClosing else { return }
+        cancelLeanTutorialReplay()
         message = nil
         route = .replay
     }
@@ -99,14 +109,16 @@ final class LaserInputFlow {
         guard canStartLive, !solo || makeSoloSession != nil else { return }
         isSolo = solo
         route = .liveSetup
+        let replayTutorial = tutorialReplayRequested
+        cancelLeanTutorialReplay()
         isStarting = true
         message = nil
         let token = UUID()
         operation = token
         do {
             let session = try (isSolo ? makeSoloSession! : makeLiveSession)()
-            leanTutorial.prepare(generation: session.inputConfiguration.sessionGeneration, roster: session.inputConfiguration.roster)
-            session.setPreRoundTutorialPending(!leanTutorial.isCompleted)
+            leanTutorial.prepare(generation: session.inputConfiguration.sessionGeneration, roster: session.inputConfiguration.roster, replayRequested: replayTutorial)
+            session.setPreRoundTutorialPending(leanTutorial.stage != .completed)
             self.session = session
             #if DEBUG
             print("[LaserSetupRestart] flow: starting session")
@@ -140,6 +152,7 @@ final class LaserInputFlow {
         #endif
         guard operation == token else { return }
         session = nil
+        cancelLeanTutorialReplay()
         leanTutorial.abandon()
         isStarting = false
         isClosing = false
@@ -183,6 +196,7 @@ final class LaserInputFlow {
 
     func showDiagnostics() {
         guard canStartLive else { return }
+        cancelLeanTutorialReplay()
         route = .diagnostics
     }
 
@@ -196,6 +210,7 @@ final class LaserInputFlow {
     }
 
     func handleBackground() async {
+        cancelLeanTutorialReplay()
         if route == .liveSetup { await closeLiveSetup() }
         if route == .diagnostics { await closeDiagnostics() }
     }

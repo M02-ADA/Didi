@@ -1,0 +1,76 @@
+import XCTest
+
+/// Real Home and LaserScene; only the explicit DEBUG fixture supplies SYNTHETIC practice input.
+final class HomeTutorialHelpUITests: XCTestCase {
+    func testHomeHelpReturningPlayerReplayAndCancellation() {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        let title = app.descendants(matching: .any)["leanTutorialTitle"]
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        func waitTitle(_ label: String) {
+            XCTAssertTrue(title.waitForExistence(timeout: 60))
+            expectation(for: NSPredicate(format: "label CONTAINS %@", label), evaluatedWith: title)
+            waitForExpectations(timeout: 25)
+            XCTAssertTrue(app.descendants(matching: .any)["ftueProgressBar"].exists)
+            XCTAssertEqual(app.images.matching(identifier: "ftueCenterCheckpoint").count, 1)
+            XCTAssertFalse(app.descendants(matching: .any)["gameplayProgressBar"].exists)
+            for id in ["leanTutorialLeave", "leanTutorialSkip", "leanTutorialContinue"] { XCTAssertFalse(app.buttons[id].exists) }
+        }
+        func complete() {
+            let status = app.staticTexts["leanPreviewStatus"]
+            XCTAssertTrue(status.waitForExistence(timeout: 60))
+            expectation(for: NSPredicate(format: "label CONTAINS 'tutorial complete'"), evaluatedWith: status)
+            waitForExpectations(timeout: 30)
+            XCTAssertFalse(title.exists)
+            XCTAssertFalse(app.descendants(matching: .any)["ftueProgressBar"].exists)
+            XCTAssertTrue(app.descendants(matching: .any)["gameplayProgressBar"].exists)
+        }
+        // Existing first-play path still works without an explicit Help replay request.
+        app.launchArguments = ["-replay", "-leanFTUEPreview", "-leanFTUEReset", "-hideDebugOverlay"]
+        app.launch(); waitTitle("Lean your head"); waitTitle("LEAN LEFT"); waitTitle("LEAN RIGHT"); complete(); app.terminate()
+
+        for solo in [false, true] {
+            let mode = solo ? "solo" : "coop"
+            // Home starts normally; only finishing the two setup-instruction screens enters the fixture.
+            app.launchArguments = ["-homeHelpFTUEPreview"] + (solo ? ["-leanFTUESolo"] : [])
+            app.launch()
+            let help = app.buttons["replayTutorial"]
+            XCTAssertTrue(help.waitForExistence(timeout: 30))
+            XCTAssertEqual(help.label, "Replay tutorial")
+            XCTAssertTrue(help.isHittable)
+            XCTAssertEqual(help.frame.width, help.frame.height, accuracy: 1)
+            XCTAssertGreaterThanOrEqual(help.frame.width, 44)
+            XCTAssertGreaterThan(help.frame.minX, app.frame.width * 0.75)
+            XCTAssertGreaterThan(help.frame.minY, 24)
+            XCTAssertLessThan(help.frame.maxY, app.buttons["startMission"].frame.minY)
+            if solo { app.segmentedControls["playerModeSelector"].buttons["1 Player · Solo Practice"].tap() }
+            capture("\(mode)-home-after")
+            let closeup = XCTAttachment(screenshot: help.screenshot()); closeup.name = "help-button-closeup"; closeup.lifetime = .keepAlways; add(closeup)
+            help.tap()
+            XCTAssertTrue(app.buttons["setupNext"].waitForExistence(timeout: 10))
+            XCTAssertFalse(title.exists, "genuine practice never opens before setup")
+            capture("\(mode)-help-required-setup")
+            // Cancel and request again: no stale request and no duplicate live session.
+            app.buttons["navigationBack"].tap()
+            XCTAssertTrue(help.waitForExistence(timeout: 10))
+            help.tap(); app.buttons["setupNext"].tap(); app.buttons["setupNext"].tap()
+            waitTitle("Lean your head"); capture("\(mode)-manual-introduction")
+            waitTitle("LEAN LEFT"); capture("\(mode)-manual-left")
+            waitTitle("LEAN RIGHT"); capture("\(mode)-manual-right")
+            complete(); capture("\(mode)-manual-completed")
+            app.buttons["leanPreviewRetry"].tap(); complete()
+            app.buttons["leaveReplay"].tap()
+            XCTAssertTrue(help.waitForExistence(timeout: 15))
+            // Ordinary replay entry has no manual request, so persisted completion wins.
+            app.buttons["chooseReplay"].tap(); complete()
+            app.terminate(); app.launch()
+            XCTAssertTrue(help.waitForExistence(timeout: 15))
+            app.buttons["chooseReplay"].tap(); complete()
+            app.terminate()
+        }
+    }
+}
