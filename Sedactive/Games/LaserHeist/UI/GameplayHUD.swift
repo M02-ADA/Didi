@@ -164,6 +164,8 @@ struct GameplayHUD: View {
     let model: GameplayHUDModel
     /// The session's player intents; the HUD offers only those it is given.
     let actions: GameplayHUDActions
+    /// Visual substitution only; no tutorial or gameplay progress is calculated here.
+    var isFTUEActive = false
     #if DEBUG
     /// `-hudPauseMenu` opens the menu at launch, for reviewing its layout (Debug
     /// only). Without a session pause it is a labelled preview: the round runs on.
@@ -210,7 +212,10 @@ struct GameplayHUD: View {
             }
             .frame(width: 268 * k, alignment: .leading)
             Spacer().frame(width: 33.9 * k)
-            progress(k)
+            Group {
+                if isFTUEActive { FTUEProgressBar(k: k) }
+                else { progress(k) }
+            }
                 .frame(width: 667 * k)
             Spacer().frame(width: 36 * k)
             // Without the session's pause (Jevon), pausing is not offered: the button
@@ -330,6 +335,7 @@ struct GameplayHUD: View {
         }
         .frame(height: height)
         .accessibilityElement()
+        .accessibilityIdentifier("gameplayProgressBar")
         .accessibilityLabel("Vaults opened \(model.vaultsOpened) of \(model.checkpoints)")
         .accessibilityValue(model.diamondReached ? "Diamond reached" : "")
     }

@@ -537,7 +537,7 @@ private struct ReplayRoundView: View {
                     }
                     // The debug HUD takes the place of the normal HUD.
                     if let model, !Self.showsReplayDebugHUD {
-                        GameplayHUD(model: model, actions: hudActions(session))
+                        GameplayHUD(model: model, actions: hudActions(session), isFTUEActive: tutorial?.isActive == true)
                     }
                 }
             }
@@ -548,7 +548,7 @@ private struct ReplayRoundView: View {
                 ZStack {
                     if let configuration = leanPreviewConfiguration {
                         GameplayHUD(model: .init(state: nil, events: [], configuration: configuration, activityDuration: configuration.activityDuration),
-                                    actions: leanTutorialActions(leanPreview))
+                                    actions: leanTutorialActions(leanPreview), isFTUEActive: leanPreview.isActive)
                     }
                     if !leanPreview.isSuspended {
                         LeanTutorialOverlay(tutorial: leanPreview, solo: isLeanPreviewSolo,

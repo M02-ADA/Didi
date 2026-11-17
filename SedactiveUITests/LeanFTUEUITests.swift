@@ -15,7 +15,17 @@ final class LeanFTUEUITests: XCTestCase {
             expectation(for: NSPredicate(format: "label CONTAINS %@", text), evaluatedWith: title)
             waitForExpectations(timeout: 25)
         }
+        func tutorialBar() {
+            let bar = app.descendants(matching: .any)["ftueProgressBar"]
+            let checkpoint = app.images["ftueCenterCheckpoint"]
+            XCTAssertTrue(bar.exists)
+            XCTAssertEqual(app.images.matching(identifier: "ftueCenterCheckpoint").count, 1)
+            XCTAssertEqual(checkpoint.frame.midX, bar.frame.midX, accuracy: 1)
+            XCTAssertEqual(checkpoint.frame.midY, bar.frame.midY, accuracy: 1)
+            XCTAssertFalse(app.descendants(matching: .any)["gameplayProgressBar"].exists)
+        }
         func noBottomControls() {
+            tutorialBar()
             for id in ["leanTutorialLeave", "leanTutorialSkip", "leanTutorialContinue", "leanPreviewInspect"] {
                 XCTAssertFalse(app.buttons[id].exists)
             }
@@ -26,6 +36,9 @@ final class LeanFTUEUITests: XCTestCase {
             expectation(for: NSPredicate(format: "label CONTAINS 'tutorial complete'"), evaluatedWith: status)
             waitForExpectations(timeout: 30)
             XCTAssertFalse(title.exists)
+            XCTAssertFalse(app.descendants(matching: .any)["ftueProgressBar"].exists)
+            XCTAssertFalse(app.images["ftueCenterCheckpoint"].exists)
+            XCTAssertTrue(app.descendants(matching: .any)["gameplayProgressBar"].exists)
         }
         for solo in [false, true] {
             let mode = solo ? "solo" : "coop"
