@@ -89,10 +89,10 @@ import Testing
         renderer.apply(nil, variant: .fill, reduceMotion: true)
         #expect(!renderer.root.isEnabled)
     }
-    @Test func defaultSelectsClosingAndLegacyFallbackIsPresentationOnly() throws {
+    @Test func defaultSelectsArrowBarAndLegacyFallbackIsPresentationOnly() throws {
         let (state, config) = try fixture(time: 3)
         let scene = LaserScene()
-        #expect(scene.timingVariant == .circular)
+        #expect(scene.timingVariant == .converging)
         let presenter = GameplayScenePresenter(scene: scene, configuration: config, encounters: state.encounters.map(\.encounter))
         presenter.apply(state: state, events: [], snapshot: nil)
         let original = scene.timingPresentation
@@ -193,6 +193,25 @@ import Testing
         let m = try #require(LaserTimingPresentation.make(state: s, configuration: config))
         #expect(m.allClear && m.label == "P1 CLEAR" && m.verdicts[.player2] == nil)
     }
+    @Test(arguments: [LaserMove.duck, .jump])
+    func arrowBarClosesAndGlowsAtCrossing(move: LaserMove) throws {
+        let renderer = TimingIndicatorRenderer()
+        let (early, config) = try fixture(move, time: 3)
+        renderer.apply(LaserTimingPresentation.make(state: early, configuration: config), variant: .converging, reduceMotion: false)
+        let bar = try #require(renderer.root.findEntity(named: "timing-yellow"))
+        let ready = try #require(renderer.root.findEntity(named: "timing-\(move.rawValue)-ready"))
+        let glow = try #require(renderer.root.findEntity(named: "timing-\(move.rawValue)-go"))
+        let earlyScale = bar.scale.x
+        #expect(ready.isEnabled && !glow.isEnabled)
+        let (crossing, _) = try fixture(move, time: 4)
+        renderer.apply(LaserTimingPresentation.make(state: crossing, configuration: config), variant: .converging, reduceMotion: false)
+        #expect(bar.scale.x < earlyScale)
+        #expect(!ready.isEnabled && glow.isEnabled)
+        let (passed, _) = try fixture(move, time: 4.3)
+        renderer.apply(LaserTimingPresentation.make(state: passed, configuration: config), variant: .converging, reduceMotion: false)
+        #expect(renderer.root.findEntity(named: "timing.converging")?.isEnabled == false)
+    }
+
     @Test func productionPauseHidesThenResumesTheSameSourceModel() throws {
         let (state, config) = try fixture(time: 3)
         let scene = LaserScene()
@@ -200,12 +219,12 @@ import Testing
         presenter.apply(state: state, events: [], snapshot: nil)
         let m = scene.timingPresentation
         scene.setTimingPaused(true)
-        #expect(scene.root.findEntity(named: "timing.circularCue")?.isEnabled == false)
+        #expect(scene.root.findEntity(named: "timing.converging")?.isEnabled == false)
         scene.setTimingPaused(false)
-        #expect(scene.root.findEntity(named: "timing.circularCue")?.isEnabled == true)
+        #expect(scene.root.findEntity(named: "timing.converging")?.isEnabled == true)
         #expect(scene.timingPresentation == m)
         presenter.stop()
-        #expect(scene.root.findEntity(named: "timing.circularCue")?.isEnabled == false)
+        #expect(scene.root.findEntity(named: "timing.converging")?.isEnabled == false)
     }
 
     @Test(arguments: [LaserMove.duck, .jump])

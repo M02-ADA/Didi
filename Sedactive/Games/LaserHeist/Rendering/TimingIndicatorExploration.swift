@@ -4,13 +4,14 @@ import UIKit
 
 /// Presentation only. Circular cue is selected; horizontal variants are comparison/fallback renderers.
 nonisolated enum TimingIndicatorVariant: String, CaseIterable, Sendable {
-    case approved, circular, closing
+    case approved, circular, closing, converging
     #if DEBUG
     case fill, sweep
     #endif
     var title: String {
         switch self {
         case .approved: "Legacy fallback"
+        case .converging: "Arrow timing bar"
         case .circular: "Circular cue"
         case .closing: "Closing Gate (comparison)"
         #if DEBUG
@@ -109,6 +110,7 @@ private extension Judgement {
     let root = Entity()
     private let horizontal = Entity()
     private let circular = CircularTimingCueRenderer()
+    private lazy var converging = ConvergingTimingCueRenderer()
     #if DEBUG
     private let fill: ModelEntity
     private let target: ModelEntity
@@ -182,8 +184,14 @@ private extension Judgement {
     func apply(_ value: LaserTimingPresentation?, variant: TimingIndicatorVariant, reduceMotion: Bool) {
         self.model = value; self.variant = variant
         root.isEnabled = variant != .approved && value != nil
-        horizontal.isEnabled = variant != .circular
+        horizontal.isEnabled = variant != .circular && variant != .converging
         circular.apply(variant == .circular ? value : nil, reduceMotion: reduceMotion)
+        if variant == .converging {
+            if converging.root.parent == nil { root.addChild(converging.root) }
+            converging.apply(value, reduceMotion: reduceMotion)
+            return
+        }
+        root.findEntity(named: "timing.converging")?.isEnabled = false
         guard let value, root.isEnabled, variant != .circular else { return }
         let p = Float(value.displayedProgress(reduceMotion: reduceMotion)), w = Self.width
         let tint = value.phase == .result ? (value.anyHit ? 4 : value.allClear ? 3 : 5)
@@ -385,7 +393,7 @@ private extension Judgement {
     }
     /// The previous in-game cue's rounded Black face, hard drop shadow and soft halo,
     /// now below the badge. Same visual language; no exclamation on action words.
-    private static func label(_ key: String) -> CGImage? {
+    fileprivate static func label(_ key: String) -> CGImage? {
         let format = UIGraphicsImageRendererFormat(); format.scale = 1
         return UIGraphicsImageRenderer(size: CGSize(width: 720, height: 224), format: format).image { context in
             let font = UIFont.systemFont(ofSize: key == "perfect" || key == "unavailable" ? 115 : 137, weight: .black)
@@ -398,11 +406,73 @@ private extension Judgement {
             text.draw(at: origin)
         }.cgImage
     }
-    private static func material(_ image: CGImage?) -> UnlitMaterial {
+    fileprivate static func material(_ image: CGImage?) -> UnlitMaterial {
         var result = UnlitMaterial(applyPostProcessToneMap: false)
         if let image, let texture = try? TextureResource(image: image, options: .init(semantic: .color)) {
             result.color = .init(tint: .white, texture: .init(texture)); result.blending = .transparent(opacity: 1.0)
         }
         return result
+    }
+}
+
+/// Two edges move toward the arrow using the encounter's game clock.
+@MainActor final class ConvergingTimingCueRenderer {
+    let root = Entity()
+    private let bar: ModelEntity
+    private let arrows: [LaserMove: (ready: ModelEntity, go: ModelEntity, label: ModelEntity)]
+    private static let width: Float = 1.06
+    private static let arrowWidth: Float = 0.24
+
+    init() {
+        func plane(_ name: String, width: Float, height: Float, material: UnlitMaterial) -> ModelEntity {
+            let entity = ModelEntity(mesh: .generatePlane(width: width, height: height), materials: [material])
+            entity.name = name
+            return entity
+        }
+        func image(_ name: String, width: Float, height: Float) -> ModelEntity {
+            plane(name, width: width, height: height, material: CircularTimingCueRenderer.material(UIImage(named: name)?.cgImage))
+        }
+        let track = image("timing-track", width: Self.width, height: Self.width * 37 / 323)
+        root.addChild(track)
+        bar = image("timing-yellow", width: Self.width, height: Self.width * 45 / 323)
+        bar.position.z = 0.002
+        root.addChild(bar)
+        var faces: [LaserMove: (ModelEntity, ModelEntity, ModelEntity)] = [:]
+        for move in [LaserMove.jump, .duck] {
+            let key = move.rawValue
+            let ready = image("timing-\(key)-ready", width: Self.arrowWidth, height: Self.arrowWidth * 72 / 73)
+            let glowWidth = Self.arrowWidth * 106 / 73
+            let go = image("timing-\(key)-go", width: glowWidth, height: glowWidth)
+            ready.position.z = 0.004
+            go.position.z = 0.004
+            let label = plane("timing.\(key).label", width: 0.66, height: 0.205,
+                              material: CircularTimingCueRenderer.material(CircularTimingCueRenderer.label(key)))
+            label.position = [0, -0.24, 0.006]
+            for face in [ready, go, label] { root.addChild(face) }
+            faces[move] = (ready, go, label)
+        }
+        arrows = faces
+        root.name = "timing.converging"
+        root.isEnabled = false
+    }
+
+    func apply(_ timing: LaserTimingPresentation?, reduceMotion: Bool) {
+        guard let timing, timing.phase == .prepare || timing.phase == .crossing,
+              arrows[timing.move] != nil else {
+            root.isEnabled = false
+            return
+        }
+        root.isEnabled = true
+        // Use the actual crossing as the cue. Keep the glow inside the capture window.
+        let go = timing.phase == .crossing && timing.evidenceWindow.contains(timing.gameTime)
+        let duration = timing.crossingTime - timing.cueTime
+        let progress = duration > 0 ? min(1, max(0, (timing.gameTime - timing.cueTime) / duration)) : 1
+        let fraction = Self.arrowWidth / Self.width
+        bar.scale.x = reduceMotion && !go ? 1 : 1 - (1 - fraction) * Float(progress)
+        for (move, faces) in arrows {
+            faces.ready.isEnabled = move == timing.move && !go
+            faces.go.isEnabled = move == timing.move && go
+            faces.label.isEnabled = move == timing.move
+        }
     }
 }
