@@ -57,7 +57,7 @@ final class HeartCollectible {
 
     fileprivate init(artwork: Entity, generation: UUID, target: UUID) {
         self.artwork = artwork
-        Self.prepareMaterials(artwork)
+        Self.prepareMaterials(artwork, palette: Self.redPalette)
         flash = artwork.clone(recursive: true)
         flash.name = "heart.flash"
         Self.tintFlash(flash)
@@ -93,8 +93,10 @@ final class HeartCollectible {
                 green: CGFloat((hex >> 8) & 255) / 255, blue: CGFloat(hex & 255) / 255, alpha: 1)
     }
     private static let redPalette: [String: UIColor] = [
-        "FrontCoral": color(0xF03242), "Shoulder": color(0xE82B3D),
-        "EdgeRose": color(0xDB2637), "Back": color(0xCD2637)
+        // Approved HUD sRGB identities; UIColor supplies their color-space metadata to RealityKit.
+        "FrontCoral": color(0xE23941), "Shoulder": color(0xEB6A44),
+        // Approximately 86% and 72% of base intensity in linear light, quantized to sRGB8.
+        "EdgeRose": color(0xD3353C), "Back": color(0xC33037)
     ]
 
     /// Three static expanded back-face shells form a small silhouette halo, not a light or bloom.
@@ -119,12 +121,12 @@ final class HeartCollectible {
         visit(artwork)
     }
 
-    private static func prepareMaterials(_ entity: Entity) {
+    private static func prepareMaterials(_ entity: Entity, palette: [String: UIColor]) {
         if let mesh = entity as? ModelEntity, var model = mesh.model {
             model.materials = model.materials.map { material in
                 guard var pbr = material as? PhysicallyBasedMaterial else { return material }
                 let key = (pbr.name ?? "").components(separatedBy: "_").last ?? ""
-                if let color = redPalette[key] { pbr.baseColor = .init(tint: color) }
+                if let color = palette[key] { pbr.baseColor = .init(tint: color) }
                 // A small material-coloured floor for faces turned away from the scene lights.
                 // It preserves the four PBR regions and does not rely on bloom.
                 pbr.emissiveColor = .init(color: pbr.baseColor.tint)
@@ -133,10 +135,16 @@ final class HeartCollectible {
             }
             mesh.model = model
         }
-        for child in entity.children { prepareMaterials(child) }
+        for child in entity.children { prepareMaterials(child, palette: palette) }
     }
 
     #if DEBUG
+    func usePreviousPaletteForComparison() {
+        Self.prepareMaterials(artwork, palette: [
+            "FrontCoral": Self.color(0xF03242), "Shoulder": Self.color(0xE82B3D),
+            "EdgeRose": Self.color(0xDB2637), "Back": Self.color(0xCD2637)
+        ])
+    }
     func hideGlowForComparison() { showsGlow = false; glow.isEnabled = false }
     func useAuthoredPaletteForComparison() {
         let palette: [String: UIColor] = ["FrontCoral": Self.color(0xF24A54), "Shoulder": Self.color(0xEB414B),

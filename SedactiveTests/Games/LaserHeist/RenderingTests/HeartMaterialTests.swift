@@ -5,13 +5,13 @@ import UIKit
 @testable import Sedactive
 
 @MainActor struct HeartMaterialTests {
-    @Test func redPresentationPaletteKeepsFourDistinctPBRRegions() async throws {
+    @Test func hudPaletteUsesExactSRGBBaseAndHighlightInFourPBRRegions() async throws {
         let heart = try await HeartArt.load().makeHeart(generation: UUID())
         let mesh = try #require(heart.root.findEntity(named: "GEO_LH_Heart") as? ModelEntity)
         func linear(_ value: CGFloat) -> CGFloat {
             value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
         }
-        let expected = [[240, 50, 66], [232, 43, 61], [219, 38, 55], [205, 38, 55]].map {
+        let expected = [[226, 57, 65], [235, 106, 68], [211, 53, 60], [195, 48, 55]].map {
             $0.map { linear(CGFloat($0) / 255) }
         }
         let materials = try #require(mesh.model).materials

@@ -55,6 +55,7 @@ final class HeartAnimationPreview {
         scene.root.addChild(next.root)
         heart = next
         let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-heartPreviousPalette") { next.usePreviousPaletteForComparison() }
         if arguments.contains("-heartOriginalPalette") { next.useAuthoredPaletteForComparison() }
         if arguments.contains("-heartNoGlow") { next.hideGlowForComparison() }
         if arguments.contains("-heartWithDiamond"), companionDiamond == nil, let diamond = scene.makeDiamond() {
