@@ -25,7 +25,12 @@ final class LaserInputFlow {
         let generation = session.inputConfiguration.sessionGeneration
         if skip { leanTutorial.skip(generation: generation) }
         else { leanTutorial.advance(generation: generation) }
-        if leanTutorial.stage == .completed { session.setPreRoundTutorialPending(false) }
+        if leanTutorial.stage == .completed {
+            session.setPreRoundTutorialPending(false)
+            // The existing command rechecks current readiness. It cannot accept calibration,
+            // spend game time before countdown, or start from stale evidence.
+            if session.canStartLiveRound { try? session.beginLiveCountdown() }
+        }
     }
 
     private let makeLiveSession: @MainActor () throws -> GameSessionCoordinator

@@ -34,6 +34,32 @@ import Testing
         #expect(!tutorial.isCompleted && tutorial.stage == .notStarted)
     }
 
+    @Test func completedVisitDoesNotHoldRetryOrPlayAgain() async throws {
+        let defaults = store(), tutorial = LeanTutorial(defaults: store())
+        // A separate isolated store verifies real relaunch construction as well.
+        let persisted = LeanTutorial(defaults: defaults), generation = UUID()
+        persisted.prepare(generation: generation)
+        persisted.beginIfEligible(generation: generation, eligible: true)
+        persisted.skip(generation: generation)
+        defer { defaults.removeObject(forKey: LeanTutorial.completionKey) }
+        func make() throws -> GameSessionCoordinator {
+            let script = try LaserReplayScript.load().freshRound(generation: UUID())
+            return GameSessionCoordinator(provider: ControlledSessionInput(), inputConfiguration: script.input.configuration)
+        }
+        let flow = LaserInputFlow(leanTutorial: LeanTutorial(defaults: defaults), makeLiveSession: make)
+        await flow.startLiveSetup()
+        let first = flow.session?.inputConfiguration.sessionGeneration
+        #expect(flow.session?.preRoundTutorialPending == false)
+        await flow.retryLiveSetup()
+        #expect(flow.session?.preRoundTutorialPending == false)
+        #expect(flow.session?.inputConfiguration.sessionGeneration != first)
+        await flow.closeLiveSetup()
+        await flow.startLiveSetup()
+        #expect(!flow.leanTutorial.isActive && flow.session?.preRoundTutorialPending == false)
+        await flow.closeLiveSetup()
+        #expect(!tutorial.isCompleted, "unrelated store does not inherit completion")
+    }
+
     @Test func interruptedVisitDoesNotPersistOrAcceptLateActions() {
         let tutorial = LeanTutorial(defaults: store()), old = UUID(), new = UUID()
         tutorial.prepare(generation: old)

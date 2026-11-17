@@ -48,7 +48,11 @@ struct LeanIntroductionAnimation: View {
                 }
             }
             .frame(width: fullWidth, height: proxy.size.height)
-            // Solo shows the original left silhouette only, at the same individual scale.
+            // Mask the original left half BEFORE centering it; the second silhouette can
+            // never leak into Solo during a wide lean. Only one decoder is used.
+            .mask(alignment: .leading) {
+                Rectangle().frame(width: solo ? fullWidth / 2 : fullWidth)
+            }
             .offset(x: solo ? -fullWidth * 0.08 : 0)
         }
         .clipped()

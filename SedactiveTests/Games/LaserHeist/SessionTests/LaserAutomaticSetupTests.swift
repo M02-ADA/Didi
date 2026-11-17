@@ -52,6 +52,22 @@ import Testing
         return time
     }
 
+    @Test func tutorialHoldsAutomaticCountdownUntilExplicitRelease() async throws {
+        let rig = try Self.rig(), session = rig.session
+        session.setPreRoundTutorialPending(true)
+        var time = try await Self.linkAndCalibrate(rig)
+        let host = try session.attachLiveFrameHost(); session.advanceLive(frameHost: host)
+        time = try await Self.frames(rig, from: time, seconds: 5)
+        #expect(session.canStartLiveRound && session.phase == .awaitingSetup)
+        #expect(session.state == nil && session.events.isEmpty && session.liveReadiness?.gameTime == 0)
+        session.setPreRoundTutorialPending(false)
+        session.advanceSetupAutomatically()
+        #expect(session.phase == .countdown && session.state == nil)
+        time = try await Self.frames(rig, from: time, seconds: 4)
+        #expect(session.phase == .running)
+        await session.stop()
+    }
+
     @Test func detectedPlayersReachGameplayWithoutAnyButton() async throws {
         let rig = try Self.rig(), session = rig.session
         var time = try await Self.linkAndCalibrate(rig)

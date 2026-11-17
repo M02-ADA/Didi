@@ -63,7 +63,7 @@ struct ContentView: View {
         liveSetup(flow: flow)
         #if DEBUG
           .overlay(alignment: .top) {
-            if flow.session?.isSoloPractice == true {
+            if flow.session?.isSoloPractice == true, !flow.leanTutorial.isActive {
               Text("SOLO PRACTICE · 1 Player · not a co-op result")
                 .font(.system(size: 13, weight: .heavy, design: .monospaced))
                 .padding(.horizontal, 12).padding(.vertical, 5)
@@ -96,6 +96,7 @@ struct ContentView: View {
             PlayView(avatarSource: { try VisionK03MailboxPump(bridge: dependencies.visionPoseBridge, mailbox: $0) },
                      onExit: { Task { await flow.closeLiveSetup() } }, liveSession: session,
                      onLiveRetry: { Task { await flow.retryLiveSetup() } })
+              .blur(radius: flow.leanTutorial.stage == .introduction ? 5 : 0)
               .id(ObjectIdentifier(session)) // a new session (Retry) gets a fresh scene
           }
           // The setup stage, with its camera preview, stays MOUNTED for the whole visit and is only
@@ -103,6 +104,7 @@ struct ContentView: View {
           // capture session and stalls frames 220–500 ms (iPad, 11 November 2026), which aborted
           // every countdown and, repeated, lost the player and restarted setup.
           let stageShown = Self.showsSetupStage(flow.session) && !flow.leanTutorial.isActive
+            && !(flow.leanTutorial.stage == .completed && flow.session?.canStartLiveRound == true)
           liveSetupStage(flow, preview: cameraPreview)
             .opacity(stageShown ? 1 : 0)
             .allowsHitTesting(stageShown)

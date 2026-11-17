@@ -13,9 +13,9 @@ struct LeanTutorialOverlay: View {
             let k = min(proxy.size.width / 1210, proxy.size.height / 834)
             ZStack {
                 if tutorial.stage == .introduction {
-                    // System backdrop material exists only during the introduction, not practice.
-                    Rectangle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark)
-                    Color.black.opacity(0.48)
+                    // The host applies a small blur only during this introduction. Darken
+                    // without a second live backdrop filter, keeping the mascots recognizable.
+                    Color.black.opacity(0.55)
                     LeanIntroductionAnimation(solo: solo)
                         .frame(width: (solo ? 330 : 660) * k, height: 455 * k)
                         .position(x: proxy.size.width / 2, y: proxy.size.height * 0.34)
@@ -26,8 +26,10 @@ struct LeanTutorialOverlay: View {
                         .accessibilityIdentifier("leanTutorialTitle")
                 } else {
                     Text(tutorial.stage == .practiceLeft ? "← LEAN LEFT" : "LEAN RIGHT →")
-                        .font(.system(size: 48 * k, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white).shadow(color: .black, radius: 5)
+                        .font(.system(size: 52.7 * k, weight: .black, design: .rounded))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.91), radius: 0, x: 3 * k, y: 5 * k)
+                        .shadow(color: .black.opacity(0.25), radius: 4 * k, x: 0, y: 4 * k)
                         .position(x: proxy.size.width / 2, y: proxy.size.height * 0.19)
                         .accessibilityIdentifier("leanTutorialTitle")
                 }
@@ -41,6 +43,8 @@ struct LeanTutorialOverlay: View {
                     }
                     .font(.system(size: max(17, 23 * k), weight: .bold, design: .rounded))
                     .buttonStyle(.bordered).controlSize(.large)
+                    .foregroundStyle(LaserHeistDesign.cream)
+                    .padding(10 * k).background(.black.opacity(0.5), in: Capsule())
                     .padding(.bottom, max(proxy.safeAreaInsets.bottom, 24 * k))
                 }
             }.frame(width: proxy.size.width, height: proxy.size.height)

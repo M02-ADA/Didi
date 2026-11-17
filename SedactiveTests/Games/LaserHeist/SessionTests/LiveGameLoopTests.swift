@@ -23,6 +23,21 @@ struct LiveGameLoopTests {
         await rig.session.stop()
     }
 
+    @Test func completingTutorialCannotBypassLostReadiness() async throws {
+        let rig = try LiveGameRig()
+        rig.session.setPreRoundTutorialPending(true)
+        try await rig.prepare()
+        try await rig.send(0.5, crown: nil)
+        rig.session.setPreRoundTutorialPending(false)
+        #expect(throws: LaserDataError.self) { try rig.session.beginLiveCountdown() }
+        #expect(rig.session.state == nil && rig.session.liveReadiness?.gameTime == 0)
+        try await rig.send(0.625); try await rig.send(0.75)
+        try rig.session.beginLiveCountdown()
+        try await rig.send(1.0)
+        #expect(rig.session.phase == .running && rig.session.state?.gameTime == 0)
+        await rig.session.stop()
+    }
+
     @Test func countdownAndOriginalCaptureReachProductionJudgeAtEqualDeadline() async throws {
         let rig = try LiveGameRig()
         try await rig.run()
