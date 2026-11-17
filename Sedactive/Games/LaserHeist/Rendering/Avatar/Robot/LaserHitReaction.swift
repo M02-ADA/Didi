@@ -88,9 +88,25 @@ nonisolated struct LaserHitReaction: Equatable, Sendable {
         var charge: Float = 0
         /// Whether residual sparks show (they fly on their own curve from `sparkStart`).
         var sparks = false
+        /// How far the struck mascot's body opacity is lifted from its translucent baseline toward
+        /// fully opaque, 0…1 (`RobotAvatarLayer.bodyOpacity`): solid at impact, back by `impactRelease`.
+        var solidity: Float = 0
 
         static let rest = Frame()
         var isRest: Bool { self == .rest }
+    }
+
+    /// The struck mascot is fully opaque from the first frame through the strongest moment (the
+    /// hit-stop, the white impact frame, the recoil peak at ~110 ms) until `impactHold`, then eases
+    /// back to its translucent baseline by `impactRelease`, while the coral charge still pulses.
+    static let impactHold = 0.16
+    static let impactRelease = 0.42
+
+    /// Body solidity (see `Frame.solidity`): an instant attack (1 on the first frame, no fade in),
+    /// a hold, then a smoothstep release. Not motion, so Reduce Motion keeps it.
+    static func solidity(_ tau: Double) -> Double {
+        guard tau >= 0, tau < duration else { return 0 }
+        return 1 - smooth(impactHold, impactRelease, tau)
     }
 
     /// When the residual sparks leave the contact point, and how long they live.
@@ -142,6 +158,7 @@ nonisolated struct LaserHitReaction: Equatable, Sendable {
         let r = Float(Self.recoil(tau))
         let lagged = Float(Self.recoil(tau - 0.025)), late = Float(Self.recoil(tau - 0.045))
         var f = Frame()
+        f.solidity = Float(Self.solidity(tau))
         if reduceMotion {
             // A gentle nudge and highlight: no hit-stop, shudder, arcs or sparks.
             f.roll = -side * 2.5 * degrees * r * end

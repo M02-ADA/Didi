@@ -46,6 +46,7 @@ private struct ReplayRoundView: View {
     @State private var scene = LaserScene()
     @State private var presentation = LaserReplayPresentation()
     @State private var diamondFlights = DiamondHUDFlightModel()
+    @State private var teamCallouts = LaserTeamCalloutModel()
     @State private var session: GameSessionCoordinator?
     /// A live session mounted before its round plan exists (scene loaded during setup): starts the
     /// presentation on the first rendered frame after the plan is installed.
@@ -87,6 +88,7 @@ private struct ReplayRoundView: View {
             presentation.holdsTimingComparison = TimingIndicatorControls.isComparison
             #endif
             presentation.diamondFlights = diamondFlights
+            presentation.teamCallouts = teamCallouts
             let authored = await LaserScene.loadAuthoredEnvironment()
             #if DEBUG
             // Launch with `-showEditorPreviews` to overlay the Reality Composer Pro
@@ -428,6 +430,10 @@ private struct ReplayRoundView: View {
                     // The debug HUD takes the place of the normal HUD.
                     if let model, !Self.showsReplayDebugHUD {
                         GameplayHUD(model: model, actions: hudActions(session))
+                    }
+                    // PERFECT! / ZAPPED! on the HUD's title line, never over the results.
+                    if session.summary == nil {
+                        LaserTeamCalloutView(model: teamCallouts)
                     }
                 }
             }
