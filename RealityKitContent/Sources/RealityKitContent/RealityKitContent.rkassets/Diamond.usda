@@ -98,7 +98,7 @@ def Xform "Root" (
     }
 
     def Xform "Diamond" (
-        doc = "Diamonds.png on a camera-facing plane. Sparkle is a template Swift copies for the collect effect."
+        doc = "Diamond templates for gameplay. Sparkle is cloned for the collect effect."
     )
     {
         quatf xformOp:orient = (1, 0, 0, 0)
@@ -109,6 +109,13 @@ def Xform "Root" (
         def Xform "Gem" (
             prepend references = @Diamond3D.usdz@</root>
             doc = "Approved Diamond v1: closed blue faceted mesh, original K06 width/height. Sparkle below stays unchanged."
+        )
+        {
+        }
+
+        def Xform "PassageGem" (
+            prepend references = @PassageBrilliant.usda@</Brilliant>
+            doc = "Volumetric brilliant-cut gem for regular corridor pickups."
         )
         {
         }

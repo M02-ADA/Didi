@@ -441,6 +441,12 @@ final class FinalVaultPresentation {
         placeRoom()
     }
 
+    /// Called after the standard room placement. Offset only the backdrop.
+    func applyDiamondTimeShake(_ offset: Float) {
+        guard case .inside = stage, let backdrop else { return }
+        backdrop.position.x += offset * backdrop.scale.y
+    }
+
     private func hide() {
         anchors = [:]
         scene.setCameraDolly(.zero)

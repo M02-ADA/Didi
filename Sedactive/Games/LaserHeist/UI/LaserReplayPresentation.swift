@@ -18,6 +18,7 @@ final class LaserReplayPresentation {
     private var busy = false
     private var presenter: GameplayScenePresenter?
     private var liveAttachment: LaserLiveFrameAttachment?
+    let pawBoardDiamonds = PawBoardDiamondPresentation()
     #if DEBUG
     private var dropoutProbe = LiveEvidenceDropoutProbe()
     #endif
@@ -155,6 +156,7 @@ final class LaserReplayPresentation {
                                                       phase: "\(session.phase)") { print(line) }
                 #endif
                 self.render(scene: scene, session: session)
+                self.renderPawBoard(on: content, scene: scene, session: session)
                 session.collectAvatarDiamondContacts(self.avatarDiamondContacts(scene: scene, session: session),
                                                      frameHost: attachment)
                 return
@@ -209,7 +211,9 @@ final class LaserReplayPresentation {
     #endif
 
     func stop() {
-        pawPickupsHeard = nil
+        pawBoardDiamonds.clear()
+        pawBoardDiamonds.boardFrame = .zero
+        resetPawPickupFeedback()
         diamondFlights?.clear()
         subscription?.cancel()
         subscription = nil
@@ -248,18 +252,77 @@ final class LaserReplayPresentation {
         return contacts
     }
 
-    private var pawPickupsHeard: Int?
+    private func renderPawBoard(on content: RealityViewCameraContent, scene: LaserScene,
+                                session: GameSessionCoordinator) {
+        guard session.showsDiamondTimePaws, let state = session.state,
+              let camera = scene.root.findEntity(named: "camera") as? PerspectiveCamera else {
+            pawBoardDiamonds.clear()
+            return
+        }
+        let projection = PawBoardDiamondPresentation.Projection(
+            board: pawBoardDiamonds.boardFrame, viewport: pawBoardDiamonds.viewportFrame,
+            cameraPosition: camera.position(relativeTo: nil), rotation: camera.orientation(relativeTo: nil),
+            verticalFieldOfView: camera.camera.fieldOfViewInDegrees)
+        let space: NamedCoordinateSpace = .named(DiamondHUDFlightModel.space)
+        pawBoardDiamonds.update(states: session.diamondStates, time: state.gameTime, scene: scene,
+                               onCollected: { [weak self] id, world in
+            guard let bonusID = Int(id.uuidString.suffix(12), radix: 16) else { return }
+            self?.diamondFlights?.collect(.bonus(bonusID), generation: state.sessionGeneration, world: world,
+                                         reduceMotion: UIAccessibility.isReduceMotionEnabled) {
+                content.project(point: $0, to: space)
+            }
+        }, place: projection.placement)
+    }
+
+    private var pawPickupCount: Int?
+    private var lastPawAccent: Double?
+    private var lastPawAccentLevel = 0
+    private var pawShake: (time: Double, level: Int)?
+
+    private func resetPawPickupFeedback() {
+        pawPickupCount = nil
+        lastPawAccent = nil
+        lastPawAccentLevel = 0
+        pawBoardDiamonds.latestCrestID = nil
+        pawShake = nil
+        if !pawBoardDiamonds.pickupLevels.isEmpty { pawBoardDiamonds.pickupLevels = [:] }
+    }
+
+    private func updatePawPickupFeedback(session: GameSessionCoordinator, at time: Double) {
+        guard session.showsDiamondTimePaws else { resetPawPickupFeedback(); return }
+        guard session.phase == .running else { return }
+        let count = session.diamondsCollected
+        guard count != pawPickupCount else { return }
+        let previous = pawPickupCount
+        pawPickupCount = count
+        let beats = DiamondTimePickupRhythm.beats(in: session.diamondStates)
+        pawBoardDiamonds.pickupLevels = Dictionary(uniqueKeysWithValues: beats.flatMap { beat in
+            beat.ids.map { ($0, beat.level) }
+        })
+        let beat = beats.last
+        pawBoardDiamonds.latestCrestID = beat.flatMap { $0.level >= 3 ? $0.ids.last : nil }
+        guard let previous, count > previous, let beat,
+              time - beat.lastPickup < LaserDiamondTimeBoard.pickupEffectDuration else { return }
+        let newAccent = lastPawAccent.map { beat.start - $0 >= DiamondTimePickupRhythm.accentWindow } ?? true
+        let crossedCrest = beat.level >= 3 && (newAccent || lastPawAccentLevel < 3)
+        if newAccent {
+            lastPawAccent = beat.start
+            switch beat.level {
+            case 1: AudioService.shared.play(.diamondCollect)
+            case 2: AudioService.shared.play(.diamondChainRise)
+            default: AudioService.shared.play(.diamondChainCrest)
+            }
+        }
+        if crossedCrest {
+            AudioService.shared.play(.diamondChainBass)
+            pawShake = (time, beat.level)
+        }
+        lastPawAccentLevel = beat.level
+    }
 
     private func render(scene: LaserScene, session: GameSessionCoordinator) {
         guard let state = session.state else { return }
-        if session.showsDiamondTimePaws {
-            if let previous = pawPickupsHeard, session.diamondsCollected > previous {
-                AudioService.shared.play(.diamondCollect)
-            }
-            pawPickupsHeard = session.diamondsCollected
-        } else {
-            pawPickupsHeard = nil
-        }
+        updatePawPickupFeedback(session: session, at: state.gameTime)
         if flightScenePhase != state.phase { diamondFlights?.clear(); flightScenePhase = state.phase }
         diamondFlights?.session(state.sessionGeneration, running: session.phase == .running && session.summary == nil)
         presenter?.apply(state: state, events: session.events, snapshot: session.latestSnapshot,
@@ -267,6 +330,11 @@ final class LaserReplayPresentation {
                             ? Self.upcomingVaultIn(state: state, activityDuration: session.activityDuration)
                             : session.liveVaultIn,
                          finalVault: session.finalVaultEntry, showsPawBoard: session.showsDiamondTimePaws)
+        if session.showsDiamondTimePaws, session.phase == .running,
+           !UIAccessibility.isReduceMotionEnabled, let pawShake {
+            presenter?.finalVault.applyDiamondTimeShake(
+                DiamondTimePickupRhythm.shake(age: state.gameTime - pawShake.time, level: pawShake.level))
+        }
         // The wrists' reach cursors (the tracked wrist the gate judges) are an engineering view only
         // (owner, 12 November 2026: players see the mascots and the buttons, no helper circles):
         // DEBUG `-showReachCursors`, while a vault's buttons wait. Contact is judged either way.

@@ -354,7 +354,7 @@ import Testing
         // MARK: Diamond Time: one real collection, no false ones, a held wrist scores once.
         let start = unlocked.gameTime
         let active = session.diamondStates.values.filter { $0.outcome == nil }.sorted { $0.spawn.id.uuidString < $1.spawn.id.uuidString }
-        #expect(active.count == 6 && active.allSatisfy { $0.interactionDeadline == start + 10 })
+        #expect(active.count == 6 && active.allSatisfy { $0.interactionDeadline == start + 20 })
         let target = try #require(active.first)
         let player = try #require(target.spawn.eligiblePlayers.first)
         let hand = LaserContactHand(playerID: player, wrist: .left)
@@ -376,7 +376,7 @@ import Testing
         for _ in 0..<200 where session.summary == nil { try await send() }
         let summary = try #require(session.summary, "round \(round): Results")
         record.diamondTimeEndedAt = summary.gameDuration
-        #expect(summary.gameDuration == start + 10, "Diamond Time ends at its deadline")
+        #expect(summary.gameDuration == start + 20, "Diamond Time ends at its deadline")
         #expect(summary.outcome == .completed && summary.vaultsOpened == 5 && summary.diamondsCollected == 1)
         #expect(summary.teamScore == scoreBefore + 25)
         // A late camera sample after time is up awards nothing.

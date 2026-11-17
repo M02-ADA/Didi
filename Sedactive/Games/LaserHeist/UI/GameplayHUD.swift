@@ -34,7 +34,8 @@ struct GameplayHUDModel: Equatable {
     var banner: Banner
     /// Whole seconds of Diamond Time left: the authoritative phase-change time
     /// plus the configured duration, against game time. `nil` outside Diamond Time.
-    var diamondSecondsLeft: Int?
+    var diamondTimeRemaining: Double?
+    var diamondSecondsLeft: Int? { diamondTimeRemaining.map { Int($0.rounded(.up)) } }
     /// Diamonds collected, or `nil` with no source (production until J05).
     var diamondsCollected: Int?
     /// The diamond count comes from the Debug fixture (labelled on screen).
@@ -110,7 +111,7 @@ struct GameplayHUDModel: Equatable {
             fillEnd = Self.fillStart
             diamondReached = false
             banner = .none
-            diamondSecondsLeft = nil
+            diamondTimeRemaining = nil
             return
         }
         let dots = Self.checkpointPositions(count: checkpoints)
@@ -146,9 +147,9 @@ struct GameplayHUDModel: Equatable {
             $0.sessionGeneration == state.sessionGeneration && $0.kind == .phaseChanged(.diamondTime)
         })?.gameTime {
             let left = start + configuration.diamondTimeDuration - state.gameTime
-            diamondSecondsLeft = max(0, Int(left.rounded(.up)))
+            diamondTimeRemaining = max(0, left)
         } else {
-            diamondSecondsLeft = nil
+            diamondTimeRemaining = nil
         }
     }
 }

@@ -127,7 +127,7 @@ nonisolated struct LaserWristDiamondConsumerTests {
         try game.touchVaultBatch(id: vault, contacts: PlayerID.allCases.flatMap { player in
             LaserVaultButton.allCases.map { .init(playerID: player, button: $0, calibrationRevision: 1) }
         }, generation: fixture.context.sessionGeneration, at: 0.25)
-        let initial = try (1...4).map { try LaserDiamondTests.spawn($0, at: 0.25, entry: 0.25, exit: 10.25) }
+        let initial = try (1...4).map { try LaserDiamondTests.spawn($0, at: 0.25, entry: 0.25, exit: 20.25) }
         try game.startDiamondTimeDiamonds(initial)
         var consumer = try LaserWristDiamondConsumer(configuration: fixture.plan(), context: fixture.context,
                                                       lifetime: UUID(), afterCapturedAt: 100)
@@ -135,9 +135,9 @@ nonisolated struct LaserWristDiamondConsumerTests {
         try consumer.receiveBodyContacts([initial[0].id: [.player1, .player2]], context: fixture.context,
                                          atHostTime: 101, game: &game)
         #expect(game.activeDiamonds.count == 4 && game.teamScore == 25)
-        try game.advance(to: 10.25)
+        try game.advance(to: 20.25)
         try consumer.receiveBodyContacts([initial[1].id: [.player1]], context: fixture.context,
-                                         atHostTime: 110.25, game: &game)
+                                         atHostTime: 120.25, game: &game)
         #expect(game.summary?.diamondsCollected == 1 && game.summary?.teamScore == 25)
     }
 
@@ -328,14 +328,14 @@ nonisolated struct LaserWristDiamondConsumerTests {
         #expect(try f.send(&c,&g,frame:4,capture:1.125,points:[WristGameplayFixture.left:WristGameplayFixture.inside],current:changed).isEmpty)
         #expect(g.teamScore == 0)
     }
-    @Test(arguments:[9.999,10.0,10.001])
+    @Test(arguments:[19.999,20.0,20.001])
     func diamondTimeDeadlineWinsAndReplacementNeedsFreshEntry(_ offset:Double) throws {
         let f = try WristGameplayFixture(); var g = try f.game()
         let vault = UUID();try g.openVault(id:vault,at:0)
         try g.touchVaultBatch(id:vault,contacts:PlayerID.allCases.flatMap { id in
             LaserVaultButton.allCases.map { LaserVaultContact(playerID:id,button:$0,calibrationRevision:1) }
         },generation:f.context.sessionGeneration,at:0.25)
-        let deadline = g.gameTime+10
+        let deadline = g.gameTime+20
         try g.startDiamondTimeDiamonds((1...4).map { try LaserDiamondTests.spawn($0,at:0.25,entry:0.25,exit:deadline) })
         var c = try LaserWristDiamondConsumer(configuration:f.plan(),context:f.context,lifetime:UUID(),afterCapturedAt:100)
         try c.refresh(game:g,context:f.context,atHostTime:100.25)
@@ -349,13 +349,13 @@ nonisolated struct LaserWristDiamondConsumerTests {
         try g.receive(packet, capturedGameTime: capture, arrivedAt: arrival)
         let r = try c.receive(packet, context: f.context, atHostTime: 100 + arrival,
                               capturedGameTime: capture, arrivedGameTime: arrival, game: &g)
-        #expect(r.count == (offset < 10 ? 1 : 0))
-        #expect(g.teamScore == (offset < 10 ? 25 : 0))
-        if offset < 10 { #expect(g.activeDiamonds.count == 4) }
+        #expect(r.count == (offset < 20 ? 1 : 0))
+        #expect(g.teamScore == (offset < 20 ? 25 : 0))
+        if offset < 20 { #expect(g.activeDiamonds.count == 4) }
         else {
             #expect(g.roundOutcome == .completed && g.activeDiamonds.isEmpty)
             #expect(g.summary?.gameDuration == deadline)
-            #expect(g.summary?.activityDuration == 10)
+            #expect(g.summary?.activityDuration == 20)
         }
     }
     @Test func repeatedReplacementRetainsOnlyActiveTargetEntryHistory() throws {
@@ -364,7 +364,7 @@ nonisolated struct LaserWristDiamondConsumerTests {
         try g.touchVaultBatch(id:vault,contacts:PlayerID.allCases.flatMap { id in
             LaserVaultButton.allCases.map { LaserVaultContact(playerID:id,button:$0,calibrationRevision:1) }
         },generation:f.context.sessionGeneration,at:0.25)
-        try g.startDiamondTimeDiamonds((1...4).map { try LaserDiamondTests.spawn($0,at:0.25,entry:0.25,exit:10.25) })
+        try g.startDiamondTimeDiamonds((1...4).map { try LaserDiamondTests.spawn($0,at:0.25,entry:0.25,exit:20.25) })
         var c = try LaserWristDiamondConsumer(configuration:f.plan(),context:f.context,lifetime:UUID(),afterCapturedAt:100)
         try c.refresh(game:g,context:f.context,atHostTime:100.25)
         for i in 0..<64 {
@@ -386,7 +386,7 @@ nonisolated struct LaserWristDiamondConsumerTests {
         try game.touchVaultBatch(id: vault, contacts: PlayerID.allCases.flatMap { player in
             LaserVaultButton.allCases.map { .init(playerID: player, button: $0, calibrationRevision: 1) }
         }, generation: fixture.context.sessionGeneration, at: 0.25)
-        let initial = try (1...4).map { try LaserDiamondTests.spawn($0, at: 0.25, entry: 0.25, exit: 10.25) }
+        let initial = try (1...4).map { try LaserDiamondTests.spawn($0, at: 0.25, entry: 0.25, exit: 20.25) }
         try game.startDiamondTimeDiamonds(initial)
         // At x=1.10 the wrist is inside the collected diamond and the free zone at x=1.16.
         // Seed 2 would select the overlapping zone first without the clearance preference.
@@ -413,7 +413,7 @@ nonisolated struct LaserWristDiamondConsumerTests {
         try g.touchVaultBatch(id:vault,contacts:PlayerID.allCases.flatMap { id in
             LaserVaultButton.allCases.map { LaserVaultContact(playerID:id,button:$0,calibrationRevision:1) }
         },generation:f.context.sessionGeneration,at:0.25)
-        try g.startDiamondTimeDiamonds((1...4).map { try LaserDiamondTests.spawn($0,at:0.25,entry:0.25,exit:10.25) })
+        try g.startDiamondTimeDiamonds((1...4).map { try LaserDiamondTests.spawn($0,at:0.25,entry:0.25,exit:20.25) })
         var c = try LaserWristDiamondConsumer(configuration:f.plan(),context:f.context,lifetime:UUID(),afterCapturedAt:100)
         try c.refresh(game:g,context:f.context,atHostTime:100.25)
         _ = try f.send(&c,&g,frame:3,capture:1,points:[WristGameplayFixture.left:WristGameplayFixture.outside])

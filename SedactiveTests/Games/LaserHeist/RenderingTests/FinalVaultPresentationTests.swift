@@ -312,7 +312,7 @@ struct FinalVaultPresentationTests {
         #expect(entering.banner == .none && entering.diamondSecondsLeft == nil && entering.diamondReached)
         let inside = GameplayHUDModel(state: state(60, .diamondTime), events: events, configuration: try configuration(),
                                       activityDuration: 60)
-        #expect(inside.banner == .retrieveDiamonds && inside.diamondSecondsLeft == 10)
+        #expect(inside.banner == .retrieveDiamonds && inside.diamondSecondsLeft == 20)
     }
 
     // MARK: - One continuous jump (13 November 2026)

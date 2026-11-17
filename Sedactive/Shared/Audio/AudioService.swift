@@ -22,6 +22,9 @@ enum SoundCue: String, CaseIterable {
     case vaultWarning = "vault-warning"
     case diamondTime = "diamond-time"
     case diamondCollect = "diamond-collect"
+    case diamondChainRise = "diamond-chain-rise"
+    case diamondChainCrest = "diamond-chain-crest"
+    case diamondChainBass = "diamond-chain-bass"
     case roundSuccess = "round-success"
     case roundFailure = "round-failure"
 
@@ -36,16 +39,29 @@ enum SoundCue: String, CaseIterable {
         switch self {
         case .uiTap, .vaultWarning: 0.12
         case .vaultButton, .diamondCollect: 0.06
+        case .diamondChainRise, .diamondChainCrest, .diamondChainBass: 0.10
         case .cueDuck, .cueJump, .laserClear, .laserHit: 0.25
         default: 0.5
         }
     }
 
     /// Simultaneous copies allowed (a small pool, never one player per play).
-    var voices: Int { self == .vaultButton || self == .diamondCollect ? 3 : 1 }
+    var voices: Int {
+        switch self {
+        case .vaultButton, .diamondCollect: 3
+        case .diamondChainRise, .diamondChainCrest: 2
+        default: 1
+        }
+    }
 
     /// Keep the impact clear without making it louder than the movement instructions.
-    var gain: Float { self == .laserHit ? 0.71 : 1 }
+    var gain: Float {
+        switch self {
+        case .laserHit: 0.71
+        case .diamondChainBass: 0.64
+        default: 1
+        }
+    }
 
     /// Instructions, CLEAR, the vault timer and stings briefly lower the music.
     var ducksMusic: Bool {

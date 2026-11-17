@@ -87,16 +87,20 @@ final class DiamondTimePresentation {
                     collections += 1
                     shown[diamond.id]?.collected = true
                     shown[diamond.id]?.until = time + Diamond.effectLifetime
+                } else if !item.collected {
+                    item.diamond.updatePassagePose(age: time - start, glow: .collectible,
+                                                   cameraPosition: scene.layout.cameraPosition)
                 }
                 continue
             }
-            guard !diamond.collected, let entity = scene.makeDiamond() else { continue }
+            guard !diamond.collected, let entity = scene.makeDiamond(passage: true) else { continue }
             var position = scene.mapping.playerPosition(diamond.lane, heightAboveFloor: diamond.heightAboveFloor)
             position.x += diamond.offsetX * scene.mapping.metersPerGameUnit
             position.z += 0.15
             entity.root.position = position
             entity.root.name = "diamondTime.diamond.\(diamond.id)"
             entity.showIdle()
+            entity.updatePassagePose(age: time - start, glow: .collectible, cameraPosition: scene.layout.cameraPosition)
             shown[diamond.id] = (entity, false, nil)
         }
     }

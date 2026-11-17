@@ -631,8 +631,8 @@ final class LaserScene {
 
     /// A new diamond in the world, not yet placed; the caller positions its
     /// `root` from game data through the world mapping and removes it when done.
-    func makeDiamond() -> Diamond? {
-        guard let diamond = diamondArt?.makeDiamond() else { return nil }
+    func makeDiamond(passage: Bool = false) -> Diamond? {
+        guard let diamond = diamondArt?.makeDiamond(passage: passage) else { return nil }
         diamonds.addChild(diamond.root)
         return diamond
     }
