@@ -95,7 +95,7 @@ struct ContentView: View {
           if let session = flow.session, session.hasLiveRoundPlan || session.automaticSetup {
             PlayView(avatarSource: { try VisionK03MailboxPump(bridge: dependencies.visionPoseBridge, mailbox: $0) },
                      onExit: { Task { await flow.closeLiveSetup() } }, liveSession: session,
-                     onLiveRetry: { Task { await flow.retryLiveSetup() } })
+                     onLiveRetry: { Task { await flow.retryLiveSetup() } }, leanTutorial: flow.leanTutorial)
               .blur(radius: flow.leanTutorial.stage == .introduction ? 5 : 0)
               .id(ObjectIdentifier(session)) // a new session (Retry) gets a fresh scene
           }

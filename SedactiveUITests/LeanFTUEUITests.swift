@@ -12,7 +12,7 @@ final class LeanFTUEUITests: XCTestCase {
             shot.name = name; shot.lifetime = .keepAlways; add(shot)
         }
         func title(_ text: String) {
-            let label = app.staticTexts["leanTutorialTitle"]
+            let label = app.descendants(matching: .any)["leanTutorialTitle"]
             XCTAssertTrue(label.waitForExistence(timeout: 60))
             expectation(for: NSPredicate(format: "label CONTAINS %@", text), evaluatedWith: label)
             waitForExpectations(timeout: 15)
@@ -22,7 +22,7 @@ final class LeanFTUEUITests: XCTestCase {
             XCTAssertTrue(label.waitForExistence(timeout: 60))
             expectation(for: NSPredicate(format: "label CONTAINS 'tutorial complete'"), evaluatedWith: label)
             waitForExpectations(timeout: 30)
-            XCTAssertFalse(app.staticTexts["leanTutorialTitle"].exists)
+            XCTAssertFalse(app.descendants(matching: .any)["leanTutorialTitle"].exists)
         }
         for solo in [false, true] {
             let mode = solo ? "solo" : "coop"
@@ -37,7 +37,7 @@ final class LeanFTUEUITests: XCTestCase {
             XCTAssertFalse(app.descendants(matching: .any)["leanIntroductionAnimation"].exists)
             Thread.sleep(forTimeInterval: 1.2) // sample the existing synthetic K03 lean, never auto-complete
             capture("\(mode)-lean-left")
-            let left = app.staticTexts["leanTutorialTitle"].frame
+            let left = app.descendants(matching: .any)["leanTutorialTitle"].frame
             app.buttons["leanTutorialContinue"].tap()
             title("LEAN RIGHT")
             Thread.sleep(forTimeInterval: 1.2)
@@ -52,13 +52,13 @@ final class LeanFTUEUITests: XCTestCase {
                     XCTAssertEqual(avatars.count, solo ? 1 : 2)
                     for avatar in avatars {
                         if let top = avatar["y"] as? Double {
-                            XCTAssertLessThan(app.staticTexts["leanTutorialTitle"].frame.maxY + 12, top)
+                            XCTAssertLessThan(app.descendants(matching: .any)["leanTutorialTitle"].frame.maxY + 12, top, audit)
                         }
                     }
                 } else { XCTFail("Missing actual RealityView projection") }
                 capture("\(mode)-lateral-\(layout)")
             }
-            let right = app.staticTexts["leanTutorialTitle"].frame
+            let right = app.descendants(matching: .any)["leanTutorialTitle"].frame
             XCTAssertEqual(left.midY, right.midY, accuracy: 1)
             XCTAssertEqual(left.height, right.height, accuracy: 1)
             app.buttons["leanTutorialContinue"].tap()

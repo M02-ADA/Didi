@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import CoreGraphics
 
 /// Lean-only first-play presentation. Continue acknowledges the instructions; it does not
 /// certify a physical movement, calibration, identity, or gameplay readiness.
@@ -9,6 +10,11 @@ final class LeanTutorial {
     static let completionKey = "laserHeist.ftue.lean.v1.completed"
     private(set) var stage: Stage = .notStarted
     private(set) var generation: UUID?
+    private(set) var headTopFraction: CGFloat?
+    func setHeadTop(_ value: CGFloat, generation: UUID) {
+        guard self.generation == generation, value.isFinite, value > 0, value < 1 else { return }
+        if headTopFraction != value { headTopFraction = value }
+    }
     @ObservationIgnored private let defaults: UserDefaults
     var isCompleted: Bool { defaults.bool(forKey: Self.completionKey) }
     var isActive: Bool { [.introduction, .practiceLeft, .practiceRight].contains(stage) }
@@ -18,6 +24,7 @@ final class LeanTutorial {
     /// A new setup always discards an unfinished visit. Completion survives Retry and relaunch.
     func prepare(generation: UUID) {
         self.generation = generation
+        headTopFraction = nil
         stage = isCompleted ? .completed : .notStarted
     }
 

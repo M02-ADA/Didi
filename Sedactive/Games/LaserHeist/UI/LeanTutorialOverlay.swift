@@ -25,13 +25,15 @@ struct LeanTutorialOverlay: View {
                         .position(x: proxy.size.width / 2, y: proxy.size.height * 0.61)
                         .accessibilityIdentifier("leanTutorialTitle")
                 } else {
-                    Text(tutorial.stage == .practiceLeft ? "← LEAN LEFT" : "LEAN RIGHT →")
-                        .font(.system(size: 52.7 * k, weight: .black, design: .rounded))
-                        .foregroundStyle(.white)
-                        .shadow(color: .black.opacity(0.91), radius: 0, x: 3 * k, y: 5 * k)
-                        .shadow(color: .black.opacity(0.25), radius: 4 * k, x: 0, y: 4 * k)
-                        .position(x: proxy.size.width / 2, y: proxy.size.height * 0.19)
-                        .accessibilityIdentifier("leanTutorialTitle")
+                    if let placement = LeanCuePlacement.make(viewport: proxy.size, headTopFraction: tutorial.headTopFraction) {
+                        Image(uiImage: tutorial.stage == .practiceLeft ? LeanInstructionArtwork.left : LeanInstructionArtwork.right)
+                            .resizable().frame(width: placement.frame.width, height: placement.frame.height)
+                            .position(x: placement.frame.midX, y: placement.frame.midY)
+                            .accessibilityLabel(tutorial.stage == .practiceLeft ? "← LEAN LEFT" : "LEAN RIGHT →")
+                            .accessibilityIdentifier("leanTutorialTitle")
+                    } else {
+                        ProgressView("Preparing movement guide…").tint(.white)
+                    }
                 }
                 VStack { Spacer()
                     HStack(spacing: 24 * k) {
@@ -49,6 +51,9 @@ struct LeanTutorialOverlay: View {
                 }
             }.frame(width: proxy.size.width, height: proxy.size.height)
         }
+        // Match the full-bleed RealityView projection space; the prior safe-area inset
+        // added 24 points to otherwise correct projected positions on the iPad Simulator.
+        .ignoresSafeArea()
         .accessibilityElement(children: .contain)
     }
 }

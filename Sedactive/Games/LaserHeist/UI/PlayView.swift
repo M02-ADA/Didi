@@ -23,13 +23,14 @@ struct PlayView: View {
     var onExit: (() -> Void)?
     var liveSession: GameSessionCoordinator?
     var onLiveRetry: (() -> Void)?
+    var leanTutorial: LeanTutorial?
 
     @State private var generation = UUID()
 
     var body: some View {
         let roundGeneration = liveSession?.inputConfiguration.sessionGeneration ?? generation
         ReplayRoundView(generation: roundGeneration, avatarSource: avatarSource, cutoutSource: cutoutSource,
-                        onExit: onExit, suppliedSession: liveSession,
+                        onExit: onExit, suppliedSession: liveSession, tutorial: leanTutorial,
                         retry: { if let onLiveRetry { onLiveRetry() } else { generation = UUID() } })
             .id(roundGeneration)
     }
@@ -42,6 +43,8 @@ private struct ReplayRoundView: View {
     let cutoutSource: LiveCutoutSource?
     let onExit: (() -> Void)?
     let suppliedSession: GameSessionCoordinator?
+    let tutorial: LeanTutorial?
+    @State private var needsLeanProjection = true
     let retry: () -> Void
     @State private var scene = LaserScene()
     @State private var presentation = LaserReplayPresentation()
@@ -117,10 +120,23 @@ private struct ReplayRoundView: View {
             content.add(scene.root)
             // Live cutouts and avatars update on the render loop, on the host clock their capture
             // times use, so stale input falls back or relaxes without waiting for a newer frame.
+            let frameContent = content
             frameRefresh = content.subscribe(to: SceneEvents.Update.self) { [weak scene] _ in
                 let now = CACurrentMediaTime()
                 scene?.refreshLiveCutouts(now: now)
                 scene?.refreshLiveAvatars(now: now)
+                if needsLeanProjection, wantsLeanProjection, let scene {
+                    let viewport = presentation.pawBoardDiamonds.viewportFrame.size
+                    if let fraction = LeanCueProjection.headTop(scene: scene, viewport: viewport, project: {
+                        frameContent.project(point: $0, to: .named(DiamondHUDFlightModel.space))
+                    }) {
+                        tutorial?.setHeadTop(fraction, generation: generation)
+                        #if DEBUG
+                        if isLeanPreview { leanPreview.setHeadTop(fraction, generation: generation) }
+                        #endif
+                        needsLeanProjection = false
+                    }
+                }
                 #if DEBUG
                 heartPreview.update(now: now)
                 MaskBenchmark.recorder.renderTick(now) // no-op without `-maskBench`
@@ -211,6 +227,7 @@ private struct ReplayRoundView: View {
                     let calibrations = input.configuration.calibrations.filter { !isLeanPreviewSolo || $0.key == .player1 }
                     guard let robots = try await installAvatars(calibrations: calibrations,
                             layout: input.configuration.playerPlaneLayout) else { return }
+                    robots.smoothing = LiveAvatarPresenter.renderSmoothing
                     scene.players[.player2]?.isEnabled = !isLeanPreviewSolo
                     scene.isLaserVisible = false
                     leanPreviewConfiguration = script.configuration
@@ -220,6 +237,15 @@ private struct ReplayRoundView: View {
                         leanPreviewAudit = LeanFTUELayoutAudit.inspect(scene: scene, solo: isLeanPreviewSolo,
                             index: leanPreviewLayoutIndex, origin: presentation.pawBoardDiamonds.viewportFrame.origin) {
                             previewContent.project(point: $0, to: .named(DiamondHUDFlightModel.space))
+                        }
+                        if let data = leanPreviewAudit.data(using: .utf8),
+                           var audit = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                            audit["headFraction"] = leanPreview.headTopFraction
+                            audit["viewportHeight"] = presentation.pawBoardDiamonds.viewportFrame.height
+                            audit["viewportY"] = presentation.pawBoardDiamonds.viewportFrame.minY
+                            if let encoded = try? JSONSerialization.data(withJSONObject: audit, options: [.sortedKeys]) {
+                                leanPreviewAudit = String(decoding: encoded, as: UTF8.self)
+                            }
                         }
                     }
                     // Existing K03 synthetic pose driver for visual QA only. It is never used
@@ -485,7 +511,10 @@ private struct ReplayRoundView: View {
         // After the DEBUG framing, so the paw board maps onto the 3D view as framed.
         .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .global)
-        } action: { presentation.pawBoardDiamonds.viewportFrame = $0 }
+        } action: {
+            presentation.pawBoardDiamonds.viewportFrame = $0
+            needsLeanProjection = true
+        }
         .ignoresSafeArea()
         .background(.black)
         .overlay {
@@ -706,6 +735,14 @@ private struct ReplayRoundView: View {
     #else
     private static let showsReplayDebugHUD = false
     #endif
+
+    private var wantsLeanProjection: Bool {
+        #if DEBUG
+        tutorial != nil || isLeanPreview
+        #else
+        tutorial != nil
+        #endif
+    }
 
     private var hasTutorialOverlay: Bool {
         if suppliedSession?.preRoundTutorialPending == true { return true }
