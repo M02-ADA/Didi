@@ -18,6 +18,7 @@ final class HeartAnimationPreview {
     @ObservationIgnored private weak var scene: LaserScene?
     @ObservationIgnored private var request: UUID?
     @ObservationIgnored private var approvedReference: Entity?
+    @ObservationIgnored private var companionDiamond: Diamond?
 
     func start(scene: LaserScene, generation: UUID) async throws {
         stop()
@@ -54,6 +55,13 @@ final class HeartAnimationPreview {
         scene.root.addChild(next.root)
         heart = next
         let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-heartOriginalPalette") { next.useAuthoredPaletteForComparison() }
+        if arguments.contains("-heartNoGlow") { next.hideGlowForComparison() }
+        if arguments.contains("-heartWithDiamond"), companionDiamond == nil, let diamond = scene.makeDiamond() {
+            diamond.root.setPosition([0.5, 1.8, 0.1], relativeTo: scene.root)
+            diamond.showIdle(reduceMotion: true)
+            companionDiamond = diamond
+        }
         if arguments.contains("-heartTipBefore") { next.compareTipShading(unlit: false) }
         if arguments.contains("-heartTipUnlit") { next.compareTipShading(unlit: true) }
         if let i = arguments.firstIndex(of: "-heartAngle"), arguments.indices.contains(i + 1) {
@@ -83,6 +91,8 @@ final class HeartAnimationPreview {
 
     func stop() {
         request = nil
+        companionDiamond?.retire()
+        companionDiamond = nil
         approvedReference?.removeFromParent()
         approvedReference = nil
         heart?.retire()

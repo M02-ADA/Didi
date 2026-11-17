@@ -5,13 +5,15 @@ import UIKit
 @testable import Sedactive
 
 @MainActor struct HeartMaterialTests {
-    @Test func approvedPaletteRemainsPBRWithFourDistinctAuthoredColors() async throws {
+    @Test func redPresentationPaletteKeepsFourDistinctPBRRegions() async throws {
         let heart = try await HeartArt.load().makeHeart(generation: UUID())
         let mesh = try #require(heart.root.findEntity(named: "GEO_LH_Heart") as? ModelEntity)
-        let expected: [[CGFloat]] = [
-            [0.887923, 0.068478, 0.088656], [0.830770, 0.052861, 0.070360],
-            [0.737910, 0.039546, 0.063010], [0.658375, 0.043735, 0.066626]
-        ]
+        func linear(_ value: CGFloat) -> CGFloat {
+            value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
+        let expected = [[240, 50, 66], [232, 43, 61], [219, 38, 55], [205, 38, 55]].map {
+            $0.map { linear(CGFloat($0) / 255) }
+        }
         let materials = try #require(mesh.model).materials
         #expect(materials.count == 4)
         for (index, value) in materials.enumerated() {
@@ -21,7 +23,8 @@ import UIKit
             for channel in 0..<3 { #expect(abs(color[channel] - expected[index][channel]) < 0.00001) }
             #expect(m.roughness.scale == 0.6 && m.metallic.scale == 0)
             #expect(m.specular.scale == 0.5)
-            let emission = try #require(m.emissiveColor.color.cgColor.components)
+            let emission = try #require(m.emissiveColor.color.cgColor.converted(
+                to: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!, intent: .relativeColorimetric, options: nil)?.components)
             for channel in 0..<3 { #expect(abs(emission[channel] - color[channel]) < 0.00001) }
             #expect(m.emissiveIntensity == HeartCollectible.shadowFill)
             print("HEART_PBR \(index) color=\(color) roughness=\(m.roughness.scale) specular=\(m.specular.scale) emissionColor=\(m.emissiveColor.color.cgColor) intensity=\(m.emissiveIntensity)")
@@ -46,4 +49,27 @@ import UIKit
         a.retire()
         #expect(a.root.parent == nil && b.root.parent === host)
     }
+    @Test(arguments: [false, true]) func idleHaloIsBoundedAndRemovedOnCollectionAndRetirement(reduceMotion: Bool) async throws {
+        let art = try await HeartArt.load()
+        let heart = art.makeHeart(generation: UUID())
+        let glow = try #require(heart.root.findEntity(named: "heart.idleGlow"))
+        heart.showIdle(reduceMotion: reduceMotion)
+        #expect(glow.isEnabled && glow.children.count == 3)
+        let mesh = try #require(heart.root.findEntity(named: "GEO_LH_Heart"))
+        #expect(abs(mesh.visualBounds(relativeTo: mesh).extents.x - 0.3) < 0.001)
+        for shell in glow.children {
+            let model = try #require((shell as? ModelEntity)?.model)
+            #expect(model.materials.allSatisfy { ($0 as? UnlitMaterial)?.faceCulling == .front })
+            #expect(shell.scale.x >= 1 && shell.scale.x <= 1.12)
+        }
+        heart.collect(generation: heart.generation, target: heart.target, now: 1, reduceMotion: reduceMotion)
+        #expect(!glow.isEnabled)
+        heart.retire(); heart.showIdle()
+        #expect(!glow.isEnabled && heart.root.parent == nil)
+        let replacement = art.makeHeart(generation: UUID())
+        replacement.showIdle(reduceMotion: true)
+        #expect(replacement.root.findEntity(named: "heart.idleGlow")?.isEnabled == true)
+        #expect(!glow.isEnabled)
+    }
+
 }

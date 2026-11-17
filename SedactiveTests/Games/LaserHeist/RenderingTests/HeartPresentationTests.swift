@@ -7,7 +7,7 @@ import Testing
     @Test func approvedHeartLoadsWithOriginalBoundsMaterialsAndPivot() async throws {
         let art = try await HeartArt.load()
         let heart = art.makeHeart(generation: UUID())
-        let bounds = heart.root.visualBounds(relativeTo: heart.root)
+        let bounds = try #require(heart.root.findEntity(named: "GEO_LH_Heart")).visualBounds(relativeTo: heart.root)
         #expect(abs(bounds.extents.x - 0.300) < 0.001)
         #expect(abs(bounds.extents.y - 0.276855) < 0.001)
         #expect(abs(bounds.extents.z - 0.105) < 0.001)
@@ -44,7 +44,7 @@ import Testing
         #expect(heart.phase == .idle && other.phase == .ready)
         #expect(heart.root.transform == placement, "idle must never move the target root")
         if reduceMotion {
-            #expect(abs(heart.root.visualBounds(relativeTo: heart.root).extents.y - 0.276855) < 0.001)
+            #expect(abs(try #require(heart.root.findEntity(named: "GEO_LH_Heart")).visualBounds(relativeTo: heart.root).extents.y - 0.276855) < 0.001)
         }
         heart.retire(); heart.showIdle(reduceMotion: reduceMotion)
         #expect(heart.phase == .retired)

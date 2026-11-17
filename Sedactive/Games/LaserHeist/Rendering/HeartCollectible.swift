@@ -46,16 +46,18 @@ final class HeartCollectible {
     private(set) var phase: Phase = .ready
     private let body = Entity()
     private let artwork: Entity
+    private let glow = Entity()
     private let flash: Entity
     private let sparkles: [ModelEntity]
     private var collectedAt: TimeInterval?
+    private var showsGlow = true
     // Use the same neutral fill as the PBR mascots, not RealityView's bright default IBL.
     // Cache the immutable environment; each Heart retains its own receiver/light ownership.
     private static let neutralEnvironment = RobotAvatarLayer.neutralEnvironment()
 
     fileprivate init(artwork: Entity, generation: UUID, target: UUID) {
         self.artwork = artwork
-        Self.fillUnlitShadows(artwork)
+        Self.prepareMaterials(artwork)
         flash = artwork.clone(recursive: true)
         flash.name = "heart.flash"
         Self.tintFlash(flash)
@@ -79,13 +81,50 @@ final class HeartCollectible {
             root.components.set(ImageBasedLightComponent(source: .single(environment)))
             body.components.set(ImageBasedLightReceiverComponent(imageBasedLight: root))
         }
-        // Preserve authored transforms, dimensions, pivot and base colors; only shadow fill is added.
+        glow.name = "heart.idleGlow"
+        Self.buildGlow(glow, around: artwork)
+        glow.isEnabled = false
+        artwork.addChild(glow)
+        // Source geometry, transforms and materials remain untouched; clones own this look.
     }
 
-    private static func fillUnlitShadows(_ entity: Entity) {
+    private static func color(_ hex: UInt32) -> UIColor {
+        UIColor(red: CGFloat((hex >> 16) & 255) / 255,
+                green: CGFloat((hex >> 8) & 255) / 255, blue: CGFloat(hex & 255) / 255, alpha: 1)
+    }
+    private static let redPalette: [String: UIColor] = [
+        "FrontCoral": color(0xF03242), "Shoulder": color(0xE82B3D),
+        "EdgeRose": color(0xDB2637), "Back": color(0xCD2637)
+    ]
+
+    /// Three static expanded back-face shells form a small silhouette halo, not a light or bloom.
+    private static func buildGlow(_ glow: Entity, around artwork: Entity) {
+        func visit(_ entity: Entity) {
+            if let mesh = entity as? ModelEntity, let model = mesh.model {
+                for (index, layer) in [(Float(1.035), Float(0.30)), (1.075, 0.12), (1.12, 0.045)].enumerated() {
+                    var material = UnlitMaterial(applyPostProcessToneMap: false)
+                    material.color = .init(tint: color(0xFF2943))
+                    material.blending = .transparent(opacity: .init(floatLiteral: layer.1))
+                    material.faceCulling = .front
+                    let shell = ModelEntity(mesh: model.mesh,
+                        materials: Array(repeating: material, count: model.materials.count))
+                    shell.name = "heart.glowShell.\(index)"
+                    shell.transform = Transform(matrix: mesh.transformMatrix(relativeTo: artwork))
+                    shell.scale *= layer.0
+                    glow.addChild(shell)
+                }
+            }
+            for child in entity.children { visit(child) }
+        }
+        visit(artwork)
+    }
+
+    private static func prepareMaterials(_ entity: Entity) {
         if let mesh = entity as? ModelEntity, var model = mesh.model {
             model.materials = model.materials.map { material in
                 guard var pbr = material as? PhysicallyBasedMaterial else { return material }
+                let key = (pbr.name ?? "").components(separatedBy: "_").last ?? ""
+                if let color = redPalette[key] { pbr.baseColor = .init(tint: color) }
                 // A small material-coloured floor for faces turned away from the scene lights.
                 // It preserves the four PBR regions and does not rely on bloom.
                 pbr.emissiveColor = .init(color: pbr.baseColor.tint)
@@ -94,11 +133,33 @@ final class HeartCollectible {
             }
             mesh.model = model
         }
-        for child in entity.children { fillUnlitShadows(child) }
+        for child in entity.children { prepareMaterials(child) }
     }
 
     #if DEBUG
+    func hideGlowForComparison() { showsGlow = false; glow.isEnabled = false }
+    func useAuthoredPaletteForComparison() {
+        let palette: [String: UIColor] = ["FrontCoral": Self.color(0xF24A54), "Shoulder": Self.color(0xEB414B),
+            "EdgeRose": Self.color(0xDF3847), "Back": Self.color(0xD43B49)]
+        func apply(_ entity: Entity) {
+            if let mesh = entity as? ModelEntity, var model = mesh.model {
+                model.materials = model.materials.map { material in
+                    guard var pbr = material as? PhysicallyBasedMaterial else { return material }
+                    let key = (pbr.name ?? "").components(separatedBy: "_").last ?? ""
+                    if let color = palette[key] { pbr.baseColor = .init(tint: color) }
+                    pbr.emissiveColor = .init(color: pbr.baseColor.tint)
+                    return pbr
+                }
+                mesh.model = model
+            }
+            for child in entity.children { apply(child) }
+        }
+        apply(artwork)
+        showsGlow = false
+        glow.isEnabled = false
+    }
     func compareTipShading(unlit: Bool) {
+        useAuthoredPaletteForComparison()
         func apply(_ entity: Entity) {
             if let mesh = entity as? ModelEntity, var model = mesh.model {
                 model.materials = model.materials.map { material in
@@ -116,6 +177,7 @@ final class HeartCollectible {
     }
     /// Matched actual-scene comparison only; production always uses the neutral fill above.
     func useDefaultEnvironmentForComparison() {
+        compareTipShading(unlit: false)
         body.components.remove(ImageBasedLightReceiverComponent.self)
         root.components.remove(ImageBasedLightComponent.self)
     }
@@ -128,6 +190,7 @@ final class HeartCollectible {
     func showIdle(reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled) {
         guard phase == .ready else { return }
         phase = .idle
+        glow.isEnabled = showsGlow
         guard !reduceMotion else { return }
         var raised = Transform.identity
         raised.translation.y = Self.floatHeight
@@ -146,6 +209,7 @@ final class HeartCollectible {
         guard self.generation == generation, self.target == target, now.isFinite,
               phase == .ready || phase == .idle else { return false }
         phase = .collected
+        glow.isEnabled = false
         collectedAt = now
         body.stopAllAnimations(recursive: true)
         let contact = artwork.transform
@@ -234,6 +298,7 @@ final class HeartCollectible {
 
     func retire() {
         phase = .retired
+        glow.isEnabled = false
         root.stopAllAnimations(recursive: true)
         root.removeFromParent()
     }
