@@ -102,7 +102,7 @@ struct ContentView: View {
           // hidden over the game: attaching or detaching the preview layer reconfigures the running
           // capture session and stalls frames 220–500 ms (iPad, 11 November 2026), which aborted
           // every countdown and, repeated, lost the player and restarted setup.
-          let stageShown = Self.showsSetupStage(flow.session)
+          let stageShown = Self.showsSetupStage(flow.session) && !flow.leanTutorial.isActive
           liveSetupStage(flow, preview: cameraPreview)
             .opacity(stageShown ? 1 : 0)
             .allowsHitTesting(stageShown)
@@ -117,6 +117,11 @@ struct ContentView: View {
              let remaining = session.liveReadiness?.countdownRemaining {
             RoundCountdownOverlay(value: Int(remaining.rounded(.up)))
           }
+          if flow.leanTutorial.isActive {
+            LeanTutorialOverlay(tutorial: flow.leanTutorial, solo: flow.isSolo,
+              next: { flow.advanceLeanTutorial() }, skip: { flow.advanceLeanTutorial(skip: true) },
+              leave: { Task { await flow.closeLiveSetup() } })
+          }
           #if DEBUG
           // DEBUG test round controls (Kevin): from the round's start to its Results, above the
           // setup stage too, so a tracking pause never hides them. Top right, under the HUD.
@@ -126,6 +131,9 @@ struct ContentView: View {
               .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
           }
           #endif
+        }
+        .onChange(of: flow.session?.canStartLiveRound, initial: true) { _, _ in
+          flow.presentLeanTutorialIfReady()
         }
   }
   /// Whether the camera setup stage is in front: always until a live round's game scene is

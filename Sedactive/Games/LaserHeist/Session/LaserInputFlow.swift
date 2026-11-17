@@ -10,7 +10,24 @@ final class LaserInputFlow {
     private(set) var isStarting = false
     private(set) var isClosing = false
     private(set) var message: String?
+    let leanTutorial: LeanTutorial
     private var operation: UUID?
+
+    /// Observe existing readiness, never make it ready. The countdown hold is set before start.
+    func presentLeanTutorialIfReady() {
+        guard route == .liveSetup, let session, session.preRoundTutorialPending else { return }
+        leanTutorial.beginIfEligible(generation: session.inputConfiguration.sessionGeneration,
+                                     eligible: session.canStartLiveRound)
+    }
+
+    func advanceLeanTutorial(skip: Bool = false) {
+        guard route == .liveSetup, let session else { return }
+        let generation = session.inputConfiguration.sessionGeneration
+        if skip { leanTutorial.skip(generation: generation) }
+        else { leanTutorial.advance(generation: generation) }
+        if leanTutorial.stage == .completed { session.setPreRoundTutorialPending(false) }
+    }
+
     private let makeLiveSession: @MainActor () throws -> GameSessionCoordinator
     /// DEBUG Solo Test: the same flow with a P1-only session. Never set in Release.
     private let makeSoloSession: (@MainActor () throws -> GameSessionCoordinator)?
@@ -36,7 +53,7 @@ final class LaserInputFlow {
         await startLiveSetup(solo: selectsSoloPractice && makeSoloSession != nil)
     }
 
-    init(initialRoute: Route = .selection,
+    init(initialRoute: Route = .selection, leanTutorial: LeanTutorial? = nil,
          makeLiveSession: @escaping @MainActor () throws -> GameSessionCoordinator,
          makeSoloSession: (@MainActor () throws -> GameSessionCoordinator)? = nil,
          stopDiagnostics: @escaping @MainActor () async -> Void = {}) {
@@ -46,6 +63,7 @@ final class LaserInputFlow {
         self.makeSoloSession = nil
         #endif
         precondition(initialRoute == .selection || initialRoute == .replay || initialRoute == .diagnostics)
+        self.leanTutorial = leanTutorial ?? LeanTutorial()
         route = initialRoute
         self.makeLiveSession = makeLiveSession
         self.stopDiagnostics = stopDiagnostics
@@ -87,6 +105,8 @@ final class LaserInputFlow {
         operation = token
         do {
             let session = try (isSolo ? makeSoloSession! : makeLiveSession)()
+            leanTutorial.prepare(generation: session.inputConfiguration.sessionGeneration)
+            session.setPreRoundTutorialPending(!leanTutorial.isCompleted)
             self.session = session
             #if DEBUG
             print("[LaserSetupRestart] flow: starting session")
@@ -120,6 +140,7 @@ final class LaserInputFlow {
         #endif
         guard operation == token else { return }
         session = nil
+        leanTutorial.abandon()
         isStarting = false
         isClosing = false
         route = .selection

@@ -106,6 +106,8 @@ struct LaserHeistIntroView: View {
                 .accessibilityIdentifier("chooseReplay")
                 .accessibilityHint("A sample round with no camera.")
                 #if DEBUG
+                Button("Reset Lean tutorial") { flow.leanTutorial.resetForNextPlay() }
+                    .accessibilityIdentifier("resetLeanTutorial")
                 Button("Camera diagnostics") { flow.showDiagnostics() }
                     .accessibilityIdentifier("cameraDiagnostics")
                 if let onInGameCamera {

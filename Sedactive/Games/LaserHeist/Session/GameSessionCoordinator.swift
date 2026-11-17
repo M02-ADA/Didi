@@ -86,6 +86,14 @@ final class GameSessionCoordinator {
               boundary > time else { return nil }
         return boundary - time
     }
+    /// Presentation hold BEFORE the initial countdown. It never pauses a started round or
+    /// admits evidence. The flow releases it after explicit Lean tutorial completion/skip.
+    private(set) var preRoundTutorialPending = false
+    func setPreRoundTutorialPending(_ pending: Bool) {
+        guard state == nil, phase == .idle || phase == .awaitingSetup else { return }
+        preRoundTutorialPending = pending
+    }
+
     private(set) var liveFrameHostReady = false
     var canStartLiveRound: Bool {
         hasLiveRoundPlan && liveFrameHostReady && phase == .awaitingSetup && liveReadiness?.phase == .ready
@@ -803,7 +811,7 @@ final class GameSessionCoordinator {
         presence.willRetry = presence.attempts < LaserAutomaticSetupPolicy.maximumAttempts
         refreshPresence()
         // Both references accepted, the round planned and the scene drawing: count down.
-        if canStartLiveRound, !countdownRequested, (try? beginLiveCountdown()) != nil {
+        if canStartLiveRound, !preRoundTutorialPending, !countdownRequested, (try? beginLiveCountdown()) != nil {
             #if DEBUG
             setupTimeline.mark("countdown", at: now)
             #endif
@@ -969,7 +977,7 @@ final class GameSessionCoordinator {
     }
 
     func beginLiveCountdown() throws {
-        guard !isReplay, lifetime != nil, hasLiveRoundPlan, liveFrameHostReady else {
+        guard !isReplay, lifetime != nil, hasLiveRoundPlan, liveFrameHostReady, !preRoundTutorialPending else {
             throw LaserDataError.invalidValue("missing live plan/policy")
         }
         readInputStatus()

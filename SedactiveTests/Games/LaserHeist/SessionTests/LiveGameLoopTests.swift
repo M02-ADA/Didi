@@ -4,6 +4,25 @@ import Testing
 
 @MainActor
 struct LiveGameLoopTests {
+    @Test func leanTutorialHoldsOnlyInitialCountdownWithoutSpendingGameTime() async throws {
+        let rig = try LiveGameRig()
+        rig.session.setPreRoundTutorialPending(true)
+        try await rig.prepare()
+        #expect(rig.session.canStartLiveRound)
+        #expect(throws: LaserDataError.self) { try rig.session.beginLiveCountdown() }
+        for time in [0.5, 0.625, 0.75, 0.875] { try await rig.send(time) }
+        #expect(rig.session.state == nil && rig.session.events.isEmpty && rig.session.results.isEmpty)
+        #expect(rig.session.liveReadiness?.gameTime == 0)
+        rig.session.setPreRoundTutorialPending(false)
+        try rig.session.beginLiveCountdown()
+        try await rig.send(1.0); try await rig.send(1.125)
+        #expect(rig.session.phase == .running && rig.session.state?.gameTime == 0)
+        rig.session.setPreRoundTutorialPending(true)
+        #expect(!rig.session.preRoundTutorialPending, "tutorial cannot interrupt an active round")
+        #expect(rig.controls.input.claimCount == 1 && rig.controls.input.observerCount == 1)
+        await rig.session.stop()
+    }
+
     @Test func countdownAndOriginalCaptureReachProductionJudgeAtEqualDeadline() async throws {
         let rig = try LiveGameRig()
         try await rig.run()
