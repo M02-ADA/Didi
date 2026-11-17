@@ -96,7 +96,7 @@ struct ContentView: View {
             PlayView(avatarSource: { try VisionK03MailboxPump(bridge: dependencies.visionPoseBridge, mailbox: $0) },
                      onExit: { Task { await flow.closeLiveSetup() } }, liveSession: session,
                      onLiveRetry: { Task { await flow.retryLiveSetup() } }, leanTutorial: flow.leanTutorial)
-              .blur(radius: flow.leanTutorial.stage == .introduction ? 5 : 0)
+              .blur(radius: flow.leanTutorial.stage == .introduction && !flow.leanTutorial.isSuspended ? 5 : 0)
               .id(ObjectIdentifier(session)) // a new session (Retry) gets a fresh scene
           }
           // The setup stage, with its camera preview, stays MOUNTED for the whole visit and is only
@@ -119,10 +119,8 @@ struct ContentView: View {
              let remaining = session.liveReadiness?.countdownRemaining {
             RoundCountdownOverlay(value: Int(remaining.rounded(.up)))
           }
-          if flow.leanTutorial.isActive {
-            LeanTutorialOverlay(tutorial: flow.leanTutorial, solo: flow.isSolo,
-              next: { flow.advanceLeanTutorial() }, skip: { flow.advanceLeanTutorial(skip: true) },
-              leave: { Task { await flow.closeLiveSetup() } })
+          if flow.leanTutorial.isActive, !flow.leanTutorial.isSuspended {
+            LeanTutorialOverlay(tutorial: flow.leanTutorial, solo: flow.isSolo)
           }
           #if DEBUG
           // DEBUG test round controls (Kevin): from the round's start to its Results, above the
@@ -137,6 +135,7 @@ struct ContentView: View {
         .onChange(of: flow.session?.canStartLiveRound, initial: true) { _, _ in
           flow.presentLeanTutorialIfReady()
         }
+        .onChange(of: flow.leanTutorial.stage) { _, _ in flow.releaseCompletedLeanTutorial() }
   }
   /// Whether the camera setup stage is in front: always until a live round's game scene is
   /// mounted, then except while counting down, playing or showing results.

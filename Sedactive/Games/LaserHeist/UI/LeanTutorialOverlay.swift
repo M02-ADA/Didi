@@ -1,12 +1,10 @@
 import SwiftUI
 
-/// Presentation only. Continue is explicit acknowledgement, never a movement verdict.
+/// Passive tutorial presentation. Progress observes admitted input; navigation belongs to the existing HUD.
 struct LeanTutorialOverlay: View {
     let tutorial: LeanTutorial
     let solo: Bool
-    let next: () -> Void
-    let skip: () -> Void
-    let leave: () -> Void
+    var posterOnly = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -16,7 +14,11 @@ struct LeanTutorialOverlay: View {
                     // The host applies a small blur only during this introduction. Darken
                     // without a second live backdrop filter, keeping the mascots recognizable.
                     Color.black.opacity(0.55)
-                    LeanIntroductionAnimation(solo: solo)
+                    LeanIntroductionAnimation(solo: solo, completed: {
+                        if let generation = tutorial.generation { tutorial.finishIntroduction(generation: generation) }
+                    }, posterOnly: posterOnly)
+                    .onAppear { if let generation = tutorial.generation { tutorial.introductionVisible(true, generation: generation) } }
+                    .onDisappear { if let generation = tutorial.generation { tutorial.introductionVisible(false, generation: generation) } }
                         .frame(width: (solo ? 330 : 660) * k, height: 455 * k)
                         .position(x: proxy.size.width / 2, y: proxy.size.height * 0.34)
                     Text("Lean your head\nto move left and right")
@@ -31,23 +33,14 @@ struct LeanTutorialOverlay: View {
                             .position(x: placement.frame.midX, y: placement.frame.midY)
                             .accessibilityLabel(tutorial.stage == .practiceLeft ? "← LEAN LEFT" : "LEAN RIGHT →")
                             .accessibilityIdentifier("leanTutorialTitle")
+                            .task(id: tutorial.stage) {
+                                if let generation = tutorial.generation {
+                                    tutorial.practiceVisible(tutorial.stage, generation: generation, at: CameraHostClock.now())
+                                }
+                            }
                     } else {
                         ProgressView("Preparing movement guide…").tint(.white)
                     }
-                }
-                VStack { Spacer()
-                    HStack(spacing: 24 * k) {
-                        Button("Leave", action: leave).accessibilityIdentifier("leanTutorialLeave")
-                        Button("Skip tutorial", action: skip).accessibilityIdentifier("leanTutorialSkip")
-                        Button(tutorial.stage == .practiceRight ? "Start playing" : "Continue", action: next)
-                            .buttonStyle(.borderedProminent).tint(Color(sketch: 0xE97333))
-                            .accessibilityIdentifier("leanTutorialContinue")
-                    }
-                    .font(.system(size: max(17, 23 * k), weight: .bold, design: .rounded))
-                    .buttonStyle(.bordered).controlSize(.large)
-                    .foregroundStyle(LaserHeistDesign.cream)
-                    .padding(10 * k).background(.black.opacity(0.5), in: Capsule())
-                    .padding(.bottom, max(proxy.safeAreaInsets.bottom, 24 * k))
                 }
             }.frame(width: proxy.size.width, height: proxy.size.height)
         }
@@ -55,5 +48,6 @@ struct LeanTutorialOverlay: View {
         // added 24 points to otherwise correct projected positions on the iPad Simulator.
         .ignoresSafeArea()
         .accessibilityElement(children: .contain)
+        .allowsHitTesting(false)
     }
 }

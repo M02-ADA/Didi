@@ -62,12 +62,21 @@ private struct ReplayRoundView: View {
     #if DEBUG
     @State private var leanPreview = LeanTutorial(defaults: UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!)
     @State private var leanPreviewConfiguration: LaserRoundConfiguration?
-    @State private var leanPreviewPose: ((LeanTutorial.Stage) -> Void)?
+    @State private var leanPreviewInput: LeanFTUESyntheticInput?
     @State private var leanPreviewStart: (() -> Void)?
     @State private var leanPreviewTask: Task<Void, Never>?
-    @State private var leanPreviewLayoutIndex = 0
     @State private var leanPreviewAudit = ""
-    @State private var leanPreviewInspect: (() -> Void)?
+    @State private var leanPreviewLayoutDone = false
+    private var leanHeldStage: LeanTutorial.Stage? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-leanFTUEHold"), args.indices.contains(i + 1) else { return nil }
+        return args[i + 1] == "left" ? .practiceLeft : args[i + 1] == "right" ? .practiceRight : .introduction
+    }
+    private var leanRequestedLayout: Int {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-leanFTUELayout"), args.indices.contains(i + 1) else { return 0 }
+        return args[i + 1] == "left" ? 1 : args[i + 1] == "right" ? 2 : 0
+    }
     private var leanPreviewStatus: String {
         if leanPreview.isActive { return "SYNTHETIC FTUE PREVIEW · no camera · game not started" }
         if leanPreview.stage == .completed, session?.state != nil { return "SYNTHETIC replay · tutorial complete" }
@@ -137,7 +146,24 @@ private struct ReplayRoundView: View {
                         needsLeanProjection = false
                     }
                 }
+                if let scene, let tutorial, let suppliedSession, tutorial.isPractising {
+                    observeLean(tutorial, scene: scene, context: suppliedSession.inputContext,
+                        eligible: suppliedSession.canStartLiveRound && suppliedSession.setup?.hasConfirmedReliablePair == true,
+                        at: now)
+                }
                 #if DEBUG
+                if isLeanPreview, let scene, let input = leanPreviewInput {
+                    if leanHeldStage != nil, !leanPreviewLayoutDone, !needsLeanProjection {
+                        leanPreviewAudit = LeanFTUELayoutAudit.inspect(scene: scene, solo: isLeanPreviewSolo,
+                            index: leanRequestedLayout, origin: presentation.pawBoardDiamonds.viewportFrame.origin) {
+                            frameContent.project(point: $0, to: .named(DiamondHUDFlightModel.space))
+                        }
+                        leanPreviewLayoutDone = true
+                    }
+                    if leanHeldStage == nil, leanPreview.isPractising {
+                        observeLean(leanPreview, scene: scene, context: input.context, eligible: true, at: now)
+                    }
+                }
                 heartPreview.update(now: now)
                 MaskBenchmark.recorder.renderTick(now) // no-op without `-maskBench`
                 #endif
@@ -225,45 +251,24 @@ private struct ReplayRoundView: View {
                     let script = try LaserReplayScript.load().freshRound(generation: generation)
                     let input = script.input
                     let calibrations = input.configuration.calibrations.filter { !isLeanPreviewSolo || $0.key == .player1 }
-                    guard let robots = try await installAvatars(calibrations: calibrations,
-                            layout: input.configuration.playerPlaneLayout) else { return }
-                    robots.smoothing = LiveAvatarPresenter.renderSmoothing
-                    scene.players[.player2]?.isEnabled = !isLeanPreviewSolo
+                    let previewConfiguration = input.configuration.replacingCalibrations(calibrations)
+                    let inputSource = LeanFTUESyntheticInput(configuration: previewConfiguration,
+                        geometry: input.cameraGeometryRevision, tutorial: leanPreview,
+                        roster: isLeanPreviewSolo ? [.player1] : PlayerID.allCases, hold: leanHeldStage != nil)
+                    let templates = try await RobotAvatarLayer.sharedTemplates()
+                    guard !Task.isCancelled else { return }
+                    scene.attachLiveAvatars(mailbox: inputSource.mailbox, templates: templates, pump: inputSource,
+                        players: Set(inputSource.roster))
+                    leanPreviewInput = inputSource
                     scene.isLaserVisible = false
                     leanPreviewConfiguration = script.configuration
-                    leanPreviewInspect = {
-                        robotDemo.stop() // requested static layout measurement, not a movement test
-                        leanPreviewLayoutIndex = (leanPreviewLayoutIndex + 1) % 3
-                        leanPreviewAudit = LeanFTUELayoutAudit.inspect(scene: scene, solo: isLeanPreviewSolo,
-                            index: leanPreviewLayoutIndex, origin: presentation.pawBoardDiamonds.viewportFrame.origin) {
-                            previewContent.project(point: $0, to: .named(DiamondHUDFlightModel.space))
-                        }
-                        if let data = leanPreviewAudit.data(using: .utf8),
-                           var audit = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                            audit["headFraction"] = leanPreview.headTopFraction
-                            audit["viewportHeight"] = presentation.pawBoardDiamonds.viewportFrame.height
-                            audit["viewportY"] = presentation.pawBoardDiamonds.viewportFrame.minY
-                            if let encoded = try? JSONSerialization.data(withJSONObject: audit, options: [.sortedKeys]) {
-                                leanPreviewAudit = String(decoding: encoded, as: UTF8.self)
-                            }
-                        }
-                    }
-                    // Existing K03 synthetic pose driver for visual QA only. It is never used
-                    // by production FTUE and never advances tutorial state or accepts movement.
-                    leanPreviewPose = { stage in
-                        robotDemo.stop(); robotDemo = RobotDemoDriver()
-                        let scenario: RobotDemoScenario = stage == .practiceLeft ? .leanLeft : stage == .practiceRight ? .leanRight : .idle
-                        let sequence = RobotDemoSequence(configuration: input.configuration,
-                            cameraGeometryRevision: input.cameraGeometryRevision, only: scenario)
-                        robotDemo.start(on: previewContent, sequence: sequence, render: { robots.render(now: $0) }) {
-                            robots.apply($0, joints: $1)
-                        }
-                    }
                     leanPreviewStart = {
-                        robotDemo.stop()
-                        leanPreviewPose = nil
                         leanPreviewTask = Task { @MainActor in
                             do {
+                                scene.detachLiveAvatars(); leanPreviewInput = nil
+                                guard try await installAvatars(calibrations: calibrations,
+                                    layout: input.configuration.playerPlaneLayout) != nil, !Task.isCancelled else { return }
+                                scene.players[.player2]?.isEnabled = !isLeanPreviewSolo
                                 let replay = try LaserReplayDriver.makeSession(script: script)
                                 session = replay
                                 try await replay.start()
@@ -273,10 +278,13 @@ private struct ReplayRoundView: View {
                         }
                     }
                     LeanFTUEPreviewLaunch.applyReset(to: leanPreview)
-                    leanPreview.prepare(generation: generation)
+                    leanPreview.freezesIntroductionForLayout = leanHeldStage == .introduction
+                    leanPreview.prepare(generation: generation, roster: inputSource.roster)
                     leanPreview.beginIfEligible(generation: generation, eligible: true)
-                    if leanPreview.isActive { leanPreviewPose?(leanPreview.stage) }
-                    else { let start = leanPreviewStart; leanPreviewStart = nil; start?() }
+                    if let held = leanHeldStage, held != .introduction {
+                        leanPreview.showPracticeForLayout(held, generation: generation)
+                    }
+                    if leanPreview.stage == .completed { let start = leanPreviewStart; leanPreviewStart = nil; start?() }
                 } catch { startupError = String(describing: error) }
                 return
             }
@@ -498,7 +506,7 @@ private struct ReplayRoundView: View {
     private var gameplaySurface: some View {
         world
         #if DEBUG
-        .blur(radius: isLeanPreview && leanPreview.stage == .introduction ? 5 : 0)
+        .blur(radius: isLeanPreview && leanPreview.stage == .introduction && !leanPreview.isSuspended ? 5 : 0)
         #endif
         #if DEBUG
         // Launch with `-landscape` to frame the 3D view at the narrowest landscape iPad's aspect
@@ -540,11 +548,12 @@ private struct ReplayRoundView: View {
                 ZStack {
                     if let configuration = leanPreviewConfiguration {
                         GameplayHUD(model: .init(state: nil, events: [], configuration: configuration, activityDuration: configuration.activityDuration),
-                                    actions: .init(pause: nil, resume: nil, leave: nil))
+                                    actions: leanTutorialActions(leanPreview))
                     }
-                    LeanTutorialOverlay(tutorial: leanPreview, solo: isLeanPreviewSolo,
-                        next: { leanPreview.advance(generation: generation) },
-                        skip: { leanPreview.skip(generation: generation) }, leave: leave)
+                    if !leanPreview.isSuspended {
+                        LeanTutorialOverlay(tutorial: leanPreview, solo: isLeanPreviewSolo,
+                            posterOnly: ProcessInfo.processInfo.arguments.contains("-leanFTUEReduceMotion"))
+                    }
                 }
             }
         }
@@ -553,12 +562,8 @@ private struct ReplayRoundView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(leanPreviewStatus)
                         .accessibilityIdentifier("leanPreviewStatus")
-                    if leanPreview.stage == .practiceLeft || leanPreview.stage == .practiceRight {
-                        Button("Inspect lateral layout") { leanPreviewInspect?() }
-                            .accessibilityIdentifier("leanPreviewInspect")
-                        Text(leanPreviewAudit).accessibilityIdentifier("leanPreviewAudit")
-                            .font(.system(size: 1)).foregroundStyle(.clear).frame(width: 1, height: 1)
-                    }
+                    Text(leanPreviewAudit).accessibilityIdentifier("leanPreviewAudit")
+                        .font(.system(size: 1)).foregroundStyle(.clear).frame(width: 1, height: 1)
                     if !leanPreview.isActive {
                         Button("Retry sample round", action: retry).accessibilityIdentifier("leanPreviewRetry")
                     }
@@ -570,7 +575,7 @@ private struct ReplayRoundView: View {
             guard isLeanPreview else { return }
             if stage == .completed {
                 let start = leanPreviewStart; leanPreviewStart = nil; start?()
-            } else if leanPreview.isActive { leanPreviewPose?(stage) }
+            }
         }
         #endif
         .overlay {
@@ -708,7 +713,7 @@ private struct ReplayRoundView: View {
             scene.detachLiveAvatars()
             #if DEBUG
             leanPreviewTask?.cancel(); leanPreviewTask = nil
-            leanPreviewPose = nil; leanPreviewStart = nil; leanPreviewInspect = nil
+            leanPreviewInput?.stop(); leanPreviewInput = nil; leanPreviewStart = nil
             leanPreview.abandon()
             heartPreview.stop()
             MaskBenchmark.recorder.suspend(reason: "view closed")
@@ -772,9 +777,30 @@ private struct ReplayRoundView: View {
         }
     }
 
+    private func leanTutorialActions(_ tutorial: LeanTutorial) -> GameplayHUDActions {
+        GameplayHUDActions(pause: { tutorial.setSuspended(true, generation: generation) },
+            resume: { tutorial.setSuspended(false, generation: generation) }, leave: leave)
+    }
+
+    private func observeLean(_ tutorial: LeanTutorial, scene: LaserScene, context: BodyInputContext?,
+                             eligible: Bool, at now: Double) {
+        guard !tutorial.isSuspended else { return }
+        guard let frame = scene.liveAvatars?.lastAppliedFrame else {
+            tutorial.observe(nil, generation: generation, at: now); return
+        }
+        guard tutorial.shouldRead(frame.source) else { return }
+        #if DEBUG
+        guard RobotAvatarLayer.debugTestSteer == nil else { tutorial.observe(nil, generation: generation, at: now); return }
+        #endif
+        let value = LeanMovementObservation.make(frame: frame, context: context, generation: generation,
+            roster: tutorial.roster, eligible: eligible, now: now) { scene.robotAvatars?.steeringReading($0) }
+        tutorial.observe(value, generation: generation, at: now)
+    }
+
     /// Live pause/continue intents go to the session. Replay retains its fixture-driven controls.
     private func hudActions(_ session: GameSessionCoordinator) -> GameplayHUDActions {
-        GameplayHUDActions(pause: session.isReplay ? nil : { session.pauseLiveRound() },
+        if let tutorial, tutorial.isActive { return leanTutorialActions(tutorial) }
+        return GameplayHUDActions(pause: session.isReplay ? nil : { session.pauseLiveRound() },
                            resume: session.isReplay ? nil : { session.continueLiveRound() },
                            leave: { Task { await session.stop() } })
     }

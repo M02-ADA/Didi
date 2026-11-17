@@ -29,4 +29,24 @@ import Testing
         playback.start(url: nil)
         #expect(playback.player == nil)
     }
+
+    @Test func inactiveAndStoppedPlaybackCannotDeliverAStaleCompletion() async throws {
+        let playback = LeanIntroductionPlayback()
+        var completions = 0
+        playback.start(onCompleted: { completions += 1 })
+        let queue = try #require(playback.player)
+        playback.didPresentFirstFrame()
+        try await Task.sleep(for: .milliseconds(100))
+        playback.setActive(false)
+        if let item = queue.currentItem {
+            NotificationCenter.default.post(name: AVPlayerItem.didPlayToEndTimeNotification, object: item)
+        }
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(completions == 0)
+        playback.setActive(true)
+        try await Task.sleep(for: .milliseconds(3500))
+        #expect(completions == 1)
+        playback.stop()
+        #expect(playback.player == nil && queue.items().isEmpty)
+    }
 }

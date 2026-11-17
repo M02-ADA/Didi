@@ -20,17 +20,12 @@ final class LaserInputFlow {
                                      eligible: session.canStartLiveRound)
     }
 
-    func advanceLeanTutorial(skip: Bool = false) {
-        guard route == .liveSetup, let session else { return }
-        let generation = session.inputConfiguration.sessionGeneration
-        if skip { leanTutorial.skip(generation: generation) }
-        else { leanTutorial.advance(generation: generation) }
-        if leanTutorial.stage == .completed {
-            session.setPreRoundTutorialPending(false)
-            // The existing command rechecks current readiness. It cannot accept calibration,
-            // spend game time before countdown, or start from stale evidence.
-            if session.canStartLiveRound { try? session.beginLiveCountdown() }
-        }
+    func releaseCompletedLeanTutorial() {
+        guard route == .liveSetup, let session,
+              leanTutorial.generation == session.inputConfiguration.sessionGeneration,
+              leanTutorial.stage == .completed else { return }
+        session.setPreRoundTutorialPending(false)
+        if session.canStartLiveRound { try? session.beginLiveCountdown() }
     }
 
     private let makeLiveSession: @MainActor () throws -> GameSessionCoordinator
@@ -110,7 +105,7 @@ final class LaserInputFlow {
         operation = token
         do {
             let session = try (isSolo ? makeSoloSession! : makeLiveSession)()
-            leanTutorial.prepare(generation: session.inputConfiguration.sessionGeneration)
+            leanTutorial.prepare(generation: session.inputConfiguration.sessionGeneration, roster: session.inputConfiguration.roster)
             session.setPreRoundTutorialPending(!leanTutorial.isCompleted)
             self.session = session
             #if DEBUG

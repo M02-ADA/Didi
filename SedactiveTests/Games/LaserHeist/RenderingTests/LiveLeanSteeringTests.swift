@@ -97,6 +97,48 @@ struct LiveLeanSteeringTests {
                     frameID: start.frameID, time: start.capturedAt)
     }
 
+    @Test(arguments: [false, true])
+    func tutorialObservesExistingAdmittedSteeringWithoutAnotherDrain(coop: Bool) async throws {
+        let roster: [PlayerID] = coop ? PlayerID.allCases : [.player1]
+        var live = try await live(Set(roster))
+        let defaults = UserDefaults(suiteName: "LeanRendered.\(UUID())")!
+        defer { defaults.removeObject(forKey: LeanTutorial.completionKey) }
+        let tutorial = LeanTutorial(defaults: defaults), generation = live.source.context.generation
+        tutorial.prepare(generation: generation, roster: roster)
+        tutorial.beginIfEligible(generation: generation, eligible: true)
+        tutorial.introductionVisible(true, generation: generation); tutorial.finishIntroduction(generation: generation)
+        tutorial.practiceVisible(.practiceLeft, generation: generation, at: 0)
+        let context = BodyInputContext(sessionGeneration: generation, cameraGeometryRevision: live.source.context.geometryRevision,
+            calibrationRevisions: live.calibrations.mapValues(\.revision),
+            cutovers: live.calibrations.mapValues { .init(frameID: $0.sourceFrameID, capturedAt: $0.capturedAt) },
+            isActive: true, wristContact: .init(sourceEpoch: live.source.context.epoch, controlRevision: live.source.controlRevision,
+                bindingRequestID: UUID(), bindingFrameID: 0, bindingCapturedAt: 0, acceptedContextRevision: 1, freshness: 0.25))
+        func observe() throws {
+            let frame = try #require(live.scene.liveAvatars?.lastAppliedFrame)
+            let before = live.mailbox.diagnostics
+            let value = LeanMovementObservation.make(frame: frame, context: context, generation: generation,
+                roster: roster, eligible: true, now: live.time + 0.02) { live.avatars.steeringReading($0) }
+            tutorial.observe(value, generation: generation, at: live.time + 0.02)
+            #expect(live.mailbox.diagnostics == before)
+        }
+        let neutral = Dictionary(uniqueKeysWithValues: roster.map { ($0, 0.0) })
+        for _ in 0..<20 { try live.frame(neutral); try observe() }
+        for _ in 0..<90 {
+            try live.frame(Dictionary(uniqueKeysWithValues: roster.map { ($0, 0.08) })); try observe()
+            if tutorial.stage == .practiceRight { break }
+        }
+        #expect(tutorial.stage == .practiceRight)
+        tutorial.practiceVisible(.practiceRight, generation: generation, at: live.time + 0.02)
+        for _ in 0..<30 { try live.frame(neutral); try observe() }
+        for _ in 0..<90 {
+            try live.frame(Dictionary(uniqueKeysWithValues: roster.map { ($0, -0.08) })); try observe()
+            if tutorial.stage == .completed { break }
+        }
+        #expect(tutorial.stage == .completed && tutorial.isCompleted)
+        #expect(Set(live.avatars.robots.keys) == Set(roster))
+        live.scene.detachLiveAvatars()
+    }
+
     /// Solo, through the live presenter: from Lemon's lane, a held RIGHT lean carries the mascot
     /// entity across X = 0 into the right half with its board; upright it stops and stays; LEFT
     /// reverses toward the left wall; no partner limit ever applies.
