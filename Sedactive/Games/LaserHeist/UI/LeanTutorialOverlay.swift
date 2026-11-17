@@ -49,6 +49,6 @@ struct LeanTutorialOverlay: View {
                 }
             }.frame(width: proxy.size.width, height: proxy.size.height)
         }
-        .accessibilityIdentifier("leanTutorialOverlay")
+        .accessibilityElement(children: .contain)
     }
 }

@@ -65,6 +65,11 @@ private struct ReplayRoundView: View {
     @State private var leanPreviewLayoutIndex = 0
     @State private var leanPreviewAudit = ""
     @State private var leanPreviewInspect: (() -> Void)?
+    private var leanPreviewStatus: String {
+        if leanPreview.isActive { return "SYNTHETIC FTUE PREVIEW · no camera · game not started" }
+        if leanPreview.stage == .completed, session?.state != nil { return "SYNTHETIC replay · tutorial complete" }
+        return "Preparing synthetic corridor…"
+    }
     private var isLeanPreview: Bool { ProcessInfo.processInfo.arguments.contains("-leanFTUEPreview") }
     private var isLeanPreviewSolo: Bool { ProcessInfo.processInfo.arguments.contains("-leanFTUESolo") }
     @State private var heartPreview = HeartAnimationPreview()
@@ -241,7 +246,7 @@ private struct ReplayRoundView: View {
                             } catch { startupError = String(describing: error) }
                         }
                     }
-                    if arguments.contains("-leanFTUEReset") { leanPreview.resetForNextPlay() }
+                    LeanFTUEPreviewLaunch.applyReset(to: leanPreview)
                     leanPreview.prepare(generation: generation)
                     leanPreview.beginIfEligible(generation: generation, eligible: true)
                     if leanPreview.isActive { leanPreviewPose?(leanPreview.stage) }
@@ -517,7 +522,7 @@ private struct ReplayRoundView: View {
         .overlay(alignment: .bottomLeading) {
             if isLeanPreview {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(leanPreview.isActive ? "SYNTHETIC FTUE PREVIEW · no camera · game not started" : "SYNTHETIC replay · tutorial complete")
+                    Text(leanPreviewStatus)
                         .accessibilityIdentifier("leanPreviewStatus")
                     if leanPreview.stage == .practiceLeft || leanPreview.stage == .practiceRight {
                         Button("Inspect lateral layout") { leanPreviewInspect?() }

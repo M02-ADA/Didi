@@ -3,6 +3,16 @@ import RealityKit
 import Foundation
 import CoreGraphics
 
+/// A DEBUG launch flag is consumed once per process, never once per Retry generation.
+@MainActor enum LeanFTUEPreviewLaunch {
+    private static var resetConsumed = false
+    static func applyReset(to tutorial: LeanTutorial) {
+        guard !resetConsumed else { return }
+        resetConsumed = true
+        if ProcessInfo.processInfo.arguments.contains("-leanFTUEReset") { tutorial.resetForNextPlay() }
+    }
+}
+
 /// On-demand, synthetic layout review ONLY. Reuses the allowed steering bounds/separation and
 /// actual RealityView projection. No per-frame layout work or production avatar writes.
 @MainActor enum LeanFTUELayoutAudit {
