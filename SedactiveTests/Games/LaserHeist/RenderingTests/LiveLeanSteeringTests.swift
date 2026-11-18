@@ -139,6 +139,39 @@ struct LiveLeanSteeringTests {
         live.scene.detachLiveAvatars()
     }
 
+    @Test(arguments: [false, true])
+    func existingLiveSteeringRemainsResponsiveDuringHeartForwardTravel(coop: Bool) async throws {
+        let roster: Set<PlayerID> = coop ? Set(PlayerID.allCases) : [.player1]
+        var live = try await live(roster)
+        live.scene.installEnvironment(authored: try #require(await LaserScene.loadAuthoredEnvironment()))
+        let demo = HeartTutorialDemo(), callouts = LaserTeamCalloutModel()
+        let context = BodyInputContext(sessionGeneration: live.source.context.generation,
+            cameraGeometryRevision: live.source.context.geometryRevision,
+            calibrationRevisions: live.calibrations.mapValues(\.revision), cutovers: [:], isActive: true)
+        var training = try HeartTrainingEncounter(configuration: try LaserReplayScript.load().configuration,
+            context: context, roster: roster)
+        _ = try live.hold(Dictionary(uniqueKeysWithValues: roster.map { ($0, 0.0) }), seconds: 0.3)
+        let start = Dictionary(uniqueKeysWithValues: roster.map { ($0, live.mascotX($0)) })
+        for _ in 0..<35 {
+            try live.frame(Dictionary(uniqueKeysWithValues: roster.map { ($0, 0.08) }))
+            training.update(at: live.time, eligible: true, context: context)
+            demo.update(scene: live.scene, training: training, callouts: callouts, suspended: false)
+        }
+        for player in roster { #expect(live.mascotX(player) < start[player]! - 0.05) }
+        #expect(live.scene.travelOffset > 0 && training.damage == nil)
+        for _ in 0..<40 {
+            try live.frame(Dictionary(uniqueKeysWithValues: roster.map { ($0, -0.08) }))
+            training.update(at: live.time, eligible: true, context: context)
+            demo.update(scene: live.scene, training: training, callouts: callouts, suspended: false)
+        }
+        #expect(training.damage?.players == roster && training.state.teamHealth == 4)
+        #expect(callouts.shown?.kind == .zapped)
+        #expect(Set(live.avatars.robots.keys) == roster)
+        if coop { #expect(live.mascotX(.player2) > live.mascotX(.player1)) }
+        demo.stop(); live.scene.detachLiveAvatars()
+        #expect(live.scene.travelOffset == 0 && demo.beam == nil)
+    }
+
     /// Solo, through the live presenter: from Lemon's lane, a held RIGHT lean carries the mascot
     /// entity across X = 0 into the right half with its board; upright it stops and stays; LEFT
     /// reverses toward the left wall; no partner limit ever applies.

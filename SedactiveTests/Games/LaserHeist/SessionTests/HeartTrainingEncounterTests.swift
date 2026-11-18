@@ -28,6 +28,30 @@ import Testing
         #expect(normal.commitHeartTrainingDamage(id: lesson.id, players: roster) == nil)
         #expect(normal.teamHealth == 5 && normal.drainEvents().isEmpty)
     }
+    @Test(arguments: [false, true])
+    func airborneInputCannotEarnTrainingClearOrPreventScriptedDeduction(coop: Bool) throws {
+        let script = try LaserReplayScript.load(), input = script.input
+        let roster: Set<PlayerID> = coop ? Set(PlayerID.allCases) : [.player1]
+        let context = BodyInputContext(sessionGeneration: input.configuration.sessionGeneration, cameraGeometryRevision: 1,
+            calibrationRevisions: input.configuration.calibrations.mapValues(\.revision), cutovers: [:], isActive: true)
+        let sequence = try RobotDemoSequence(configuration: input.configuration,
+            cameraGeometryRevision: input.cameraGeometryRevision, only: .bothJump)
+        let frames = try (UInt64(1)...120).map { try sequence.frame($0).snapshot }
+        let airborne = try #require(frames.first { $0.players[.player1]?.jumpState.phase == .airborne })
+        #expect(airborne.players[.player1]?.jumpState.validity == .valid)
+        let id = UUID()
+        var game = try LaserGame.heartTraining(configuration: script.configuration, context: context, id: id)
+        // Real input semantics are preserved; the explicit teaching policy simply has no
+        // avoidance targets. It must never turn this valid airborne evidence into a fake HIT.
+        try game.receive(airborne, capturedGameTime: 0.1, arrivedAt: 0.1)
+        #expect(throws: LaserDataError.self) { try game.register(script.encounters[0]) }
+        try game.advance(to: HeartTrainingEncounter.crossingTime)
+        #expect(game.commitHeartTrainingDamage(id: id, players: roster)?.remainingHealth == 4)
+        #expect(game.commitHeartTrainingDamage(id: id, players: roster) == nil)
+        #expect(game.drainEvents().map(\.kind) == [.teamDamaged(amount: 1, remainingHealth: 4)])
+        #expect(game.teamScore == 0)
+    }
+
     @Test func pauseGapsAndContextReplacementCannotProduceHiddenOrDuplicateDamage() throws {
         let input = try LaserReplayScript.load().input
         let context = BodyInputContext(sessionGeneration: input.configuration.sessionGeneration, cameraGeometryRevision: 1,
