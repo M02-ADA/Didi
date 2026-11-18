@@ -147,6 +147,11 @@ private struct ReplayRoundView: View {
                 scene?.refreshLiveCutouts(now: now)
                 scene?.refreshLiveAvatars(now: now)
                 if let scene { updateHeartTraining(scene: scene, at: now); updateLaserPractice(scene: scene, at: now) }
+                if let tutorial = activeTutorial {
+                    tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: now,
+                        active: tutorial.isActive && !tutorial.isSuspended && trainingSceneActive
+                            && (suppliedSession == nil || suppliedSession?.canStartLiveRound == true))
+                }
                 if needsLeanProjection, wantsLeanProjection, let scene {
                     let viewport = presentation.pawBoardDiamonds.viewportFrame.size
                     if let fraction = LeanCueProjection.headTop(scene: scene, viewport: viewport, project: {
@@ -570,7 +575,7 @@ private struct ReplayRoundView: View {
                     }
                     // The debug HUD takes the place of the normal HUD.
                     if let model, !Self.showsReplayDebugHUD {
-                        GameplayHUD(model: model, actions: hudActions(session), isFTUEActive: tutorial?.isActive == true,
+                        GameplayHUD(model: model, actions: hudActions(session), isFTUEActive: tutorial?.isActive == true, ftueJourney: tutorial?.progressJourney,
                             onHealthFrame: { tutorial?.setHealthHUDFrame($0, generation: generation) })
                     }
                     // PERFECT! / ZAPPED! on the HUD's title line, never over the results.
@@ -587,7 +592,7 @@ private struct ReplayRoundView: View {
                 ZStack {
                     if let configuration = leanPreviewConfiguration {
                         GameplayHUD(model: .init(state: previewHeartTraining?.state, events: [], configuration: configuration, activityDuration: configuration.activityDuration),
-                                    actions: leanTutorialActions(leanPreview), isFTUEActive: leanPreview.isActive,
+                                    actions: leanTutorialActions(leanPreview), isFTUEActive: leanPreview.isActive, ftueJourney: leanPreview.progressJourney,
                                     onHealthFrame: { leanPreview.setHealthHUDFrame($0, generation: generation) })
                     }
                     if !leanPreview.isSuspended {

@@ -11,6 +11,7 @@ final class LeanTutorial {
     static let completionKey = "laserHeist.ftue.lean.v1.completed"
     static let jumpDuckCompletionKey = "laserHeist.ftue.jumpDuck.v1.completed"
     static let heartCompletionKey = "laserHeist.ftue.heart.v1.completed"
+    let progressJourney = FTUEProgressJourney()
     private(set) var stage: Stage = .notStarted
     private(set) var generation: UUID?
     private(set) var roster: [PlayerID] = []
@@ -43,6 +44,7 @@ final class LeanTutorial {
     }
     /// Explicit replay overrides completion for this generation without clearing its saved record.
     func prepare(generation: UUID, roster: [PlayerID] = PlayerID.allCases, replayRequested: Bool = false) {
+        progressJourney.reset(generation: generation)
         self.generation = generation; self.roster = roster; replayForVisit = replayRequested
         headTopFraction = nil; healthHUDFrame = nil; isSuspended = false; introVisible = false; visibleHeart = nil
         clearPractice(); context = nil; lastSource = nil
@@ -164,6 +166,7 @@ final class LeanTutorial {
     }
     func abandon() {
         replayForVisit = false; visibleHeart = nil; healthHUDFrame = nil
+        progressJourney.reset(generation: nil)
         generation = nil; stage = .notStarted; isSuspended = false; introVisible = false
         clearPractice(); context = nil; lastSource = nil
     }

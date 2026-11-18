@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Static Hi-Fi artwork during FTUE. Deliberately has no progress, stage, time or model input.
+/// Approved FTUE geometry, with a presentation-only journey supplied by its tutorial owner.
 /// The existing HUD owns this slot; its normal gameplay renderer remains separate.
 struct FTUEProgressBar: View {
     let k: CGFloat
+    var journey: FTUEProgressJourney? = nil
 
     var body: some View {
         GeometryReader { track in
@@ -17,11 +18,11 @@ struct FTUEProgressBar: View {
                     .frame(width: GameplayHUDModel.diamondPosition * width - start, height: 8 * k)
                     .offset(x: start, y: height / 2 - 4 * k)
                     .accessibilityHidden(true)
-                // Fixed 100-artboard-point orange accent from the FTUE reference, NOT earned progress.
+                // Same initial 100-point accent; later endpoints come only from FTUE milestones.
                 Capsule()
                     .fill(LinearGradient(colors: [GameplayHUD.fillTop, GameplayHUD.fillBottom], startPoint: .top, endPoint: .bottom))
                     .shadow(color: .black.opacity(0.25), radius: 4 * k, y: 4 * k)
-                    .frame(width: 100 * k, height: 32 * k)
+                    .frame(width: max(0, (journey?.fillEnd ?? FTUEProgressJourney.initial) * width - start), height: 32 * k)
                     .offset(x: start, y: height / 2 - 16 * k)
                     .accessibilityHidden(true)
                 // Existing checkpoint artwork matches Asset 30's cream/dark-purple circular treatment.
@@ -39,6 +40,7 @@ struct FTUEProgressBar: View {
         .frame(height: 65 * k)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Tutorial progress artwork")
+        .accessibilityValue(String(format: "Tutorial fill endpoint %.3f", journey?.fillEnd ?? FTUEProgressJourney.initial))
         .accessibilityIdentifier("ftueProgressBar")
     }
 }
