@@ -35,6 +35,21 @@ import Testing
         #expect(m.flights.count == 3 && m.started == 3)
         #expect(Set(m.flights.map(\.id)).count == 3)
     }
+
+    @Test func restorativeHeartFliesToHealthAndOnlyHighlightsHealthOnce() throws {
+        let m = model()
+        let health = CGRect(x: 80, y: 55, width: 100, height: 30)
+        m.geometry(.init(viewport: viewport, score: score, health: health))
+        let target = DiamondHUDFlightModel.Target.heart(UUID())
+        collect(m, target)
+        collect(m, target)
+        let flight = try #require(m.flights.first)
+        #expect(m.flights.count == 1)
+        #expect(flight.end == CGPoint(x: health.midX, y: health.midY))
+        m.arrived(flight)
+        m.arrived(flight)
+        #expect(m.heartArrivalSerial == 1 && m.arrivalSerial == 0)
+    }
     @Test func arrivalDoesNotReplayAndReplacementHasNewIdentity() throws {
         let m = model(); collect(m)
         let first = try #require(m.flights.first)

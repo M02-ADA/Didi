@@ -661,7 +661,34 @@ final class RobotAvatarLayer {
     nonisolated static let standingHeight: Float = 1.6
     /// The uniform scale that gives the model that height.
     nonisolated static var modelScale: Float { standingHeight / RobotSkeleton.modelHeight }
-    static let unavailableOpacity: Float = 0.5
+    /// Every tracked mascot's body opacity: see-through, so a beam or vertical laser behind Lemon
+    /// or Tangerine reads through the body (motion-game style). One stable value for both players,
+    /// never varied by laser approach; the hoverboard stays opaque (grounding). 0.5 is the design
+    /// decision (18 November 2026, down from 0.65): the mascots block less of the corridor. Only a
+    /// HIT lifts the struck mascot to fully opaque for a moment (`LaserHitReaction.solidity`), so the
+    /// impact stays readable. Presentation only. DEBUG `-mascotOpacity <0…1>` overrides it for
+    /// comparison captures.
+    nonisolated static let bodyOpacity: Float = {
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if let i = arguments.firstIndex(of: "-mascotOpacity"), i + 1 < arguments.count,
+           let value = Float(arguments[i + 1]) { return max(0.05, min(1, value)) }
+        #endif
+        return 0.5
+    }()
+    /// While a player is not tracked: half the body opacity (the earlier tracked-to-dimmed ratio).
+    nonisolated static var unavailableOpacity: Float { bodyOpacity * 0.5 }
+    /// One mascot body's opacity: its baseline (tracked or dimmed), lifted toward fully opaque by
+    /// its own HIT's `solidity` only while tracked, times any scripted fade.
+    nonisolated static func shownOpacity(tracked: Bool, solidity: Float, scripted: Float = 1) -> Float {
+        let baseline = tracked ? bodyOpacity : unavailableOpacity
+        let impact = tracked ? max(0, min(1, solidity)) : 0
+        return (baseline + (1 - baseline) * impact) * max(0, min(1, scripted))
+    }
+    /// Both mascots' depth pre-pass: the renderer writes their depth before any colour, so only
+    /// each mascot's front surface blends over the scene. A translucent body then never shows its
+    /// own far side or overlapping parts (an arm across the torso, a raised knee) through itself.
+    static let mascotSortGroup = ModelSortGroup(depthPass: .prePass)
 
     private(set) var robots: [PlayerID: Robot] = [:]
     /// Each mascot's own 3D hoverboard (`PlayerHoverboard`), when the board
@@ -785,12 +812,20 @@ final class RobotAvatarLayer {
         let reaction = LaserHitReaction(region: region, side: player == .player1 ? -1 : 1,
                                         reduceMotion: Self.hitsReduceMotion, seed: hitCount &* 7 &+ (player == .player1 ? 1 : 2))
         hits[player] = ActiveHit(reaction: reaction, contact: local)
+        // The struck player's board takes the shock with its mascot, in the same frame.
+        hoverboards[player]?.react(.hit, reduceMotion: Self.hitsReduceMotion)
         if zaps[player] == nil {
             let zap = LaserHitZap()
             zap.root.name = "player.\(player.rawValue).laserHitZap"
             lane.addChild(zap.root)
             zaps[player] = zap
         }
+    }
+
+    /// One player's authoritative CLEAR: that player's board celebrates, in the verdict's frame.
+    /// The partner's board answers only its own verdict (a HIT, a CLEAR, or nothing for UNAVAILABLE).
+    func celebrateBoard(_ player: PlayerID) {
+        hoverboards[player]?.react(.clear, reduceMotion: Self.hitsReduceMotion)
     }
 
     /// Whether a mascot is showing a HIT reaction (tests, previews).
@@ -807,6 +842,7 @@ final class RobotAvatarLayer {
         hits = [:]
         unreactedJoints = [:]
         for zap in zaps.values { zap.hide() }
+        for board in hoverboards.values { board.cancelReaction() }
         for player in players { applyScripted(player); restoreBodyMaterials(player) }
     }
 
@@ -1149,6 +1185,7 @@ final class RobotAvatarLayer {
             // One shared size for every player; uniform scale only.
             container.scale = SIMD3(repeating: Self.modelScale)
             container.addChild(robot)
+            model.components.set(ModelSortGroupComponent(group: Self.mascotSortGroup, order: 0))
             entity.addChild(container)
             entity.hasMascot = true
             if let hoverboard {
@@ -1897,8 +1934,12 @@ final class RobotAvatarLayer {
         if robot.container.orientation != tilt { robot.container.orientation = tilt }
         let squash = max(0.05, move.squash * hit.squash).squareRoot()
         robot.container.scale = SIMD3(move.scale / squash, move.scale * squash, move.scale / squash) * Self.modelScale
-        // Dimmed exactly while the player is not tracked (the pose itself fades separately).
-        let opacity = (robot.retargeter.isAvailable ? 1 : Self.unavailableOpacity) * max(0, min(1, move.opacity))
+        // Translucent while tracked, dimmed further exactly while the player is not tracked (the
+        // pose itself fades separately). The board is never dimmed by this. A HIT on THIS mascot
+        // lifts it to fully opaque on the reaction's own clock (one timeline per player: a repeat
+        // HIT restarts it, the end lands exactly on the baseline); never while untracked, so a
+        // dimmed mascot stays dimmed.
+        let opacity = Self.shownOpacity(tracked: robot.retargeter.isAvailable, solidity: hit.solidity, scripted: move.opacity)
         if robot.container.components[OpacityComponent.self]?.opacity != opacity {
             robot.container.components.set(OpacityComponent(opacity: opacity))
         }

@@ -97,11 +97,16 @@ struct LaserGateLifecycleTests {
         func entity(_ name: String) throws -> Entity { try #require(feedback.root.findEntity(named: name)) }
 
         feedback.setMoveCue(.duck, actionRemaining: 0.5)
+        // Only UNAVAILABLE keeps a badge over the head; CLEAR and HIT are the team callout's
+        // (PERFECT!/ZAPPED!, 17 November 2026), and a HIT keeps the laser's spark.
+        feedback.showOutcome(.unavailable, for: .player1, badgeAt: .zero, impactAt: .zero)
+        #expect(try entity("laserFeedback.badge.player1").isEnabled)
+        #expect(try entity("laserFeedback.badge.player1.unavailable").isEnabled)
         feedback.showOutcome(.hit, for: .player1, badgeAt: .zero, impactAt: .zero)
+        #expect(try !entity("laserFeedback.badge.player1").isEnabled)
+        #expect(try entity("laserFeedback.impact.player1").isEnabled)
         feedback.showOutcome(.clear, for: .player1, badgeAt: .zero, impactAt: .zero)
-        #expect(try entity("laserFeedback.badge.player1.clear").isEnabled)
-        #expect(try !entity("laserFeedback.badge.player1.hit").isEnabled)
-        #expect(try !entity("laserFeedback.badge.player1.unavailable").isEnabled)
+        #expect(try !entity("laserFeedback.badge.player1").isEnabled)
 
         feedback.clear()
         for player in PlayerID.allCases {

@@ -98,6 +98,39 @@ import Testing
         #expect(!touchesGem())
     }
 
+    @Test func everyPassagePickupIsReachableWithStandingMascotAndLateralTravel() async throws {
+        let scene = LaserScene()
+        let input = try LaserReplayScript.load().input.configuration
+        let layout = input.playerPlaneLayout
+        let avatars = RobotAvatarLayer(scene: scene, calibrations: input.calibrations,
+            layout: layout, templates: try await RobotAvatarLayer.loadTemplates())
+        let diamond = try await art().makeDiamond(passage: true)
+        let heart = try await HeartArt.load().makeHeart(generation: input.sessionGeneration)
+        for player in PlayerID.allCases {
+            let robot = try #require(avatars.robots[player])
+            let original = robot.container.position
+            let calibration = try #require(input.calibrations[player])
+            let height = LaserLiveRoundGeometryV1.standingHeight(calibration, layout: layout)
+            let lane = layout.centerX(for: player)
+            for placement in try LaserLiveRoundGeometryV1.passagePlacements(player: player, lane: lane, height: height) {
+                let shown = scene.mapping.mascotPoint(x: placement.position.x, y: placement.position.y,
+                    player: player, laneCenter: lane, standingHeight: height).center
+                let position = SIMD3<Float>(shown.x, shown.y, scene.mapping.interactionPlaneZ)
+                diamond.root.position = position
+                heart.root.position = position
+                let x = robot.container.position(relativeTo: nil).x
+                #expect(LaserBoardGeometry.bounds.contains(Double(shown.x)))
+                robot.container.position.x += shown.x - x
+                let body = avatars.diamondContactBody(player)
+                for sphere in [diamond.bodyContactSphere, heart.bodyContactSphere] {
+                    #expect(body.contains { $0.overlaps(center: sphere.center, radius: sphere.radius) },
+                            "Standing \(player) cannot reach \(placement.position) by steering")
+                }
+                robot.container.position = original
+            }
+        }
+    }
+
     @Test func collectionIsOnceAndFourClonesAreIndependent() async throws {
         let art = try await art()
         let diamonds = (0..<4).map { _ in art.makeDiamond() }

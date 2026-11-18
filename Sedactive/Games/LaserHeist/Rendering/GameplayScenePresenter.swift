@@ -105,6 +105,17 @@ final class GameplayScenePresenter {
     /// the vault's last seconds, the door opening, Diamond Time and a
     /// collected diamond. Each fires once per event; UNAVAILABLE stays silent.
     var onSound: ((SoundCue) -> Void)?
+    /// The team's PERFECT!/ZAPPED! for a logical encounter (`LaserTeamOutcomeTracker`), in the frame
+    /// its completing verdict is shown, with whether a DUCK/JUMP cue is on screen in that frame (the
+    /// callout then keeps clear of it). Presentation only.
+    var onTeamCallout: ((LaserTeamCallout, _ cueShown: Bool) -> Void)?
+    /// Whether a DUCK/JUMP cue is on screen; called when that changes.
+    var onCueShownChanged: ((Bool) -> Void)?
+    /// Every team callout shown this generation (tests and debugging).
+    private(set) var teamCallouts: [LaserTeamCallout] = []
+    private var teamOutcomes = LaserTeamOutcomeTracker()
+    private var pendingCallout: LaserTeamCallout?
+    private var cueShown = false
     /// Attempts whose action cue has sounded, by attempt and move.
     private var cuedAttempts: Set<String> = []
     #if DEBUG
@@ -219,6 +230,14 @@ final class GameplayScenePresenter {
         updateCue(state: state, at: time)
         scene.setTimingPresentation(endedAt == nil && scene.timingVariant != .approved ? LaserTimingPresentation.make(state: state,
             configuration: configuration, withdrawn: Set(withdrawnAt.keys)).flatMap { Self.timingFits($0, state) ? $0 : nil } : nil)
+        // The team callout goes out in the frame its verdict is shown, knowing whether a cue is up.
+        let shown = Self.cueOnScreen(scene)
+        if shown != cueShown { cueShown = shown; onCueShownChanged?(shown) }
+        if let callout = pendingCallout {
+            pendingCallout = nil
+            teamCallouts.append(callout)
+            onTeamCallout?(callout, shown)
+        }
         if let snapshot, snapshot.sessionGeneration == state.sessionGeneration { present(snapshot) }
         updateBandEdges()
     }
@@ -268,6 +287,9 @@ final class GameplayScenePresenter {
         diamondTimeStartedAt = nil
         judgedAt = [:]
         withdrawnAt = [:]
+        teamOutcomes.reset()
+        teamCallouts = []
+        pendingCallout = nil
         endedAt = nil
         nextEvent = 0
         lastSequence = nil
@@ -330,6 +352,10 @@ final class GameplayScenePresenter {
                 case .pending: nil
                 }
                 if let outcome {
+                    if let callout = teamOutcomes.verdictShown(encounterID: encounterID, in: state,
+                                                               withdrawn: Set(withdrawnAt.keys)) {
+                        pendingCallout = callout
+                    }
                     scene.presentOutcome(outcome, for: player, band: displayedBand(target))
                     diagnostics.badges += 1
                     if outcome == .clear { onSound?(.laserClear) }
@@ -734,6 +760,14 @@ final class GameplayScenePresenter {
 
     /// The timing cue names one DUCK or JUMP for everyone: it is not shown for a LEAN target (the
     /// vertical beam shows its own way) or for a combined encounter (each player has their own move).
+    /// A DUCK/JUMP instruction is on screen: the approved panel, or the circular cue before its
+    /// result (its CLEAR/HIT result gives way to the team callout, `LaserFeedback`).
+    private static func cueOnScreen(_ scene: LaserScene) -> Bool {
+        if scene.timingVariant == .approved { return scene.shownMoveCue != nil }
+        guard let timing = scene.timingPresentation else { return false }
+        return timing.phase != .result
+    }
+
     private static func timingFits(_ timing: LaserTimingPresentation, _ state: LaserGameState) -> Bool {
         guard timing.move != .lean,
               let encounter = state.encounters.first(where: { $0.encounter.attemptID == timing.attemptID }) else { return false }

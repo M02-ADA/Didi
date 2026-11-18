@@ -509,9 +509,11 @@ struct GameplayScenePresenterTests {
         let scene = LaserScene()
         let laser = try encounter(1, crossing: [.player1: 10, .player2: 10])
         let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [laser])
-        let judged: [UUID: [PlayerID: Judgement]] = [laser.id: [.player1: .clear, .player2: .clear]]
+        // UNAVAILABLE: the verdict that still shows a per-player badge.
+        let unavailable = Judgement.unavailable(.noSample)
+        let judged: [UUID: [PlayerID: Judgement]] = [laser.id: [.player1: unavailable, .player2: .clear]]
         presenter.apply(state: state(10.4, [laser], judged: judged),
-                        events: [event(1, 10.35, .targetJudged(encounterID: laser.id, playerID: .player1, judgement: .clear))], snapshot: nil)
+                        events: [event(1, 10.35, .targetJudged(encounterID: laser.id, playerID: .player1, judgement: unavailable))], snapshot: nil)
         let badge = try #require(scene.root.findEntity(named: "laserFeedback.badge.\(PlayerID.player1.rawValue)"))
         #expect(badge.isEnabled)
         presenter.apply(state: state(0.5, [], generation: UUID()), events: [], snapshot: nil)

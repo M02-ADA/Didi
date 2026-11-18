@@ -948,6 +948,20 @@ final class GameSessionCoordinator {
         if diamondTimePaws != visible { diamondTimePaws = visible }
     }
 
+    var activeHeart: LaserDiamondSpawn? {
+        guard let state, state.phase == .activity, let heart = game?.heart, state.gameTime < heart.exit else { return nil }
+        return heart
+    }
+
+    var lastHeartPickup: (id: UUID, restored: Bool)? { game?.lastHeartPickup }
+
+    func collectAvatarHeart(id: UUID, players: Set<PlayerID>, frameHost token: LaserLiveFrameAttachment) {
+        guard lifetime != nil, liveFrameAttachment == token, phase == .running,
+              let context = inputContext, context == provider.currentContext, context.isActive else { return }
+        game?.collectHeart(id: id, players: players)
+        if game?.lastHeartPickup?.id == id { collectLiveState() }
+    }
+
     func collectAvatarDiamondContacts(_ contacts: [UUID: Set<PlayerID>], frameHost token: LaserLiveFrameAttachment) {
         guard !contacts.isEmpty, lifetime != nil, liveFrameAttachment == token, phase == .running,
               liveReadiness?.isClockHeld == false, let context = inputContext,
@@ -1178,6 +1192,8 @@ final class GameSessionCoordinator {
                             #endif
                         case .normalDiamond(let spawn, let boundary):
                             try stagedGame.spawnNormalDiamonds([spawn], beforeVaultAt: boundary)
+                        case .heart(let spawn, let boundary):
+                            try stagedGame.spawnHeart(spawn, beforeVaultAt: boundary)
                         case .openVault(let id, let zones):
                             try stagedGame.openVault(id: id, at: stagedGame.gameTime)
                             try stagedWrist?.openVault(id: id, zones: zones, game: stagedGame, atHostTime: hostNow())

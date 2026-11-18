@@ -41,6 +41,34 @@ nonisolated struct LaserGameTests {
                             capturedAt: 100 + time, cameraGeometryRevision: 1, players: players)
     }
 
+    @Test(arguments: [true, false])
+    func heartRestoresOneLifeOnlyWhenHealthIsMissing(_ tookDamage: Bool) throws {
+        let (scenario, initial) = try setup()
+        var game = initial
+        if tookDamage {
+            try game.register(scenario.encounter)
+            try game.receive(packet(scenario, verdicts: [outcomes[1], outcomes[1]]), capturedGameTime: 10, arrivedAt: 10.05)
+            try game.advance(to: 11)
+            #expect(game.teamHealth == 3)
+        }
+        let heart = try LaserDiamondTests.spawn(1, at: game.gameTime, players: [.player1])
+        try game.spawnHeart(heart, beforeVaultAt: 30)
+        game.collectHeart(id: heart.id, players: [.player1])
+        #expect(game.heart == heart)
+        try game.advance(to: heart.entry)
+        game.collectHeart(id: heart.id, players: [.player2])
+        #expect(game.heart == heart)
+        game.pause()
+        game.collectHeart(id: heart.id, players: [.player1])
+        #expect(game.heart == heart)
+        game.resume()
+        game.collectHeart(id: heart.id, players: [.player1])
+        game.collectHeart(id: heart.id, players: [.player1])
+        #expect(game.heart == nil && game.lastHeartPickup?.restored == tookDamage)
+        #expect(game.teamHealth == (tookDamage ? 4 : 5))
+        #expect(game.teamScore == 0)
+    }
+
     @Test(arguments: [0,1,2], [0,1,2])
     func nineVerdictCombinationsHaveExactlyTheRulesOutcome(_ p1: Int, _ p2: Int) throws {
         let (scenario, initial) = try setup()

@@ -126,7 +126,7 @@ struct LiveAvatarPresenterTests {
         let avatars = try #require(scene.robotAvatars)
         let p1 = try #require(avatars.robots[.player1]), p2 = try #require(avatars.robots[.player2])
         #expect(p1.retargeter.isAvailable && p1.retargeter.presence > 0.95)
-        #expect(p1.container.components[OpacityComponent.self]?.opacity == 1)
+        #expect(p1.container.components[OpacityComponent.self]?.opacity == RobotAvatarLayer.bodyOpacity)
         #expect(!p2.retargeter.isAvailable && p2.retargeter.presence < 0.05)
         #expect(p2.container.components[OpacityComponent.self]?.opacity == RobotAvatarLayer.unavailableOpacity)
         try oneMascotEach(scene)

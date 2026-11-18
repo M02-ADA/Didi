@@ -35,6 +35,10 @@ import RealityKitContent
 ///   the mascot fades while it is airborne.
 /// - Tracking loss: no stale input is kept. The mascot's shown pose relaxes,
 ///   and while the player is unavailable the board eases back to level.
+/// - Verdict reactions (`react(_:)`, `HoverboardReaction`): each board answers its own player's
+///   CLEAR (a celebration) or HIT (an electric shock), cosmetically: squash and stretch about the
+///   deck top and a small roll, never a sideways move, so the feet stay planted and the ride stays
+///   authoritative. The deck still never rises above the soles.
 @MainActor
 final class PlayerHoverboard {
     /// The asset's name in the Reality Composer Pro package.
@@ -111,6 +115,8 @@ final class PlayerHoverboard {
         var offsetX: Float = 0
         var hoverPhase: Float = 0
         var pitchPhase: Float = 0
+        /// The verdict reaction's pose this frame; the rest pose when none plays.
+        var reaction = HoverboardReaction.Pose()
 
         init(hoverPhase: Float = 0, pitchPhase: Float = 0) {
             self.hoverPhase = hoverPhase
@@ -138,13 +144,13 @@ final class PlayerHoverboard {
         }
 
         /// Roll about the board's long axis: a lean to screen right dips the right side.
-        var roll: Float { -bank }
+        var roll: Float { -bank + reaction.roll }
         var pitch: Float { pitchAmplitude * sin(pitchPhase) }
         /// How far the deck sits below the soles' plane (≤ 0): the hover, the
         /// push-off, and whatever a bank or pitch would otherwise raise under a foot.
         var height: Float {
             -(hoverDepth * (1 - cos(hoverPhase)) / 2 + recoil
-              + footHalfSpan * sin(abs(bank)) + footHalfLength * sin(abs(pitch)))
+              + footHalfSpan * sin(abs(roll)) + footHalfLength * sin(abs(pitch)))
         }
     }
 
@@ -159,6 +165,9 @@ final class PlayerHoverboard {
     var input = Input()
     private var shadowOpacity: Float = -1
     private var glowOpacity: Float = -1
+    /// The playing verdict reaction and its age (seconds of frame time).
+    private(set) var activeReaction: (kind: HoverboardReaction, age: Double, reduceMotion: Bool)?
+    private var reactionFX: HoverboardReactionFX!
 
     /// - Parameters:
     ///   - template: the loaded board; it is cloned, never shown.
@@ -185,21 +194,59 @@ final class PlayerHoverboard {
         contactShadow.name = "hoverboard.contactShadow"
         contactShadow.position = [0, 0.003, 0]
         model.addChild(contactShadow)
+        reactionFX = HoverboardReactionFX(root: root, model: model, boardWidth: 2 * Self.halfWidth, floorY: floorY)
         root.components.set(HoverboardComponent(board: self))
         apply()
     }
 
+    // MARK: - Verdict reactions
+
+    /// Starts `kind` from its first frame (a repeat restarts it; reactions never stack).
+    func react(_ kind: HoverboardReaction, reduceMotion: Bool) {
+        activeReaction = (kind, 0, reduceMotion)
+        reactionFX.start(kind)
+        motion.reaction = kind.pose(at: 0, reduceMotion: reduceMotion)
+        apply()
+    }
+
+    /// Ends any reaction at once: the board is exactly its plain self again.
+    func cancelReaction() {
+        activeReaction = nil
+        motion.reaction = HoverboardReaction.Pose()
+        reactionFX.reset()
+        apply()
+    }
+
+    private func advanceReaction(dt: Float) {
+        guard var active = activeReaction else { return }
+        active.age += Double(max(0, min(dt, 0.1)))
+        if active.age >= active.kind.duration {
+            activeReaction = nil
+            motion.reaction = HoverboardReaction.Pose()
+            reactionFX.reset()
+        } else {
+            activeReaction = active
+            motion.reaction = active.kind.pose(at: active.age, reduceMotion: active.reduceMotion)
+        }
+    }
+
     /// Advances the hover and bank by `dt` seconds of frame time (`HoverboardSystem`).
     func step(dt: Float) {
+        advanceReaction(dt: dt)
         motion.step(dt: dt, input: input)
         apply()
     }
 
     private func apply() {
-        model.transform = Transform(scale: SIMD3(repeating: Self.scale),
+        // The reaction's squash and stretch is about the model's origin, the deck top: the feet stay put.
+        let squash = motion.reaction
+        model.transform = Transform(scale: Self.scale * SIMD3(squash.scaleX, squash.scaleY, squash.scaleX),
                                     rotation: simd_quatf(angle: motion.roll, axis: [0, 0, 1]) * simd_quatf(angle: motion.pitch, axis: [1, 0, 0]),
                                     translation: [motion.offsetX, motion.height, 0])
         underglow.position.x = motion.offsetX
+        if let active = activeReaction {
+            reactionFX?.apply(motion.reaction, tau: active.age, deckX: motion.offsetX, deckY: motion.height, reduceMotion: active.reduceMotion)
+        }
         let lift = input.available && input.lift.isFinite ? max(0, input.lift) : 0
         // The shadow sits under the mascot, in the board's own (scaled, glided) space.
         let x = input.centerX.isFinite ? (input.centerX - motion.offsetX) / Self.scale : 0

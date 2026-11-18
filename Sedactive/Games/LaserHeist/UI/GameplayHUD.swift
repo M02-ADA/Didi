@@ -274,6 +274,7 @@ struct GameplayHUD: View {
             }
         }
         .frame(width: 268 * k, height: 64 * k)
+        .anchorPreference(key: PickupHUDAnchorKey.self, value: .bounds) { [.health: $0] }
         .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.3), value: displayedHealth)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onHealthFrame?($0) }
         .accessibilityElement()
@@ -288,7 +289,7 @@ struct GameplayHUD: View {
         HStack(spacing: 8 * k) {
             Image(systemName: "star.fill")
                 .foregroundStyle(Self.sun)
-                .anchorPreference(key: DiamondScoreAnchorKey.self, value: .bounds) { $0 }
+                .anchorPreference(key: PickupHUDAnchorKey.self, value: .bounds) { [.score: $0] }
             Text(model.score, format: .number)
                 .contentTransition(.numericText(value: Double(model.score)))
                 .monospacedDigit()

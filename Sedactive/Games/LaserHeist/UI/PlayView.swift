@@ -50,6 +50,7 @@ private struct ReplayRoundView: View {
     @State private var scene = LaserScene()
     @State private var presentation = LaserReplayPresentation()
     @State private var diamondFlights = DiamondHUDFlightModel()
+    @State private var teamCallouts = LaserTeamCalloutModel()
     @State private var session: GameSessionCoordinator?
     /// A live session mounted before its round plan exists (scene loaded during setup): starts the
     /// presentation on the first rendered frame after the plan is installed.
@@ -117,6 +118,7 @@ private struct ReplayRoundView: View {
             presentation.holdsTimingComparison = TimingIndicatorControls.isComparison
             #endif
             presentation.diamondFlights = diamondFlights
+            presentation.teamCallouts = teamCallouts
             let authored = await LaserScene.loadAuthoredEnvironment()
             #if DEBUG
             // Launch with `-showEditorPreviews` to overlay the Reality Composer Pro
@@ -561,6 +563,10 @@ private struct ReplayRoundView: View {
                             tutorialHealthLoss: tutorial?.heartPhase?.illustratesHealthLoss == true,
                             onHealthFrame: { tutorial?.setHealthHUDFrame($0, generation: generation) })
                     }
+                    // PERFECT! / ZAPPED! on the HUD's title line, never over the results.
+                    if session.summary == nil {
+                        LaserTeamCalloutView(model: teamCallouts)
+                    }
                 }
             }
         }
@@ -605,8 +611,10 @@ private struct ReplayRoundView: View {
         .overlay {
             if let final = session?.summary { ResultsView(summary: final, onRetry: retry, onHome: homeAction) }
         }
-        .overlayPreferenceValue(DiamondScoreAnchorKey.self) { anchor in
-            if !hasTutorialOverlay { DiamondHUDFlightOverlay(model: diamondFlights, scoreAnchor: anchor) }
+        .overlayPreferenceValue(PickupHUDAnchorKey.self) { anchors in
+            if !hasTutorialOverlay {
+                DiamondHUDFlightOverlay(model: diamondFlights, scoreAnchor: anchors[.score], healthAnchor: anchors[.health])
+            }
         }
         .coordinateSpace(name: DiamondHUDFlightModel.space)
         .safeAreaInset(edge: .bottom) {
@@ -717,6 +725,11 @@ private struct ReplayRoundView: View {
         #if DEBUG
         .overlay(alignment: .topLeading) {
             if MaskBenchmark.configuration.map({ $0.overlay || $0.script }) == true { MaskBenchmarkOverlay() }
+        }
+        .overlay {
+            // `-replay -debugRoundControlsPreview`: the live round's DEBUG card over the replay, to
+            // review its placement in the Simulator (no camera). A replay offers no skips: both stay off.
+            if let session, session.summary == nil, DebugRoundControls.previewRequested { DebugRoundControls(session: session) }
         }
         #endif
         .onChange(of: session?.summary?.sessionGeneration) { _, final in

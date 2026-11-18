@@ -171,7 +171,7 @@ struct VisionK03IntegrationTests {
         for _ in 0..<3 { try rig.deliver([TrackingFixtures.candidate(10, x: 0.75)]); rig.renderTick() }
         #expect(rig.robot(.player1).retargeter.isAvailable)
         #expect(!rig.robot(.player2).retargeter.isAvailable)
-        #expect(rig.robot(.player1).container.components[OpacityComponent.self]?.opacity == 1)
+        #expect(rig.robot(.player1).container.components[OpacityComponent.self]?.opacity == RobotAvatarLayer.bodyOpacity)
         #expect(rig.robot(.player2).container.components[OpacityComponent.self]?.opacity == RobotAvatarLayer.unavailableOpacity)
         try oneMascotEach(rig.scene)
         for _ in 0..<8 { try rig.deliver(); rig.renderTick() }
@@ -289,7 +289,7 @@ struct VisionK03IntegrationTests {
         #expect(diagnostics.rejected.isEmpty)
         for player in PlayerID.allCases {
             #expect(rig.robot(player).retargeter.isAvailable)
-            #expect(rig.robot(player).container.components[OpacityComponent.self]?.opacity == 1)
+            #expect(rig.robot(player).container.components[OpacityComponent.self]?.opacity == RobotAvatarLayer.bodyOpacity)
         }
         #expect(armY(rig.robot(.player1)) > 0.5, "P1 \(armY(rig.robot(.player1)))")
         #expect(armY(rig.robot(.player2)) < 0.3, "P2 \(armY(rig.robot(.player2)))")
