@@ -3,7 +3,7 @@ import Testing
 @testable import Sedactive
 
 @MainActor struct LeanMovementEvidenceTests {
-    @Test(arguments: ["valid", "generation", "epoch", "control", "stale", "future", "calibration", "directionOnly", "untracked", "testMove", "cutover", "notReady"])
+    @Test(arguments: ["valid", "generation", "epoch", "control", "stale", "future", "calibration", "directionOnly", "untracked", "testMove", "cutover", "notReady", "leftLimit", "rightLimit", "partner", "movingLimit"])
     func existingAdmissionAndSteeringMustAgree(reason: String) throws {
         let input = try LaserReplayScript.load().input
         let source = SyntheticAvatarSource(configuration: input.configuration, cameraGeometryRevision: input.cameraGeometryRevision)
@@ -28,11 +28,14 @@ import Testing
         let result = LeanMovementObservation.make(frame: frame, context: context, generation: c.generation,
             roster: [.player1], eligible: reason != "notReady", now: now) { _ in
                 .init(solo: true, rawLean: -0.08, filteredLean: -0.08,
-                    leanSpeed: -1, targetSpeed: reason == "testMove" ? 1 : -1, velocity: -1, travel: -0.1,
-                    targetX: -0.8, appliedX: -0.8, constraint: .free, leftWallDistance: 1, rightWallDistance: 1,
+                    leanSpeed: -1, targetSpeed: reason == "testMove" ? 1 : -1, velocity: ["leftLimit", "rightLimit", "partner"].contains(reason) ? 0 : -1, travel: -0.1,
+                    targetX: -0.8, appliedX: -0.8, constraint: reason == "leftLimit" || reason == "movingLimit" ? .leftLimit : reason == "rightLimit" ? .rightLimit : reason == "partner" ? .partner : .free, leftWallDistance: 1, rightWallDistance: 1,
                     partnerDistance: nil, boardWorldX: -0.8, screenX: 0.4, frameDT: 1 / 60,
                     poseAge: 0.01, tracked: reason != "untracked")
             }
-        #expect((result?.players[.player1] != nil) == (reason == "valid"))
+        #expect((result?.players[.player1] != nil) == (["valid", "leftLimit", "rightLimit", "partner", "movingLimit"].contains(reason)))
+        if let reading = result?.players[.player1] {
+            #expect(reading.blockedDirection == (reason == "leftLimit" ? -1 : reason == "rightLimit" || reason == "partner" ? 1 : 0))
+        }
     }
 }

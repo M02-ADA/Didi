@@ -942,7 +942,7 @@ private struct ReplayRoundView: View {
         guard RobotAvatarLayer.debugTestSteer == nil else { tutorial.observe(nil, generation: generation, at: now); return }
         #endif
         let value = LeanMovementObservation.make(frame: frame, context: context, generation: generation,
-            roster: tutorial.roster, eligible: eligible, now: now) { scene.robotAvatars?.steeringReading($0) }
+            roster: tutorial.roster, eligible: eligible, now: now, bounds: scene.robotAvatars?.steering?.bounds) { scene.robotAvatars?.steeringReading($0) }
         tutorial.observe(value, generation: generation, at: now)
     }
 

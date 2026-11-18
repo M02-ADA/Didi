@@ -47,7 +47,8 @@ import Foundation
         if stage != tutorial.stage || wasSuspended != tutorial.isSuspended {
             stage = tutorial.stage; stageStart = now; wasSuspended = tutorial.isSuspended
         }
-        let share: Double = hold || tutorial.isSuspended || now - stageStart < 3 ? 0
+        let boundarySetup = ProcessInfo.processInfo.arguments.contains("-leanFTUEBoundary") && stage == .introduction
+        let share: Double = boundarySetup ? 0.08 : hold || tutorial.isSuspended || now - stageStart < 3 ? 0
             : stage == .practiceLeft ? 0.08 : stage == .practiceRight ? -0.08 : 0
         var players: [PlayerID: PlayerBodySample] = [:]
         var poses: [PlayerID: PresentationPoseSample] = [:]

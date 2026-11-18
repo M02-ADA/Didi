@@ -113,6 +113,66 @@ import Testing
         f.send(tutorial, 10, -1, -1, -4.3)
         #expect(tutorial.stage == .practiceRight)
     }
+    @Test(arguments: ["valid", "free", "wrong", "held", "stale", "paused", "generation", "missing"])
+    func boundaryProofRequiresFreshRearmedDirectionalInput(scenario: String) {
+        let f = Fixture(), tutorial = f.tutorial()
+        func send(_ id: UInt64, command: Float, blocked: Float, generation: UUID? = nil) {
+            let t = Double(id) / 10
+            let observation = f.observation(id, t, command, 0, -2)
+            tutorial.observe(.init(source: observation.source, context: observation.context,
+                players: [.player1: .init(command: command, velocity: 0, x: -2, blockedDirection: blocked)]),
+                generation: generation ?? f.generation, at: t + 0.01)
+        }
+        if scenario != "held" { send(1, command: 0, blocked: 0) }
+        if scenario == "paused" {
+            tutorial.setSuspended(true, generation: f.generation)
+            tutorial.setSuspended(false, generation: f.generation)
+            tutorial.practiceVisible(.practiceLeft, generation: f.generation, at: 0.15)
+        }
+        if scenario == "missing" { tutorial.observe(nil, generation: f.generation, at: 0.15) }
+        let command: Float = scenario == "wrong" ? 1 : -1
+        let blocked: Float = scenario == "free" ? 0 : -1
+        send(2, command: command, blocked: blocked, generation: scenario == "generation" ? UUID() : nil)
+        send(scenario == "stale" ? 2 : 3, command: command, blocked: blocked,
+             generation: scenario == "generation" ? UUID() : nil)
+        let accepted = scenario == "valid"
+        #expect(tutorial.stage == (accepted ? .practiceRight : .practiceLeft))
+        if !accepted {
+            // BODY neutral rearms at the SAME world position, no opposite translation.
+            send(4, command: 0, blocked: 0)
+            send(5, command: -1, blocked: -1); send(6, command: -1, blocked: -1)
+            #expect(tutorial.stage == .practiceRight)
+        }
+        tutorial.practiceVisible(.practiceRight, generation: f.generation, at: 0.65)
+        send(7, command: 0, blocked: 0)
+        send(8, command: 1, blocked: 1); send(9, command: 1, blocked: 1)
+        #expect(tutorial.stage == .heart(.introduction))
+    }
+
+    @Test func coopBoundaryProofBelongsOnlyToTheObservedPlayer() {
+        var f = Fixture(); f.roster = PlayerID.allCases
+        let tutorial = f.tutorial()
+        func send(_ id: UInt64, _ players: [PlayerID: LeanMovementObservation.Reading]) {
+            let t = Double(id) / 10, original = f.observation(id, Double(id) / 10, 0, 0, 0)
+            tutorial.observe(.init(source: original.source, context: original.context, players: players),
+                generation: f.generation, at: t + 0.01)
+        }
+        send(1, [.player1: .init(command: 0, velocity: 0, x: -2)])
+        for id: UInt64 in [2, 3] {
+            send(id, [.player1: .init(command: -1, velocity: 0, x: -2, blockedDirection: -1)])
+        }
+        #expect(tutorial.stage == .practiceLeft && tutorial.demonstrated == [.player1])
+        // Missing P2, static position, and inward-to-the-wrong-constraint cannot substitute.
+        send(4, [.player2: .init(command: 0, velocity: 0, x: -1)])
+        send(5, [.player2: .init(command: -1, velocity: 0, x: -1, blockedDirection: 1)])
+        #expect(tutorial.stage == .practiceLeft)
+        send(6, [.player2: .init(command: 0, velocity: 0, x: -1)])
+        for id: UInt64 in [7, 8] {
+            send(id, [.player2: .init(command: -1, velocity: 0, x: -1, blockedDirection: -1)])
+        }
+        #expect(tutorial.stage == .practiceRight)
+    }
+
     @Test func coopPlayersDemonstrateIndependentlyAndNeitherCanSubstituteForTheOther() {
         var f = Fixture(); f.roster = PlayerID.allCases
         let tutorial = f.tutorial()

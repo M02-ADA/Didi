@@ -117,7 +117,7 @@ struct LiveLeanSteeringTests {
             let frame = try #require(live.scene.liveAvatars?.lastAppliedFrame)
             let before = live.mailbox.diagnostics
             let value = LeanMovementObservation.make(frame: frame, context: context, generation: generation,
-                roster: roster, eligible: true, now: live.time + 0.02) { live.avatars.steeringReading($0) }
+                roster: roster, eligible: true, now: live.time + 0.02, bounds: live.avatars.steering?.bounds) { live.avatars.steeringReading($0) }
             tutorial.observe(value, generation: generation, at: live.time + 0.02)
             #expect(live.mailbox.diagnostics == before)
         }
@@ -137,6 +137,102 @@ struct LiveLeanSteeringTests {
         #expect(tutorial.stage == .heart(.introduction) && tutorial.hasCompletedLean && !tutorial.isCompleted)
         #expect(Set(live.avatars.robots.keys) == Set(roster))
         live.scene.detachLiveAvatars()
+    }
+
+    /// Real K03 controller, mailbox and mascot transforms; only the camera packets are synthetic.
+    @Test(arguments: [false, true])
+    func boundaryLimitedLiveLeanRearmsWithoutOppositeTravel(coop: Bool) async throws {
+        let roster: [PlayerID] = coop ? PlayerID.allCases : [.player1]
+        var live = try await live(Set(roster))
+        defer { live.scene.detachLiveAvatars() }
+        let left = Dictionary(uniqueKeysWithValues: roster.map { ($0, 0.08) })
+        let neutral = Dictionary(uniqueKeysWithValues: roster.map { ($0, 0.0) })
+        _ = try live.hold(neutral, seconds: 1)
+        _ = try live.hold(left, seconds: 6) // reach the REAL controller limits, no placement override
+        let f = LeanTutorialTests.Fixture()
+        let tutorial = LeanTutorial(defaults: f.defaults), generation = live.source.context.generation
+        tutorial.prepare(generation: generation, roster: roster)
+        tutorial.beginIfEligible(generation: generation, eligible: true)
+        tutorial.introductionVisible(true, generation: generation); tutorial.finishIntroduction(generation: generation)
+        tutorial.practiceVisible(.practiceLeft, generation: generation, at: live.time)
+        let context = BodyInputContext(sessionGeneration: generation, cameraGeometryRevision: live.source.context.geometryRevision,
+            calibrationRevisions: live.calibrations.mapValues(\.revision),
+            cutovers: live.calibrations.mapValues { .init(frameID: $0.sourceFrameID, capturedAt: $0.capturedAt) },
+            isActive: true, wristContact: .init(sourceEpoch: live.source.context.epoch, controlRevision: live.source.controlRevision,
+                bindingRequestID: UUID(), bindingFrameID: 0, bindingCapturedAt: 0, acceptedContextRevision: 1, freshness: 0.25))
+        func observe() throws {
+            let frame = try #require(live.scene.liveAvatars?.lastAppliedFrame)
+            tutorial.observe(LeanMovementObservation.make(frame: frame, context: context, generation: generation,
+                roster: roster, eligible: true, now: live.time + 0.02, bounds: live.avatars.steering?.bounds) { live.avatars.steeringReading($0) },
+                generation: generation, at: live.time + 0.02)
+        }
+        for _ in 0..<10 { try live.frame(left); try observe() }
+        #expect(tutorial.stage == .practiceLeft, "already-held input is not a new action")
+        for _ in 0..<40 { try live.frame(neutral); try observe() }
+        let positions = Dictionary(uniqueKeysWithValues: roster.map { ($0, live.mascotX($0)) })
+        for _ in 0..<40 { try live.frame(left); try observe() }
+        #expect(tutorial.stage == .practiceRight)
+        for p in roster {
+            let reading = try #require(live.avatars.steeringReading(p))
+            #expect(reading.constraint == .leftLimit || reading.constraint == .partner)
+            if p == .player1 { #expect(abs(reading.targetX - live.avatars.steering!.bounds.lowerBound) < 0.000001) }
+            #expect(reading.velocity == 0 && reading.leanSpeed < 0)
+            #expect(abs(live.mascotX(p) - positions[p]!) < 0.0001, "no impossible extra displacement")
+        }
+        let right = Dictionary(uniqueKeysWithValues: roster.map { ($0, -0.08) })
+        _ = try live.hold(right, seconds: 6) // reach the opposite REAL limit before RIGHT is visible
+        tutorial.practiceVisible(.practiceRight, generation: generation, at: live.time + 0.02)
+        for _ in 0..<40 { try live.frame(neutral); try observe() }
+        let rightPositions = Dictionary(uniqueKeysWithValues: roster.map { ($0, live.mascotX($0)) })
+        for _ in 0..<40 { try live.frame(right); try observe() }
+        for p in roster {
+            let reading = try #require(live.avatars.steeringReading(p))
+            #expect(reading.constraint == .rightLimit || reading.constraint == .partner)
+            #expect(reading.velocity == 0 && reading.leanSpeed > 0)
+            #expect(abs(live.mascotX(p) - rightPositions[p]!) < 0.0001)
+        }
+        #expect(tutorial.stage == .heart(.introduction))
+    }
+
+    @Test(arguments: PlayerID.allCases)
+    func coopConstrainedPlayerCannotCompleteTheOtherPlayer(blockedPlayer: PlayerID) async throws {
+        var live = try await live(Set(PlayerID.allCases))
+        defer { live.scene.detachLiveAvatars() }
+        let other: PlayerID = blockedPlayer == .player1 ? .player2 : .player1
+        let neutral: [PlayerID: Double] = [.player1: 0, .player2: 0]
+        let held: [PlayerID: Double] = [blockedPlayer: 0.08, other: 0]
+        _ = try live.hold(neutral, seconds: 1)
+        _ = try live.hold(held, seconds: 6)
+        let f = LeanTutorialTests.Fixture()
+        let tutorial = LeanTutorial(defaults: f.defaults), generation = live.source.context.generation
+        tutorial.prepare(generation: generation, roster: PlayerID.allCases)
+        tutorial.beginIfEligible(generation: generation, eligible: true)
+        tutorial.introductionVisible(true, generation: generation); tutorial.finishIntroduction(generation: generation)
+        tutorial.practiceVisible(.practiceLeft, generation: generation, at: live.time)
+        let context = BodyInputContext(sessionGeneration: generation, cameraGeometryRevision: live.source.context.geometryRevision,
+            calibrationRevisions: live.calibrations.mapValues(\.revision),
+            cutovers: live.calibrations.mapValues { .init(frameID: $0.sourceFrameID, capturedAt: $0.capturedAt) },
+            isActive: true, wristContact: .init(sourceEpoch: live.source.context.epoch, controlRevision: live.source.controlRevision,
+                bindingRequestID: UUID(), bindingFrameID: 0, bindingCapturedAt: 0, acceptedContextRevision: 1, freshness: 0.25))
+        func observe() throws {
+            let frame = try #require(live.scene.liveAvatars?.lastAppliedFrame)
+            tutorial.observe(LeanMovementObservation.make(frame: frame, context: context, generation: generation,
+                roster: PlayerID.allCases, eligible: true, now: live.time + 0.02,
+                bounds: live.avatars.steering?.bounds) { live.avatars.steeringReading($0) },
+                generation: generation, at: live.time + 0.02)
+        }
+        for _ in 0..<40 { try live.frame(neutral); try observe() }
+        let x = live.mascotX(blockedPlayer)
+        for _ in 0..<40 { try live.frame(held); try observe() }
+        let reading = try #require(live.avatars.steeringReading(blockedPlayer))
+        #expect(reading.constraint == (blockedPlayer == .player1 ? .leftLimit : .partner))
+        #expect(abs(live.mascotX(blockedPlayer) - x) < 0.0001)
+        #expect(tutorial.stage == .practiceLeft && tutorial.demonstrated == [blockedPlayer])
+        // The other bound player must now supply its OWN fresh movement.
+        for _ in 0..<40 {
+            try live.frame([blockedPlayer: 0, other: 0.08]); try observe()
+        }
+        #expect(tutorial.stage == .practiceRight)
     }
 
     @Test(arguments: [false, true])

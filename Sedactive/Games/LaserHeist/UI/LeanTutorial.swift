@@ -108,7 +108,11 @@ final class LeanTutorial {
             if value.command == 0, value.velocity == 0 {
                 attempt.armed = true; attempt.x = value.x; attempt.movingFrames = 0
             } else if attempt.armed, let x = attempt.x,
-                      value.command * sign > 0, value.velocity * sign > 0, (value.x - x) * sign > 0 {
+                      value.command * sign > 0,
+                      (value.velocity * sign > 0 && (value.x - x) * sign > 0
+                       || value.velocity == 0 && value.blockedDirection == sign) {
+                // Fresh neutral + two independent commanded frames are still required.
+                // A confirmed directional clamp substitutes only for impossible movement.
                 attempt.movingFrames += 1; attempt.x = value.x
                 if attempt.movingFrames >= 2 { demonstrated.insert(player) }
             } else { attempt = Attempt() }

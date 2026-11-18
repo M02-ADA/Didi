@@ -2,6 +2,30 @@ import XCTest
 
 /// Real Home and LaserScene; only the explicit DEBUG fixture supplies SYNTHETIC practice input.
 final class HomeTutorialHelpUITests: XCTestCase {
+    func testBoundaryLimitedLeanRearmsAndReachesHeart() {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments = ["-replay", "-leanFTUEPreview", "-leanFTUEReset", "-leanFTUESolo",
+                               "-leanFTUEBoundary", "-hideDebugOverlay"]
+        app.launch()
+        func waitTitle(_ label: String, id: String = "leanTutorialTitle") {
+            let title = app.descendants(matching: .any)[id]
+            XCTAssertTrue(title.waitForExistence(timeout: 45))
+            expectation(for: NSPredicate(format: "label CONTAINS %@", label), evaluatedWith: title)
+            waitForExpectations(timeout: 25)
+            let image = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            image.name = "synthetic-boundary-\(label)"; image.lifetime = .keepAlways; add(image)
+            XCTAssertEqual(app.images.matching(identifier: "ftueCenterCheckpoint").count, 1)
+            XCTAssertFalse(app.buttons["leanTutorialContinue"].exists)
+        }
+        waitTitle("Lean your head")
+        waitTitle("LEAN LEFT")
+        waitTitle("LEAN RIGHT")
+        waitTitle("This is your shared health", id: "heartTutorialTitle")
+        app.terminate()
+    }
+
     func testHomeHelpReturningPlayerReplayAndCancellation() {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft
