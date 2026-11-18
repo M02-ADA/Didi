@@ -46,6 +46,9 @@ private struct ReplayRoundView: View {
     let tutorial: LeanTutorial?
     @State private var needsLeanProjection = true
     @Environment(\.scenePhase) private var scenePhase
+    // Render subscriptions outlive the SwiftUI value that installed them. Read current lifecycle
+    // through State storage instead of capturing that value's startup (inactive) environment.
+    @State private var trainingSceneActive = false
     @State private var heartTutorialDemo = HeartTutorialDemo()
     let retry: () -> Void
     @State private var scene = LaserScene()
@@ -710,7 +713,9 @@ private struct ReplayRoundView: View {
             }.ignoresSafeArea()
         }
         #endif
+        .onAppear { trainingSceneActive = scenePhase == .active }
         .onChange(of: scenePhase) { _, phase in
+            trainingSceneActive = phase == .active
             guard activeTutorial?.heartPhase == .hurt else { return }
             teamCallouts.setTutorialSuspended(phase != .active || activeTutorial?.isSuspended == true)
             updateHeartTraining(scene: scene, at: CACurrentMediaTime())
@@ -837,7 +842,7 @@ private struct ReplayRoundView: View {
             return
         }
         guard tutorial.heartPhase == .hurt else { heartTutorialDemo.stop(); return }
-        let suspended = tutorial.isSuspended || scenePhase != .active
+        let suspended = tutorial.isSuspended || !trainingSceneActive
         if let suppliedSession {
             suppliedSession.updateHeartTraining(at: now, suspended: suspended)
             let paused = suspended || !suppliedSession.canStartLiveRound

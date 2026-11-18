@@ -35,7 +35,8 @@ nonisolated struct HeartTrainingEncounter {
     mutating func update(at now: Double, eligible: Bool, context current: BodyInputContext?) {
         guard !invalidated, !feedbackFinished else { return }
         guard current == context else { invalidated = true; anchor = nil; return }
-        guard eligible, now.isFinite else { anchor = nil; return }
+        guard eligible, now.isFinite, now >= 0 else { anchor = nil; return }
+        if let previous = anchor, now < previous { return }
         defer { anchor = now }
         guard let previous = anchor, now >= previous else { return }
         // A stalled/background render callback cannot jump over the visible approach.

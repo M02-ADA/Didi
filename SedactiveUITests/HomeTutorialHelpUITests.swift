@@ -41,10 +41,16 @@ final class HomeTutorialHelpUITests: XCTestCase {
                 app.buttons["resume"].tap()
                 waitHeart("This is your shared health")
             }
-            waitHeart("OUCH!"); capture("\(prefix)-heart-ouch")
-            XCTAssertTrue(health.label.contains("Tutorial demo shared health 4 of 5"))
+            let encounter = app.descendants(matching: .any)["heartTrainingEncounter"]
+            XCTAssertTrue(encounter.waitForExistence(timeout: 15))
+            XCTAssertEqual(health.label, "Team health 5 of 5")
+            capture("\(prefix)-heart-laser-approach")
+            let zapped = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Zapped!'")).firstMatch
+            XCTAssertTrue(zapped.waitForExistence(timeout: 10))
+            capture("\(prefix)-heart-zapped")
+            XCTAssertEqual(health.label, "Team health 4 of 5")
             waitHeart("Your health will be deducted"); capture("\(prefix)-heart-warning")
-            XCTAssertTrue(health.label.contains("gameplay health unchanged"))
+            XCTAssertEqual(health.label, "Team health 4 of 5")
             XCTAssertEqual(app.images.matching(identifier: "ftueCenterCheckpoint").count, 1)
             XCTAssertFalse(app.descendants(matching: .any)["gameplayProgressBar"].exists)
             for id in ["leanTutorialLeave", "leanTutorialSkip", "leanTutorialContinue"] { XCTAssertFalse(app.buttons[id].exists) }
