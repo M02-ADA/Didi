@@ -96,7 +96,7 @@ struct ContentView: View {
             PlayView(avatarSource: { try VisionK03MailboxPump(bridge: dependencies.visionPoseBridge, mailbox: $0) },
                      onExit: { Task { await flow.closeLiveSetup() } }, liveSession: session,
                      onLiveRetry: { Task { await flow.retryLiveSetup() } }, leanTutorial: flow.leanTutorial)
-              .blur(radius: flow.leanTutorial.stage == .introduction && !flow.leanTutorial.isSuspended ? 5 : 0)
+              .blur(radius: (flow.leanTutorial.stage == .introduction || flow.leanTutorial.stage == .jumpDuckIntroduction) && !flow.leanTutorial.isSuspended ? 5 : 0)
               .id(ObjectIdentifier(session)) // a new session (Retry) gets a fresh scene
           }
           // The setup stage, with its camera preview, stays MOUNTED for the whole visit and is only

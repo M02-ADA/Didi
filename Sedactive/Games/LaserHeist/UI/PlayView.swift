@@ -49,6 +49,7 @@ private struct ReplayRoundView: View {
     // Render subscriptions outlive the SwiftUI value that installed them. Read current lifecycle
     // through State storage instead of capturing that value's startup (inactive) environment.
     @State private var trainingSceneActive = false
+    @State private var practicePresentation = FTUEPracticePresentation()
     @State private var heartTutorialDemo = HeartTutorialDemo()
     let retry: () -> Void
     @State private var scene = LaserScene()
@@ -67,6 +68,7 @@ private struct ReplayRoundView: View {
     @State private var frameRefresh: EventSubscription?
     #if DEBUG
     @State private var leanPreview = LeanTutorial(defaults: UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!)
+    @State private var previewLaserPractice: FTUELaserPractice?
     @State private var previewHeartTraining: HeartTrainingEncounter?
     @State private var leanPreviewConfiguration: LaserRoundConfiguration?
     @State private var leanPreviewInput: LeanFTUESyntheticInput?
@@ -144,7 +146,7 @@ private struct ReplayRoundView: View {
                 let now = CACurrentMediaTime()
                 scene?.refreshLiveCutouts(now: now)
                 scene?.refreshLiveAvatars(now: now)
-                if let scene { updateHeartTraining(scene: scene, at: now) }
+                if let scene { updateHeartTraining(scene: scene, at: now); updateLaserPractice(scene: scene, at: now) }
                 if needsLeanProjection, wantsLeanProjection, let scene {
                     let viewport = presentation.pawBoardDiamonds.viewportFrame.size
                     if let fraction = LeanCueProjection.headTop(scene: scene, viewport: viewport, project: {
@@ -270,6 +272,10 @@ private struct ReplayRoundView: View {
                     guard !Task.isCancelled else { return }
                     scene.attachLiveAvatars(mailbox: inputSource.mailbox, templates: templates, pump: inputSource,
                         players: Set(inputSource.roster))
+                    inputSource.practice = { previewLaserPractice }
+                    inputSource.onBodySnapshot = { packet, host in
+                        try? previewLaserPractice?.receive(packet, at: host, maximumAge: LiveAvatarPresenter.maximumPoseAge)
+                    }
                     leanPreviewInput = inputSource
                     scene.isLaserVisible = false
                     leanPreviewConfiguration = script.configuration
@@ -295,6 +301,7 @@ private struct ReplayRoundView: View {
                     if manualReplay {
                         UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.completionKey)
                         UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.heartCompletionKey)
+                        UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.jumpDuckCompletionKey)
                     }
                     leanPreview.prepare(generation: generation, roster: inputSource.roster, replayRequested: manualReplay)
                     leanPreview.beginIfEligible(generation: generation, eligible: true)
@@ -531,7 +538,7 @@ private struct ReplayRoundView: View {
         world
         .blur(radius: activeTutorial?.heartPhase?.usesOverlay == true && activeTutorial?.isSuspended == false ? 5 : 0)
         #if DEBUG
-        .blur(radius: isLeanPreview && leanPreview.stage == .introduction && !leanPreview.isSuspended ? 5 : 0)
+        .blur(radius: isLeanPreview && (leanPreview.stage == .introduction || leanPreview.stage == .jumpDuckIntroduction) && !leanPreview.isSuspended ? 5 : 0)
         #endif
         #if DEBUG
         // Launch with `-landscape` to frame the 3D view at the narrowest landscape iPad's aspect
@@ -595,6 +602,10 @@ private struct ReplayRoundView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(leanPreviewStatus)
                         .accessibilityIdentifier("leanPreviewStatus")
+                    if let practice = previewLaserPractice {
+                        Text("SYNTHETIC \(practice.move.rawValue) attempt \(practice.attemptNumber) · \(String(describing: practice.outcome)) · no practice damage")
+                            .accessibilityIdentifier("ftuePracticeStatus")
+                    }
                     Text(leanPreviewAudit).accessibilityIdentifier("leanPreviewAudit")
                         .font(.system(size: 1)).foregroundStyle(.clear).frame(width: 1, height: 1)
                     if !leanPreview.isActive {
@@ -716,9 +727,10 @@ private struct ReplayRoundView: View {
         .onAppear { trainingSceneActive = scenePhase == .active }
         .onChange(of: scenePhase) { _, phase in
             trainingSceneActive = phase == .active
-            guard activeTutorial?.heartPhase == .hurt else { return }
+            guard activeTutorial?.heartPhase == .hurt || activeTutorial?.practiceMove != nil else { return }
             teamCallouts.setTutorialSuspended(phase != .active || activeTutorial?.isSuspended == true)
             updateHeartTraining(scene: scene, at: CACurrentMediaTime())
+            updateLaserPractice(scene: scene, at: CACurrentMediaTime())
         }
         .onChange(of: session?.phase) { _, phase in
             scene.setTimingPaused(phase == .paused)
@@ -760,6 +772,8 @@ private struct ReplayRoundView: View {
             scene.detachLiveAvatars()
             heartTutorialDemo.stop()
             suppliedSession?.retireHeartTraining()
+            suppliedSession?.retireFTUELaserPractice()
+            practicePresentation.stop(callouts: teamCallouts)
             #if DEBUG
             leanPreviewTask?.cancel(); leanPreviewTask = nil
             leanPreviewInput?.stop(); leanPreviewInput = nil; leanPreviewStart = nil
@@ -835,10 +849,13 @@ private struct ReplayRoundView: View {
     /// Only the existing render callback drives the scoped training encounter.
     private func updateHeartTraining(scene: LaserScene, at now: Double) {
         guard let tutorial = activeTutorial, tutorial.heartPhase != nil else {
-            heartTutorialDemo.stop(); suppliedSession?.retireHeartTraining()
-            #if DEBUG
-            previewHeartTraining = nil
-            #endif
+            heartTutorialDemo.stop()
+            if activeTutorial?.isActive != true {
+                suppliedSession?.retireHeartTraining()
+                #if DEBUG
+                previewHeartTraining = nil
+                #endif
+            }
             return
         }
         guard tutorial.heartPhase == .hurt else { heartTutorialDemo.stop(); return }
@@ -871,6 +888,45 @@ private struct ReplayRoundView: View {
             }
         }
         #endif
+        }
+    }
+
+    private func updateLaserPractice(scene: LaserScene, at now: Double) {
+        guard let tutorial = activeTutorial, tutorial.practiceMove != nil else {
+            practicePresentation.stop(callouts: teamCallouts)
+            suppliedSession?.retireFTUELaserPractice()
+            #if DEBUG
+            previewLaserPractice = nil
+            #endif
+            return
+        }
+        let suspended = tutorial.isSuspended || !trainingSceneActive
+        if let suppliedSession {
+            suppliedSession.updateFTUELaserPractice(at: now, generation: generation, suspended: suspended)
+            guard let practice = suppliedSession.laserPractice else { return }
+            let paused = suspended || !suppliedSession.canStartLiveRound
+            practicePresentation.update(scene: scene, practice: practice, callouts: teamCallouts, suspended: paused)
+            if !paused, let attempt = practicePresentation.finishedAttempt(teamCallouts) {
+                suppliedSession.finishFTUEPracticeFeedback(attempt: attempt, generation: generation)
+                if let current = suppliedSession.laserPractice { tutorial.synchronizePractice(current, generation: generation) }
+            }
+        } else {
+            #if DEBUG
+            if isLeanPreview, let configuration = leanPreviewConfiguration, let input = leanPreviewInput {
+                if previewLaserPractice == nil {
+                    previewLaserPractice = try? .init(input: input.configuration, configuration: configuration,
+                        context: input.context, poseFirst: PoseFirstCandidate.isEnabled)
+                }
+                try? previewLaserPractice?.update(at: now, eligible: !suspended, context: input.context)
+                if let practice = previewLaserPractice {
+                    practicePresentation.update(scene: scene, practice: practice, callouts: teamCallouts, suspended: suspended)
+                    if !suspended, let attempt = practicePresentation.finishedAttempt(teamCallouts) {
+                        try? previewLaserPractice?.feedbackFinished(attempt: attempt, generation: generation)
+                        if let current = previewLaserPractice { tutorial.synchronizePractice(current, generation: generation) }
+                    }
+                }
+            }
+            #endif
         }
     }
 

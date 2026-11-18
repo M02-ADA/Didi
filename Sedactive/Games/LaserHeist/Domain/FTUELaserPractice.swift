@@ -84,8 +84,14 @@ nonisolated struct FTUELaserPractice {
         let capture = packet.capturedAt - epochHost, arrival = host - epochHost
         guard arrival <= deadline else { return }
         lastFrame = packet.frameID; lastCapture = packet.capturedAt
+        let evidence = LaserBodyEvidence(snapshot: packet, capturedGameTime: capture, arrivedGameTime: arrival)
+        // As in normal evidence history: keep only one stale predecessor before the capture
+        // window, not the whole warning lead (which could overflow at a fast capture cadence).
+        if capture < configuration.evidenceTiming.captureWindow(crossing: crossing).lowerBound {
+            history = [evidence]; return
+        }
         if history.count >= 120 { overflow = true; return }
-        history.append(.init(snapshot: packet, capturedGameTime: capture, arrivedGameTime: arrival))
+        history.append(evidence)
     }
     private mutating func finalize() throws {
         let judge = LaserCollisionJudge(acceptsPresenceHeldEvidence: poseFirst)
@@ -108,7 +114,7 @@ nonisolated struct FTUELaserPractice {
         else { outcome = .unavailable }
     }
     mutating func feedbackFinished(attempt: UUID, generation: UUID) throws {
-        guard self.generation == generation, attempt == attemptID, !completed else { return }
+        guard self.generation == generation, attempt == attemptID, !completed, lastHost != nil else { return }
         if outcome == .hit { try restart() }
         else if outcome == .clear {
             if move == .jump { move = .duck; try restart() } else { completed = true }

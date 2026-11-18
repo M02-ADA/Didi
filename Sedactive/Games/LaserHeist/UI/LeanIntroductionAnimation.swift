@@ -67,6 +67,8 @@ struct LeanIntroductionAnimation: View {
     let solo: Bool
     let completed: () -> Void
     var posterOnly = false
+    var resourceName = "lean-introduction"
+    var demonstratesJumpDuck = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var playback = LeanIntroductionPlayback()
@@ -79,7 +81,7 @@ struct LeanIntroductionAnimation: View {
                 if let player = playback.player, !reduceMotion, !posterOnly {
                     LeanPlayerLayer(player: player, ready: { playback.didPresentFirstFrame(for: player) })
                 } else {
-                    Image("lean-introduction-poster").resizable().scaledToFit()
+                    Image(resourceName + "-poster").resizable().scaledToFit()
                 }
             }
             .frame(width: fullWidth, height: proxy.size.height)
@@ -87,7 +89,7 @@ struct LeanIntroductionAnimation: View {
             .offset(x: solo ? -fullWidth * 0.08 : 0)
         }
         .clipped()
-        .accessibilityLabel(solo ? "One mascot demonstrating leaning left and right" : "Two mascots demonstrating leaning left and right")
+        .accessibilityLabel(demonstratesJumpDuck ? "Mascots demonstrating jumping and ducking" : (solo ? "One mascot demonstrating leaning left and right" : "Two mascots demonstrating leaning left and right"))
         .accessibilityIdentifier("leanIntroductionAnimation")
         .accessibilityValue(reduceMotion || posterOnly || posterFallback ? "Static poster" : "Silent video")
         .task(id: "\(reduceMotion || posterOnly)-\(scenePhase == .active)-\(posterFallback)") {
@@ -99,7 +101,7 @@ struct LeanIntroductionAnimation: View {
                 guard !Task.isCancelled else { return }
                 completed() // finite accessible poster presentation, not movement success
             } else {
-                playback.start(onCompleted: completed)
+                playback.start(url: Bundle.main.url(forResource: resourceName, withExtension: "mov"), onCompleted: completed)
                 playback.setActive(active)
                 if playback.player == nil { posterFallback = true }
             }

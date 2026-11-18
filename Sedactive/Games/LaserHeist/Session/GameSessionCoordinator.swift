@@ -86,6 +86,24 @@ final class GameSessionCoordinator {
               boundary > time else { return nil }
         return boundary - time
     }
+    private(set) var laserPractice: FTUELaserPractice?
+    func updateFTUELaserPractice(at now: Double, generation: UUID, suspended: Bool) {
+        guard generation == inputConfiguration.sessionGeneration, lifetime != nil, preRoundTutorialPending,
+              phase == .awaitingSetup, game == nil, let configuration, let context = inputContext else { return }
+        let eligible = !suspended && canStartLiveRound && pairInPlay
+        if laserPractice == nil, eligible {
+            let accepted = provider.acceptedCalibrations.filter { inputConfiguration.roster.contains($0.key) }
+            let input = inputConfiguration.replacingCalibrations(accepted)
+            laserPractice = try? .init(input: input, configuration: configuration, context: context, poseFirst: poseFirstCandidate)
+        }
+        try? laserPractice?.update(at: now, eligible: eligible, context: context)
+    }
+    func finishFTUEPracticeFeedback(attempt: UUID, generation: UUID) {
+        guard lifetime != nil, preRoundTutorialPending else { return }
+        try? laserPractice?.feedbackFinished(attempt: attempt, generation: generation)
+    }
+    func retireFTUELaserPractice() { laserPractice = nil }
+
     /// Session-owned instructional round; ordinary gameplay remains uninitialized.
     private(set) var heartTraining: HeartTrainingEncounter?
     func updateHeartTraining(at now: Double, suspended: Bool) {
@@ -550,7 +568,7 @@ final class GameSessionCoordinator {
     }
 
     func stop(reason: LaserRoundOutcome = .aborted) async {
-        heartTraining = nil
+        heartTraining = nil; laserPractice = nil
         setupTask?.cancel(); setupTask = nil
         let hadLifetime = lifetime != nil
         wristDiamonds = nil
@@ -598,6 +616,9 @@ final class GameSessionCoordinator {
                     bindingConfirmed: pairInPlay && setup?.canCancelCalibration == false,
                     at: hostNow())
             } catch { debugRestart("observe threw: \(error)"); liveReadiness?.requireRestart() }
+        }
+        if preRoundTutorialPending, let context = inputContext, context == provider.currentContext {
+            try? laserPractice?.receive(packet, at: hostNow(), maximumAge: liveReadiness?.policy?.maximumEvidenceAge ?? 0)
         }
         synchronizeLiveGame(packet: packet)
     }
@@ -1395,7 +1416,7 @@ final class GameSessionCoordinator {
     }
 
     private func finishLiveInput() {
-        heartTraining = nil
+        heartTraining = nil; laserPractice = nil
         guard liveTerminationTask == nil else { return }
         setupTask?.cancel(); setupTask = nil
         wristDiamonds = nil

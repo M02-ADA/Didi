@@ -10,18 +10,21 @@ struct LeanTutorialOverlay: View {
         GeometryReader { proxy in
             let k = min(proxy.size.width / 1210, proxy.size.height / 834)
             ZStack {
-                if tutorial.stage == .introduction {
+                if tutorial.stage == .introduction || tutorial.stage == .jumpDuckIntroduction {
                     // The host applies a small blur only during this introduction. Darken
                     // without a second live backdrop filter, keeping the mascots recognizable.
                     Color.black.opacity(0.55)
                     LeanIntroductionAnimation(solo: solo, completed: {
-                        if let generation = tutorial.generation { tutorial.finishIntroduction(generation: generation) }
-                    }, posterOnly: posterOnly)
+                        if let generation = tutorial.generation {
+                            if tutorial.stage == .jumpDuckIntroduction { tutorial.finishJumpDuckIntroduction(generation: generation) }
+                            else { tutorial.finishIntroduction(generation: generation) }
+                        }
+                    }, posterOnly: posterOnly, resourceName: tutorial.stage == .jumpDuckIntroduction ? "jump-duck-introduction" : "lean-introduction", demonstratesJumpDuck: tutorial.stage == .jumpDuckIntroduction)
                     .onAppear { if let generation = tutorial.generation { tutorial.introductionVisible(true, generation: generation) } }
                     .onDisappear { if let generation = tutorial.generation { tutorial.introductionVisible(false, generation: generation) } }
                         .frame(width: (solo ? 330 : 660) * k, height: 455 * k)
                         .position(x: proxy.size.width / 2, y: proxy.size.height * 0.34)
-                    Text("Lean your head\nto move left and right")
+                    Text(tutorial.stage == .jumpDuckIntroduction ? "Jump or Duck\nto avoid the lasers" : "Lean your head\nto move left and right")
                         .font(.system(size: 60 * k, weight: .bold, design: .rounded))
                         .foregroundStyle(LaserHeistDesign.cream).multilineTextAlignment(.center)
                         .position(x: proxy.size.width / 2, y: proxy.size.height * 0.61)
@@ -35,6 +38,9 @@ struct LeanTutorialOverlay: View {
                             if let heartGeneration { tutorial.finishHeart(phase, generation: heartGeneration) }
                         })
                         .id(phase)
+                } else if let move = tutorial.practiceMove {
+                    Color.clear.accessibilityElement().accessibilityLabel(move == .jump ? "JUMP practice" : "DUCK practice")
+                        .accessibilityIdentifier("ftueLaserPractice")
                 } else {
                     if let placement = LeanCuePlacement.make(viewport: proxy.size, headTopFraction: tutorial.headTopFraction) {
                         Image(uiImage: tutorial.stage == .practiceLeft ? LeanInstructionArtwork.left : LeanInstructionArtwork.right)

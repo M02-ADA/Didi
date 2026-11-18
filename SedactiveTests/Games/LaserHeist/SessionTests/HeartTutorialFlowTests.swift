@@ -19,6 +19,8 @@ import Testing
             tutorial.heartVisible(phase, visible: true, generation: f.generation)
             f.finishPhase(tutorial, phase)
         }
+        #expect(tutorial.stage == .jumpDuckIntroduction && !tutorial.isCompleted)
+        f.finishPractice(tutorial)
         #expect(tutorial.stage == .completed && tutorial.isCompleted)
         tutorial.prepare(generation: UUID(), roster: f.roster)
         #expect(tutorial.stage == .completed)
@@ -35,6 +37,8 @@ import Testing
         returning.beginIfEligible(generation: f.generation, eligible: true)
         #expect(returning.heartPhase == .introduction)
         f.finishHeart(returning)
+        #expect(returning.stage == .jumpDuckIntroduction && !returning.isCompleted)
+        f.finishPractice(returning)
         #expect(returning.isCompleted)
         returning.prepare(generation: f.generation, roster: f.roster, replayRequested: true)
         returning.beginIfEligible(generation: f.generation, eligible: true)
@@ -89,6 +93,8 @@ import Testing
             tutorial.heartVisible(phase, visible: true, generation: gen)
             f.finishPhase(tutorial, phase, generation: gen)
         }
+        #expect(session.preRoundTutorialPending && tutorial.stage == .jumpDuckIntroduction)
+        f.finishPractice(tutorial, generation: gen)
         flow.releaseCompletedLeanTutorial()
         #expect(!session.preRoundTutorialPending && session.state == nil && !session.canStartLiveRound)
         await flow.closeLiveSetup()

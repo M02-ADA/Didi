@@ -6,6 +6,11 @@ import Foundation
 @MainActor final class LeanFTUESyntheticInput: AvatarPosePump {
     let mailbox: AvatarPoseMailbox
     let source: SyntheticAvatarSource
+    let configuration: BodyInputConfiguration
+    var practice: (() -> FTUELaserPractice?)?
+    var onBodySnapshot: ((BodySnapshot, Double) -> Void)?
+    private var currentAttempt: UUID?
+    private var stageAttempts: [LaserMove: Int] = [:]
     let context: BodyInputContext
     let roster: [PlayerID]
     private let tutorial: LeanTutorial
@@ -19,6 +24,7 @@ import Foundation
 
     init(configuration: BodyInputConfiguration, geometry: UInt64, tutorial: LeanTutorial,
          roster: [PlayerID], hold: Bool) {
+        self.configuration = configuration
         self.tutorial = tutorial; self.roster = roster; self.hold = hold
         source = SyntheticAvatarSource(configuration: configuration, cameraGeometryRevision: geometry)
         frame = (configuration.calibrations.values.map(\.sourceFrameID).max() ?? 0) + 1
@@ -57,18 +63,38 @@ import Foundation
                 .leftHip: p(0.10 * h, hip), .rightHip: p(-0.10 * h, hip),
                 .leftAnkle: p(0.10 * h, r.standingLeftAnkleY), .rightAnkle: p(-0.10 * h, r.standingRightAnkleY),
                 .nose: p(head, 0.9 * h), .leftEar: p(head + 0.05 * h, 0.9 * h), .rightEar: p(head - 0.05 * h, 0.9 * h)])
+            let activePractice = practice?()
+            if let activePractice, currentAttempt != activePractice.attemptID {
+                currentAttempt = activePractice.attemptID
+                stageAttempts[activePractice.move, default: 0] += 1
+            }
+            let attempt = activePractice.map { stageAttempts[$0.move, default: 0] } ?? 0
+            // Explicit DEBUG fixture: one mixed HIT then one all-CLEAR attempt per move.
+            let succeeds = activePractice != nil && (attempt > 1 || (roster.count > 1 && player == .player1 && activePractice?.move == .jump)
+                || (roster.count > 1 && player == .player2 && activePractice?.move == .duck))
+            let action = activePractice.map { abs($0.elapsed - $0.crossing) < 0.3 && succeeds } ?? false
+            let duck = action && activePractice?.move == .duck
+            let jump = action && activePractice?.move == .jump
             players[player] = .init(playerID: player, calibrationRevision: c.revision, trackingStatus: .reliable,
-                geometry: .init(crownY: try value(h), leftWristY: try value(h * 0.5), rightWristY: try value(h * 0.5),
-                    leftSoleY: try value(0), rightSoleY: try value(0), centerX: try value(lane)),
-                jumpState: .init(phase: .grounded, validity: .valid))
+                geometry: .init(crownY: try value(duck ? h * 0.6 : h), leftWristY: try value(h * 0.5), rightWristY: try value(h * 0.5),
+                    leftSoleY: try value(jump ? h * 0.12 : 0), rightSoleY: try value(jump ? h * 0.12 : 0), centerX: try value(lane)),
+                jumpState: .init(phase: jump ? .airborne : .grounded, validity: .valid))
+        }
+        for id in PlayerID.allCases where players[id] == nil {
+            let missing = try EstimatedScalar(value: nil, validity: .notCalibrated)
+            players[id] = .init(playerID: id, calibrationRevision: nil, trackingStatus: .lost,
+                geometry: .init(crownY: missing, leftWristY: missing, rightWristY: missing,
+                    leftSoleY: missing, rightSoleY: missing, centerX: missing),
+                jumpState: .init(phase: .unknown, validity: .notCalibrated))
         }
         let snapshot = BodySnapshot(sessionGeneration: source.context.generation, frameID: frame,
             capturedAt: capture, cameraGeometryRevision: source.context.geometryRevision, players: players)
         let pose = PresentationPoseFrame(sessionGeneration: source.context.generation, frameID: frame,
             capturedAt: capture, players: poses)
         mailbox.offer(source.output(snapshot, joints: pose))
+        onBodySnapshot?(snapshot, now)
         return true
     }
-    func stop() { stopped = true; mailbox.revoke() }
+    func stop() { stopped = true; practice = nil; onBodySnapshot = nil; mailbox.revoke() }
 }
 #endif

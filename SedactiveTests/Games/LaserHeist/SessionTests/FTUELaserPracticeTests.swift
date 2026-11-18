@@ -3,8 +3,8 @@ import Testing
 @testable import Sedactive
 
 @MainActor struct FTUELaserPracticeTests {
-    static func make(coop: Bool = true, poseFirst: Bool = true) throws -> FTUELaserPractice {
-        let script = try LaserReplayScript.load().freshRound(generation: UUID())
+    static func make(coop: Bool = true, poseFirst: Bool = true, generation: UUID = UUID()) throws -> FTUELaserPractice {
+        let script = try LaserReplayScript.load().freshRound(generation: generation)
         var input = script.input.configuration
         if !coop { input = input.replacingCalibrations(input.calibrations.filter { $0.key == .player1 }); input.soloPlayer = .player1 }
         let context = BodyInputContext(sessionGeneration: input.sessionGeneration, cameraGeometryRevision: 1,
@@ -73,6 +73,33 @@ import Testing
             #expect(p.move == .jump && p.attemptID != id && p.verdicts.isEmpty)
         }
     }
+    @Test func duckFailureStaysDuckAndPauseCannotScheduleRetry() throws {
+        var p = try Self.make()
+        try Self.run(&p, clear: Set(p.roster))
+        try p.feedbackFinished(attempt: p.attemptID, generation: p.generation)
+        #expect(p.move == .duck)
+        try Self.run(&p, clear: [.player1], start: 1100)
+        let id = p.attemptID
+        #expect(p.outcome == .hit)
+        try p.update(at: 1104, eligible: false, context: p.context)
+        try p.feedbackFinished(attempt: id, generation: p.generation)
+        #expect(p.attemptID == id && p.move == .duck)
+        try p.update(at: 1200, eligible: true, context: p.context)
+        try p.feedbackFinished(attempt: id, generation: p.generation)
+        #expect(p.move == .duck && p.attemptID != id && p.verdicts.isEmpty)
+    }
+    @Test func fastCaptureCadenceDoesNotOverflowWarningHistory() throws {
+        var p = try Self.make()
+        try p.update(at: 1000, eligible: true, context: p.context)
+        for i in 1...240 {
+            let now = 1000 + Double(i) / 60
+            try p.receive(Self.packet(p, at: now - 0.001, frame: UInt64(i + 10000), clear: Set(p.roster)), at: now, maximumAge: 0.25)
+            try p.update(at: now, eligible: true, context: p.context)
+            if p.outcome != .pending { break }
+        }
+        #expect(p.outcome == .clear)
+    }
+
     @Test func unavailablePauseAndOldEvidenceNeverComplete() throws {
         var p = try Self.make()
         try Self.run(&p, clear: [], unavailable: Set(p.roster))

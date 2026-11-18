@@ -60,7 +60,17 @@ import Testing
                 finishPhase(tutorial, phase)
             }
         }
-        func finish(_ tutorial: LeanTutorial) { finishLean(tutorial); finishHeart(tutorial) }
+        func finishPractice(_ tutorial: LeanTutorial, generation: UUID? = nil) {
+            let gen = generation ?? self.generation
+            tutorial.finishJumpDuckIntroduction(generation: gen)
+            var p = try! FTUELaserPracticeTests.make(coop: roster.count == 2, generation: gen)
+            for i in 0...1 {
+                try! FTUELaserPracticeTests.run(&p, clear: Set(roster), start: 1000 + Double(i) * 10)
+                try! p.feedbackFinished(attempt: p.attemptID, generation: gen)
+                tutorial.synchronizePractice(p, generation: gen)
+            }
+        }
+        func finish(_ tutorial: LeanTutorial) { finishLean(tutorial); finishHeart(tutorial); finishPractice(tutorial) }
     }
 
     @Test func introRequiresVisibleCurrentGenerationAndDoesNotInferPractice() {
