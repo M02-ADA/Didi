@@ -678,7 +678,13 @@ final class GameplayScenePresenter {
     /// interaction plane, so it is on the plane at exactly `crossingTime`.
     /// While the team travels this moves exactly with the corridor.
     func depth(of target: LaserTarget, at time: Double) -> Float {
-        scene.mapping.interactionPlaneZ - scene.layout.travelSpeed * Float(target.crossingTime - time)
+        Self.obstacleDepth(in: scene, crossingTime: target.crossingTime, at: time)
+    }
+
+    /// Shared corridor convention: an obstacle and corridor details advance at the same speed.
+    /// Tutorial presentation reuses this projection without scheduling an ordinary encounter.
+    static func obstacleDepth(in scene: LaserScene, crossingTime: Double, at time: Double) -> Float {
+        scene.mapping.interactionPlaneZ - scene.layout.travelSpeed * Float(crossingTime - time)
     }
 
     /// A gate is in view once it is no farther down the corridor than the laser spawn point.
