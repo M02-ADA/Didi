@@ -195,19 +195,26 @@ struct LaserTeamCalloutTests {
         let count = LaserTeamCalloutMotion.text(kind).count
         #expect(LaserTeamCalloutMotion.word(kind, at: frame, reduceMotion: false).opacity > 0)
         #expect((0..<count).contains { LaserTeamCalloutMotion.letter(kind, index: $0, count: count, at: frame, reduceMotion: false).opacity > 0 })
-        // A big change within 100 ms (game feel): the first letter has popped / the word has slammed.
+        // The whole word reads from its first frame: no letter waits to appear.
+        for i in 0..<count {
+            #expect(LaserTeamCalloutMotion.letter(kind, index: i, count: count, at: frame, reduceMotion: false).opacity == 1)
+        }
+        // A big change within 100 ms (game feel), each word with its own motion.
+        typealias M = LaserTeamCalloutMotion
         if kind == .perfect {
-            // Bursts out of a squashed seed to a tall stretch at 0.09 s.
-            let peak = LaserTeamCalloutMotion.word(kind, at: 0.09, reduceMotion: false)
-            #expect(peak.scale > 1.3 && peak.scaleY > peak.scaleX)
-            #expect(LaserTeamCalloutMotion.letter(kind, index: 0, count: count, at: 0.1, reduceMotion: false).scale > 1.1)
+            // Launches stretched tall, overshoots high and big, lands squashed wide.
+            let apex = M.word(kind, at: M.perfectApex, reduceMotion: false)
+            #expect(apex.scale > 1.2 && apex.scaleY > apex.scaleX && apex.y < 0)
+            let landing = M.word(kind, at: M.perfectLanding, reduceMotion: false)
+            #expect(landing.scaleX > 1.15 && landing.scaleY < 0.85)
+            #expect(M.perfectLanding <= 0.15)
         } else {
-            // Slams in big and flat, compresses, rebounds tall.
-            let slam = LaserTeamCalloutMotion.word(kind, at: 0, reduceMotion: false)
-            #expect(slam.scale > 1.8 && slam.scaleY < slam.scaleX)
-            #expect(LaserTeamCalloutMotion.word(kind, at: 0.05, reduceMotion: false).scale < 0.85)
-            let rebound = LaserTeamCalloutMotion.word(kind, at: 0.11, reduceMotion: false)
-            #expect(rebound.scale > 1.1 && rebound.scaleY > rebound.scaleX)
+            // Bangs in oversized and flat from the left, slams small, recoils tall.
+            let bang = M.word(kind, at: 0, reduceMotion: false)
+            #expect(bang.scale > 1.5 && bang.scaleY < bang.scaleX && bang.x < 0)
+            #expect(M.word(kind, at: M.zapImpact, reduceMotion: false).scale < 0.9)
+            let recoil = M.word(kind, at: M.zapRecoil, reduceMotion: false)
+            #expect(recoil.scale > 1.1 && recoil.scaleY > recoil.scaleX)
         }
         for reduce in [false, true] {
             let end = LaserTeamCalloutMotion.duration(kind, reduceMotion: reduce)
@@ -237,19 +244,55 @@ struct LaserTeamCalloutTests {
             }
             #expect(LaserTeamCalloutMotion.shine(at: t, reduceMotion: true) == nil)
             #expect(LaserTeamCalloutMotion.burst(kind, at: t, reduceMotion: true) == nil)
-            #expect(LaserTeamCalloutMotion.ring(at: t, reduceMotion: true) == nil && LaserTeamCalloutMotion.smoke(at: t, reduceMotion: true) == nil)
+            #expect(LaserTeamCalloutMotion.seal(at: t, reduceMotion: true) == nil && LaserTeamCalloutMotion.crackle(at: t, reduceMotion: true) == nil)
+            #expect(LaserTeamCalloutMotion.confetti(at: t, reduceMotion: true) == nil)
+            #expect(LaserTeamCalloutMotion.rays(at: t, reduceMotion: true) == nil && LaserTeamCalloutMotion.plate(at: t, reduceMotion: true) == nil)
+            #expect(LaserTeamCalloutMotion.singe(at: t, reduceMotion: true) == 0)
         }
     }
 
-    @Test func zappedFlashesExactlyThreeTimesThenStaysCalm() {
+    @Test func zappedFlashesExactlyTwiceThenStaysCalm() {
         var peaks = 0, wasOn = false
         for t in stride(from: 0.0, through: 0.95, by: 0.005) {
             let on = LaserTeamCalloutMotion.flash(at: t) > 0.2
             if on && !wasOn { peaks += 1 }
             wasOn = on
-            if t > 0.4 { #expect(!on) }
+            if t > 0.3 { #expect(!on) }
         }
-        #expect(peaks == 3)
+        #expect(peaks == 2)
+        // The aftermath crackle: one small arc at a time, a few short windows, done by 0.8 s.
+        var lit = 0, wasLit = false
+        for t in stride(from: 0.0, through: 0.95, by: 1.0 / 120) {
+            let on = LaserTeamCalloutMotion.crackle(at: t, reduceMotion: false) != nil
+            if on && !wasLit { lit += 1 }
+            wasLit = on
+            if t >= 0.8 { #expect(!on) }
+        }
+        #expect(lit == LaserTeamCalloutMotion.crackleWindows.count && lit <= 6)
+        // The buzz and the bolts stop early too: no lingering flicker.
+        #expect(!LaserTeamCalloutMotion.boltsOn(at: 0.3, reduceMotion: false))
+        #expect(LaserTeamCalloutMotion.word(.zapped, at: 0.5, reduceMotion: false).x == 0)
+    }
+
+    /// ZAPPED! lands with the struck mascot (`LaserHitReaction`): its slam at the mascot's hit-stop,
+    /// its first flash inside the mascot's white impact frame, its recoil at the mascot's recoil peak.
+    @Test func zappedIsInStepWithTheStruckMascot() {
+        typealias M = LaserTeamCalloutMotion
+        #expect(M.zapImpact == LaserHitReaction.hitStop)
+        #expect(M.flashCenters[0] < LaserHitReaction.hitStop + 0.05)
+        let peak = stride(from: 0.0, through: 0.3, by: 0.001).max { LaserHitReaction.recoil($0) < LaserHitReaction.recoil($1) } ?? 0
+        #expect(abs(M.zapRecoil - peak) <= 0.02, "recoil peak \(peak)")
+    }
+
+    /// Each word leaves its own way: PERFECT! zips up and shrinks, ZAPPED!'s letters drop off one by
+    /// one; both are gone by their end.
+    @Test func eachWordHasItsOwnExit() {
+        typealias M = LaserTeamCalloutMotion
+        let zip = M.word(.perfect, at: 0.92, reduceMotion: false)
+        #expect(zip.scale < 0.7 && zip.y < -0.2)
+        let first = M.letter(.zapped, index: 0, count: 7, at: 0.8, reduceMotion: false)
+        let last = M.letter(.zapped, index: 6, count: 7, at: 0.8, reduceMotion: false)
+        #expect(first.y > last.y && first.opacity < last.opacity, "the first letter falls first")
     }
 
     // MARK: - No ✓/✗ over the heads

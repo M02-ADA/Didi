@@ -455,7 +455,7 @@ struct AvatarPoseContractTests {
         #expect(layer.robots[.player2]!.retargeter.isAvailable && layer.robots[.player2]!.retargeter.presence > 0.9)
     }
 
-    /// A HIT lifts only the struck, tracked mascot from 65 % to fully opaque, then eases it back to
+    /// A HIT lifts only the struck, tracked mascot from its body opacity to fully opaque, then eases it back to
     /// exactly 65 %; the partner never changes; a repeat restarts cleanly; an untracked mascot's
     /// HIT never lights it (its dim stays); a stop mid-impact lands on the baseline.
     @Test func aHitTurnsOnlyTheStruckTrackedMascotSolidThenBack() async throws {

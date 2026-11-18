@@ -663,18 +663,18 @@ final class RobotAvatarLayer {
     nonisolated static var modelScale: Float { standingHeight / RobotSkeleton.modelHeight }
     /// Every tracked mascot's body opacity: see-through, so a beam or vertical laser behind Lemon
     /// or Tangerine reads through the body (motion-game style). One stable value for both players,
-    /// never varied by laser approach; the hoverboard stays opaque (grounding). 0.65 is the design
-    /// decision (17 November 2026, after a 1 / 0.85 / 0.8 / 0.75 / 0.65 replay comparison): the
-    /// clearest beam through the heads. Only a HIT lifts the struck mascot to fully opaque for a
-    /// moment (`LaserHitReaction.solidity`). Presentation only. DEBUG `-mascotOpacity <0…1>`
-    /// overrides it for comparison captures.
+    /// never varied by laser approach; the hoverboard stays opaque (grounding). 0.5 is the design
+    /// decision (18 November 2026, down from 0.65): the mascots block less of the corridor. Only a
+    /// HIT lifts the struck mascot to fully opaque for a moment (`LaserHitReaction.solidity`), so the
+    /// impact stays readable. Presentation only. DEBUG `-mascotOpacity <0…1>` overrides it for
+    /// comparison captures.
     nonisolated static let bodyOpacity: Float = {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         if let i = arguments.firstIndex(of: "-mascotOpacity"), i + 1 < arguments.count,
            let value = Float(arguments[i + 1]) { return max(0.05, min(1, value)) }
         #endif
-        return 0.65
+        return 0.5
     }()
     /// While a player is not tracked: half the body opacity (the earlier tracked-to-dimmed ratio).
     nonisolated static var unavailableOpacity: Float { bodyOpacity * 0.5 }
@@ -812,12 +812,20 @@ final class RobotAvatarLayer {
         let reaction = LaserHitReaction(region: region, side: player == .player1 ? -1 : 1,
                                         reduceMotion: Self.hitsReduceMotion, seed: hitCount &* 7 &+ (player == .player1 ? 1 : 2))
         hits[player] = ActiveHit(reaction: reaction, contact: local)
+        // The struck player's board takes the shock with its mascot, in the same frame.
+        hoverboards[player]?.react(.hit, reduceMotion: Self.hitsReduceMotion)
         if zaps[player] == nil {
             let zap = LaserHitZap()
             zap.root.name = "player.\(player.rawValue).laserHitZap"
             lane.addChild(zap.root)
             zaps[player] = zap
         }
+    }
+
+    /// One player's authoritative CLEAR: that player's board celebrates, in the verdict's frame.
+    /// The partner's board answers only its own verdict (a HIT, a CLEAR, or nothing for UNAVAILABLE).
+    func celebrateBoard(_ player: PlayerID) {
+        hoverboards[player]?.react(.clear, reduceMotion: Self.hitsReduceMotion)
     }
 
     /// Whether a mascot is showing a HIT reaction (tests, previews).
@@ -834,6 +842,7 @@ final class RobotAvatarLayer {
         hits = [:]
         unreactedJoints = [:]
         for zap in zaps.values { zap.hide() }
+        for board in hoverboards.values { board.cancelReaction() }
         for player in players { applyScripted(player); restoreBodyMaterials(player) }
     }
 

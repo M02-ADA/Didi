@@ -712,8 +712,11 @@ final class LaserScene {
         }
         feedback.showOutcome(outcome, for: id, badgeAt: badge, impactAt: impact)
         // The mascot itself is zapped (primary cue); the badge stays as the explicit one.
-        // Only a HIT: CLEAR and UNAVAILABLE never shock a mascot.
+        // Only a HIT: CLEAR and UNAVAILABLE never shock a mascot. The player's own board answers
+        // its own verdict: shocked with the mascot on a HIT, celebrating on a CLEAR, still on
+        // UNAVAILABLE (never shown as a success or a failure).
         if outcome == .hit { robotAvatars?.startHitReaction(id, contact: impact) }
+        if outcome == .clear { robotAvatars?.celebrateBoard(id) }
     }
 
     /// Clears the move cue and outcome feedback, e.g. when the next encounter starts.
