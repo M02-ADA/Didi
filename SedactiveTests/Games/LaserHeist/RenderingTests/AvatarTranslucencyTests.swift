@@ -17,10 +17,10 @@ struct AvatarTranslucencyTests {
         return false
     }
 
-    /// One stable body opacity for both mascots (the 65 % design decision); the untracked dim
-    /// stays clearly lower.
-    @Test func theBodyOpacityIsTheDesignedSixtyFivePercent() {
-        #expect(RobotAvatarLayer.bodyOpacity == 0.65)
+    /// One stable body opacity for both mascots (the 50 % design decision, 18 November 2026); the
+    /// untracked dim stays clearly lower.
+    @Test func theBodyOpacityIsTheDesignedFiftyPercent() {
+        #expect(RobotAvatarLayer.bodyOpacity == 0.5)
         #expect(RobotAvatarLayer.unavailableOpacity == RobotAvatarLayer.bodyOpacity * 0.5)
     }
 
@@ -46,7 +46,7 @@ struct AvatarTranslucencyTests {
         }
     }
 
-    /// The rule: tracked 65 % → 100 % by its own HIT; untracked stays dimmed whatever the HIT;
+    /// The rule: tracked 50 % → 100 % by its own HIT; untracked stays dimmed whatever the HIT;
     /// a scripted fade multiplies on top.
     @Test func onlyATrackedStruckMascotTurnsSolid() {
         let body = RobotAvatarLayer.bodyOpacity, dim = RobotAvatarLayer.unavailableOpacity

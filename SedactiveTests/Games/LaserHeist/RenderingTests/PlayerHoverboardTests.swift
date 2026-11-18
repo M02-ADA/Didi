@@ -267,6 +267,83 @@ struct PlayerHoverboardTests {
         layer.remove()
     }
 
+    // MARK: Verdict reactions
+
+    @Test("CLEAR and HIT boards react at once, never move sideways and never lift the deck into the feet",
+          arguments: [HoverboardReaction.clear, .hit])
+    func verdictReactionsStayUnderTheFeet(kind: HoverboardReaction) {
+        #expect(kind.duration <= 0.6, "one short beat")
+        // A big, readable change within 100 ms (game feel): the burst, the squash, the lights.
+        let early = stride(from: 0.0, through: 0.1, by: 1.0 / 60).map { kind.pose(at: $0, reduceMotion: false) }
+        #expect(early.contains { ($0.burst ?? 0) >= 1 && $0.burstOpacity > 0.9 })
+        #expect(early.contains { abs($0.scaleY - 1) > 0.2 } && early.contains { $0.lights == 2 })
+        // Folded into the board's motion, the deck stays at or below the soles every frame.
+        var motion = PlayerHoverboard.Motion()
+        for tau in stride(from: 0.0, through: kind.duration + 0.1, by: 1.0 / 120) {
+            motion.reaction = kind.pose(at: tau, reduceMotion: false)
+            let rise = PlayerHoverboard.footHalfSpan * sin(abs(motion.roll)) + PlayerHoverboard.footHalfLength * sin(abs(motion.pitch))
+            #expect(motion.height + rise <= 1e-6)
+            #expect(motion.reaction.scaleX > 0.85 && motion.reaction.scaleX < 1.2, "a squash, not a resize")
+        }
+        #expect(kind.pose(at: kind.duration, reduceMotion: false) == HoverboardReaction.Pose(), "nothing left after the beat")
+        // Reduce Motion: no squash, rock, shake, sparks or flicker; the burst and lights fade.
+        for tau in stride(from: 0.0, through: kind.duration, by: 0.01) {
+            let calm = kind.pose(at: tau, reduceMotion: true)
+            #expect(calm.scaleX == 1 && calm.scaleY == 1 && calm.roll == 0 && !calm.bolts)
+            #expect((0..<6).allSatisfy { kind.spark($0, at: tau, boardWidth: 1, reduceMotion: true) == nil })
+        }
+    }
+
+    @Test("HIT is abrupt and chaotic, landing on its first frame; CLEAR is a buoyant squash and spring")
+    func hitAndClearFeelDifferent() {
+        func signChanges(_ kind: HoverboardReaction) -> Int {
+            var changes = 0, last: Float = 0
+            for tau in stride(from: 0.0, through: 0.3, by: 1.0 / 240) {
+                let roll = kind.pose(at: tau, reduceMotion: false).roll
+                if roll * last < 0 { changes += 1 }
+                if roll != 0 { last = roll }
+            }
+            return changes
+        }
+        #expect(signChanges(.hit) >= 6 && signChanges(.clear) <= 2)
+        let hit = HoverboardReaction.hit.pose(at: 0, reduceMotion: false)
+        #expect(hit.scaleY < 0.8 && hit.burst != nil && hit.bolts, "the shock lands on frame one")
+        #expect(HoverboardReaction.clear.pose(at: 0, reduceMotion: false).scaleY == 1, "the squash eases in")
+        // The celebration's stars rise past the rider's legs; the shock's sparks spray sideways.
+        let star = try? #require(HoverboardReaction.clear.spark(0, at: 0.25, boardWidth: 1, reduceMotion: false))
+        let spark = try? #require(HoverboardReaction.hit.spark(0, at: 0.1, boardWidth: 1, reduceMotion: false))
+        #expect((star?.position.y ?? 0) > 0.3 && abs(spark?.position.x ?? 0) > 0.6)
+        // No lingering flicker.
+        #expect(!HoverboardReaction.hit.pose(at: 0.31, reduceMotion: false).bolts)
+    }
+
+    @Test("Each board answers only its own player's verdict: HIT shocks, CLEAR celebrates, UNAVAILABLE stays still")
+    func boardsFollowEachPlayersVerdict() async throws {
+        let (scene, layer) = try await Self.sceneWithBoards()
+        let p1 = try #require(layer.hoverboards[.player1]), p2 = try #require(layer.hoverboards[.player2])
+        // One player hit while the other clears: each board shows its own outcome.
+        scene.presentOutcome(.hit, for: .player1)
+        scene.presentOutcome(.clear, for: .player2)
+        #expect(p1.activeReaction?.kind == .hit && p2.activeReaction?.kind == .clear)
+        layer.cancelHitReactions()
+        scene.presentOutcome(.unavailable, for: .player1)
+        #expect(p1.activeReaction == nil, "UNAVAILABLE is neither a success nor a failure")
+        // The reaction squashes the board about its deck top and never moves it off its ride.
+        scene.presentOutcome(.clear, for: .player1)
+        for _ in 0..<4 { p1.step(dt: 1 / 60) }
+        #expect(p1.model.scale.y < p1.model.scale.x && p1.model.position.x == p1.motion.offsetX)
+        let sprites = { (board: PlayerHoverboard) in board.root.children.filter { $0.name.hasPrefix("hoverboard.reaction.") } }
+        #expect(sprites(p1).contains { $0.isEnabled }, "the burst is up")
+        layer.cancelHitReactions()
+        #expect(p1.activeReaction == nil && p1.motion.reaction == HoverboardReaction.Pose())
+        #expect(!sprites(p1).contains { $0.isEnabled } && abs(p1.model.scale.y - PlayerHoverboard.scale) < 1e-6)
+        // A finished reaction leaves nothing behind.
+        layer.celebrateBoard(.player2)
+        for _ in 0..<60 { p2.step(dt: 1 / 60) }
+        #expect(p2.activeReaction == nil && !sprites(p2).contains { $0.isEnabled })
+        layer.remove()
+    }
+
     private static func firstModel(in entity: Entity) -> ModelComponent? {
         if let model = entity.components[ModelComponent.self] { return model }
         for child in entity.children { if let model = firstModel(in: child) { return model } }
