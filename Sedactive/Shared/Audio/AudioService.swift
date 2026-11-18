@@ -217,7 +217,17 @@ final class AudioService {
         let started = player.play()
         playCount[cue, default: 0] += 1
         Self.log.debug("play \(cue.rawValue, privacy: .public) started=\(started)")
-        if cue.ducksMusic { duck(for: player.duration, attack: cue == .laserClear ? 0.04 : 0.12) }
+        if cue.ducksMusic {
+            let attack: TimeInterval = cue == .laserClear || cue == .vaultWarning ? 0.04 : 0.12
+            duck(for: player.duration, attack: attack)
+        }
+    }
+
+    /// Sounds the newly displayed digit during Diamond Time's final five seconds.
+    func playDiamondTimeTick(from previous: Int?, to current: Int?) {
+        guard let current, (1...5).contains(current),
+              previous.map({ current < $0 }) ?? true else { return }
+        play(.vaultWarning)
     }
 
     /// Stops every effect, e.g. when a round's scene is torn down.

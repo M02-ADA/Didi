@@ -139,7 +139,7 @@ struct AudioServiceTests {
         audio.play(cue)
         let mission = try #require(harness.made.first { $0.name == "lh-music-silky-spy" })
         #expect(abs(mission.volume - audio.musicVolume * 0.5 * AudioService.duckedShare) < 1e-6)
-        if cue == .laserClear {
+        if cue == .laserClear || cue == .vaultWarning {
             #expect(mission.fades.last?.1 == 0.04)
         }
     }
@@ -181,6 +181,26 @@ struct AudioServiceTests {
         audio.setMusic(nil)
         audio.startDiamondTimeMusicIfReady(isInside: true)
         #expect(audio.mood == nil && track.plays == 1)
+    }
+
+    @Test func diamondTimeTicksOnlyOnceForEachNewDigitFromFiveToOne() throws {
+        let harness = Harness()
+        let audio = service(harness)
+        audio.setMusic(.diamondTime)
+        let music = try #require(harness.made.first { $0.name == "lh-music-slick-spy" })
+        let normalVolume = music.volume
+        audio.playDiamondTimeTick(from: 7, to: 6)
+        for second in (1...5).reversed() {
+            harness.clock += 1
+            audio.playDiamondTimeTick(from: second + 1, to: second)
+            audio.playDiamondTimeTick(from: second, to: second)
+            #expect(audio.playCount[.vaultWarning] == 6 - second)
+        }
+        audio.playDiamondTimeTick(from: 1, to: 0)
+        audio.playDiamondTimeTick(from: 0, to: nil)
+        #expect(audio.playCount[.vaultWarning] == 5)
+        #expect(music.volume == normalVolume * AudioService.duckedShare)
+        #expect(music.fades.last?.1 == 0.04)
     }
 
     @Test func selectedMusicTracksAreBundled() {

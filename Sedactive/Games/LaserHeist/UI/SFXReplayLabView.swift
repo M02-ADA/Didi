@@ -180,6 +180,7 @@ private final class SFXReplayLab {
                     }
                     let elapsed = Double(delta.seconds) + Double(delta.attoseconds) / 1e18
                     let next = min(script.duration, time + min(elapsed, 0.10) * speed)
+                    let previousDigit = diamondSecondsLeft(session: session, script: script)
                     try await session.advance(to: next)
                     if closed || Task.isCancelled { break }
                     guard pendingSeek == nil else { continue }
@@ -187,6 +188,8 @@ private final class SFXReplayLab {
                     render()
                     audio.startDiamondTimeMusicIfReady(
                         isInside: session.summary == nil && session.state?.phase == .diamondTime)
+                    audio.playDiamondTimeTick(from: previousDigit,
+                                             to: diamondSecondsLeft(session: session, script: script))
                     if let summary = session.summary {
                         playing = false
                         AudioService.shared.setMusic(nil, fade: 0.6)
@@ -260,6 +263,13 @@ private final class SFXReplayLab {
             playing = false
             AudioService.shared.setMusic(nil, fade: 0.6)
         }
+    }
+
+    private func diamondSecondsLeft(session: GameSessionCoordinator, script: LaserReplayScript) -> Int? {
+        guard let state = session.state, state.phase == .diamondTime,
+              let start = presenter?.diamondTimeStartedAt else { return nil }
+        let remaining = max(0, start + script.configuration.diamondTimeDuration - state.gameTime)
+        return Int(remaining.rounded(.up))
     }
 
     private func render() {
