@@ -174,7 +174,10 @@ private final class SFXReplayLab {
                     try await rebuild(at: position)
                     lastTick = clock.now
                 } else if playing, let session, let script, session.phase == .running {
-                    AudioService.shared.setMusic(.mission)
+                    let audio = AudioService.shared
+                    if session.state?.phase != .diamondTime || audio.mood == nil || audio.mood == .menu {
+                        audio.setMusic(.mission)
+                    }
                     let elapsed = Double(delta.seconds) + Double(delta.attoseconds) / 1e18
                     let next = min(script.duration, time + min(elapsed, 0.10) * speed)
                     try await session.advance(to: next)
@@ -182,6 +185,8 @@ private final class SFXReplayLab {
                     guard pendingSeek == nil else { continue }
                     time = session.summary?.gameDuration ?? next
                     render()
+                    audio.startDiamondTimeMusicIfReady(
+                        isInside: session.summary == nil && session.state?.phase == .diamondTime)
                     if let summary = session.summary {
                         playing = false
                         AudioService.shared.setMusic(nil, fade: 0.6)

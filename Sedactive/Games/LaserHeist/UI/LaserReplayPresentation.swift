@@ -402,6 +402,9 @@ final class LaserReplayPresentation {
                             ? Self.upcomingVaultIn(state: state, activityDuration: session.activityDuration)
                             : session.liveVaultIn,
                          finalVault: session.finalVaultEntry, showsPawBoard: session.showsDiamondTimePaws)
+        AudioService.shared.startDiamondTimeMusicIfReady(
+            isInside: session.phase == .running && state.phase == .diamondTime
+                && (session.isReplay || session.finalVaultEntry?.isComplete == true))
         if session.showsDiamondTimePaws, session.phase == .running,
            !UIAccessibility.isReduceMotionEnabled, let pawShake {
             presenter?.finalVault.applyDiamondTimeShake(

@@ -77,14 +77,18 @@ enum SoundCue: String, CaseIterable {
 enum MusicMood: Hashable {
     case menu
     case mission
+    case diamondTimeEntry
+    case diamondTime
 
-    // Silky Spy is about 10 dB louder in RMS than the menu source.
-    var gain: Float { self == .mission ? 0.5 : 1 }
+    // Leave room for gameplay cues under the two mission tracks.
+    var gain: Float { self == .menu ? 1 : 0.5 }
 
-    var resource: String {
+    var resource: String? {
         switch self {
         case .menu: "lh-music-60s-special-agent"
         case .mission: "lh-music-silky-spy"
+        case .diamondTimeEntry: nil
+        case .diamondTime: "lh-music-slick-spy"
         }
     }
 }
@@ -197,6 +201,7 @@ final class AudioService {
     /// Plays a cue once, unless effects are off, the same cue just played, or
     /// its file is missing (then nothing happens; never a crash).
     func play(_ cue: SoundCue) {
+        if cue == .diamondTime, mood == .mission { setMusic(.diamondTimeEntry, fade: 0) }
         guard effectsEnabled else { return }
         let time = now()
         if let last = lastPlayed[cue], time - last < cue.minimumInterval {
@@ -261,14 +266,23 @@ final class AudioService {
         updateMusic(fade: fade, fadeIn: fadeIn)
     }
 
+    /// Called after presenting the room. Keep the entry sting audible until it ends.
+    func startDiamondTimeMusicIfReady(isInside: Bool) {
+        guard isInside, mood == .diamondTimeEntry || mood == .mission,
+              pools[.diamondTime]?.contains(where: { $0.isPlaying }) != true else { return }
+        setMusic(.diamondTime, fade: 0.35)
+    }
+
     private var wantedMusic: MusicMood? {
-        musicEnabled && !musicSuspended ? mood : nil
+        guard musicEnabled, !musicSuspended, let mood, mood.resource != nil else { return nil }
+        return mood
     }
 
     private func updateMusic(fade: TimeInterval, fadeIn: TimeInterval? = nil) {
         stopTask?.cancel()
         let wanted = wantedMusic
-        if let wanted, musicPlayers[wanted] == nil, let player = makePlayer(wanted.resource) {
+        if let wanted, let resource = wanted.resource, musicPlayers[wanted] == nil,
+           let player = makePlayer(resource) {
             player.numberOfLoops = -1
             player.prepareToPlay()
             musicPlayers[wanted] = player
@@ -282,7 +296,12 @@ final class AudioService {
         applyMusicVolume(fade: fadeIn ?? fade)
         for (track, player) in musicPlayers where track != wanted {
             player.setVolume(0, fadeDuration: fade)
+            if fade == 0 {
+                player.stop()
+                player.currentTime = 0
+            }
         }
+        guard fade > 0 else { return }
         stopTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(fade))
             guard !Task.isCancelled, let self else { return }

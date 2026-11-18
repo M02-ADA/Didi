@@ -131,7 +131,7 @@ struct AudioServiceTests {
         #expect(menu.volume == 0 && mission.volume == 0)
     }
 
-    @Test(arguments: [SoundCue.diamondTime, .cueDuck, .cueJump, .laserClear, .vaultWarning])
+    @Test(arguments: [SoundCue.cueDuck, .cueJump, .laserClear, .vaultWarning])
     func priorityCuesDuckTheMusic(cue: SoundCue) throws {
         let harness = Harness()
         let audio = service(harness)
@@ -161,8 +161,30 @@ struct AudioServiceTests {
         }
     }
 
+    @Test func diamondTimeMusicWaitsForRoomAndBonusSting() throws {
+        let harness = Harness()
+        let audio = service(harness)
+        audio.setMusic(.mission)
+        let mission = try #require(harness.made.first { $0.name == "lh-music-silky-spy" })
+        audio.play(.diamondTime)
+        #expect(!mission.isPlaying && !audio.isMusicPlaying)
+        let sting = try #require(harness.made.first { $0.name == "lh-diamond-time" })
+        audio.startDiamondTimeMusicIfReady(isInside: true)
+        #expect(audio.mood == .diamondTimeEntry && !audio.isMusicPlaying)
+        sting.stop()
+        audio.startDiamondTimeMusicIfReady(isInside: false)
+        #expect(audio.mood == .diamondTimeEntry && !audio.isMusicPlaying)
+        audio.startDiamondTimeMusicIfReady(isInside: true)
+        audio.startDiamondTimeMusicIfReady(isInside: true)
+        let track = try #require(harness.made.first { $0.name == "lh-music-slick-spy" })
+        #expect(audio.mood == .diamondTime && track.plays == 1)
+        audio.setMusic(nil)
+        audio.startDiamondTimeMusicIfReady(isInside: true)
+        #expect(audio.mood == nil && track.plays == 1)
+    }
+
     @Test func selectedMusicTracksAreBundled() {
-        for name in ["lh-music-60s-special-agent", "lh-music-silky-spy"] {
+        for name in ["lh-music-60s-special-agent", "lh-music-silky-spy", "lh-music-slick-spy"] {
             #expect(Bundle.main.url(forResource: name, withExtension: "mp3") != nil)
         }
     }
