@@ -264,7 +264,8 @@ private struct ReplayRoundView: View {
                     let script = try LaserReplayScript.load().freshRound(generation: generation)
                     let input = script.input
                     let calibrations = input.configuration.calibrations.filter { !isLeanPreviewSolo || $0.key == .player1 }
-                    let previewConfiguration = input.configuration.replacingCalibrations(calibrations)
+                    var previewConfiguration = input.configuration.replacingCalibrations(calibrations)
+                    if isLeanPreviewSolo { previewConfiguration.soloPlayer = .player1 }
                     let inputSource = LeanFTUESyntheticInput(configuration: previewConfiguration,
                         geometry: input.cameraGeometryRevision, tutorial: leanPreview,
                         roster: isLeanPreviewSolo ? [.player1] : PlayerID.allCases, hold: leanHeldStage != nil)
@@ -574,7 +575,7 @@ private struct ReplayRoundView: View {
                     }
                     // PERFECT! / ZAPPED! on the HUD's title line, never over the results.
                     if session.summary == nil, activeTutorial?.isSuspended != true, scenePhase == .active,
-                       activeTutorial?.heartPhase != .hurt || suppliedSession?.canStartLiveRound != false {
+                       (activeTutorial?.heartPhase != .hurt && activeTutorial?.practiceMove == nil) || suppliedSession?.canStartLiveRound != false {
                         LaserTeamCalloutView(model: teamCallouts)
                     }
                 }
@@ -912,9 +913,9 @@ private struct ReplayRoundView: View {
             }
         } else {
             #if DEBUG
-            if isLeanPreview, let configuration = leanPreviewConfiguration, let input = leanPreviewInput {
+            if isLeanPreview, leanPreviewConfiguration != nil, let input = leanPreviewInput {
                 if previewLaserPractice == nil {
-                    previewLaserPractice = try? .init(input: input.configuration, configuration: configuration,
+                    previewLaserPractice = try? .init(input: input.configuration, configuration: try LaserFullReplayPlan.roundConfiguration(),
                         context: input.context, poseFirst: PoseFirstCandidate.isEnabled)
                 }
                 try? previewLaserPractice?.update(at: now, eligible: !suspended, context: input.context)

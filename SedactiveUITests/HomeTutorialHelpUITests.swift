@@ -55,6 +55,30 @@ final class HomeTutorialHelpUITests: XCTestCase {
             XCTAssertFalse(app.descendants(matching: .any)["gameplayProgressBar"].exists)
             for id in ["leanTutorialLeave", "leanTutorialSkip", "leanTutorialContinue"] { XCTAssertFalse(app.buttons[id].exists) }
         }
+        func practiceSequence(_ prefix: String) {
+            waitTitle("Jump or Duck"); capture("\(prefix)-jump-duck-introduction")
+            let status = app.staticTexts["ftuePracticeStatus"]
+            let health = app.descendants(matching: .any)["sharedHealthHUD"]
+            func waitStatus(_ text: String) {
+                XCTAssertTrue(status.waitForExistence(timeout: 15))
+                expectation(for: NSPredicate(format: "label CONTAINS %@", text), evaluatedWith: status)
+                waitForExpectations(timeout: 15)
+            }
+            func feedback(_ label: String, _ name: String) {
+                let word = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+                XCTAssertTrue(word.waitForExistence(timeout: 12))
+                capture("\(prefix)-\(name)")
+                XCTAssertEqual(health.label, "Team health 4 of 5", "practice never adds damage")
+            }
+            waitStatus("jump attempt 1"); capture("\(prefix)-jump-first-approach")
+            feedback("Zapped!", "jump-failure")
+            waitStatus("jump attempt 2"); capture("\(prefix)-jump-retry")
+            feedback("Perfect!", "jump-clear")
+            waitStatus("duck attempt 3"); capture("\(prefix)-duck-first-approach")
+            feedback("Zapped!", "duck-failure")
+            waitStatus("duck attempt 4"); capture("\(prefix)-duck-retry")
+            feedback("Perfect!", "duck-clear")
+        }
         func complete() {
             let status = app.staticTexts["leanPreviewStatus"]
             XCTAssertTrue(status.waitForExistence(timeout: 60))
@@ -67,7 +91,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
         }
         // Existing first-play path still works without an explicit Help replay request.
         app.launchArguments = ["-replay", "-leanFTUEPreview", "-leanFTUEReset", "-hideDebugOverlay"]
-        app.launch(); waitTitle("Lean your head"); waitTitle("LEAN LEFT"); waitTitle("LEAN RIGHT"); heartSequence("first-time"); complete(); app.terminate()
+        app.launch(); waitTitle("Lean your head"); waitTitle("LEAN LEFT"); waitTitle("LEAN RIGHT"); heartSequence("first-time"); practiceSequence("first-time"); complete(); app.terminate()
 
         for solo in [false, true] {
             let mode = solo ? "solo" : "coop"
@@ -98,6 +122,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
             waitTitle("LEAN LEFT"); capture("\(mode)-manual-left")
             waitTitle("LEAN RIGHT"); capture("\(mode)-manual-right")
             heartSequence(mode, pause: !solo)
+            practiceSequence(mode)
             complete(); capture("\(mode)-manual-completed")
             app.buttons["leanPreviewRetry"].tap(); complete()
             app.buttons["leaveReplay"].tap()

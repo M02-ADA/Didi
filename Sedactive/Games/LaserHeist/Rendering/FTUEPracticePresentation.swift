@@ -22,7 +22,8 @@ import RealityKit
             beam?.root.name = "ftue.practice.\(practice.move.rawValue).\(practice.attemptID)"
             let target = practice.encounter.targets[0]
             let h = LaserLiveRoundGeometryV1.standingHeight(practice.input.calibrations[target.playerID]!, layout: practice.input.playerPlaneLayout)
-            let scale = Float(RobotAvatarLayer.standingHeight) / scene.mapping.metersPerGameUnit / Float(h)
+            let scale = scene.robotAvatars?.laserBandScale(for: target.playerID, mapping: scene.mapping)
+                ?? Float(RobotAvatarLayer.standingHeight) / scene.mapping.metersPerGameUnit / Float(h)
             beam?.setBand(lowerEdge: Float(target.beam.lowerY) * scale, upperEdge: Float(target.beam.upperY) * scale)
             scene.selectTimingVariant(.converging)
         }
