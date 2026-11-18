@@ -70,7 +70,15 @@ import Testing
                 tutorial.synchronizePractice(p, generation: gen)
             }
         }
-        func finish(_ tutorial: LeanTutorial) { finishLean(tutorial); finishHeart(tutorial); finishPractice(tutorial) }
+        func finishProgress(_ tutorial: LeanTutorial, generation: UUID? = nil) {
+            let generation = generation ?? self.generation
+            for i in 0...40 { tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: Double(i) / 50, active: true) }
+            for phase in ProgressTutorialPhase.allCases {
+                tutorial.progressVisible(phase, visible: true, generation: generation)
+                tutorial.finishProgress(phase, generation: generation)
+            }
+        }
+        func finish(_ tutorial: LeanTutorial) { finishLean(tutorial); finishHeart(tutorial); finishPractice(tutorial); finishProgress(tutorial) }
     }
 
     @Test func introRequiresVisibleCurrentGenerationAndDoesNotInferPractice() {

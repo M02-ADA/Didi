@@ -96,12 +96,30 @@ final class HomeTutorialHelpUITests: XCTestCase {
             }
             waitStatus("jump attempt 1"); capture("\(prefix)-jump-first-approach")
             feedback("Zapped!", "jump-failure")
+            XCTAssertEqual(app.descendants(matching: .any)["ftueProgressBar"].value as? String, "Tutorial fill endpoint 0.400")
             waitStatus("jump attempt 2"); capture("\(prefix)-jump-retry")
+            XCTAssertEqual(app.descendants(matching: .any)["ftueProgressBar"].value as? String, "Tutorial fill endpoint 0.400")
             feedback("Perfect!", "jump-clear")
             waitStatus("duck attempt 3"); capture("\(prefix)-duck-first-approach")
             feedback("Zapped!", "duck-failure")
+            XCTAssertEqual(app.descendants(matching: .any)["ftueProgressBar"].value as? String, "Tutorial fill endpoint 0.460")
             waitStatus("duck attempt 4"); capture("\(prefix)-duck-retry")
+            XCTAssertEqual(app.descendants(matching: .any)["ftueProgressBar"].value as? String, "Tutorial fill endpoint 0.460")
             feedback("Perfect!", "duck-clear")
+            let explanation = app.descendants(matching: .any)["progressTutorialTitle"]
+            XCTAssertTrue(explanation.waitForExistence(timeout: 12))
+            XCTAssertEqual(explanation.label, "This bar shows how far\nyou've gone")
+            XCTAssertEqual(app.descendants(matching: .any)["ftueProgressBar"].value as? String, "Tutorial fill endpoint 0.500")
+            capture("\(prefix)-progress-explanation")
+            expectation(for: NSPredicate(format: "label CONTAINS 'Each circle is a vault door'"), evaluatedWith: explanation)
+            waitForExpectations(timeout: 12)
+            capture("\(prefix)-vault-explanation")
+            XCTAssertEqual(explanation.label, "Each circle is a vault door\nto open")
+            let pointer = app.descendants(matching: .any)["ftueVaultPointer"]
+            XCTAssertTrue(pointer.exists)
+            XCTAssertEqual(pointer.frame.midX, app.images["ftueCenterCheckpoint"].frame.midX, accuracy: 1)
+            XCTAssertEqual(app.images.matching(identifier: "ftueCenterCheckpoint").count, 1)
+            XCTAssertFalse(app.descendants(matching: .any)["gameplayProgressBar"].exists)
         }
         func complete() {
             let status = app.staticTexts["leanPreviewStatus"]

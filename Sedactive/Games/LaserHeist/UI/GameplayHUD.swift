@@ -168,6 +168,7 @@ struct GameplayHUD: View {
     var isFTUEActive = false
     var ftueJourney: FTUEProgressJourney? = nil
     /// Report the health HUD bounds for the existing FTUE spotlight.
+    var onFTUEProgressFrame: ((CGRect) -> Void)? = nil
     var onHealthFrame: ((CGRect) -> Void)? = nil
     private var displayedHealth: Int { model.health }
     #if DEBUG
@@ -217,7 +218,8 @@ struct GameplayHUD: View {
             .frame(width: 268 * k, alignment: .leading)
             Spacer().frame(width: 33.9 * k)
             Group {
-                if isFTUEActive { FTUEProgressBar(k: k, journey: ftueJourney) }
+                if isFTUEActive { FTUEProgressBar(k: k, journey: ftueJourney)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onFTUEProgressFrame?($0) } }
                 else { progress(k) }
             }
                 .frame(width: 667 * k)

@@ -10,6 +10,7 @@ import Testing
         defaults.set(completed, forKey: LeanTutorial.completionKey)
         defaults.set(completed, forKey: LeanTutorial.heartCompletionKey)
         defaults.set(completed, forKey: LeanTutorial.jumpDuckCompletionKey)
+        defaults.set(completed, forKey: LeanTutorial.progressCompletionKey)
         let tutorial = LeanTutorial(defaults: defaults)
         var constructed = 0
         let flow = LaserInputFlow(leanTutorial: tutorial, makeLiveSession: {
@@ -40,6 +41,7 @@ import Testing
         f.defaults.set(true, forKey: LeanTutorial.completionKey)
         f.defaults.set(true, forKey: LeanTutorial.heartCompletionKey)
         f.defaults.set(true, forKey: LeanTutorial.jumpDuckCompletionKey)
+        f.defaults.set(true, forKey: LeanTutorial.progressCompletionKey)
         defer { f.defaults.removeObject(forKey: LeanTutorial.completionKey); f.defaults.removeObject(forKey: LeanTutorial.heartCompletionKey) }
         let tutorial = LeanTutorial(defaults: f.defaults)
         tutorial.prepare(generation: f.generation, roster: f.roster, replayRequested: true)
@@ -76,6 +78,7 @@ import Testing
         defaults.set(true, forKey: LeanTutorial.completionKey)
         defaults.set(true, forKey: LeanTutorial.heartCompletionKey)
         defaults.set(true, forKey: LeanTutorial.jumpDuckCompletionKey)
+        defaults.set(true, forKey: LeanTutorial.progressCompletionKey)
         defer { defaults.removeObject(forKey: LeanTutorial.completionKey); defaults.removeObject(forKey: LeanTutorial.heartCompletionKey) }
         var fail = true
         let flow = LaserInputFlow(leanTutorial: LeanTutorial(defaults: defaults), makeLiveSession: {

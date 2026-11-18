@@ -308,6 +308,7 @@ private struct ReplayRoundView: View {
                         UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.completionKey)
                         UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.heartCompletionKey)
                         UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.jumpDuckCompletionKey)
+                        UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.progressCompletionKey)
                     }
                     leanPreview.prepare(generation: generation, roster: inputSource.roster, replayRequested: manualReplay)
                     leanPreview.beginIfEligible(generation: generation, eligible: true)
@@ -542,7 +543,7 @@ private struct ReplayRoundView: View {
 
     private var gameplaySurface: some View {
         world
-        .blur(radius: activeTutorial?.heartPhase?.usesOverlay == true && activeTutorial?.isSuspended == false ? 5 : 0)
+        .blur(radius: (activeTutorial?.heartPhase?.usesOverlay == true || activeTutorial?.progressPhase != nil) && activeTutorial?.isSuspended == false ? 5 : 0)
         #if DEBUG
         .blur(radius: isLeanPreview && (leanPreview.stage == .introduction || leanPreview.stage == .jumpDuckIntroduction) && !leanPreview.isSuspended ? 5 : 0)
         #endif
@@ -576,6 +577,7 @@ private struct ReplayRoundView: View {
                     // The debug HUD takes the place of the normal HUD.
                     if let model, !Self.showsReplayDebugHUD {
                         GameplayHUD(model: model, actions: hudActions(session), isFTUEActive: tutorial?.isActive == true, ftueJourney: tutorial?.progressJourney,
+                            onFTUEProgressFrame: { tutorial?.setProgressHUDFrame($0, generation: generation) },
                             onHealthFrame: { tutorial?.setHealthHUDFrame($0, generation: generation) })
                     }
                     // PERFECT! / ZAPPED! on the HUD's title line, never over the results.
@@ -593,6 +595,7 @@ private struct ReplayRoundView: View {
                     if let configuration = leanPreviewConfiguration {
                         GameplayHUD(model: .init(state: previewHeartTraining?.state, events: [], configuration: configuration, activityDuration: configuration.activityDuration),
                                     actions: leanTutorialActions(leanPreview), isFTUEActive: leanPreview.isActive, ftueJourney: leanPreview.progressJourney,
+                                    onFTUEProgressFrame: { leanPreview.setProgressHUDFrame($0, generation: generation) },
                                     onHealthFrame: { leanPreview.setHealthHUDFrame($0, generation: generation) })
                     }
                     if !leanPreview.isSuspended {

@@ -21,6 +21,7 @@ import Testing
         }
         #expect(tutorial.stage == .jumpDuckIntroduction && !tutorial.isCompleted)
         f.finishPractice(tutorial)
+        f.finishProgress(tutorial)
         #expect(tutorial.stage == .completed && tutorial.isCompleted)
         tutorial.prepare(generation: UUID(), roster: f.roster)
         #expect(tutorial.stage == .completed)
@@ -39,6 +40,7 @@ import Testing
         f.finishHeart(returning)
         #expect(returning.stage == .jumpDuckIntroduction && !returning.isCompleted)
         f.finishPractice(returning)
+        f.finishProgress(returning)
         #expect(returning.isCompleted)
         returning.prepare(generation: f.generation, roster: f.roster, replayRequested: true)
         returning.beginIfEligible(generation: f.generation, eligible: true)
@@ -95,6 +97,9 @@ import Testing
         }
         #expect(session.preRoundTutorialPending && tutorial.stage == .jumpDuckIntroduction)
         f.finishPractice(tutorial, generation: gen)
+        flow.releaseCompletedLeanTutorial()
+        #expect(session.preRoundTutorialPending && tutorial.progressPhase == .bar)
+        f.finishProgress(tutorial, generation: gen)
         flow.releaseCompletedLeanTutorial()
         #expect(!session.preRoundTutorialPending && session.state == nil && !session.canStartLiveRound)
         await flow.closeLiveSetup()

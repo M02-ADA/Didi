@@ -7,6 +7,7 @@ import Observation
     static let checkpoint = 0.5
     static let duration = 0.65
     private(set) var fillEnd = initial
+    private(set) var isActivePresentation = false
     private(set) var generation: UUID?
     @ObservationIgnored private var previous: Double?
     @ObservationIgnored private var origin = initial
@@ -25,16 +26,17 @@ import Observation
         case .laserPractice(.jump): 0.40
         case .laserPractice(.duck): 0.46
         case .laserPractice: 0.40
-        case .completed: checkpoint
+        case .progressExplanation, .completed: checkpoint
         }
     }
     func reset(generation: UUID?) {
-        self.generation = generation; fillEnd = Self.initial
+        self.generation = generation; isActivePresentation = false; fillEnd = Self.initial
         origin = Self.initial; target = Self.initial; previous = nil; elapsed = 0
     }
     /// Driven by the EXISTING scene callback. Inactivity never contributes catch-up time.
     func update(stage: LeanTutorial.Stage, generation: UUID, at now: Double, active: Bool) {
         guard self.generation == generation, now.isFinite else { return }
+        isActivePresentation = active
         guard active else { previous = nil; return }
         let destination = Self.endpoint(for: stage)
         if destination != target { origin = fillEnd; target = destination; elapsed = 0 }

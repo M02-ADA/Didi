@@ -29,6 +29,8 @@ struct LeanTutorialOverlay: View {
                         .foregroundStyle(LaserHeistDesign.cream).multilineTextAlignment(.center)
                         .position(x: proxy.size.width / 2, y: proxy.size.height * 0.61)
                         .accessibilityIdentifier("leanTutorialTitle")
+                } else if let phase = tutorial.progressPhase {
+                    ProgressTutorialOverlay(tutorial: tutorial, phase: phase).id(phase)
                 } else if let phase = tutorial.heartPhase {
                     let heartGeneration = tutorial.generation
                     HeartTutorialOverlay(phase: phase, healthFrame: tutorial.healthHUDFrame,

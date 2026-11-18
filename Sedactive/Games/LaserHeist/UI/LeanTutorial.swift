@@ -7,9 +7,10 @@ import CoreGraphics
 /// There is no new lean threshold, dwell timer, steering controller, or gameplay success verdict.
 @MainActor @Observable
 final class LeanTutorial {
-    enum Stage: Equatable { case notStarted, introduction, practiceLeft, practiceRight, heart(HeartTutorialPhase), jumpDuckIntroduction, laserPractice(LaserMove), completed }
+    enum Stage: Equatable { case notStarted, introduction, practiceLeft, practiceRight, heart(HeartTutorialPhase), jumpDuckIntroduction, laserPractice(LaserMove), progressExplanation(ProgressTutorialPhase), completed }
     static let completionKey = "laserHeist.ftue.lean.v1.completed"
     static let jumpDuckCompletionKey = "laserHeist.ftue.jumpDuck.v1.completed"
+    static let progressCompletionKey = "laserHeist.ftue.progress.v1.completed"
     static let heartCompletionKey = "laserHeist.ftue.heart.v1.completed"
     let progressJourney = FTUEProgressJourney()
     private(set) var stage: Stage = .notStarted
@@ -18,6 +19,8 @@ final class LeanTutorial {
     private(set) var demonstrated: Set<PlayerID> = []
     private(set) var isSuspended = false
     private(set) var headTopFraction: CGFloat?
+    private(set) var progressHUDFrame: CGRect?
+    @ObservationIgnored private var visibleProgress: ProgressTutorialPhase?
     private(set) var healthHUDFrame: CGRect?
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var replayForVisit = false
@@ -31,9 +34,10 @@ final class LeanTutorial {
     @ObservationIgnored private var attempts: [PlayerID: Attempt] = [:]
     @ObservationIgnored private var suppressed = false
     var hasCompletedLean: Bool { defaults.bool(forKey: Self.completionKey) }
-    var isCompleted: Bool { hasCompletedLean && defaults.bool(forKey: Self.heartCompletionKey) && defaults.bool(forKey: Self.jumpDuckCompletionKey) }
+    var isCompleted: Bool { hasCompletedLean && defaults.bool(forKey: Self.heartCompletionKey) && defaults.bool(forKey: Self.jumpDuckCompletionKey) && defaults.bool(forKey: Self.progressCompletionKey) }
+    var progressPhase: ProgressTutorialPhase? { if case .progressExplanation(let phase) = stage { return phase }; return nil }
     var heartPhase: HeartTutorialPhase? { if case .heart(let phase) = stage { return phase }; return nil }
-    var isActive: Bool { [.introduction, .practiceLeft, .practiceRight].contains(stage) || heartPhase != nil || stage == .jumpDuckIntroduction || practiceMove != nil }
+    var isActive: Bool { [.introduction, .practiceLeft, .practiceRight].contains(stage) || heartPhase != nil || stage == .jumpDuckIntroduction || practiceMove != nil || progressPhase != nil }
     var practiceMove: LaserMove? { if case .laserPractice(let move) = stage { return move }; return nil }
     var isPractising: Bool { stage == .practiceLeft || stage == .practiceRight }
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }
@@ -46,7 +50,7 @@ final class LeanTutorial {
     func prepare(generation: UUID, roster: [PlayerID] = PlayerID.allCases, replayRequested: Bool = false) {
         progressJourney.reset(generation: generation)
         self.generation = generation; self.roster = roster; replayForVisit = replayRequested
-        headTopFraction = nil; healthHUDFrame = nil; isSuspended = false; introVisible = false; visibleHeart = nil
+        headTopFraction = nil; healthHUDFrame = nil; progressHUDFrame = nil; visibleProgress = nil; isSuspended = false; introVisible = false; visibleHeart = nil
         clearPractice(); context = nil; lastSource = nil
         stage = isCompleted && !replayForVisit ? .completed : .notStarted
     }
@@ -54,7 +58,8 @@ final class LeanTutorial {
         guard self.generation == generation, eligible, !roster.isEmpty, stage == .notStarted, (!isCompleted || replayForVisit) else { return }
         if replayForVisit || !hasCompletedLean { stage = .introduction }
         else if !defaults.bool(forKey: Self.heartCompletionKey) { stage = .heart(.introduction) }
-        else { stage = .jumpDuckIntroduction }
+        else if !defaults.bool(forKey: Self.jumpDuckCompletionKey) { stage = .jumpDuckIntroduction }
+        else { stage = .progressExplanation(.bar) }
     }
     func introductionVisible(_ visible: Bool, generation: UUID) {
         guard self.generation == generation, stage == .introduction else { return }
@@ -77,7 +82,7 @@ final class LeanTutorial {
     }
     func setSuspended(_ value: Bool, generation: UUID) {
         guard self.generation == generation, isActive, isSuspended != value else { return }
-        isSuspended = value; introVisible = false; visibleHeart = nil; clearPractice()
+        isSuspended = value; introVisible = false; visibleHeart = nil; visibleProgress = nil; clearPractice()
     }
     func shouldRead(_ source: AvatarSourceFrame) -> Bool {
         isPractising && !isSuspended && visiblePractice == stage && source != lastSource
@@ -161,11 +166,30 @@ final class LeanTutorial {
               Set(practice.roster) == Set(roster), practiceMove != nil, !isSuspended else { return }
         if practice.completed {
             defaults.set(true, forKey: Self.jumpDuckCompletionKey)
-            replayForVisit = false; stage = .completed
+            stage = .progressExplanation(.bar)
         } else { stage = .laserPractice(practice.move) }
     }
+    func setProgressHUDFrame(_ frame: CGRect, generation: UUID) {
+        guard self.generation == generation, frame.width > 0, frame.height > 0,
+              frame.minX.isFinite, frame.minY.isFinite, frame.width.isFinite, frame.height.isFinite else { return }
+        if progressHUDFrame != frame { progressHUDFrame = frame }
+    }
+    func progressVisible(_ phase: ProgressTutorialPhase, visible: Bool, generation: UUID) {
+        guard self.generation == generation, progressPhase == phase else { return }
+        visibleProgress = visible && !isSuspended ? phase : nil
+    }
+    func finishProgress(_ phase: ProgressTutorialPhase, generation: UUID) {
+        guard self.generation == generation, progressPhase == phase, visibleProgress == phase, !isSuspended,
+              progressJourney.isActivePresentation, progressJourney.fillEnd == FTUEProgressJourney.checkpoint else { return }
+        visibleProgress = nil
+        if phase == .bar { stage = .progressExplanation(.vault) }
+        else {
+            defaults.set(true, forKey: Self.progressCompletionKey)
+            replayForVisit = false; stage = .completed
+        }
+    }
     func abandon() {
-        replayForVisit = false; visibleHeart = nil; healthHUDFrame = nil
+        replayForVisit = false; visibleHeart = nil; healthHUDFrame = nil; progressHUDFrame = nil; visibleProgress = nil
         progressJourney.reset(generation: nil)
         generation = nil; stage = .notStarted; isSuspended = false; introVisible = false
         clearPractice(); context = nil; lastSource = nil
@@ -174,7 +198,7 @@ final class LeanTutorial {
         demonstrated = []; attempts = [:]; visiblePractice = nil; activation = .infinity; suppressed = false
     }
     #if DEBUG
-    func resetForNextPlay() { defaults.removeObject(forKey: Self.completionKey); defaults.removeObject(forKey: Self.heartCompletionKey); defaults.removeObject(forKey: Self.jumpDuckCompletionKey); abandon() }
+    func resetForNextPlay() { defaults.removeObject(forKey: Self.completionKey); defaults.removeObject(forKey: Self.heartCompletionKey); defaults.removeObject(forKey: Self.jumpDuckCompletionKey); defaults.removeObject(forKey: Self.progressCompletionKey); abandon() }
     /// Static screenshot route ONLY; never completes/persists a tutorial or reaches live input.
     func showPracticeForLayout(_ requested: Stage, generation: UUID) {
         guard self.generation == generation, requested == .practiceLeft || requested == .practiceRight else { return }
