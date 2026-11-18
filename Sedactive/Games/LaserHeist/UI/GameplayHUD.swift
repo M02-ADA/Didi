@@ -166,6 +166,10 @@ struct GameplayHUD: View {
     let actions: GameplayHUDActions
     /// Visual substitution only; no tutorial or gameplay progress is calculated here.
     var isFTUEActive = false
+    /// Illustrative missing heart during Heart FTUE only; never writes health or damage.
+    var tutorialHealthLoss = false
+    var onHealthFrame: ((CGRect) -> Void)? = nil
+    private var displayedHealth: Int { isFTUEActive && tutorialHealthLoss ? max(0, model.health - 1) : model.health }
     #if DEBUG
     /// `-hudPauseMenu` opens the menu at launch, for reviewing its layout (Debug
     /// only). Without a session pause it is a labelled preview: the round runs on.
@@ -260,7 +264,7 @@ struct GameplayHUD: View {
                     .foregroundStyle(Self.socket)
                     .frame(width: 29 * k, height: 27 * k)
                     .position(center)
-                if index < model.health {
+                if index < displayedHealth {
                     Image("LaserHeistHUD/heart")
                         .resizable()
                         .frame(width: 29 * k, height: 27 * k)
@@ -270,9 +274,13 @@ struct GameplayHUD: View {
             }
         }
         .frame(width: 268 * k, height: 64 * k)
-        .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.3), value: model.health)
+        .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.3), value: displayedHealth)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onHealthFrame?($0) }
         .accessibilityElement()
-        .accessibilityLabel("Team health \(model.health) of \(model.maxHealth)")
+        .accessibilityIdentifier("sharedHealthHUD")
+        .accessibilityLabel(isFTUEActive && tutorialHealthLoss
+            ? "Tutorial demo shared health \(displayedHealth) of \(model.maxHealth); gameplay health unchanged"
+            : "Team health \(model.health) of \(model.maxHealth)")
     }
 
     /// The team score in the same surface as the other HUD parts.

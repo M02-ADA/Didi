@@ -26,6 +26,15 @@ struct LeanTutorialOverlay: View {
                         .foregroundStyle(LaserHeistDesign.cream).multilineTextAlignment(.center)
                         .position(x: proxy.size.width / 2, y: proxy.size.height * 0.61)
                         .accessibilityIdentifier("leanTutorialTitle")
+                } else if let phase = tutorial.heartPhase {
+                    let heartGeneration = tutorial.generation
+                    HeartTutorialOverlay(phase: phase, healthFrame: tutorial.healthHUDFrame,
+                        onVisibilityChange: { visible in
+                            if let heartGeneration { tutorial.heartVisible(phase, visible: visible, generation: heartGeneration) }
+                        }, completed: {
+                            if let heartGeneration { tutorial.finishHeart(phase, generation: heartGeneration) }
+                        })
+                        .id(phase)
                 } else {
                     if let placement = LeanCuePlacement.make(viewport: proxy.size, headTopFraction: tutorial.headTopFraction) {
                         Image(uiImage: tutorial.stage == .practiceLeft ? LeanInstructionArtwork.left : LeanInstructionArtwork.right)

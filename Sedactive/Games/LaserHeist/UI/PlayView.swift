@@ -45,6 +45,7 @@ private struct ReplayRoundView: View {
     let suppliedSession: GameSessionCoordinator?
     let tutorial: LeanTutorial?
     @State private var needsLeanProjection = true
+    @State private var heartTutorialDemo = HeartTutorialDemo()
     let retry: () -> Void
     @State private var scene = LaserScene()
     @State private var presentation = LaserReplayPresentation()
@@ -136,6 +137,9 @@ private struct ReplayRoundView: View {
                 let now = CACurrentMediaTime()
                 scene?.refreshLiveCutouts(now: now)
                 scene?.refreshLiveAvatars(now: now)
+                if let scene {
+                    heartTutorialDemo.update(scene: scene, visible: activeTutorial?.heartPhase == .hurt && activeTutorial?.isSuspended == false)
+                }
                 if needsLeanProjection, wantsLeanProjection, let scene {
                     let viewport = presentation.pawBoardDiamonds.viewportFrame.size
                     if let fraction = LeanCueProjection.headTop(scene: scene, viewport: viewport, project: {
@@ -285,6 +289,7 @@ private struct ReplayRoundView: View {
                     let manualReplay = LeanFTUEPreviewLaunch.consumeManualReplay()
                     if manualReplay {
                         UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.completionKey)
+                        UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.heartCompletionKey)
                     }
                     leanPreview.prepare(generation: generation, roster: inputSource.roster, replayRequested: manualReplay)
                     leanPreview.beginIfEligible(generation: generation, eligible: true)
@@ -510,8 +515,16 @@ private struct ReplayRoundView: View {
         }
     }
 
+    private var activeTutorial: LeanTutorial? {
+        #if DEBUG
+        if isLeanPreview { return leanPreview }
+        #endif
+        return tutorial
+    }
+
     private var gameplaySurface: some View {
         world
+        .blur(radius: activeTutorial?.heartPhase?.usesOverlay == true && activeTutorial?.isSuspended == false ? 5 : 0)
         #if DEBUG
         .blur(radius: isLeanPreview && leanPreview.stage == .introduction && !leanPreview.isSuspended ? 5 : 0)
         #endif
@@ -544,7 +557,9 @@ private struct ReplayRoundView: View {
                     }
                     // The debug HUD takes the place of the normal HUD.
                     if let model, !Self.showsReplayDebugHUD {
-                        GameplayHUD(model: model, actions: hudActions(session), isFTUEActive: tutorial?.isActive == true)
+                        GameplayHUD(model: model, actions: hudActions(session), isFTUEActive: tutorial?.isActive == true,
+                            tutorialHealthLoss: tutorial?.heartPhase?.illustratesHealthLoss == true,
+                            onHealthFrame: { tutorial?.setHealthHUDFrame($0, generation: generation) })
                     }
                 }
             }
@@ -555,7 +570,9 @@ private struct ReplayRoundView: View {
                 ZStack {
                     if let configuration = leanPreviewConfiguration {
                         GameplayHUD(model: .init(state: nil, events: [], configuration: configuration, activityDuration: configuration.activityDuration),
-                                    actions: leanTutorialActions(leanPreview), isFTUEActive: leanPreview.isActive)
+                                    actions: leanTutorialActions(leanPreview), isFTUEActive: leanPreview.isActive,
+                                    tutorialHealthLoss: leanPreview.heartPhase?.illustratesHealthLoss == true,
+                                    onHealthFrame: { leanPreview.setHealthHUDFrame($0, generation: generation) })
                     }
                     if !leanPreview.isSuspended {
                         LeanTutorialOverlay(tutorial: leanPreview, solo: isLeanPreviewSolo,
@@ -718,6 +735,7 @@ private struct ReplayRoundView: View {
             // Revoke any pose attachment and remove the avatars and their lights
             // before this scene is replaced (Retry).
             scene.detachLiveAvatars()
+            heartTutorialDemo.stop()
             #if DEBUG
             leanPreviewTask?.cancel(); leanPreviewTask = nil
             leanPreviewInput?.stop(); leanPreviewInput = nil; leanPreviewStart = nil

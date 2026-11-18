@@ -20,6 +20,35 @@ final class HomeTutorialHelpUITests: XCTestCase {
             XCTAssertFalse(app.descendants(matching: .any)["gameplayProgressBar"].exists)
             for id in ["leanTutorialLeave", "leanTutorialSkip", "leanTutorialContinue"] { XCTAssertFalse(app.buttons[id].exists) }
         }
+        func heartSequence(_ prefix: String, pause: Bool = false) {
+            let heart = app.descendants(matching: .any)["heartTutorialTitle"]
+            func waitHeart(_ copy: String) {
+                XCTAssertTrue(heart.waitForExistence(timeout: 20))
+                expectation(for: NSPredicate(format: "label CONTAINS %@", copy), evaluatedWith: heart)
+                waitForExpectations(timeout: 15)
+            }
+            waitHeart("This is your shared health")
+            let health = app.descendants(matching: .any)["sharedHealthHUD"]
+            XCTAssertTrue(health.exists)
+            XCTAssertEqual(health.label, "Team health 5 of 5")
+            XCTAssertLessThan(health.frame.maxY, heart.frame.minY)
+            capture("\(prefix)-heart-introduction")
+            if pause {
+                app.buttons["pauseMenu"].tap()
+                XCTAssertTrue(app.buttons["resume"].waitForExistence(timeout: 10))
+                Thread.sleep(forTimeInterval: 4.5)
+                XCTAssertFalse(heart.exists)
+                app.buttons["resume"].tap()
+                waitHeart("This is your shared health")
+            }
+            waitHeart("OUCH!"); capture("\(prefix)-heart-ouch")
+            XCTAssertTrue(health.label.contains("Tutorial demo shared health 4 of 5"))
+            waitHeart("Your health will be deducted"); capture("\(prefix)-heart-warning")
+            XCTAssertTrue(health.label.contains("gameplay health unchanged"))
+            XCTAssertEqual(app.images.matching(identifier: "ftueCenterCheckpoint").count, 1)
+            XCTAssertFalse(app.descendants(matching: .any)["gameplayProgressBar"].exists)
+            for id in ["leanTutorialLeave", "leanTutorialSkip", "leanTutorialContinue"] { XCTAssertFalse(app.buttons[id].exists) }
+        }
         func complete() {
             let status = app.staticTexts["leanPreviewStatus"]
             XCTAssertTrue(status.waitForExistence(timeout: 60))
@@ -28,10 +57,11 @@ final class HomeTutorialHelpUITests: XCTestCase {
             XCTAssertFalse(title.exists)
             XCTAssertFalse(app.descendants(matching: .any)["ftueProgressBar"].exists)
             XCTAssertTrue(app.descendants(matching: .any)["gameplayProgressBar"].exists)
+            XCTAssertEqual(app.descendants(matching: .any)["sharedHealthHUD"].label, "Team health 5 of 5")
         }
         // Existing first-play path still works without an explicit Help replay request.
         app.launchArguments = ["-replay", "-leanFTUEPreview", "-leanFTUEReset", "-hideDebugOverlay"]
-        app.launch(); waitTitle("Lean your head"); waitTitle("LEAN LEFT"); waitTitle("LEAN RIGHT"); complete(); app.terminate()
+        app.launch(); waitTitle("Lean your head"); waitTitle("LEAN LEFT"); waitTitle("LEAN RIGHT"); heartSequence("first-time"); complete(); app.terminate()
 
         for solo in [false, true] {
             let mode = solo ? "solo" : "coop"
@@ -61,6 +91,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
             waitTitle("Lean your head"); capture("\(mode)-manual-introduction")
             waitTitle("LEAN LEFT"); capture("\(mode)-manual-left")
             waitTitle("LEAN RIGHT"); capture("\(mode)-manual-right")
+            heartSequence(mode, pause: !solo)
             complete(); capture("\(mode)-manual-completed")
             app.buttons["leanPreviewRetry"].tap(); complete()
             app.buttons["leaveReplay"].tap()

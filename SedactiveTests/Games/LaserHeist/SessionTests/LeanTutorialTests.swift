@@ -36,11 +36,18 @@ import Testing
             let t = Double(id) / 10
             tutorial.observe(observation(id, t, command, velocity, x, players: players), generation: generation, at: t + 0.01)
         }
-        func finish(_ tutorial: LeanTutorial) {
+        func finishLean(_ tutorial: LeanTutorial) {
             send(tutorial, 1, 0, 0, 0); send(tutorial, 2, -1, -1, -0.1); send(tutorial, 3, -1, -1, -0.2)
             tutorial.practiceVisible(.practiceRight, generation: generation, at: 0.31)
             send(tutorial, 4, 0, 0, -0.2); send(tutorial, 5, 1, 1, -0.1); send(tutorial, 6, 1, 1, 0)
         }
+        func finishHeart(_ tutorial: LeanTutorial) {
+            for phase in HeartTutorialPhase.allCases {
+                tutorial.heartVisible(phase, visible: true, generation: generation)
+                tutorial.finishHeart(phase, generation: generation)
+            }
+        }
+        func finish(_ tutorial: LeanTutorial) { finishLean(tutorial); finishHeart(tutorial) }
     }
 
     @Test func introRequiresVisibleCurrentGenerationAndDoesNotInferPractice() {
@@ -60,7 +67,7 @@ import Testing
     }
     @Test(arguments: [false, true]) func bothDirectionsPersistOnlyAfterRosterDemonstration(coop: Bool) {
         var f = Fixture(); if coop { f.roster = PlayerID.allCases }
-        defer { f.defaults.removeObject(forKey: LeanTutorial.completionKey) }
+        defer { f.defaults.removeObject(forKey: LeanTutorial.completionKey); f.defaults.removeObject(forKey: LeanTutorial.heartCompletionKey) }
         let tutorial = f.tutorial(); f.finish(tutorial)
         #expect(tutorial.stage == .completed && tutorial.isCompleted)
         let relaunched = LeanTutorial(defaults: f.defaults)
@@ -128,7 +135,7 @@ import Testing
     }
     @Test(arguments: [false, true]) func flowRequiresAcceptedSetupAndRetainsCompletionAcrossRetry(solo: Bool) async throws {
         let f = Fixture(), tutorial = f.tutorial(); f.finish(tutorial)
-        defer { f.defaults.removeObject(forKey: LeanTutorial.completionKey) }
+        defer { f.defaults.removeObject(forKey: LeanTutorial.completionKey); f.defaults.removeObject(forKey: LeanTutorial.heartCompletionKey) }
         func make() throws -> GameSessionCoordinator {
             let script = try LaserReplayScript.load().freshRound(generation: UUID())
             return GameSessionCoordinator(provider: ControlledSessionInput(), inputConfiguration: script.input.configuration)

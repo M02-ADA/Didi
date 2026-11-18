@@ -6,8 +6,9 @@ import Testing
     @Test(arguments: [false, true], [false, true])
     func firstPlayAndExplicitReplayChooseOnlyTheInitialHold(completed: Bool, manual: Bool) async throws {
         let defaults = UserDefaults(suiteName: "LeanManual.\(UUID())")!
-        defer { defaults.removeObject(forKey: LeanTutorial.completionKey) }
+        defer { defaults.removeObject(forKey: LeanTutorial.completionKey); defaults.removeObject(forKey: LeanTutorial.heartCompletionKey) }
         defaults.set(completed, forKey: LeanTutorial.completionKey)
+        defaults.set(completed, forKey: LeanTutorial.heartCompletionKey)
         let tutorial = LeanTutorial(defaults: defaults)
         var constructed = 0
         let flow = LaserInputFlow(leanTutorial: tutorial, makeLiveSession: {
@@ -36,7 +37,8 @@ import Testing
     @Test func completedPlayerReplaysBothDirectionsWithoutResettingCompletion() {
         let f = LeanTutorialTests.Fixture()
         f.defaults.set(true, forKey: LeanTutorial.completionKey)
-        defer { f.defaults.removeObject(forKey: LeanTutorial.completionKey) }
+        f.defaults.set(true, forKey: LeanTutorial.heartCompletionKey)
+        defer { f.defaults.removeObject(forKey: LeanTutorial.completionKey); f.defaults.removeObject(forKey: LeanTutorial.heartCompletionKey) }
         let tutorial = LeanTutorial(defaults: f.defaults)
         tutorial.prepare(generation: f.generation, roster: f.roster, replayRequested: true)
         tutorial.beginIfEligible(generation: f.generation, eligible: true)
@@ -70,7 +72,8 @@ import Testing
     @Test func manualVisitIsConsumedBeforeFailureAndCannotLeakThroughRetry() async throws {
         let defaults = UserDefaults(suiteName: "LeanFailure.\(UUID())")!
         defaults.set(true, forKey: LeanTutorial.completionKey)
-        defer { defaults.removeObject(forKey: LeanTutorial.completionKey) }
+        defaults.set(true, forKey: LeanTutorial.heartCompletionKey)
+        defer { defaults.removeObject(forKey: LeanTutorial.completionKey); defaults.removeObject(forKey: LeanTutorial.heartCompletionKey) }
         var fail = true
         let flow = LaserInputFlow(leanTutorial: LeanTutorial(defaults: defaults), makeLiveSession: {
             if fail { throw CameraFailure.permissionDenied }

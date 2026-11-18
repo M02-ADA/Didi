@@ -132,9 +132,9 @@ struct LiveLeanSteeringTests {
         for _ in 0..<30 { try live.frame(neutral); try observe() }
         for _ in 0..<90 {
             try live.frame(Dictionary(uniqueKeysWithValues: roster.map { ($0, -0.08) })); try observe()
-            if tutorial.stage == .completed { break }
+            if tutorial.stage == .heart(.introduction) { break }
         }
-        #expect(tutorial.stage == .completed && tutorial.isCompleted)
+        #expect(tutorial.stage == .heart(.introduction) && tutorial.hasCompletedLean && !tutorial.isCompleted)
         #expect(Set(live.avatars.robots.keys) == Set(roster))
         live.scene.detachLiveAvatars()
     }
