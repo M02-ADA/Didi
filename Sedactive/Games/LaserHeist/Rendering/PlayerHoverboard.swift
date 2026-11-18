@@ -35,10 +35,10 @@ import RealityKitContent
 ///   the mascot fades while it is airborne.
 /// - Tracking loss: no stale input is kept. The mascot's shown pose relaxes,
 ///   and while the player is unavailable the board eases back to level.
-/// - Verdict reactions (`react(_:)`, `HoverboardReaction`): each board answers its own player's
-///   CLEAR (a celebration) or HIT (an electric shock), cosmetically: squash and stretch about the
-///   deck top and a small roll, never a sideways move, so the feet stay planted and the ride stays
-///   authoritative. The deck still never rises above the soles.
+/// - Verdict reactions (`react(_:)`, `HoverboardReaction`): each board's own energy system
+///   answers its own player's CLEAR (a gold charge round the rim ring) or HIT (a coral and pink
+///   overload), through the board's materials and a rim ribbon on the ring itself. Only HIT adds a
+///   brief, small shudder roll; nothing moves sideways and the deck never rises above the soles.
 @MainActor
 final class PlayerHoverboard {
     /// The asset's name in the Reality Composer Pro package.
@@ -165,6 +165,7 @@ final class PlayerHoverboard {
     var input = Input()
     private var shadowOpacity: Float = -1
     private var glowOpacity: Float = -1
+    private var glowTint: HoverboardReaction?
     /// The playing verdict reaction and its age (seconds of frame time).
     private(set) var activeReaction: (kind: HoverboardReaction, age: Double, reduceMotion: Bool)?
     private var reactionFX: HoverboardReactionFX!
@@ -194,7 +195,7 @@ final class PlayerHoverboard {
         contactShadow.name = "hoverboard.contactShadow"
         contactShadow.position = [0, 0.003, 0]
         model.addChild(contactShadow)
-        reactionFX = HoverboardReactionFX(root: root, model: model, boardWidth: 2 * Self.halfWidth, floorY: floorY)
+        reactionFX = HoverboardReactionFX(root: root, model: model)
         root.components.set(HoverboardComponent(board: self))
         apply()
     }
@@ -238,14 +239,15 @@ final class PlayerHoverboard {
     }
 
     private func apply() {
-        // The reaction's squash and stretch is about the model's origin, the deck top: the feet stay put.
-        let squash = motion.reaction
-        model.transform = Transform(scale: Self.scale * SIMD3(squash.scaleX, squash.scaleY, squash.scaleX),
+        model.transform = Transform(scale: SIMD3(repeating: Self.scale),
                                     rotation: simd_quatf(angle: motion.roll, axis: [0, 0, 1]) * simd_quatf(angle: motion.pitch, axis: [1, 0, 0]),
                                     translation: [motion.offsetX, motion.height, 0])
+        reactionFX?.anchor.transform = model.transform
         underglow.position.x = motion.offsetX
+        var floorLight: (tint: HoverboardReaction?, scale: Float) = (nil, 1)
         if let active = activeReaction {
-            reactionFX?.apply(motion.reaction, tau: active.age, deckX: motion.offsetX, deckY: motion.height, reduceMotion: active.reduceMotion)
+            reactionFX?.apply(motion.reaction, tau: active.age, reduceMotion: active.reduceMotion)
+            floorLight = HoverboardReactionFX.floorLight(active.kind, motion.reaction)
         }
         let lift = input.available && input.lift.isFinite ? max(0, input.lift) : 0
         // The shadow sits under the mascot, in the board's own (scaled, glided) space.
@@ -257,8 +259,13 @@ final class PlayerHoverboard {
             contactShadow.isEnabled = shadow > 0.01
             contactShadow.components.set(OpacityComponent(opacity: shadow))
         }
-        // The thrusters' light on the floor brightens a little as the board sinks toward it.
-        let glow = 0.75 + 0.25 * (1 - cos(motion.hoverPhase)) / 2
+        // The thrusters' light on the floor brightens a little as the board sinks toward it, and
+        // takes a reaction's colour while the thrusters blaze (or dims in a HIT's brownout).
+        if floorLight.tint != glowTint {
+            glowTint = floorLight.tint
+            underglow.model?.materials = [floorLight.tint.map { $0 == .clear ? Self.clearGlowMaterial : Self.hitGlowMaterial } ?? Self.glowMaterial]
+        }
+        let glow = min(1, (0.75 + 0.25 * (1 - cos(motion.hoverPhase)) / 2) * (floorLight.tint == nil ? floorLight.scale : floorLight.scale / 2.6))
         if abs(glow - glowOpacity) > 0.01 {
             glowOpacity = glow
             underglow.components.set(OpacityComponent(opacity: glow))
@@ -319,6 +326,9 @@ final class PlayerHoverboard {
 
     /// The thrusters' warm light on the corridor floor: a soft oval pool.
     private static let glowMaterial = radialMaterial("hoverboard.underglow", color: (1.0, 0.8, 0.52), alpha: 0.17, falloff: 2.0)
+    /// The same pool in a reaction's colour (the thrusters blazing gold, or coral in an overload).
+    private static let clearGlowMaterial = radialMaterial("hoverboard.underglow.clear", color: (1.0, 0.78, 0.2), alpha: 0.34, falloff: 1.6)
+    private static let hitGlowMaterial = radialMaterial("hoverboard.underglow.hit", color: (1.0, 0.3, 0.45), alpha: 0.34, falloff: 1.6)
     /// The mascot's soft contact shadow on the deck.
     private static let shadowMaterial = radialMaterial("hoverboard.contactShadow", color: (0.08, 0.06, 0.2), alpha: 0.45, falloff: 1.2)
 
