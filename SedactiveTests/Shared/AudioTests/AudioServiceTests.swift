@@ -194,11 +194,14 @@ struct AudioServiceTests {
             harness.clock += 1
             audio.playDiamondTimeTick(from: second + 1, to: second)
             audio.playDiamondTimeTick(from: second, to: second)
-            #expect(audio.playCount[.vaultWarning] == 6 - second)
+            #expect(audio.playCount[.diamondTimeTick, default: 0] == min(3, 6 - second))
+            #expect(audio.playCount[.diamondTimeUrgentTick, default: 0] == max(0, 3 - second))
         }
         audio.playDiamondTimeTick(from: 1, to: 0)
         audio.playDiamondTimeTick(from: 0, to: nil)
-        #expect(audio.playCount[.vaultWarning] == 5)
+        #expect(audio.playCount[.diamondTimeTick] == 3)
+        #expect(audio.playCount[.diamondTimeUrgentTick] == 2)
+        #expect(audio.playCount[.vaultWarning] == nil)
         #expect(music.volume == normalVolume * AudioService.duckedShare)
         #expect(music.fades.last?.1 == 0.04)
     }

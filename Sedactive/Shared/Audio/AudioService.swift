@@ -20,6 +20,8 @@ enum SoundCue: String, CaseIterable {
     case vaultButton = "vault-button"
     case vaultOpen = "vault-open"
     case vaultWarning = "vault-warning"
+    case diamondTimeTick = "diamond-time-tick"
+    case diamondTimeUrgentTick = "diamond-time-urgent-tick"
     case diamondTime = "diamond-time"
     case diamondCollect = "diamond-collect"
     case healthPickup = "health-pickup"
@@ -38,7 +40,7 @@ enum SoundCue: String, CaseIterable {
     /// even when both players' events arrive together or a button is tapped twice.
     var minimumInterval: TimeInterval {
         switch self {
-        case .uiTap, .vaultWarning: 0.12
+        case .uiTap, .vaultWarning, .diamondTimeTick, .diamondTimeUrgentTick: 0.12
         case .vaultButton, .diamondCollect: 0.06
         case .diamondChainRise, .diamondChainCrest, .diamondChainBass: 0.10
         case .cueDuck, .cueJump, .laserClear, .laserHit: 0.25
@@ -64,10 +66,17 @@ enum SoundCue: String, CaseIterable {
         }
     }
 
-    /// Instructions, CLEAR, the vault timer and stings briefly lower the music.
+    var isCountdownTick: Bool {
+        self == .vaultWarning || self == .diamondTimeTick || self == .diamondTimeUrgentTick
+    }
+
+    static let diamondPickupCues: [Self] = [.diamondCollect, .diamondChainRise, .diamondChainCrest, .diamondChainBass]
+
+    /// Instructions, CLEAR, countdown ticks and stings briefly lower the music.
     var ducksMusic: Bool {
-        switch self {
-        case .cueDuck, .cueJump, .laserClear, .vaultWarning, .diamondTime, .roundSuccess, .roundFailure: true
+        if isCountdownTick { return true }
+        return switch self {
+        case .cueDuck, .cueJump, .laserClear, .diamondTime, .roundSuccess, .roundFailure: true
         default: false
         }
     }
@@ -158,6 +167,7 @@ final class AudioService {
     private var missing: Set<String> = []
     private var musicPlayers: [MusicMood: any SoundPlaying] = [:]
     private var musicSuspended = false
+    private var pickupsDuckedUntil: TimeInterval = 0
     private var duckedUntil: TimeInterval = 0
     private var duckTask: Task<Void, Never>?
     private var stopTask: Task<Void, Never>?
@@ -170,6 +180,7 @@ final class AudioService {
     static let effectsKey = "audio.effectsEnabled"
     /// Music level while a sting plays.
     static let duckedShare: Float = 0.35
+    private static let countdownPickupShare: Float = 0.45
 
     /// - Parameters:
     ///   - makePlayer: loads a bundled resource by name, or `nil` if missing.
@@ -213,12 +224,22 @@ final class AudioService {
         lastPlayed[cue] = time
         activateSession()
         player.currentTime = 0
-        player.volume = effectsVolume * cue.gain
+        let pickupShare: Float = time < pickupsDuckedUntil && SoundCue.diamondPickupCues.contains(cue)
+            ? Self.countdownPickupShare : 1
+        player.volume = effectsVolume * cue.gain * pickupShare
         let started = player.play()
         playCount[cue, default: 0] += 1
         Self.log.debug("play \(cue.rawValue, privacy: .public) started=\(started)")
-        if cue.ducksMusic {
-            let attack: TimeInterval = cue == .laserClear || cue == .vaultWarning ? 0.04 : 0.12
+        if started, cue.isCountdownTick {
+            pickupsDuckedUntil = max(pickupsDuckedUntil, time + player.duration)
+            for pickup in SoundCue.diamondPickupCues {
+                for active in pools[pickup] ?? [] where active.isPlaying {
+                    active.setVolume(effectsVolume * pickup.gain * Self.countdownPickupShare, fadeDuration: 0.02)
+                }
+            }
+        }
+        if started, cue.ducksMusic {
+            let attack: TimeInterval = cue == .laserClear || cue.isCountdownTick ? 0.04 : 0.12
             duck(for: player.duration, attack: attack)
         }
     }
@@ -227,11 +248,12 @@ final class AudioService {
     func playDiamondTimeTick(from previous: Int?, to current: Int?) {
         guard let current, (1...5).contains(current),
               previous.map({ current < $0 }) ?? true else { return }
-        play(.vaultWarning)
+        play(current <= 2 ? .diamondTimeUrgentTick : .diamondTimeTick)
     }
 
     /// Stops every effect, e.g. when a round's scene is torn down.
     func stopEffects() {
+        pickupsDuckedUntil = 0
         for player in pools.values.flatMap({ $0 }) where player.isPlaying { player.stop() }
     }
 

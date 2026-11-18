@@ -32,6 +32,8 @@ Links identify specific assets. The manifest also records source IDs and SHA-256
 | 310480 | [Playful Failure](https://pixabay.com/sound-effects/musical-playful-failure-310480/) | Universfield | [playful-failure-310480.mp3](Sources/playful-failure-310480.mp3) | Not recorded during inspection |
 | 417444 | [VIDEO GAME PAUSE SFX](https://pixabay.com/sound-effects/film-special-effects-video-game-pause-sfx-417444/) | ROHHSADOTCOM | [video-game-pause-417444.mp3](Sources/video-game-pause-417444.mp3) | Not recorded during inspection |
 | 417465 | [Game Over](https://pixabay.com/sound-effects/musical-game-over-417465/) | Alphix | [game-over-417465.mp3](Sources/game-over-417465.mp3) | Not recorded during inspection |
+| 7007 | [Arcade Countdown](https://pixabay.com/sound-effects/film-special-effects-arcade-countdown-7007/) | NXRT (Freesound) | [arcade-countdown-7007.mp3](Sources/arcade-countdown-7007.mp3) | Not recorded during inspection |
+| 376897 | [Clock Ticking Down](https://pixabay.com/sound-effects/film-special-effects-clock-ticking-down-376897/) | DRAGON-STUDIO | [clock-ticking-down-376897.mp3](Sources/clock-ticking-down-376897.mp3) | Not recorded during inspection |
 
 ## Current cue edits
 
@@ -46,4 +48,4 @@ These edits supersede the corresponding original cuts in [GAME-AUDIO.md](GAME-AU
 
 Both pickup clips come from separate passages in the original source and alternate in playback order. The Alphix source was obtained from the official Pixabay page player.
 
-The vault countdown uses the existing Warning Notification excerpt (199277) once for each positive displayed second, with no catch-up ticks when a replay jumps ahead.
+The vault uses one Clock Ticking Down tick per displayed second (0.055–0.19 s, −4 dBFS). Diamond Time uses Arcade Countdown throughout. Digits 5–4–3 use the short beep (0.90–1.26 s, −7 dBFS), and digits 2–1 each use the long beep (2.66–3.60 s, −5 dBFS). The new sources came from the official Pixabay players.
