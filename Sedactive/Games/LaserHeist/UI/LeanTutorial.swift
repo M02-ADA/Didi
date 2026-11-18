@@ -126,8 +126,15 @@ final class LeanTutorial {
         guard self.generation == generation, heartPhase == phase else { return }
         visibleHeart = visible && !isSuspended ? phase : nil
     }
+    /// Called only after an authorized encounter receipt and the existing ZAPPED completion.
+    func finishTrainingEncounter(_ training: HeartTrainingEncounter, generation: UUID) {
+        guard self.generation == generation, training.context.sessionGeneration == generation,
+              training.feedbackFinished, !training.invalidated, training.damage != nil,
+              training.roster == Set(roster), heartPhase == .hurt, !isSuspended else { return }
+        stage = .heart(.warning); visibleHeart = nil
+    }
     func finishHeart(_ phase: HeartTutorialPhase, generation: UUID) {
-        guard self.generation == generation, heartPhase == phase, visibleHeart == phase, !isSuspended else { return }
+        guard phase != .hurt, self.generation == generation, heartPhase == phase, visibleHeart == phase, !isSuspended else { return }
         visibleHeart = nil
         if let next = phase.next { stage = .heart(next) }
         else {

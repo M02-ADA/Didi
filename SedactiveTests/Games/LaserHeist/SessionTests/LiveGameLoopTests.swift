@@ -4,6 +4,33 @@ import Testing
 
 @MainActor
 struct LiveGameLoopTests {
+    @Test func heartTrainingIsHeldSessionOwnedAndRetiredBeforeFreshNormalRound() async throws {
+        let rig = try LiveGameRig()
+        rig.session.updateHeartTraining(at: 0, suspended: false)
+        #expect(rig.session.heartTraining == nil)
+        rig.session.setPreRoundTutorialPending(true)
+        try await rig.prepare()
+        for i in 0...20 {
+            let time = 0.5 + Double(i) * 0.125
+            try await rig.send(time)
+            rig.session.updateHeartTraining(at: time, suspended: false)
+        }
+        let lesson = try #require(rig.session.heartTraining)
+        #expect(lesson.state.teamHealth == 4 && lesson.damage?.players == Set(PlayerID.allCases))
+        #expect(rig.session.state == nil && rig.session.events.isEmpty && rig.session.results.isEmpty)
+        #expect(rig.session.liveReadiness?.gameTime == 0 && rig.session.preRoundTutorialPending)
+        #expect(rig.controls.input.claimCount == 1 && rig.controls.input.observerCount == 1)
+        rig.session.retireHeartTraining()
+        rig.session.setPreRoundTutorialPending(false)
+        try rig.session.beginLiveCountdown()
+        try await rig.send(3.125); try await rig.send(3.25)
+        #expect(rig.session.state?.teamHealth == 5 && rig.session.phase == .running)
+        rig.session.updateHeartTraining(at: 3.25, suspended: false)
+        #expect(rig.session.heartTraining == nil)
+        await rig.session.stop()
+        #expect(rig.session.heartTraining == nil)
+    }
+
     @Test func leanTutorialHoldsOnlyInitialCountdownWithoutSpendingGameTime() async throws {
         let rig = try LiveGameRig()
         rig.session.setPreRoundTutorialPending(true)

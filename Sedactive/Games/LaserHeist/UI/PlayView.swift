@@ -45,6 +45,7 @@ private struct ReplayRoundView: View {
     let suppliedSession: GameSessionCoordinator?
     let tutorial: LeanTutorial?
     @State private var needsLeanProjection = true
+    @Environment(\.scenePhase) private var scenePhase
     @State private var heartTutorialDemo = HeartTutorialDemo()
     let retry: () -> Void
     @State private var scene = LaserScene()
@@ -63,6 +64,7 @@ private struct ReplayRoundView: View {
     @State private var frameRefresh: EventSubscription?
     #if DEBUG
     @State private var leanPreview = LeanTutorial(defaults: UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!)
+    @State private var previewHeartTraining: HeartTrainingEncounter?
     @State private var leanPreviewConfiguration: LaserRoundConfiguration?
     @State private var leanPreviewInput: LeanFTUESyntheticInput?
     @State private var leanPreviewStart: (() -> Void)?
@@ -139,9 +141,7 @@ private struct ReplayRoundView: View {
                 let now = CACurrentMediaTime()
                 scene?.refreshLiveCutouts(now: now)
                 scene?.refreshLiveAvatars(now: now)
-                if let scene {
-                    heartTutorialDemo.update(scene: scene, visible: activeTutorial?.heartPhase == .hurt && activeTutorial?.isSuspended == false)
-                }
+                if let scene { updateHeartTraining(scene: scene, at: now) }
                 if needsLeanProjection, wantsLeanProjection, let scene {
                     let viewport = presentation.pawBoardDiamonds.viewportFrame.size
                     if let fraction = LeanCueProjection.headTop(scene: scene, viewport: viewport, project: {
@@ -560,11 +560,11 @@ private struct ReplayRoundView: View {
                     // The debug HUD takes the place of the normal HUD.
                     if let model, !Self.showsReplayDebugHUD {
                         GameplayHUD(model: model, actions: hudActions(session), isFTUEActive: tutorial?.isActive == true,
-                            tutorialHealthLoss: tutorial?.heartPhase?.illustratesHealthLoss == true,
                             onHealthFrame: { tutorial?.setHealthHUDFrame($0, generation: generation) })
                     }
                     // PERFECT! / ZAPPED! on the HUD's title line, never over the results.
-                    if session.summary == nil {
+                    if session.summary == nil, activeTutorial?.isSuspended != true, scenePhase == .active,
+                       activeTutorial?.heartPhase != .hurt || suppliedSession?.canStartLiveRound != false {
                         LaserTeamCalloutView(model: teamCallouts)
                     }
                 }
@@ -575,12 +575,12 @@ private struct ReplayRoundView: View {
             if isLeanPreview, leanPreview.isActive {
                 ZStack {
                     if let configuration = leanPreviewConfiguration {
-                        GameplayHUD(model: .init(state: nil, events: [], configuration: configuration, activityDuration: configuration.activityDuration),
+                        GameplayHUD(model: .init(state: previewHeartTraining?.state, events: [], configuration: configuration, activityDuration: configuration.activityDuration),
                                     actions: leanTutorialActions(leanPreview), isFTUEActive: leanPreview.isActive,
-                                    tutorialHealthLoss: leanPreview.heartPhase?.illustratesHealthLoss == true,
                                     onHealthFrame: { leanPreview.setHealthHUDFrame($0, generation: generation) })
                     }
                     if !leanPreview.isSuspended {
+                        if scenePhase == .active { LaserTeamCalloutView(model: teamCallouts) }
                         LeanTutorialOverlay(tutorial: leanPreview, solo: isLeanPreviewSolo,
                             posterOnly: ProcessInfo.processInfo.arguments.contains("-leanFTUEReduceMotion"))
                     }
@@ -710,6 +710,11 @@ private struct ReplayRoundView: View {
             }.ignoresSafeArea()
         }
         #endif
+        .onChange(of: scenePhase) { _, phase in
+            guard activeTutorial?.heartPhase == .hurt else { return }
+            teamCallouts.setTutorialSuspended(phase != .active || activeTutorial?.isSuspended == true)
+            updateHeartTraining(scene: scene, at: CACurrentMediaTime())
+        }
         .onChange(of: session?.phase) { _, phase in
             scene.setTimingPaused(phase == .paused)
             if phase != .running { diamondFlights.clear() }
@@ -749,6 +754,7 @@ private struct ReplayRoundView: View {
             // before this scene is replaced (Retry).
             scene.detachLiveAvatars()
             heartTutorialDemo.stop()
+            suppliedSession?.retireHeartTraining()
             #if DEBUG
             leanPreviewTask?.cancel(); leanPreviewTask = nil
             leanPreviewInput?.stop(); leanPreviewInput = nil; leanPreviewStart = nil
@@ -821,6 +827,48 @@ private struct ReplayRoundView: View {
             resume: { tutorial.setSuspended(false, generation: generation) }, leave: leave)
     }
 
+    /// Only the existing render callback drives the scoped training encounter.
+    private func updateHeartTraining(scene: LaserScene, at now: Double) {
+        guard let tutorial = activeTutorial, tutorial.heartPhase != nil else {
+            heartTutorialDemo.stop(); suppliedSession?.retireHeartTraining()
+            #if DEBUG
+            previewHeartTraining = nil
+            #endif
+            return
+        }
+        guard tutorial.heartPhase == .hurt else { heartTutorialDemo.stop(); return }
+        let suspended = tutorial.isSuspended || scenePhase != .active
+        if let suppliedSession {
+            suppliedSession.updateHeartTraining(at: now, suspended: suspended)
+            let paused = suspended || !suppliedSession.canStartLiveRound
+            heartTutorialDemo.update(scene: scene, training: suppliedSession.heartTraining, callouts: teamCallouts, suspended: paused)
+            if !paused, let receipt = heartTutorialDemo.feedbackFinished(teamCallouts) {
+                suppliedSession.finishHeartTrainingFeedback(id: receipt.id, generation: generation)
+                if suppliedSession.heartTraining?.feedbackFinished == true {
+                    tutorial.finishTrainingEncounter(suppliedSession.heartTraining!, generation: generation)
+                }
+            }
+        }
+        else {
+        #if DEBUG
+        if isLeanPreview, let configuration = leanPreviewConfiguration, let input = leanPreviewInput {
+            if previewHeartTraining == nil {
+                previewHeartTraining = try? HeartTrainingEncounter(configuration: configuration, context: input.context,
+                    roster: Set(leanPreview.roster))
+            }
+            previewHeartTraining?.update(at: now, eligible: !suspended, context: input.context)
+            heartTutorialDemo.update(scene: scene, training: previewHeartTraining, callouts: teamCallouts, suspended: suspended)
+            if !suspended, let receipt = heartTutorialDemo.feedbackFinished(teamCallouts) {
+                previewHeartTraining?.finishFeedback(id: receipt.id, generation: generation)
+                if previewHeartTraining?.feedbackFinished == true {
+                    tutorial.finishTrainingEncounter(previewHeartTraining!, generation: generation)
+                }
+            }
+        }
+        #endif
+        }
+    }
+
     private func observeLean(_ tutorial: LeanTutorial, scene: LaserScene, context: BodyInputContext?,
                              eligible: Bool, at now: Double) {
         guard !tutorial.isSuspended else { return }
@@ -858,7 +906,8 @@ private struct ReplayRoundView: View {
             fixture = true
         }
         #endif
-        return GameplayHUDModel(state: session.state, events: session.events, configuration: configuration,
+        return GameplayHUDModel(state: tutorial?.isActive == true ? (session.heartTraining?.state ?? session.state) : session.state,
+                                events: session.events, configuration: configuration,
                                 activityDuration: session.activityDuration, stageProgress: session.stageProgress,
                                 diamondsCollected: collected, diamondsAreFixture: fixture,
                                 enteringFinalVault: session.finalVaultEntry.map { !$0.isComplete } ?? false)

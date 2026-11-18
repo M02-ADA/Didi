@@ -17,7 +17,7 @@ import Testing
         for phase in HeartTutorialPhase.allCases {
             #expect(!tutorial.isCompleted)
             tutorial.heartVisible(phase, visible: true, generation: f.generation)
-            tutorial.finishHeart(phase, generation: f.generation)
+            f.finishPhase(tutorial, phase)
         }
         #expect(tutorial.stage == .completed && tutorial.isCompleted)
         tutorial.prepare(generation: UUID(), roster: f.roster)
@@ -68,7 +68,7 @@ import Testing
         #expect(!tutorial.isActive && !tutorial.isCompleted)
     }
     @Test func heartRetainsPreRoundHoldAndCompletionCannotGrantReadiness() async throws {
-        let f = LeanTutorialTests.Fixture()
+        var f = LeanTutorialTests.Fixture(); f.roster = PlayerID.allCases
         f.defaults.set(true, forKey: LeanTutorial.completionKey)
         let tutorial = LeanTutorial(defaults: f.defaults)
         defer { tutorial.resetForNextPlay() }
@@ -87,7 +87,7 @@ import Testing
             flow.releaseCompletedLeanTutorial()
             #expect(session.preRoundTutorialPending && session.state == nil && session.events.isEmpty)
             tutorial.heartVisible(phase, visible: true, generation: gen)
-            tutorial.finishHeart(phase, generation: gen)
+            f.finishPhase(tutorial, phase, generation: gen)
         }
         flow.releaseCompletedLeanTutorial()
         #expect(!session.preRoundTutorialPending && session.state == nil && !session.canStartLiveRound)

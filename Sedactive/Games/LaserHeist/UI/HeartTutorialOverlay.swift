@@ -5,12 +5,11 @@ enum HeartTutorialPhase: String, CaseIterable {
     case introduction, hurt, warning
     var duration: Double { self == .hurt ? 2 : 4 }
     var usesOverlay: Bool { self != .hurt }
-    var illustratesHealthLoss: Bool { self != .introduction }
     var next: Self? { self == .introduction ? .hurt : self == .hurt ? .warning : nil }
     var copy: String {
         switch self {
         case .introduction: "This is your shared health,\navoid lasers to protect it"
-        case .hurt: "OUCH!"
+        case .hurt: ""
         case .warning: "Your health will be deducted\nif you get hit by lasers"
         }
     }
@@ -58,15 +57,11 @@ struct HeartTutorialOverlay: View {
                         .frame(width: proxy.size.width * 0.9)
                         .position(x: proxy.size.width / 2, y: proxy.size.height * 0.59)
                         .accessibilityIdentifier("heartTutorialTitle")
+
                 } else {
-                    LinearGradient(colors: [.red.opacity(0.15), .clear, .red.opacity(0.15)], startPoint: .top, endPoint: .bottom)
-                    Text(phase.copy)
-                        .font(.system(size: 52.7 * k, weight: .black, design: .rounded))
-                        .foregroundStyle(Color(sketch: 0xF58A36))
-                        .shadow(color: .black.opacity(0.91), radius: 0, x: 3 * k, y: 5 * k)
-                        .shadow(color: .black.opacity(0.25), radius: 4 * k, y: 4 * k)
-                        .position(x: proxy.size.width / 2, y: proxy.size.height * 0.23)
-                        .accessibilityIdentifier("heartTutorialTitle")
+                    Color.clear.accessibilityElement()
+                        .accessibilityLabel("Instructional laser encounter; scripted training damage")
+                        .accessibilityIdentifier("heartTrainingEncounter")
                 }
             }.frame(width: proxy.size.width, height: proxy.size.height)
         }
@@ -74,7 +69,7 @@ struct HeartTutorialOverlay: View {
         .task(id: Visibility(phase: phase, active: scenePhase == .active)) {
             let active = scenePhase == .active
             onVisibilityChange(active)
-            guard active else { return }
+            guard active, phase.usesOverlay else { return }
             do { try await Task.sleep(for: .seconds(phase.duration)) } catch { return }
             guard !Task.isCancelled else { return }
             completed()

@@ -41,10 +41,23 @@ import Testing
             tutorial.practiceVisible(.practiceRight, generation: generation, at: 0.31)
             send(tutorial, 4, 0, 0, -0.2); send(tutorial, 5, 1, 1, -0.1); send(tutorial, 6, 1, 1, 0)
         }
+        func finishPhase(_ tutorial: LeanTutorial, _ phase: HeartTutorialPhase, generation: UUID? = nil) {
+            let gen = generation ?? self.generation
+            if phase == .hurt {
+                let input = try! LaserReplayScript.load().freshRound(generation: gen).input
+                let context = BodyInputContext(sessionGeneration: gen, cameraGeometryRevision: 1,
+                    calibrationRevisions: Dictionary(uniqueKeysWithValues: roster.map { ($0, 1) }),
+                    cutovers: Dictionary(uniqueKeysWithValues: roster.map { ($0, .init(frameID: 0, capturedAt: 0)) }), isActive: true)
+                var training = try! HeartTrainingEncounter(configuration: try LaserReplayScript.load().configuration, context: context, roster: Set(roster))
+                for i in 0...20 { training.update(at: Double(i) / 10, eligible: true, context: context) }
+                training.finishFeedback(id: training.id, generation: gen)
+                tutorial.finishTrainingEncounter(training, generation: gen)
+            } else { tutorial.finishHeart(phase, generation: gen) }
+        }
         func finishHeart(_ tutorial: LeanTutorial) {
             for phase in HeartTutorialPhase.allCases {
                 tutorial.heartVisible(phase, visible: true, generation: generation)
-                tutorial.finishHeart(phase, generation: generation)
+                finishPhase(tutorial, phase)
             }
         }
         func finish(_ tutorial: LeanTutorial) { finishLean(tutorial); finishHeart(tutorial) }

@@ -86,8 +86,25 @@ final class GameSessionCoordinator {
               boundary > time else { return nil }
         return boundary - time
     }
-    /// Presentation hold BEFORE the initial countdown. It never pauses a started round or
-    /// admits evidence. The flow releases it after explicit Lean tutorial completion/skip.
+    /// Session-owned instructional round; ordinary gameplay remains uninitialized.
+    private(set) var heartTraining: HeartTrainingEncounter?
+    func updateHeartTraining(at now: Double, suspended: Bool) {
+        guard lifetime != nil, preRoundTutorialPending, phase == .awaitingSetup,
+              game == nil, let configuration, let context = inputContext else { return }
+        let eligible = !suspended && canStartLiveRound && setup?.hasConfirmedReliablePair == true
+        if heartTraining == nil, eligible {
+            heartTraining = try? HeartTrainingEncounter(configuration: configuration, context: context,
+                roster: Set(inputConfiguration.roster))
+        }
+        heartTraining?.update(at: now, eligible: eligible, context: context)
+    }
+    func finishHeartTrainingFeedback(id: UUID, generation: UUID) {
+        guard lifetime != nil, preRoundTutorialPending else { return }
+        heartTraining?.finishFeedback(id: id, generation: generation)
+    }
+    func retireHeartTraining() { heartTraining = nil }
+
+    /// Hold BEFORE the initial countdown; released only after the complete FTUE.
     private(set) var preRoundTutorialPending = false
     func setPreRoundTutorialPending(_ pending: Bool) {
         guard state == nil, phase == .idle || phase == .awaitingSetup else { return }
@@ -533,6 +550,7 @@ final class GameSessionCoordinator {
     }
 
     func stop(reason: LaserRoundOutcome = .aborted) async {
+        heartTraining = nil
         setupTask?.cancel(); setupTask = nil
         let hadLifetime = lifetime != nil
         wristDiamonds = nil
@@ -1377,6 +1395,7 @@ final class GameSessionCoordinator {
     }
 
     private func finishLiveInput() {
+        heartTraining = nil
         guard liveTerminationTask == nil else { return }
         setupTask?.cancel(); setupTask = nil
         wristDiamonds = nil
