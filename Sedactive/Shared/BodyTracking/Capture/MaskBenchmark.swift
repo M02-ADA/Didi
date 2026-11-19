@@ -313,14 +313,14 @@ nonisolated enum MaskBenchAssociation {
         guard let receipt else { return "no tracker result" }
         let roster = PersonSegmenter.linkedRoster(receipt)
         guard !roster.isEmpty else { return "no linked player" }
-        // The matcher returns every linked player or none, so P1's label stands for the whole result.
+        // P1's label stands for the result (Solo, and co-op P1). Other people may be in view.
         if productionLabel(pose: pose, receipt: receipt, labels: labels, extents: extents, labelAt: labelAt) != nil {
             return "matched"
         }
         // Explain the refusal, in the matcher's own order (diagnostic wording, not its code).
-        if labels.count != roster.count { return "people \(labels.count) ≠ players \(roster.count)" }
-        if pose.frame.candidates.count != roster.count || pose.observationCount != roster.count {
-            return "poses \(pose.frame.candidates.count) ≠ players \(roster.count)"
+        if labels.count < roster.count { return "people \(labels.count) < players \(roster.count)" }
+        if pose.frame.candidates.count < roster.count {
+            return "poses \(pose.frame.candidates.count) < players \(roster.count)"
         }
         for id in roster {
             let slot = receipt[id]
@@ -340,6 +340,7 @@ nonisolated enum MaskBenchAssociation {
                 support = label
             }
         }
+        if pose.frame.candidates.count > roster.count { return "shared with another person" }
         return "refused (source or context)"
     }
 }

@@ -112,6 +112,21 @@ The **producer** defines each contract type once. Consumers import it and do not
 
 ## G. Decisions
 
+- **Confirmed — task owner (Kevin, calibration implementation ownership), 18 November 2026:** standing calibration `StandingCollectionPolicyV1.2` and setup reliability.
+  - **Stability rule:** a player is stable once 10 valid samples within the existing 10 s span agree within the unchanged tolerance (max of 3 px and 2 mask rows) on head-top and both soles.
+    - The samples must come after the feet last moved (both soles elsewhere for two samples in a row).
+    - They must be at least 60 % of the valid samples across their span.
+    - The reference is the mean of the latest 10 agreeing samples. Acceptance still requires exactly 10.
+  - **What changes:** head-top jumps no longer restart the window. On the iPad, a still player's head-top jumped 5–8 rows in 35 of 126 samples, which restarted V1.1's window (progress 70 % → 20–30 %).
+  - **What still blocks calibration:** a real step, sustained movement and an evenly alternating estimate.
+  - **Unchanged:** freshness, identity and the landmark and anatomy checks.
+  - **Comparison:** [LaserHeist-Calibration-Algorithm-Comparison.md](LaserHeist-Calibration-Algorithm-Comparison.md) (option D, plus the movement-boundary and share refinements).
+  - **Setup:**
+    - every failed automatic attempt counts and pauses 2 s;
+    - after 3 attempts the players always get Try again;
+    - a progress drop names its reason;
+    - Vision's mask model is warmed once per body session, off the camera worker, so the first-use load never costs a calibration attempt.
+
 - **Confirmed — task owner, 16 November 2026:** Diamond Time lasts **20 active seconds** in Solo and Co-op. This supersedes the earlier ten-second duration. The live paw board supports six active diamonds initially, eight at ten seconds remaining, and ten at five seconds remaining.
 
 - **Confirmed — task owner (Kevin), 11 November 2026 (evening):** head-top estimate fix and setup framing.

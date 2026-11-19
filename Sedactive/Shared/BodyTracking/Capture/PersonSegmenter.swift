@@ -50,10 +50,12 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
       request.revision = VNGeneratePersonInstanceMaskRequestRevision1
       let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up, options: [:])
       try handler.perform([request])
-      // As many people as there are linked players: two in co-op, one in a DEBUG Solo Test.
+      // At least one instance per linked player (two in co-op, one in a DEBUG Solo Test). Other
+      // people may be in view: each linked player is found by their own torso (`associate`),
+      // and a bystander's instance never contributes a pixel to a player's measurements.
       let roster = Self.linkedRoster(association)
       guard !roster.isEmpty, let observations = request.results, observations.count == 1,
-        let observation = observations.first, observation.allInstances.count == roster.count,
+        let observation = observations.first, observation.allInstances.count >= roster.count,
         observation.allInstances.allSatisfy({ $0 > 0 && $0 <= 255 }) else {
         var refused = PersonMaskObservation(source: pose.source, quality: .insufficientEvidence, regions: [:],
           outputBytes: 0, serviceSeconds: CameraHostClock.now() - start)
@@ -127,12 +129,16 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
 
   /// Explicit provisional lower-left Vision -> top-row CV transform. Optical alignment remains
   /// UNVERIFIED; these diagnostic regions cannot become authoritative anatomy/calibration.
+  ///
+  /// Each linked player's instance is the one under all four of THEIR torso joints. Other people
+  /// (bystanders, outside the boxes or not) are allowed in view, but if another person's torso
+  /// lands on a player's instance, Vision has merged them: that player gets no region this frame
+  /// (refused as not separated), never a measurement that may include someone else.
   static func associate(pose: CameraPoseResult, association: PlayerTrackingSnapshot,
     labels: [UInt8], bounds: [[Int]], width: Int, height: Int,
     labelAt: (Int, Int) -> UInt8) -> [PlayerID: PersonMaskRegion] {
     let roster = linkedRoster(association)
-    guard !roster.isEmpty, pose.matchesSource, pose.observationCount == roster.count,
-      pose.frame.candidates.count == roster.count,
+    guard !roster.isEmpty, pose.matchesSource, pose.frame.candidates.count >= roster.count,
       let original = association.source, original.frameID == pose.source.frameID,
       original.capturedAt == pose.source.capturedAt, original.controlRevision == association.controlRevision,
       original.context.generation == pose.source.context.generation,
@@ -141,8 +147,19 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
       original.context.imageWidth == pose.frame.imageWidth,
       original.context.imageHeight == pose.frame.imageHeight,
       original.context.rotationAngle == pose.source.rotationAngle, !original.context.mirrored,
-      width > 0, height > 0, labels.count == roster.count, Set(labels).count == roster.count,
-      !labels.contains(0), bounds.count == roster.count, bounds.allSatisfy({ $0.count == 4 }) else { return [:] }
+      width > 0, height > 0, labels.count >= roster.count, Set(labels).count == labels.count,
+      !labels.contains(0), bounds.count == labels.count, bounds.allSatisfy({ $0.count == 4 }) else { return [:] }
+    func label(_ p: PoseJoint) -> UInt8? {
+      guard (try? p.validate()) != nil, p.confidence >= 0.5, p.x > 0, p.x < 1, p.y > 0, p.y < 1 else { return nil }
+      let x = Int(p.x * Double(width)), y = Int((1 - p.y) * Double(height))
+      guard (0..<width).contains(x), (0..<height).contains(y) else { return nil }
+      return labelAt(x, y)
+    }
+    let players = Set(roster.compactMap { association[$0].candidateID })
+    // Instances under any confident torso joint of someone who is not a linked player.
+    let foreign = Set(pose.frame.candidates.filter { !players.contains($0.candidateID) }.flatMap { c in
+      [BodyJoint.leftShoulder, .rightShoulder, .leftHip, .rightHip].compactMap { c.joints[$0].flatMap(label) }
+    }).subtracting([0])
     var output: [PlayerID: PersonMaskRegion] = [:]
     for id in roster {
       let slot = association[id]
@@ -162,6 +179,7 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
       }
       guard let support, let i = labels.firstIndex(of: support), bounds[i][1] >= bounds[i][0],
         bounds[i][3] >= bounds[i][2] else { return [:] }
+      guard !foreign.contains(support) else { continue } // merged with another person: not separated
       let b = bounds[i]
       output[id] = .init(candidateID: candidate.candidateID, label: support,
         minX: Double(b[0]) / Double(width), maxX: Double(b[1] + 1) / Double(width),
@@ -197,6 +215,8 @@ nonisolated struct MaskAssociationPlayerDiagnostic: Equatable, Sendable {
 nonisolated struct MaskAssociationDiagnostics: Equatable, Sendable {
   var global = "unobserved"
   var instanceCount: Int?
+  /// Pose candidates in view besides the linked players (bystanders), this frame.
+  var otherPeople: Int?
   var players: [PlayerID: MaskAssociationPlayerDiagnostic] = [:]
 }
 extension PersonSegmenter {
@@ -209,8 +229,8 @@ extension PersonSegmenter {
     // support. Diagnostics never turn a refused production association into success.
     guard width > 0, height > 0 else { return d }
     let original = association.source
-    guard !roster.isEmpty, pose.matchesSource, pose.observationCount == roster.count,
-      pose.frame.candidates.count == roster.count,
+    d.otherPeople = max(0, pose.frame.candidates.count - roster.count)
+    guard !roster.isEmpty, pose.matchesSource, pose.frame.candidates.count >= roster.count,
       original?.frameID == pose.source.frameID, original?.capturedAt == pose.source.capturedAt,
       original?.controlRevision == association.controlRevision,
       original?.context.generation == pose.source.context.generation,
@@ -219,8 +239,8 @@ extension PersonSegmenter {
       original?.context.imageWidth == pose.frame.imageWidth,
       original?.context.imageHeight == pose.frame.imageHeight,
       original?.context.rotationAngle == pose.source.rotationAngle, original?.context.mirrored == false,
-      labels.count == roster.count, Set(labels).count == roster.count, !labels.contains(0),
-      bounds.count == roster.count, bounds.allSatisfy({ $0.count == 4 }) else { return d }
+      labels.count >= roster.count, Set(labels).count == labels.count, !labels.contains(0),
+      bounds.count == labels.count, bounds.allSatisfy({ $0.count == 4 }) else { return d }
     d.global = result.count == roster.count ? "supported" : "pairAssociationRefused"
     for id in roster {
       let slot = association[id]
@@ -250,6 +270,7 @@ extension PersonSegmenter {
           let i = labels.firstIndex(of: support) {
           if bounds[i][1] < bounds[i][0] || bounds[i][3] < bounds[i][2] { player.reason = "invalidInstanceBounds" }
           else if result[id] != nil { player.reason = "supported" }
+          else if d.otherPeople ?? 0 > 0 { player.reason = "mergedWithAnotherPerson" }
         }
       } else { player.reason = "candidateMissing" }
       d.players[id] = player
@@ -263,3 +284,34 @@ extension PersonSegmenter {
   }
 }
 #endif
+
+extension PersonSegmenter {
+  /// Loads Vision's person-instance-mask model before a calibration needs it. The first request in
+  /// a process loads the model (iPad Pro 11" M5, 18 November 2026: 90.7 ms on an idle device,
+  /// 111 ms in the app, against a 4–12 ms warm request), and inside a calibration attempt that
+  /// first mask exceeds the 100 ms STOP/REVIEW budget and costs the attempt. One throwaway
+  /// request on a small blank image, on a background queue: it never blocks the camera worker or
+  /// the main actor, produces no evidence and changes no budget.
+  static func warmUp() {
+    DispatchQueue.global(qos: .userInitiated).async {
+      var buffer: CVPixelBuffer?
+      guard CVPixelBufferCreate(nil, 256, 144, kCVPixelFormatType_32BGRA,
+        [kCVPixelBufferIOSurfacePropertiesKey as String: [:]] as CFDictionary, &buffer) == kCVReturnSuccess,
+        let buffer else { return }
+      CVPixelBufferLockBaseAddress(buffer, [])
+      if let base = CVPixelBufferGetBaseAddress(buffer) { memset(base, 0x80, CVPixelBufferGetDataSize(buffer)) }
+      CVPixelBufferUnlockBaseAddress(buffer, [])
+      #if DEBUG
+      let start = CameraHostClock.now()
+      #endif
+      autoreleasepool {
+        let request = VNGeneratePersonInstanceMaskRequest()
+        request.revision = VNGeneratePersonInstanceMaskRequestRevision1
+        try? VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up, options: [:]).perform([request])
+      }
+      #if DEBUG
+      print(String(format: "[LaserSetupTiming] Vision mask warm-up %.1f ms (off the camera worker)", (CameraHostClock.now() - start) * 1000))
+      #endif
+    }
+  }
+}

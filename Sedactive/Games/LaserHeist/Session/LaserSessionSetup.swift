@@ -21,6 +21,10 @@ protocol LaserSetupControlling: AnyObject {
     var debugPeople: [(x: Double, core: [Double])] { get }
     var debugVision: String { get }
     var debugMask: VisionPreviewMaskRead? { get }
+    /// Each person in view: torso X, box (or ignored as outside), and tracker slot.
+    var debugZones: String { get }
+    /// Vision pose results completed so far on the retained pipeline, and the age of the latest.
+    var debugPoseFlow: (completed: UInt64, latestAge: Double?) { get }
     #endif
 }
 
@@ -30,6 +34,8 @@ extension LaserSetupControlling {
     var debugPeople: [(x: Double, core: [Double])] { [] }
     var debugVision: String { "" }
     var debugMask: VisionPreviewMaskRead? { nil }
+    var debugZones: String { "" }
+    var debugPoseFlow: (completed: UInt64, latestAge: Double?) { (0, nil) }
     #endif
 }
 
@@ -37,7 +43,9 @@ extension LaserSetupControlling {
 @MainActor
 final class LaserLiveSetupControls: LaserSetupControlling {
     let service: BodyInputService
-    init(service: BodyInputService) { self.service = service }
+    /// A DEBUG Solo session: one centred box instead of two.
+    let solo: Bool
+    init(service: BodyInputService, solo: Bool = false) { self.service = service; self.solo = solo }
     var provider: any BodyInputProviding { service }
     var tracking: CameraTrackingDiagnostics { service.camera.frames.tracking.snapshot }
     var calibration: StandingCalibrationProgress { service.calibrationProgress }
@@ -55,10 +63,18 @@ final class LaserLiveSetupControls: LaserSetupControlling {
               latest.source.context == service.camera.state.context else { return nil }
         let age = CameraHostClock.now() - latest.source.capturedAt
         guard age >= 0, age < LiveAvatarPresenter.maximumPoseAge * 2 else { return 0 }
-        return min(2, latest.frame.candidates.count)
+        // People standing in a box only: a bystander outside the boxes is not a player in view.
+        let placed = latest.frame.candidates.filter { candidate in
+            PlayerAcquisitionZones.torsoCenterX(candidate).flatMap { PlayerAcquisitionZones.player(atX: $0, solo: solo) } != nil
+        }
+        return min(2, placed.count)
     }
     #if DEBUG
     var debugMask: VisionPreviewMaskRead? { service.camera.frames.tracking.readVisionPreviewMask() }
+    var debugPoseFlow: (completed: UInt64, latestAge: Double?) {
+        let snapshot = service.camera.frames.poses.snapshot
+        return (snapshot.statistics.completed, snapshot.latest.map { CameraHostClock.now() - $0.source.capturedAt })
+    }
     /// Vision's raw body count and the age of its latest result (DEBUG setup log).
     var debugVision: String {
         guard let latest = service.camera.frames.poses.snapshot.latest else { return "vision: no result yet" }
@@ -67,6 +83,19 @@ final class LaserLiveSetupControls: LaserSetupControlling {
                       service.camera.frames.poses.snapshot.statistics.completed)
     }
     /// Raw pose candidates now: mean x and shoulder/hip confidences (DEBUG setup log).
+    /// Each person Vision sees now: torso X, the box it falls in (or ignored), the tracker slot.
+    var debugZones: String {
+        guard let latest = service.camera.frames.poses.snapshot.latest else { return "no pose result" }
+        let slots = service.camera.frames.tracking.snapshot.latest
+        return latest.frame.candidates.map { c in
+            let x = PlayerAcquisitionZones.torsoCenterX(c)
+            let zone = x.flatMap { PlayerAcquisitionZones.player(atX: $0, solo: solo) }
+            let slot = PlayerID.allCases.first { slots?[$0].candidateID == c.candidateID }
+            return "#\(c.candidateID) x \(x.map { String(format: "%.2f", $0) } ?? "-") "
+                + (zone.map { "in \($0 == .player1 ? "P1" : "P2") box" } ?? "outside (ignored)")
+                + (slot.map { " = \($0 == .player1 ? "P1" : "P2")" } ?? "")
+        }.joined(separator: " | ")
+    }
     var debugPeople: [(x: Double, core: [Double])] {
         guard let latest = service.camera.frames.poses.snapshot.latest else { return [] }
         return latest.frame.candidates.map { c in

@@ -89,11 +89,11 @@ final class LaserInputFlow {
             let session = try (isSolo ? makeSoloSession! : makeLiveSession)()
             self.session = session
             #if DEBUG
-            print("[LaserSetupRestart] flow: starting session")
+            print("[LaserSetupRestart] flow: starting session \(Self.tag(session))\(isSolo ? " (solo)" : "")")
             #endif
             try await session.start()
             #if DEBUG
-            print("[LaserSetupRestart] flow: session started")
+            print("[LaserSetupRestart] flow: session \(Self.tag(session)) started (\(session.phase))")
             #endif
             guard operation == token, route == .liveSetup else { return }
         } catch {
@@ -112,11 +112,11 @@ final class LaserInputFlow {
         let token = UUID()
         operation = token
         #if DEBUG
-        print("[LaserSetupRestart] flow: stopping session")
+        print("[LaserSetupRestart] flow: stopping session \(Self.tag(session)) (phase \(String(describing: session?.phase)), round \(session?.summary != nil ? "ended" : session?.state != nil ? "running" : "not started"))")
         #endif
         await session?.stop()
         #if DEBUG
-        print("[LaserSetupRestart] flow: session stopped")
+        print("[LaserSetupRestart] flow: session \(Self.tag(session)) stopped")
         #endif
         guard operation == token else { return }
         session = nil
@@ -131,6 +131,9 @@ final class LaserInputFlow {
     func retryLiveSetup() async {
         guard route == .liveSetup, !isStarting, !isClosing else { return }
         let solo = isSolo // Retry keeps the chosen mode; leaving resets it on the next start.
+        #if DEBUG
+        print("[LaserSetupRestart] flow: retry requested (Play again / Restart setup) from session \(Self.tag(session))")
+        #endif
         await closeLiveSetup()
         guard canStartLive else { return }
         await startLiveSetup(solo: solo)
@@ -178,6 +181,13 @@ final class LaserInputFlow {
         if route == .liveSetup { await closeLiveSetup() }
         if route == .diagnostics { await closeDiagnostics() }
     }
+
+    #if DEBUG
+    /// Short session identity for DEBUG lifecycle lines (the input generation's first 8 characters).
+    private static func tag(_ session: GameSessionCoordinator?) -> String {
+        session.map { String($0.inputConfiguration.sessionGeneration.uuidString.prefix(8)) } ?? "none"
+    }
+    #endif
 
     private static func explain(_ error: any Error) -> String {
         switch error {

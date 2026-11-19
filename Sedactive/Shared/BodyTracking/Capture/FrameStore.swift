@@ -365,6 +365,10 @@ actor CameraCopySink: CameraFrameSink {
   private var detector: (any CameraPoseDetecting)?
   private var segmenter: (any PersonMaskDetecting)?
   private let makeSegmenter: (@Sendable () -> any PersonMaskDetecting)?
+  /// Production composition only: warm Vision's mask model once per body session, before any
+  /// calibration mask (`PersonSegmenter.warmUp`). Test sinks never start background Vision work.
+  private let warmsSegmentation: Bool
+  private var warmed = false
   #if DEBUG
   // DEBUG-ONLY MASK FEASIBILITY SPIKE (Kevin, 14 Nov 2026 — needs Edo's review): nil unless the app
   // was launched with `-maskBench`. See `MaskBenchmark.swift`.
@@ -373,8 +377,9 @@ actor CameraCopySink: CameraFrameSink {
   init(metrics: CameraCaptureMetrics? = nil, poses: CameraPoseResults? = nil,
     tracking: CameraTrackingGate? = nil,
     makeDetector: @escaping @Sendable () -> any CameraPoseDetecting = { PoseEstimator() },
-    makeSegmenter: (@Sendable () -> any PersonMaskDetecting)? = nil) {
+    makeSegmenter: (@Sendable () -> any PersonMaskDetecting)? = nil, warmsSegmentation: Bool = false) {
     self.metrics = metrics
+    self.warmsSegmentation = warmsSegmentation
     self.poses = poses
     self.tracking = tracking
     if let tracking { motion = try? MotionEngine(policy: tracking.policy) }
@@ -396,6 +401,10 @@ actor CameraCopySink: CameraFrameSink {
     }
     guard let ticket = poses.start(frame.metadata) else { return }
     if detector == nil { detector = makeDetector() }
+    if warmsSegmentation, !warmed, tracking != nil, makeSegmenter == nil {
+      warmed = true // first frame of this body session: well before the upright prompt ends
+      PersonSegmenter.warmUp()
+    }
     #if DEBUG
     let benchmarkWorkerStart = CameraHostClock.now()
     #endif
@@ -521,6 +530,7 @@ actor CameraCopySink: CameraFrameSink {
     workspace = nil
     detector = nil
     segmenter = nil
+    warmed = false
     metrics?.workspace(bytes: 0)
   }
 }
