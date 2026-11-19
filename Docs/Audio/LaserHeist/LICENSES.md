@@ -48,4 +48,4 @@ These edits supersede the corresponding original cuts in [GAME-AUDIO.md](GAME-AU
 
 Both pickup clips come from separate passages in the original source and alternate in playback order. The Alphix source was obtained from the official Pixabay page player.
 
-The vault uses one Clock Ticking Down tick per displayed second (0.055–0.19 s, −4 dBFS). Diamond Time uses Arcade Countdown throughout. Digits 5–4–3 use the short beep (0.90–1.26 s, −7 dBFS), and digits 2–1 each use the long beep (2.66–3.60 s, −5 dBFS). The new sources came from the official Pixabay players.
+The vault uses one Clock Ticking Down tick per displayed second (0.055–0.19 s, −4 dBFS). Diamond Time uses Arcade Countdown throughout. Digits 5–4–3 use the short beep (0.90–1.26 s, −7 dBFS), and digits 2–1 each use the long beep (2.66–3.60 s, −3 dBFS). The new sources came from the official Pixabay players.

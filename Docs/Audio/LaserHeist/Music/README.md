@@ -26,7 +26,7 @@ Both source files are stereo MP3s at 44.1 kHz. The durations above are estimates
 
 ## Diamond Time
 
-Silky Spy stops when the Game Bonus sting starts. The entry sequence then has no background music. Slick Spy by Sonican plays once the team is inside the final vault and the sting has finished. It fades in over 0.35 seconds at the gameplay music gain. The results screen fades it out with the existing music transition.
+Silky Spy stops when the Game Bonus sting starts. The entry sequence then has no background music. Slick Spy by Sonican plays once the team is inside the final vault and the sting has finished. It fades in over 0.35 seconds at a gain about 4 dB above regular gameplay music. On digits 2 and 1, music and diamond pickup cues drop to 40% and 60% of their respective levels while the long beep plays. The results screen fades it out with the existing music transition.
 
 The app bundles the original MP3 from the official page player. Pixabay lists it under the Content License and shows a Content ID badge. [Slick Spy, Pixabay #425009](https://pixabay.com/music/crime-scene-slick-spy-60-seconds-secret-mission-music-425009/)
 

@@ -202,8 +202,29 @@ struct AudioServiceTests {
         #expect(audio.playCount[.diamondTimeTick] == 3)
         #expect(audio.playCount[.diamondTimeUrgentTick] == 2)
         #expect(audio.playCount[.vaultWarning] == nil)
-        #expect(music.volume == normalVolume * AudioService.duckedShare)
+        #expect(music.volume == normalVolume * 0.40)
         #expect(music.fades.last?.1 == 0.04)
+    }
+
+    @Test func diamondTimeMusicIsLouderAndUrgentTicksTakePriority() throws {
+        let harness = Harness()
+        let audio = service(harness)
+        audio.setMusic(.mission)
+        let mission = try #require(harness.made.first { $0.name == "lh-music-silky-spy" })
+        audio.setMusic(.diamondTime)
+        let bonus = try #require(harness.made.first { $0.name == "lh-music-slick-spy" })
+        #expect(bonus.volume > audio.musicVolume * 0.5)
+        #expect(bonus.volume == audio.musicVolume * 0.79)
+        #expect(mission.volume == 0)
+
+        audio.play(.diamondCollect)
+        let pickup = try #require(harness.made.first { $0.name == "lh-diamond-collect-1" })
+        audio.playDiamondTimeTick(from: 3, to: 2)
+        #expect(pickup.volume == audio.effectsVolume * 0.60)
+        #expect(bonus.volume == audio.musicVolume * 0.79 * 0.40)
+        audio.play(.diamondChainRise)
+        let chain = try #require(harness.made.first { $0.name == "lh-diamond-chain-rise" })
+        #expect(chain.volume == audio.effectsVolume * 0.60)
     }
 
     @Test func selectedMusicTracksAreBundled() {

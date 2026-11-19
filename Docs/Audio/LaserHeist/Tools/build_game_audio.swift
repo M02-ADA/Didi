@@ -94,7 +94,7 @@ write(level(fade(cut(load("safe-open-close-443345.mp3"), 0.06, 0.58), out: 0.08)
 write(level(fade(cut(load("clock-ticking-down-376897.mp3"), 0.055, 0.19), in: 0.001, out: 0.025), peakDB: -4), "vault-warning")
 let arcadeCountdown = load("arcade-countdown-7007.mp3")
 write(level(fade(cut(arcadeCountdown, 0.90, 1.26), out: 0.045), peakDB: -7), "diamond-time-tick")
-write(level(fade(cut(arcadeCountdown, 2.66, 3.60), out: 0.045), peakDB: -5), "diamond-time-urgent-tick")
+write(level(fade(cut(arcadeCountdown, 2.66, 3.60), out: 0.045), peakDB: -3), "diamond-time-urgent-tick")
 write(level(fade(cut(load("game-bonus-144751.mp3"), 0.14, 1.45), out: 0.25), peakDB: -8), "diamond-time")
 
 let diamond = fade(cut(load("diamond-found-190255.mp3"), 0, 0.55), out: 0.25)

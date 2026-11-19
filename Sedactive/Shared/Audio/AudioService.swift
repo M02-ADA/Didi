@@ -89,8 +89,13 @@ enum MusicMood: Hashable {
     case diamondTimeEntry
     case diamondTime
 
-    // Leave room for gameplay cues under the two mission tracks.
-    var gain: Float { self == .menu ? 1 : 0.5 }
+    var gain: Float {
+        switch self {
+        case .menu: 1
+        case .diamondTime: 0.79 // About 4 dB above the mission music.
+        case .mission, .diamondTimeEntry: 0.5
+        }
+    }
 
     var resource: String? {
         switch self {
@@ -168,6 +173,7 @@ final class AudioService {
     private var musicPlayers: [MusicMood: any SoundPlaying] = [:]
     private var musicSuspended = false
     private var pickupsDuckedUntil: TimeInterval = 0
+    private var urgentCountdownUntil: TimeInterval = 0
     private var duckedUntil: TimeInterval = 0
     private var duckTask: Task<Void, Never>?
     private var stopTask: Task<Void, Never>?
@@ -181,6 +187,8 @@ final class AudioService {
     /// Music level while a sting plays.
     static let duckedShare: Float = 0.35
     private static let countdownPickupShare: Float = 0.45
+    private static let urgentMusicShare: Float = 0.40
+    private static let urgentPickupShare: Float = 0.60
 
     /// - Parameters:
     ///   - makePlayer: loads a bundled resource by name, or `nil` if missing.
@@ -224,17 +232,21 @@ final class AudioService {
         lastPlayed[cue] = time
         activateSession()
         player.currentTime = 0
-        let pickupShare: Float = time < pickupsDuckedUntil && SoundCue.diamondPickupCues.contains(cue)
-            ? Self.countdownPickupShare : 1
+        let pickupShare = SoundCue.diamondPickupCues.contains(cue) ? diamondPickupShare(at: time) : 1
         player.volume = effectsVolume * cue.gain * pickupShare
         let started = player.play()
         playCount[cue, default: 0] += 1
         Self.log.debug("play \(cue.rawValue, privacy: .public) started=\(started)")
         if started, cue.isCountdownTick {
-            pickupsDuckedUntil = max(pickupsDuckedUntil, time + player.duration)
+            let deadline = time + player.duration
+            pickupsDuckedUntil = max(pickupsDuckedUntil, deadline)
+            if cue == .diamondTimeUrgentTick {
+                urgentCountdownUntil = max(urgentCountdownUntil, deadline)
+            }
+            let share = diamondPickupShare(at: time)
             for pickup in SoundCue.diamondPickupCues {
                 for active in pools[pickup] ?? [] where active.isPlaying {
-                    active.setVolume(effectsVolume * pickup.gain * Self.countdownPickupShare, fadeDuration: 0.02)
+                    active.setVolume(effectsVolume * pickup.gain * share, fadeDuration: 0.02)
                 }
             }
         }
@@ -242,6 +254,11 @@ final class AudioService {
             let attack: TimeInterval = cue == .laserClear || cue.isCountdownTick ? 0.04 : 0.12
             duck(for: player.duration, attack: attack)
         }
+    }
+
+    private func diamondPickupShare(at time: TimeInterval) -> Float {
+        if time < urgentCountdownUntil { return Self.urgentPickupShare }
+        return time < pickupsDuckedUntil ? Self.countdownPickupShare : 1
     }
 
     /// Sounds the newly displayed digit during Diamond Time's final five seconds.
@@ -254,6 +271,7 @@ final class AudioService {
     /// Stops every effect, e.g. when a round's scene is torn down.
     func stopEffects() {
         pickupsDuckedUntil = 0
+        urgentCountdownUntil = 0
         for player in pools.values.flatMap({ $0 }) where player.isPlaying { player.stop() }
     }
 
@@ -346,7 +364,8 @@ final class AudioService {
 
     private func applyMusicVolume(fade: TimeInterval) {
         guard let wantedMusic, let player = musicPlayers[wantedMusic] else { return }
-        let duck: Float = now() < duckedUntil ? Self.duckedShare : 1
+        let time = now()
+        let duck = time < urgentCountdownUntil ? Self.urgentMusicShare : (time < duckedUntil ? Self.duckedShare : 1)
         player.setVolume(musicVolume * wantedMusic.gain * duck, fadeDuration: fade)
     }
 
@@ -358,12 +377,18 @@ final class AudioService {
     private func duck(for duration: TimeInterval, attack: TimeInterval) {
         let start = now()
         let deadline = start + duration
-        guard deadline > duckedUntil else { return }
-        duckedUntil = deadline
+        duckedUntil = max(duckedUntil, deadline)
         applyMusicVolume(fade: attack)
         duckTask?.cancel()
+        let urgentEnd = urgentCountdownUntil
+        let duckEnd = duckedUntil
         duckTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(duration))
+            if urgentEnd > start, urgentEnd < duckEnd {
+                try? await Task.sleep(for: .seconds(urgentEnd - start))
+                guard !Task.isCancelled else { return }
+                self?.applyMusicVolume(fade: 0.12)
+            }
+            try? await Task.sleep(for: .seconds(duckEnd - max(start, urgentEnd)))
             guard !Task.isCancelled else { return }
             self?.applyMusicVolume(fade: 0.5)
         }
