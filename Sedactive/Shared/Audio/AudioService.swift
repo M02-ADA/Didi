@@ -220,6 +220,10 @@ final class AudioService {
     /// Plays a cue once, unless effects are off, the same cue just played, or
     /// its file is missing (then nothing happens; never a crash).
     func play(_ cue: SoundCue) {
+        play(cue, urgentCountdown: false)
+    }
+
+    private func play(_ cue: SoundCue, urgentCountdown: Bool) {
         if cue == .diamondTime, mood == .mission { setMusic(.diamondTimeEntry, fade: 0) }
         guard effectsEnabled else { return }
         let time = now()
@@ -240,7 +244,7 @@ final class AudioService {
         if started, cue.isCountdownTick {
             let deadline = time + player.duration
             pickupsDuckedUntil = max(pickupsDuckedUntil, deadline)
-            if cue == .diamondTimeUrgentTick {
+            if urgentCountdown {
                 urgentCountdownUntil = max(urgentCountdownUntil, deadline)
             }
             let share = diamondPickupShare(at: time)
@@ -265,7 +269,7 @@ final class AudioService {
     func playDiamondTimeTick(from previous: Int?, to current: Int?) {
         guard let current, (1...5).contains(current),
               previous.map({ current < $0 }) ?? true else { return }
-        play(current <= 2 ? .diamondTimeUrgentTick : .diamondTimeTick)
+        play(current == 1 ? .diamondTimeUrgentTick : .diamondTimeTick, urgentCountdown: current <= 2)
     }
 
     /// Stops every effect, e.g. when a round's scene is torn down.
