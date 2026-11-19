@@ -36,9 +36,10 @@ import RealityKitContent
 /// - Tracking loss: no stale input is kept. The mascot's shown pose relaxes,
 ///   and while the player is unavailable the board eases back to level.
 /// - Verdict reactions (`react(_:)`, `HoverboardReaction`): each board's own energy system
-///   answers its own player's CLEAR (a gold charge round the rim ring) or HIT (a coral and pink
-///   overload), through the board's materials and a rim ribbon on the ring itself. Only HIT adds a
-///   brief, small shudder roll; nothing moves sideways and the deck never rises above the soles.
+///   answers its own player's CLEAR (a gold power surge) or HIT (a red electrical overload)
+///   through its materials, rim, field, arcs and sparks, with a short cosmetic lift, pitch, roll
+///   and yaw (`reactionLift`). The mascot rides the same lift (`RobotAvatarLayer`), so the feet
+///   stay planted on the deck; nothing moves sideways and nothing judged moves.
 @MainActor
 final class PlayerHoverboard {
     /// The asset's name in the Reality Composer Pro package.
@@ -145,7 +146,7 @@ final class PlayerHoverboard {
 
         /// Roll about the board's long axis: a lean to screen right dips the right side.
         var roll: Float { -bank + reaction.roll }
-        var pitch: Float { pitchAmplitude * sin(pitchPhase) }
+        var pitch: Float { pitchAmplitude * sin(pitchPhase) + reaction.pitch }
         /// How far the deck sits below the soles' plane (≤ 0): the hover, the
         /// push-off, and whatever a bank or pitch would otherwise raise under a foot.
         var height: Float {
@@ -196,6 +197,11 @@ final class PlayerHoverboard {
         contactShadow.position = [0, 0.003, 0]
         model.addChild(contactShadow)
         reactionFX = HoverboardReactionFX(root: root, model: model)
+        // Translucent layers in a fixed order (the floor's light first): the field, the expanding
+        // ring and the arcs' glow composite over it instead of hiding it with their depth.
+        let order = ModelSortGroup()
+        underglow.components.set(ModelSortGroupComponent(group: order, order: 0))
+        reactionFX.sort(in: order)
         root.components.set(HoverboardComponent(board: self))
         apply()
     }
@@ -218,9 +224,18 @@ final class PlayerHoverboard {
         apply()
     }
 
+    #if DEBUG
+    /// DEBUG review (`-hitReactionPreview … <seconds>`): every reaction shows exactly this age, so a
+    /// screenshot can hold any moment of it. Never set outside that preview.
+    static var debugHeldAge: Double?
+    #endif
+
     private func advanceReaction(dt: Float) {
         guard var active = activeReaction else { return }
         active.age += Double(max(0, min(dt, 0.1)))
+        #if DEBUG
+        if let held = Self.debugHeldAge { active.age = min(held, active.kind.duration - 1e-3) }
+        #endif
         if active.age >= active.kind.duration {
             activeReaction = nil
             motion.reaction = HoverboardReaction.Pose()
@@ -238,10 +253,15 @@ final class PlayerHoverboard {
         apply()
     }
 
+    /// The verdict reaction's cosmetic lift this frame (metres; 0 at rest). The mascot standing on
+    /// this board is raised by the same amount, so it stays planted on the deck.
+    var reactionLift: Float { motion.reaction.lift }
+
     private func apply() {
         model.transform = Transform(scale: SIMD3(repeating: Self.scale),
-                                    rotation: simd_quatf(angle: motion.roll, axis: [0, 0, 1]) * simd_quatf(angle: motion.pitch, axis: [1, 0, 0]),
-                                    translation: [motion.offsetX, motion.height, 0])
+                                    rotation: simd_quatf(angle: motion.reaction.yaw, axis: [0, 1, 0])
+                                        * simd_quatf(angle: motion.roll, axis: [0, 0, 1]) * simd_quatf(angle: motion.pitch, axis: [1, 0, 0]),
+                                    translation: [motion.offsetX, motion.height + motion.reaction.lift, 0])
         reactionFX?.anchor.transform = model.transform
         underglow.position.x = motion.offsetX
         var floorLight: (tint: HoverboardReaction?, scale: Float) = (nil, 1)

@@ -269,7 +269,7 @@ struct PlayerHoverboardTests {
 
     // MARK: Verdict reactions
 
-    @Test("CLEAR and HIT light the board at once, never move it sideways or lift the deck, and end at rest",
+    @Test("CLEAR and HIT light the board at once, move it within bounds (never sideways, the deck under the rider's soles), and end at rest",
           arguments: [HoverboardReaction.clear, .hit])
     func verdictReactionsStayUnderTheFeet(kind: HoverboardReaction) {
         #expect(kind.duration <= 0.75, "one short beat")
@@ -277,13 +277,25 @@ struct PlayerHoverboardTests {
         let first = kind.pose(at: 0, reduceMotion: false)
         #expect(first.core.energy == 1 && first.core.heat == 1, "the core ignites white-hot")
         #expect(kind.segment(23, at: 0, reduceMotion: false).energy > 0.5, "the ring's front segment is lit")
-        // Folded into the board's motion, the deck stays at or below the soles every frame.
+        // Folded into the board's motion, the deck stays at or below the soles every frame (the rider
+        // rides the same lift, so the soles' plane moves with it), within a bounded, short motion.
         var motion = PlayerHoverboard.Motion()
+        var lowest: Float = 0, highest: Float = 0
         for tau in stride(from: 0.0, through: kind.duration + 0.1, by: 1.0 / 120) {
             motion.reaction = kind.pose(at: tau, reduceMotion: false)
             let rise = PlayerHoverboard.footHalfSpan * sin(abs(motion.roll)) + PlayerHoverboard.footHalfLength * sin(abs(motion.pitch))
             #expect(motion.height + rise <= 1e-6)
-            #expect(abs(motion.reaction.roll) <= 0.02, "at most a small shudder, never a shake")
+            #expect(abs(motion.reaction.lift) <= HoverboardReaction.maximumLift)
+            #expect(abs(motion.reaction.roll) <= 0.09 && abs(motion.reaction.yaw) <= 0.04 && abs(motion.reaction.pitch) <= 0.05,
+                    "a shudder, never a tumble")
+            lowest = min(lowest, motion.reaction.lift); highest = max(highest, motion.reaction.lift)
+        }
+        if kind == .clear {
+            #expect(highest > 0.025, "a buoyant surge of hover power")
+            #expect(kind.pose(at: 0.05, reduceMotion: false).lift < 0, "a crouch as the charge gathers")
+        } else {
+            #expect(kind.pose(at: 0.04, reduceMotion: false).lift < -0.02, "a hard drop on impact")
+            #expect(kind.pose(at: 0.45, reduceMotion: false).lift < -0.015, "the hover sags in the failure")
         }
         // Nothing left after the beat.
         #expect(kind.pose(at: kind.duration, reduceMotion: false) == HoverboardReaction.Pose())
@@ -293,7 +305,9 @@ struct PlayerHoverboardTests {
         for tau in stride(from: 0.0, through: kind.duration, by: 0.01) {
             let calm = kind.pose(at: tau, reduceMotion: true)
             let ring = (0..<HoverboardReaction.segments).map { kind.segment($0, at: tau, reduceMotion: true) }
-            #expect(calm.roll == 0 && calm.bars.energy >= 0 && Set(ring.map(\.energy)).count == 1)
+            #expect(calm.roll == 0 && calm.lift == 0 && calm.pitch == 0 && calm.yaw == 0)
+            #expect(calm.bars.energy >= 0 && Set(ring.map(\.energy)).count == 1)
+            #expect(kind.pulse(at: tau, reduceMotion: true) == nil && kind.fieldScale(at: tau, reduceMotion: true) == 1)
             if calm.core.energy < last - 1e-6 { falling = true }
             #expect(!falling || calm.core.energy <= last + 1e-6, "no flicker")
             last = calm.core.energy
@@ -314,10 +328,10 @@ struct PlayerHoverboardTests {
         #expect((0..<HoverboardReaction.segments).allSatisfy { clear.segment($0, at: 0.22, reduceMotion: false).energy == 1 })
         let peak = clear.pose(at: 0.22, reduceMotion: false)
         #expect(peak.circuit.energy == 1 && peak.bars.energy == 1 && peak.plates.energy == 1 && peak.vents.energy == 1)
-        // CLEAR never flickers or dims below idle, and never moves the board.
+        // CLEAR never flickers or dims below idle, and never shakes the board (only a small settling sway).
         for tau in stride(from: 0.0, to: clear.duration, by: 1.0 / 120) {
             let p = clear.pose(at: tau, reduceMotion: false)
-            #expect(p.roll == 0 && [p.core, p.bars, p.vents, p.circuit, p.plates].allSatisfy { $0.energy >= 0 })
+            #expect(abs(p.roll) <= 0.02 && p.yaw == 0 && [p.core, p.bars, p.vents, p.circuit, p.plates, p.hull].allSatisfy { $0.energy >= 0 })
         }
         // HIT: everything surges on frame one, then the ring's segments disagree (a disrupted pattern).
         let hit = HoverboardReaction.hit
@@ -342,12 +356,20 @@ struct PlayerHoverboardTests {
     @Test("HIT is an electrical shock: arcs on the rim, red-dominant ZAPPED! colours; CLEAR has none and stays gold")
     func hitIsElectricAndRed() {
         let hit = HoverboardReaction.hit, clear = HoverboardReaction.clear
-        // Four discharges on the shock's first frame, a crackle, a dead gap, a secondary pair, then nothing.
+        // Every site on the impact (rim and both end caps), a crackle, a dead gap, the secondary
+        // discharge (both end caps and a rim site), then only short single sputters, then nothing.
         #expect(hit.arcs(at: 0, reduceMotion: false).count == HoverboardReaction.arcSites)
+        for tau in stride(from: 0.12, to: 0.21, by: 0.01) { #expect(hit.arcs(at: tau, reduceMotion: false).count >= 2, "crackling") }
         #expect(hit.arcs(at: 0.22, reduceMotion: false).isEmpty)
         let secondary = hit.arcs(at: HoverboardReaction.dischargeStart + 0.02, reduceMotion: false)
-        #expect(secondary.count == 2 && secondary.allSatisfy(\.secondary))
-        for tau in stride(from: HoverboardReaction.dischargeEnd, to: 1, by: 0.01) { #expect(hit.arcs(at: tau, reduceMotion: false).isEmpty) }
+        #expect(secondary.count == 3 && secondary.allSatisfy(\.secondary) && Set(secondary.map(\.site)).isSuperset(of: [4, 5]))
+        var sputters = 0
+        for tau in stride(from: HoverboardReaction.dischargeEnd, to: 1, by: 0.01) {
+            let arcs = hit.arcs(at: tau, reduceMotion: false)
+            #expect(arcs.count <= 1 && arcs.allSatisfy { !$0.secondary && $0.site >= 4 } && (arcs.isEmpty || tau < 0.5))
+            sputters += arcs.count
+        }
+        #expect(sputters > 0, "residual sparking through the failure")
         for tau in stride(from: 0.0, to: 1, by: 0.01) {
             #expect(clear.arcs(at: tau, reduceMotion: false).isEmpty && hit.arcs(at: tau, reduceMotion: true).isEmpty)
         }
@@ -371,17 +393,75 @@ struct PlayerHoverboardTests {
         #expect(clear.segment(7, at: HoverboardReaction.flashEnd + 0.01, reduceMotion: false).tone == 1)
     }
 
-    @Test("The discharges and the energy field are built on the board's own rim")
+    @Test("The discharges, field, ring and sparks are built on the board's own structure")
     func dischargesStartAndEndOnTheRim() throws {
         for site in 0..<HoverboardReaction.arcSites {
             for variant in 0..<HoverboardReaction.arcVariants {
                 let bounds = HoverboardReactionFX.arcMeshes[site][variant].bounds
-                #expect(bounds.min.y > -0.01 && bounds.max.y < 0.11, "over the rim, below the knees")
-                #expect(abs(bounds.max.x) < 0.61 && abs(bounds.min.x) < 0.61 && bounds.max.z < 0.26, "hugging the outline")
+                if site < 4 {
+                    #expect(bounds.min.y > -0.04 && bounds.max.y < 0.2, "rim arcs: over the rim, below the knees")
+                } else {
+                    #expect(bounds.min.y > -0.14 && bounds.max.y < 0.12, "end-cap bolts: from the thrusters up to the rim")
+                    #expect(abs(bounds.center.x) > 0.5, "on its end cap")
+                }
+                #expect(abs(bounds.max.x) < 0.72 && abs(bounds.min.x) < 0.72 && bounds.max.z < 0.36, "never far off the board")
             }
+            let spark = RimOutline.sparkSite(site)
+            #expect(abs(spark.x) < 0.62 && spark.y > -0.12 && spark.y < 0.05, "sparks leave the board itself")
         }
         let field = HoverboardReactionFX.fieldMesh.bounds
         #expect(field.min.y > 0.01 && field.max.y < 0.1 && field.max.x < 0.585)
+        let ring = HoverboardReactionFX.pulseMesh.bounds
+        #expect(ring.max.x > 0.58 && ring.max.x < 0.7 && ring.min.y > 0.01 && ring.max.y < 0.06, "a band just outside the rim")
+    }
+
+    @Test("The peaks change the board's outline: an expanding ring and a taller field; sparks at the beats")
+    func peaksExpandBeyondTheBoard() {
+        let clear = HoverboardReaction.clear, hit = HoverboardReaction.hit
+        // CLEAR: no ring before the burst; from it, one ring that grows as it fades.
+        #expect(clear.pulse(at: HoverboardReaction.meet - 0.01, reduceMotion: false) == nil)
+        var lastScale: Float = 0, lastLevel = 9
+        for tau in stride(from: HoverboardReaction.meet, to: HoverboardReaction.meet + 0.29, by: 0.01) {
+            guard let ring = clear.pulse(at: tau, reduceMotion: false) else { continue }
+            #expect(ring.scale >= lastScale && ring.level <= lastLevel)
+            lastScale = ring.scale; lastLevel = ring.level
+        }
+        #expect(lastScale > 1.4, "well beyond the board")
+        #expect(clear.fieldScale(at: HoverboardReaction.meet + 0.04, reduceMotion: false) > 2)
+        // HIT: a white-hot shock ring on the first frame, then red.
+        #expect(hit.pulse(at: 0, reduceMotion: false)?.tone == 3 && hit.pulse(at: 0.06, reduceMotion: false)?.tone == 0)
+        #expect(hit.fieldScale(at: 0.02, reduceMotion: false) > 1.8)
+        // Sparks: CLEAR's gold fountain at the burst; HIT's red sparks on impact, secondary and sputter.
+        #expect(clear.sparkBursts.map(\.time) == [HoverboardReaction.meet])
+        #expect(hit.sparkBursts.first?.time == 0 && hit.sparkBursts.first?.sites.count == HoverboardReaction.arcSites)
+        #expect(hit.sparkBursts.allSatisfy { $0.time < hit.duration && $0.sites.allSatisfy { $0 < HoverboardReaction.arcSites } })
+    }
+
+    @Test("The mascot rides its board's verdict lift: its feet stay planted while the board surges or sags")
+    func mascotRidesTheBoardsVerdictLift() async throws {
+        let (scene, layer) = try await Self.sceneWithBoards()
+        let board = try #require(layer.hoverboards[.player1]), robot = try #require(layer.robots[.player1])
+        let partner = try #require(layer.robots[.player2])
+        layer.smoothing = 1e-4 // the render loop places the mascots every frame
+        layer.render(now: 0)
+        let rest = robot.container.position.y, partnerRest = partner.container.position.y
+        let tracked = layer.trackedRootPosition(.player1)
+        for kind in [HoverboardReaction.clear, .hit] {
+            board.react(kind, reduceMotion: false)
+            var t = 0.0, largest: Float = 0
+            for _ in 0..<Int(kind.duration * 60) + 4 {
+                board.step(dt: 1 / 60); t += 1 / 60
+                layer.render(now: t)
+                #expect(abs(robot.container.position.y - rest - board.reactionLift) < 1e-5, "\(kind) riding the lift")
+                #expect(abs(partner.container.position.y - partnerRest) < 1e-6, "the other mascot is untouched")
+                largest = max(largest, abs(board.reactionLift))
+            }
+            #expect(largest > 0.02, "\(kind) visibly moves board and rider")
+            #expect(board.reactionLift == 0 && abs(robot.container.position.y - rest) < 1e-6, "\(kind) ends exactly at rest")
+        }
+        #expect(layer.trackedRootPosition(.player1) == tracked, "contacts read the tracked root, never the ride")
+        #expect(scene.players[.player1]?.ride.transform == .identity)
+        layer.remove()
     }
 
     @Test("Each board's own lights answer only its own player's verdict and come back exactly as authored")
@@ -421,7 +501,7 @@ struct PlayerHoverboardTests {
         let field1 = try #require(try layers(p1).children.first { $0.name == "hoverboard.energyField" })
         // The layers follow the board exactly and never widen the model the steering measures.
         #expect(try layers(p1).transform == p1.model.transform)
-        #expect(abs(p1.model.visualBounds(relativeTo: p1.root).extents.x - 1.168 * PlayerHoverboard.scale) < 0.01)
+        #expect(abs(p1.model.visualBounds(relativeTo: p1.model).extents.x - 1.168) < 0.01)
         #expect(arcs1.count == HoverboardReaction.arcSites && arcs1.allSatisfy(\.isEnabled), "the struck board crackles")
         #expect(!arcs2.contains { $0.isEnabled } && field1.isEnabled, "the cleared board does not")
         let hot = hitLook.max { $0.w < $1.w }!, gold = clearLook.max { $0.w < $1.w }!

@@ -1929,7 +1929,10 @@ final class RobotAvatarLayer {
         let base = move.anchor.map { tracked + ($0 - tracked) * max(0, min(1, move.anchorWeight)) } ?? tracked
         // A HIT reaction adds its recoil, tilt (about the feet) and squash on top of all of that.
         let hit = hits[player]?.frame ?? .rest
-        robot.container.position = base + move.offset + hit.rootOffset
+        // Riding the board's verdict lift (`PlayerHoverboard.reactionLift`, cosmetic): the feet stay
+        // planted on the deck while it surges or sags. Contacts read the tracked root, never this.
+        let ride = hoverboards[player]?.reactionLift ?? 0
+        robot.container.position = base + move.offset + hit.rootOffset + SIMD3(0, ride, 0)
         let tilt = simd_quatf(angle: hit.roll, axis: [0, 0, 1]) * simd_quatf(angle: hit.pitch, axis: [1, 0, 0])
         if robot.container.orientation != tilt { robot.container.orientation = tilt }
         let squash = max(0.05, move.squash * hit.squash).squareRoot()

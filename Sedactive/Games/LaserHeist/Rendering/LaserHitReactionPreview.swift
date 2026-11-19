@@ -75,14 +75,20 @@ final class LaserHitReactionPreview {
             guard heldAt >= 0 else { return } // `pre`: the moment before the beam strikes
             strike()
             robots.render(now: 1)
+            let held: Double
             if request.repeats, heldAt > 0.3 {
                 robots.render(now: 1.3)
                 strike()
                 robots.render(now: 1.3 + 0.0001)
-                robots.render(now: 1.3 + (heldAt - 0.3))
+                held = 1.3 + (heldAt - 0.3)
+                PlayerHoverboard.debugHeldAge = heldAt - 0.3
             } else {
-                robots.render(now: 1 + heldAt)
+                held = 1 + heldAt
+                PlayerHoverboard.debugHeldAge = heldAt
             }
+            robots.render(now: held)
+            // Re-render the same frozen moment every frame, so the mascots ride the board's held lift.
+            subscription = content.subscribe(to: SceneEvents.Update.self) { _ in robots.render(now: held) }
             return
         }
         var sinceStrike = Self.period

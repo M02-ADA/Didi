@@ -30,18 +30,30 @@ import UIKit
 ///   running round the ring while the rest flickers, a short dead gap, a secondary coral jolt
 ///   with hot-pink arcs, then a brownout and reboot. Shock → surge → unstable flicker → recovery.
 /// UNAVAILABLE gets none. A new reaction restarts the board's one reaction (never stacks).
+///
+/// Game-feel pass (19 November 2026): the board itself reacts, not just its paint.
+/// - Physical: a cosmetic lift, pitch, roll and yaw of the board alone (`Pose.lift` etc.); the
+///   rider rides the same lift (`RobotAvatarLayer`), so the feet stay planted. The board's X, its
+///   ride, steering, collision and every judged position are untouched.
+/// - The hull (deck, band, frames, pods) takes the energy too: warm gold for CLEAR, scorched dark
+///   with a red smoulder for HIT (which also lifts the red's contrast against the purple).
+/// - A board-shaped energy ring (`pulse`) expands from the rim at the peak, the field stands
+///   taller (`fieldScale`), and spark bursts (`sparkBursts`) leave the rim and thrusters.
+/// - HIT's arcs are big, glowing, camera-facing bolts, two of them climbing from the thrusters up
+///   the end caps to the rim, with residual sputters through the system failure.
 nonisolated enum HoverboardReaction: Equatable, Sendable {
     case clear, hit
 
     /// One short beat each.
-    var duration: Double { self == .clear ? 0.66 : 0.6 }
+    var duration: Double { self == .clear ? 0.72 : 0.62 }
 
     /// The rim's segment count: the ring lights segment by segment (a radar sweep).
     static let segments = 32
-    /// Where HIT's discharges strike: the rim's front left and right, and over each end.
-    static let arcSites = 4
+    /// Where HIT's discharges strike: the rim's front left and right (0, 1), over each end (2, 3),
+    /// and up each end cap from the thrusters to the rim (4, 5).
+    static let arcSites = 6
     /// Shapes per site (the current changes shape on twos).
-    static let arcVariants = 3
+    static let arcVariants = 4
 
     /// One energy channel's state: `energy` 0 is the authored look, 1 the peak; below 0 the
     /// authored lights dim (HIT's brownout). `heat` picks the colour from deep (0) to the
@@ -61,8 +73,15 @@ nonisolated enum HoverboardReaction: Equatable, Sendable {
 
     /// One frame of a reaction (the rim's segments, field and arcs have their own functions).
     struct Pose: Equatable, Sendable {
-        /// HIT's brief shudder (radians of roll); the deck drops by its rise under the feet.
+        /// Roll, pitch and yaw of the board alone (radians); the deck drops by a roll's or pitch's
+        /// rise under the feet.
         var roll: Float = 0
+        var pitch: Float = 0
+        var yaw: Float = 0
+        /// The board's cosmetic lift (metres, lane space; + up). The rider rides the same lift.
+        var lift: Float = 0
+        /// The board's hull: deck, band, frames and pods.
+        var hull = Glow()
         /// The emblem's sun and disc.
         var core = Glow()
         /// The four plates set into the rim.
@@ -98,6 +117,12 @@ nonisolated enum HoverboardReaction: Equatable, Sendable {
     static let disruptEnd = 0.21
     static let dischargeStart = 0.25
     static let dischargeEnd = 0.32
+    /// HIT: the system failure (radar dark, hover sagging), then the reboot.
+    static let rebootStart = 0.5
+    /// CLEAR: a brief residual shimmer after the release.
+    static let shimmerStart = 0.42, shimmerEnd = 0.62
+    /// Largest cosmetic lift either way (metres): the board and its rider together.
+    static let maximumLift: Float = 0.04
 
     /// The pose at `tau` seconds (pure, deterministic). Reduce Motion: no sweep, flicker, arcs,
     /// brownout or shudder; every light fades up to its colour and back.
@@ -107,6 +132,7 @@ nonisolated enum HoverboardReaction: Equatable, Sendable {
         if reduceMotion {
             let glow = calm(tau)
             p.core = glow; p.plates = glow; p.circuit = glow; p.bars = glow; p.vents = glow
+            p.hull = Glow(energy: 0.6 * glow.energy, heat: glow.heat)
             return p
         }
         if self == .clear {
@@ -127,8 +153,23 @@ nonisolated enum HoverboardReaction: Equatable, Sendable {
             p.vents = peak ?? (tau < 0.04 ? Glow()
                 : tau < Self.meet ? Glow(energy: Float(0.7 * Self.smooth(0.04, Self.meet, tau)), heat: 0.4)
                 : cool(tau, from: Self.peakEnd, to: duration, heat: 0.4))
+            // The hull warms with the charge and glows gold through the peak.
+            p.hull = tau < Self.meet ? Glow(energy: Float(0.45 * Self.smooth(0.03, Self.meet, tau)), heat: 0.4)
+                : tau < Self.flashEnd ? Glow(energy: 0.85, heat: 0.7)
+                : tau < Self.peakEnd ? Glow(energy: 0.75, heat: 0.4)
+                : cool(tau, from: Self.peakEnd, to: duration - 0.12, heat: 0.4, floor: 0.17)
+            // Power surge: a short crouch as the charge gathers, a buoyant lift at the burst, then
+            // a damped settle (two soft bobs), nose rising with the lift.
+            let lift = Self.clearLift(tau)
+            p.lift = lift
+            p.pitch = -0.6 * lift
+            p.roll = Float(0.012 * exp(-max(0, tau - Self.meet) / 0.12) * sin(2 * .pi * 5 * max(0, tau - Self.meet)))
         } else {
-            p.roll = Float(0.02 * exp(-tau / 0.09) * sin(2 * .pi * 15 * tau))
+            let motion = Self.hitMotion(tau)
+            p.roll = motion.roll; p.yaw = motion.yaw; p.pitch = motion.pitch; p.lift = motion.lift
+            // Scorched: the hull darkens with a red smoulder through the overload, then cools.
+            p.hull = tau < Self.flashOut ? Glow(energy: 0.9, heat: 1)
+                : Glow(energy: Float(Self.smooth(Self.flashOut, 0.09, tau) * (1 - Self.smooth(0.4, duration - 0.02, tau))), heat: 0)
             if tau < Self.surgeEnd {
                 // The shock lands on frame one: white-hot, then the full coral-red surge.
                 let surge = tau < Self.flashOut ? Glow(energy: 1, heat: 1) : Glow(energy: 1, heat: 0)
@@ -146,9 +187,12 @@ nonisolated enum HoverboardReaction: Equatable, Sendable {
                 let jolt = tau < Self.dischargeStart + 0.035 ? Glow(energy: 1, heat: 0.4) : Glow(energy: 0.6, heat: 0)
                 p.core = jolt; p.plates = jolt; p.circuit = jolt; p.bars = jolt; p.vents = jolt
             } else {
-                // Brownout, then the board reboots to its idle look.
-                let reboot = Glow(energy: Float(-0.55 * (1 - Self.smooth(Self.dischargeEnd, duration, tau))), heat: 0)
-                p.core = reboot; p.bars = reboot; p.vents = reboot
+                // System failure: brownout while the hover sags, then the core tries to reboot
+                // (two red blinks) and the lights come back to idle.
+                let reboot = Glow(energy: Float(-0.6 * (1 - Self.smooth(Self.rebootStart, duration, tau))), heat: 0)
+                p.bars = reboot; p.vents = reboot
+                let blink = (tau >= Self.rebootStart && tau < Self.rebootStart + 0.03) || (tau >= 0.555 && tau < 0.59)
+                p.core = blink ? Glow(energy: 0.7, heat: 0) : reboot
             }
         }
         return p
@@ -171,7 +215,10 @@ nonisolated enum HoverboardReaction: Equatable, Sendable {
             }
             if tau < Self.flashEnd { return Glow(energy: 1, heat: 1) }
             if tau < Self.peakEnd { return Glow(energy: 1, heat: 0.4) }
-            return cool(tau, from: Self.peakEnd, to: duration, heat: 0.4)
+            // A brief residual shimmer: a few segments glint gold as the ring cools.
+            if tau >= Self.shimmerStart && tau < Self.shimmerEnd,
+               Self.hash(index, Int(tau * 24) / 2 &+ 89) > 0.78 { return Glow(energy: 0.55, heat: 0.7) }
+            return cool(tau, from: Self.peakEnd, to: duration - 0.08, heat: 0.4)
         }
         if tau < Self.surgeEnd { return tau < Self.flashOut ? Glow(energy: 1, heat: 1) : Glow(energy: 1, heat: 0) }
         let step = Int(tau * 24) / 2
@@ -192,9 +239,15 @@ nonisolated enum HoverboardReaction: Equatable, Sendable {
             if tau < Self.dischargeStart + 0.035 { return Glow(energy: 1, heat: 0.4) }
             return Self.hash(index, step &+ 41) > 0.4 ? Glow(energy: 0.7, heat: 0) : Glow(energy: 0.2, heat: 0)
         }
-        // A red residue drains out of the ring.
-        let drain = 1 - Self.smooth(Self.dischargeEnd, Self.dischargeEnd + 0.14, tau)
-        return Glow(energy: Float(0.35 * drain), heat: 0)
+        if tau < Self.rebootStart {
+            // System failure: the radar is dead but for a red residue draining out and a few shorts.
+            let drain = 1 - Self.smooth(Self.dischargeEnd, Self.dischargeEnd + 0.1, tau)
+            if Self.hash(index, step &+ 47) > 0.94 { return Glow(energy: 0.7, heat: 0) }
+            return Glow(energy: Float(0.35 * drain), heat: 0)
+        }
+        // Reboot: a dim red check-sweep from the front round to the back, then the authored rim.
+        let r = Float((tau - Self.rebootStart) / 0.08)
+        return d <= r && d > r - 0.35 && r < 1.35 ? Glow(energy: 0.4, heat: 0) : Glow()
     }
 
     /// The energy field over segment `index` at `tau`: its opacity (`energy`) and colour.
@@ -231,21 +284,102 @@ nonisolated enum HoverboardReaction: Equatable, Sendable {
         return Glow()
     }
 
-    /// HIT's discharges over the rim at `tau`: all four sites on the shock, a crackle of two, a
-    /// dead gap, then the secondary (hot-pink) discharge. CLEAR and Reduce Motion have none.
+    /// HIT's discharges at `tau`: every site on the impact, a crackle through the breakdown, a dead
+    /// gap, the secondary discharge (both end caps and one rim site, hot-pink glow), then two short
+    /// residual sputters through the system failure. CLEAR and Reduce Motion have none.
     func arcs(at tau: Double, reduceMotion: Bool) -> [Arc] {
-        guard self == .hit, !reduceMotion, tau >= 0 else { return [] }
+        guard self == .hit, !reduceMotion, tau >= 0, tau < duration else { return [] }
         let step = Int(tau * 24) / 2
         func arc(_ site: Int, secondary: Bool = false) -> Arc {
             Arc(site: site, variant: Int(Self.hash(site &+ 50, step) * Double(Self.arcVariants)) % Self.arcVariants, secondary: secondary)
         }
         if tau < 0.12 { return (0..<Self.arcSites).map { arc($0) } }
-        if tau < 0.19 { return (0..<Self.arcSites).filter { Self.hash($0, step &+ 61) > 0.45 }.map { arc($0) } }
-        if tau >= Self.dischargeStart && tau < Self.dischargeEnd {
-            let first = Int(Self.hash(step, 71) * 4) % 4
-            return [arc(first, secondary: true), arc((first + 2) % 4, secondary: true)]
+        if tau < 0.21 {
+            let crackle = (0..<Self.arcSites).filter { Self.hash($0, step &+ 61) > 0.4 }
+            return (crackle.count >= 2 ? crackle : [4, 5]).map { arc($0) }
         }
+        if tau >= Self.dischargeStart && tau < Self.dischargeEnd {
+            let rim = Int(Self.hash(step, 71) * 4) % 4
+            return [arc(4, secondary: true), arc(5, secondary: true), arc(rim, secondary: true)]
+        }
+        if tau >= 0.36 && tau < 0.4 { return [arc(4)] }
+        if tau >= 0.44 && tau < 0.47 { return [arc(5)] }
         return []
+    }
+
+    /// The expanding energy ring at `tau`: its scale (1 is the rim) and opacity step (0 hidden).
+    /// CLEAR: one golden ring from the burst (warm white as it leaves). HIT: a fast red shock ring
+    /// on impact, and a smaller coral one with the secondary discharge. Reduce Motion: none.
+    func pulse(at tau: Double, reduceMotion: Bool) -> (scale: Float, level: Int, tone: Int)? {
+        guard !reduceMotion, tau >= 0 else { return nil }
+        func ring(_ start: Double, _ length: Double, grow: Float, peak: Float, tone: (Double) -> Int) -> (Float, Int, Int)? {
+            guard tau >= start, tau < start + length else { return nil }
+            let s = (tau - start) / length
+            let out = 1 - pow(1 - s, 3)
+            let level = Int((Double(peak) * pow(1 - s, 1.4)).rounded())
+            return level > 0 ? (1 + grow * Float(out), level, tone(tau - start)) : nil
+        }
+        if self == .clear { return ring(Self.meet, 0.3, grow: 0.55, peak: 8) { $0 < 0.05 ? 3 : 1 } }
+        return ring(0, 0.16, grow: 0.42, peak: 8) { $0 < Self.flashOut ? 3 : 0 }
+            ?? ring(Self.dischargeStart, 0.11, grow: 0.22, peak: 5) { _ in 1 }
+    }
+
+    /// How tall the energy field stands at `tau` (1 is its authored height): it surges at the peaks.
+    func fieldScale(at tau: Double, reduceMotion: Bool) -> Float {
+        guard !reduceMotion, tau >= 0 else { return 1 }
+        func bump(_ start: Double, _ peak: Double, _ end: Double) -> Double {
+            tau < start || tau >= end ? 0 : tau < peak ? Self.smooth(start, peak, tau) : 1 - Self.smooth(peak, end, tau)
+        }
+        if self == .clear { return Float(1 + 1.2 * bump(Self.meet - 0.02, Self.meet + 0.04, 0.42)) }
+        return Float(1 + 0.9 * bump(0, 0.02, 0.14) + 0.5 * bump(Self.dischargeStart, Self.dischargeStart + 0.02, Self.dischargeEnd))
+    }
+
+    /// Spark bursts: when, from which sites (as `arcSites`), and how many sparks each.
+    /// CLEAR: a gold fountain from the rim and thrusters at the burst. HIT: red sparks from every
+    /// site on impact, from the end caps with the secondary discharge, and one short sputter.
+    var sparkBursts: [(time: Double, sites: [Int], count: Int)] {
+        self == .clear ? [(Self.meet, [0, 1, 2, 3, 4, 5], 14)]
+            : [(0, [0, 1, 2, 3, 4, 5], 26), (Self.dischargeStart, [4, 5], 18), (0.4, [Int(Self.hash(7, 3) * 2) + 4], 8)]
+    }
+
+    // MARK: Physical response (cosmetic; board and rider together)
+
+    /// CLEAR's lift: a crouch as the charge gathers, a buoyant lift at the burst, a damped settle.
+    static func clearLift(_ tau: Double) -> Float {
+        let crouch = -0.010
+        if tau < 0.07 { return Float(crouch * smooth(0, 0.07, tau)) }
+        if tau < 0.19 {
+            let s = (tau - 0.07) / 0.12
+            let out = 1 - pow(1 - s, 3) // fast up, eased into the top
+            return Float(crouch + (0.032 - crouch) * out)
+        }
+        let t = tau - 0.19
+        let settle = 0.032 * exp(-t / 0.12) * cos(2 * .pi * t / 0.32)
+        return Float(settle * (1 - smooth(0.62, 0.72, tau)))
+    }
+
+    /// HIT's motion: a hard drop on impact with a violent shudder, a second jolt with the
+    /// secondary discharge, the hover sagging through the failure, and a reboot pop back to idle.
+    static func hitMotion(_ tau: Double) -> (lift: Float, roll: Float, yaw: Float, pitch: Float) {
+        let shake = exp(-tau / 0.11)
+        var lift: Double
+        if tau < 0.035 { lift = -0.028 * smooth(0, 0.035, tau) }
+        else if tau < dischargeStart {
+            // Fighting back up, unsteadily (a 20 Hz judder).
+            lift = -0.028 + 0.016 * smooth(0.035, 0.2, tau) + 0.004 * sin(2 * .pi * 20 * tau) * shake
+        } else if tau < dischargeEnd {
+            lift = -0.012 - 0.012 * sin(.pi * (tau - dischargeStart) / (dischargeEnd - dischargeStart))
+        } else if tau < rebootStart {
+            lift = -0.012 - 0.012 * smooth(dischargeEnd, 0.42, tau) // the hover sags
+        } else {
+            let s = (tau - rebootStart) / 0.12
+            lift = s < 0.45 ? -0.024 + 0.032 * smooth(0, 0.45, s) : 0.008 * (1 - smooth(0.45, 1, s)) // reboot pop
+        }
+        let second = tau >= dischargeStart ? exp(-(tau - dischargeStart) / 0.05) : 0
+        let roll = 0.055 * shake * sin(2 * .pi * 17 * tau) + 0.03 * second * sin(2 * .pi * 19 * (tau - dischargeStart))
+        let yaw = 0.03 * shake * sin(2 * .pi * 13 * tau + 1.3)
+        let droop = tau >= dischargeEnd && tau < rebootStart + 0.06 ? -0.025 * smooth(dischargeEnd, 0.42, tau) : 0
+        return (Float(lift), Float(roll), Float(yaw), Float(droop + 0.02 * shake * sin(2 * .pi * 11 * tau)))
     }
 
     /// How far round the ring segment `index` sits from the front centre (the emblem, 0) to the
@@ -265,10 +399,11 @@ nonisolated enum HoverboardReaction: Equatable, Sendable {
     }
 
     /// Smooth release from the peak: quick at first, a long soft tail; the colour cools too.
-    private func cool(_ tau: Double, from: Double, to: Double, heat: Float) -> Glow {
+    /// `floor`: below this the part is its authored self again (one small step, never a mauve tail).
+    private func cool(_ tau: Double, from: Double, to: Double, heat: Float, floor: Float = 0.02) -> Glow {
         let s = min(1, max(0, (tau - from) / (to - from)))
         let e = Float((1 - s) * (1 - s))
-        return e < 0.02 ? Glow() : Glow(energy: e, heat: heat * Float(1 - s))
+        return e < floor ? Glow() : Glow(energy: e, heat: heat * Float(1 - s))
     }
 
     /// Reduce Motion: one soft rise and fall, in the reaction's colour.
@@ -306,6 +441,8 @@ final class HoverboardReactionFX {
     /// The board's lit parts, by their authored colour in `hoverboard_build.py`.
     enum Role: CaseIterable, Hashable {
         case ring, plates, groove, deckLines, chevrons, lightBars, sun, emblem, slots, thrusters
+        /// The hull: deck, band (lower and upper), module frames and pods.
+        case deck, band, bandUpper, moduleFrame, pod
 
         var authoredColor: UInt32 {
             switch self {
@@ -319,8 +456,15 @@ final class HoverboardReactionFX {
             case .emblem: 0x2A2360
             case .slots: 0x2C2566
             case .thrusters: 0xFFD9A0
+            case .deck: 0x40387F
+            case .band: 0x4C3C92
+            case .bandUpper: 0x5E4EA8
+            case .moduleFrame: 0x8473CE
+            case .pod: 0x5A4AAE
             }
         }
+
+        var isHull: Bool { [.deck, .band, .bandUpper, .moduleFrame, .pod].contains(self) }
 
         /// Peak emission and how far the surface takes the energy's colour. Gold above about
         /// 1.3 clips to pale yellow (no bloom), so the ring and plates stay just under it.
@@ -336,6 +480,7 @@ final class HoverboardReactionFX {
             case .emblem: (1.2, 0.7)
             case .slots: (1.8, 1)
             case .thrusters: (3.5, 0.9)
+            case .deck, .band, .bandUpper, .moduleFrame, .pod: (0.55, 0.45)
             }
         }
 
@@ -350,6 +495,7 @@ final class HoverboardReactionFX {
             case .lightBars: pose.bars
             case .sun, .emblem: pose.core
             case .slots, .thrusters: pose.vents
+            case .deck, .band, .bandUpper, .moduleFrame, .pod: pose.hull
             }
         }
     }
@@ -375,6 +521,12 @@ final class HoverboardReactionFX {
     let field: ModelEntity
     /// HIT's discharges, one per site.
     let arcs: [ModelEntity]
+    /// The expanding energy ring.
+    let pulse: ModelEntity
+    /// Spark emitters at the arc sites (rim and end caps).
+    let sparks: [Entity]
+    private var lastTau = -1.0
+    private var shownPulse: FieldKey?
     private let body: ModelEntity?
     /// The Body's materials at rest: authored, with each lit slot rebuilt once as a fresh copy
     /// (`fresh(_:)`), so a reaction only ever switches between materials the board owns.
@@ -414,16 +566,32 @@ final class HoverboardReactionFX {
         field = ModelEntity(mesh: Self.fieldMesh, materials: Array(repeating: Self.hiddenField, count: HoverboardReaction.segments))
         field.name = "hoverboard.energyField"
         arcs = (0..<HoverboardReaction.arcSites).map { site in
-            let arc = ModelEntity(mesh: Self.arcMeshes[site][0], materials: [Self.arcOuter, Self.arcCore])
+            let arc = ModelEntity(mesh: Self.arcMeshes[site][0], materials: [Self.arcGlow, Self.arcOuter, Self.arcCore])
             arc.name = "hoverboard.discharge\(site)"
             return arc
+        }
+        pulse = ModelEntity(mesh: Self.pulseMesh, materials: [Self.hiddenField])
+        pulse.name = "hoverboard.pulse"
+        sparks = (0..<HoverboardReaction.arcSites).map { site in
+            let emitter = Entity()
+            emitter.name = "hoverboard.sparks\(site)"
+            emitter.position = RimOutline.sparkSite(site)
+            return emitter
         }
         anchor.name = "hoverboard.reaction"
         anchor.transform = model.transform
         root.addChild(anchor)
-        for entity in [ribbon, field] + arcs {
+        for entity in [ribbon, field, pulse] + arcs {
             entity.isEnabled = false
             anchor.addChild(entity)
+        }
+        for emitter in sparks { anchor.addChild(emitter) }
+    }
+
+    /// Draws the translucent layers after the board's floor light, in this order.
+    func sort(in group: ModelSortGroup) {
+        for (i, entity) in ([field, pulse] + arcs).enumerated() {
+            entity.components.set(ModelSortGroupComponent(group: group, order: Int32(i + 1)))
         }
     }
 
@@ -433,7 +601,12 @@ final class HoverboardReactionFX {
         shownBody = shownBody.map { _ in nil }
         shownRibbon = shownRibbon.map { _ in nil }
         shownField = shownField.map { _ in nil }
+        shownPulse = nil
+        lastTau = -1
         ribbon.isEnabled = true
+        for (site, emitter) in sparks.enumerated() {
+            emitter.components.set(Self.sparkEmitter(kind, site: site))
+        }
     }
 
     /// Lights the board for one frame of the reaction.
@@ -474,15 +647,43 @@ final class HoverboardReactionFX {
                 entity.isEnabled = arc != nil
                 guard let arc, var model = entity.model else { continue }
                 model.mesh = Self.arcMeshes[arc.site][arc.variant]
-                model.materials = [arc.secondary ? Self.arcSecondary : Self.arcOuter, Self.arcCore]
+                model.materials = [arc.secondary ? Self.arcSecondaryGlow : Self.arcGlow, Self.arcOuter, Self.arcCore]
                 entity.model = model
             }
         }
+        // The field surges at the peaks (scaled up from the rim lip).
+        let height = kind.fieldScale(at: tau, reduceMotion: reduceMotion)
+        if field.scale.y != height { field.scale = [1, height, 1] }
+        // The expanding ring.
+        let ring = kind.pulse(at: tau, reduceMotion: reduceMotion)
+        let ringKey = ring.map { FieldKey(kind: kind, tone: $0.tone, level: $0.level) }
+        if ringKey != shownPulse, var model = pulse.model {
+            shownPulse = ringKey
+            pulse.isEnabled = ringKey != nil
+            model.materials = [ringKey.map(Self.pulseMaterial) ?? Self.hiddenField]
+            pulse.model = model
+        }
+        if let ring { pulse.scale = [ring.scale, 1 + (ring.scale - 1) * 0.5, ring.scale] }
+        // Spark bursts whose moment this frame passed (never under Reduce Motion).
+        if !reduceMotion {
+            for burst in kind.sparkBursts where burst.time > lastTau && burst.time <= tau {
+                for site in burst.sites where site < sparks.count {
+                    guard var emitter = sparks[site].components[ParticleEmitterComponent.self] else { continue }
+                    emitter.burstCount = burst.count
+                    emitter.burst()
+                    sparks[site].components.set(emitter)
+                }
+            }
+        }
+        lastTau = tau
     }
 
     /// The board exactly as authored again.
     func reset() {
-        for entity in [ribbon, field] + arcs { entity.isEnabled = false }
+        for entity in [ribbon, field, pulse] + arcs { entity.isEnabled = false }
+        field.scale = [1, 1, 1]
+        shownPulse = nil
+        lastTau = -1
         if let body, var model = body.model, model.materials.count == restMaterials.count, shownBody.contains(where: { $0 != nil }) {
             model.materials = restMaterials
             body.model = model
@@ -523,11 +724,33 @@ final class HoverboardReactionFX {
         if let material = made[key] { return material }
         guard var pbr = authored[key.role] else { return SimpleMaterial() }
         let base = rgb(pbr.baseColor.tint)
-        if key.level > 0 {
+        if key.level > 0, key.role.isHull {
+            let e = Float(key.level) / 12
+            let color = tone(key.kind, key.tone)
+            if key.kind == .clear {
+                // Energised: the hull warms toward gold and glows softly (its shape stays readable).
+                // Its light fades faster than its gold (amber light over the purple reads pink).
+                pbr.baseColor = .init(tint: uiColor(base + (color * 0.75 - base) * (key.role.peak.tint * min(1, 2.5 * e))))
+                pbr.emissiveColor = .init(color: uiColor(color))
+                pbr.emissiveIntensity = key.role.peak.intensity * e * e * (key.tone == 3 ? 1.5 : 1)
+            } else if key.tone == 3 {
+                // The impact's white-hot frame.
+                pbr.baseColor = .init(tint: uiColor(base + (color - base) * 0.35 * e))
+                pbr.emissiveColor = .init(color: uiColor(color))
+                pbr.emissiveIntensity = 0.9 * e
+            } else {
+                // Scorched: darkened, with a red smoulder (it also lifts the red's contrast).
+                pbr.baseColor = .init(tint: uiColor(base * (1 - 0.62 * e)))
+                pbr.emissiveColor = .init(color: uiColor(color))
+                pbr.emissiveIntensity = 0.3 * e
+            }
+        } else if key.level > 0 {
             let e = Float(key.level) / 12
             let color = tone(key.kind, key.tone)
             // The colour replaces the purple quickly: red over purple reads magenta, amber pink.
-            let mix = min(1, e * (key.kind == .hit ? 2.5 : 2)) * (key.kind == .hit ? 1 : key.role.peak.tint)
+            // CLEAR keeps its gold base until the light has nearly gone, so the release passes
+            // through amber and never through mauve.
+            let mix = min(1, e * (key.kind == .hit ? 2.5 : 3.4)) * (key.kind == .hit ? 1 : key.role.peak.tint)
             pbr.baseColor = .init(tint: uiColor(base + (color * 0.8 - base) * mix))
             pbr.emissiveColor = .init(color: uiColor(color))
             // The white-hot highlights burn brighter than the colour around them.
@@ -635,6 +858,53 @@ final class HoverboardReactionFX {
         return material
     }
 
+    private static var pulseMade: [FieldKey: PhysicallyBasedMaterial] = [:]
+
+    /// The ring's opacity ramp as greyscale (an opacity texture is read from its colour, not its
+    /// alpha): full at the rim (v 0), soft to nothing outward, with the field's falloff.
+    private static let pulseRamp: TextureResource? = {
+        let width = 4, height = 64
+        var bytes = [UInt8](repeating: 255, count: width * height * 4)
+        for row in 0..<height {
+            let v = 1 - Float(row) / Float(height - 1)
+            let a = UInt8((pow(1 - v, 1.7) * (0.75 + 0.25 * exp(-v * 9)) * 255).rounded())
+            for column in 0..<width {
+                let i = (row * width + column) * 4
+                bytes[i] = a; bytes[i + 1] = a; bytes[i + 2] = a
+            }
+        }
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData),
+              let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                                  provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+        else { return nil }
+        return try? TextureResource(image: image, withName: "hoverboard.pulseRamp", options: .init(semantic: .raw))
+    }()
+
+    /// The expanding ring's light: emission only (black, rough base), its opacity fading outward
+    /// from the field's texture, and it never writes depth, so its faint outer reach can never hide
+    /// the board's light on the floor behind it (an unlit band did: a dark halo round the ring).
+    private static func pulseMaterial(_ key: FieldKey) -> any RealityKit.Material {
+        if let made = pulseMade[key] { return made }
+        var material = PhysicallyBasedMaterial()
+        material.baseColor = .init(tint: .black)
+        material.roughness = .init(floatLiteral: 1)
+        material.metallic = .init(floatLiteral: 0)
+        material.emissiveColor = .init(color: uiColor(tone(key.kind, key.tone)))
+        material.emissiveIntensity = key.tone == 3 ? 2.2 : 1.8
+        let opacity = Float(key.level) / 8 * 0.9
+        if let pulseRamp {
+            material.blending = .transparent(opacity: .init(scale: opacity, texture: .init(pulseRamp)))
+        } else {
+            material.blending = .transparent(opacity: .init(scale: opacity))
+        }
+        material.writesDepth = false
+        material.faceCulling = .none
+        pulseMade[key] = material
+        return material
+    }
+
     // MARK: Discharge materials
 
     private static func unlit(_ c: SIMD3<Float>) -> UnlitMaterial {
@@ -642,10 +912,56 @@ final class HoverboardReactionFX {
         material.color = .init(tint: uiColor(c))
         return material
     }
-    /// ZAPPED!'s coral round a white-hot core; the secondary discharge is hot pink.
-    private static let arcOuter = unlit([1, 0.27, 0.35])
-    private static let arcSecondary = unlit([1, 0.23, 0.5])
+    /// ZAPPED!'s red face round its white-hot core, in a translucent coral glow (hot pink for the
+    /// secondary discharge).
+    private static let arcOuter = unlit([0.96, 0.22, 0.26])
     private static let arcCore = unlit([1, 0.95, 0.93])
+    private static func glow(_ c: SIMD3<Float>, _ opacity: Float) -> UnlitMaterial {
+        var material = unlit(c)
+        material.blending = .transparent(opacity: .init(scale: opacity))
+        return material
+    }
+    private static let arcGlow = glow([1, 0.27, 0.35], 0.45)
+    private static let arcSecondaryGlow = glow([1, 0.23, 0.5], 0.45)
+
+    // MARK: Sparks
+
+    /// One site's spark emitter for a reaction: HIT's red-hot streaks that fall away (sparks from a
+    /// short circuit), CLEAR's gold glints rising (energy shed by the burst). Additive, unlit,
+    /// stretched along their motion; bursts only (`HoverboardReaction.sparkBursts`).
+    static func sparkEmitter(_ kind: HoverboardReaction, site: Int) -> ParticleEmitterComponent {
+        var p = ParticleEmitterComponent()
+        p.emitterShape = .sphere
+        p.emitterShapeSize = [0.03, 0.02, 0.03]
+        p.birthLocation = .volume
+        p.birthDirection = .local
+        p.emissionDirection = RimOutline.sparkDirection(site, rising: kind == .clear)
+        p.isEmitting = false
+        p.burstCountVariation = 4
+        var e = p.mainEmitter
+        e.birthRate = 0
+        e.spreadingAngle = kind == .clear ? 0.55 : 0.85
+        e.lifeSpan = kind == .clear ? 0.42 : 0.3
+        e.colorEvolutionPower = kind == .clear ? 1 : 0.5 // HIT reaches its red early
+        e.lifeSpanVariation = 0.1
+        e.size = kind == .clear ? 0.012 : 0.014
+        e.sizeVariation = 0.005
+        e.sizeMultiplierAtEndOfLifespan = 0.25
+        e.acceleration = kind == .clear ? [0, -1.2, 0] : [0, -5.5, 0]
+        e.dampingFactor = kind == .clear ? 2.5 : 1.2
+        e.stretchFactor = kind == .clear ? 1.5 : 5
+        e.billboardMode = .billboard
+        e.blendMode = .additive
+        e.opacityCurve = .linearFadeOut
+        e.isLightingEnabled = false
+        e.color = kind == .clear
+            ? .evolving(start: .single(UIColor(red: 1, green: 0.95, blue: 0.75, alpha: 1)), end: .single(UIColor(red: 1, green: 0.66, blue: 0.1, alpha: 1)))
+            : .evolving(start: .single(UIColor(red: 1, green: 0.5, blue: 0.42, alpha: 1)), end: .single(UIColor(red: 0.96, green: 0.16, blue: 0.2, alpha: 1)))
+        p.mainEmitter = e
+        p.speed = kind == .clear ? 0.9 : 1.6
+        p.speedVariation = kind == .clear ? 0.35 : 0.7
+        return p
+    }
 
     // MARK: Meshes (asset units; the board model scales them; shared by both boards)
 
@@ -658,6 +974,8 @@ final class HoverboardReactionFX {
         let descriptors = (0..<HoverboardReaction.segments).map { RimOutline.field($0) }
         return (try? MeshResource.generate(from: descriptors)) ?? .generateBox(size: 0.001)
     }()
+
+    static let pulseMesh: MeshResource = (try? MeshResource.generate(from: [RimOutline.pulse()])) ?? .generateBox(size: 0.001)
 
     static let arcMeshes: [[MeshResource]] = (0..<HoverboardReaction.arcSites).map { site in
         (0..<HoverboardReaction.arcVariants).map { variant in
@@ -686,8 +1004,13 @@ nonisolated enum RimOutline {
     /// The energy field: from the rim's outer lip up this high, leaning out this far at its top.
     static let fieldHeight: Float = 0.085
     static let fieldLean: Float = 0.014
-    /// Where the discharges run along the outline (arc-length fractions; the front centre is 0.75).
+    /// Where the rim discharges run along the outline (arc-length fractions; the front centre is 0.75).
     static let arcSpans: [(Float, Float)] = [(0.6, 0.71), (0.79, 0.9), (0.44, 0.56), (0.94, 1.06)]
+    /// Toward the gameplay camera from the board (it looks down 18.7° from the front): bolts are
+    /// built facing it, so none is ever seen edge-on.
+    static let towardCamera = simd_normalize(SIMD3<Float>(0, 0.32, 0.947))
+    /// The end caps' lower front, by the thruster pods (the end bolts start here; x by side).
+    static let endCapBase = SIMD3<Float>(0.575, -0.1, 0.055)
 
     static func point(_ a: Float, _ b: Float, _ t: Float) -> SIMD2<Float> {
         let c = cos(t), s = sin(t)
@@ -801,33 +1124,50 @@ nonisolated enum RimOutline {
         return descriptor
     }
 
-    /// One discharge over the rim at `site` (shape `variant`): a jagged bolt that leaves the rim
-    /// lip, arcs up to 7 cm over it and lands on the lip again, as a coral ribbon (material 0)
-    /// with a white-hot core (material 1) in front of it, both sides drawn.
+    /// One discharge at `site` (shape `variant`), as three camera-facing ribbons: a translucent
+    /// coral glow (material 0), ZAPPED!'s red bolt (1) and a white-hot core (2), tapered at both
+    /// ends. Sites 0–3 leave the rim lip, arc up to 13 cm over it and land on the lip again; sites
+    /// 4 and 5 climb from the thruster pods up the end caps to the rim.
     static func arc(site: Int, variant: Int) -> [MeshDescriptor] {
-        let (u0, u1) = arcSpans[site % arcSpans.count]
         let seed = site &* 7 &+ variant &* 13 &+ 101
-        let points = 11
-        var path: [(position: SIMD3<Float>, outward: SIMD3<Float>)] = []
-        let bulge: Float = 0.045 + 0.025 * Float(HoverboardReaction.hash(seed, 1))
-        for k in 0..<points {
-            let s = Float(k) / Float(points - 1)
-            let jitter = k == 0 || k == points - 1 ? 0 : (Float(HoverboardReaction.hash(seed, k &+ 20)) - 0.5) * 0.35 / Float(points)
-            let r = rim(u0 + (u1 - u0) * (s + jitter), ox: 0.008, oy: 0.008, height: 0.012)
-            let zig: Float = k == 0 || k == points - 1 ? 0 : (k.isMultiple(of: 2) ? 1 : -1) * (0.008 + 0.016 * Float(HoverboardReaction.hash(seed, k)))
-            path.append((r.position + r.outward * 0.012 + SIMD3(0, bulge * sin(.pi * s) + zig, 0), r.outward))
+        let points = 15
+        func h(_ k: Int) -> Float { Float(HoverboardReaction.hash(seed, k)) }
+        var path: [SIMD3<Float>] = []
+        if site < arcSpans.count {
+            let (u0, u1) = arcSpans[site]
+            let bulge: Float = 0.07 + 0.06 * h(1)
+            for k in 0..<points {
+                let s = Float(k) / Float(points - 1)
+                let end = k == 0 || k == points - 1
+                let jitter = end ? 0 : (h(k &+ 20) - 0.5) * 0.4 / Float(points)
+                let r = rim(u0 + (u1 - u0) * (s + jitter), ox: 0.008, oy: 0.008, height: 0.012)
+                let zig: Float = end ? 0 : (k.isMultiple(of: 2) ? 1 : -1) * (0.012 + 0.024 * h(k))
+                path.append(r.position + r.outward * (0.012 + 0.02 * sin(.pi * s)) + SIMD3(0, bulge * sin(.pi * s) + zig, 0))
+            }
+        } else {
+            let side: Float = site == 4 ? -1 : 1
+            let base = SIMD3(endCapBase.x * side, endCapBase.y, endCapBase.z)
+            let top = rim(side < 0 ? 0.5 + 0.03 * (h(2) - 0.5) : 0.03 * (h(2) - 0.5), ox: 0.008, oy: 0.008, height: 0.018).position
+            for k in 0..<points {
+                let s = Float(k) / Float(points - 1)
+                let end = k == 0 || k == points - 1
+                let zig: Float = end ? 0 : (k.isMultiple(of: 2) ? 1 : -1) * (0.012 + 0.022 * h(k))
+                let out = SIMD3<Float>(side, 0, 0) * ((0.045 + 0.03 * h(3)) * sin(.pi * s) + zig * 0.6)
+                path.append(base + (top - base) * s + out + SIMD3(0, 0, zig * 0.5))
+            }
         }
         func ribbon(halfWidth: Float, forward: Float, material: UInt32) -> MeshDescriptor {
             var positions: [SIMD3<Float>] = [], indices: [UInt32] = []
+            let taper = { (i: Int) -> Float in 0.45 + 0.55 * sin(.pi * Float(i) / Float(points - 1)) }
             for k in 0..<(points - 1) {
                 let a = path[k], b = path[k + 1]
-                let d = simd_normalize(b.position - a.position)
-                let taper = { (i: Int) -> Float in 0.55 + 0.45 * sin(.pi * Float(i) / Float(points - 1)) }
-                let side = simd_normalize(simd_cross(a.outward, d))
+                let d = simd_normalize(b - a)
+                var side = simd_cross(d, towardCamera)
+                side = simd_length(side) > 1e-4 ? simd_normalize(side) : SIMD3(0, 1, 0)
                 let base = UInt32(positions.count)
-                let ea = a.position - d * halfWidth * 0.5, eb = b.position + d * halfWidth * 0.5 // overlap at the kinks
-                positions += [ea - side * halfWidth * taper(k) + a.outward * forward, eb - side * halfWidth * taper(k + 1) + b.outward * forward,
-                              eb + side * halfWidth * taper(k + 1) + b.outward * forward, ea + side * halfWidth * taper(k) + a.outward * forward]
+                let ea = a - d * halfWidth * 0.5 + towardCamera * forward, eb = b + d * halfWidth * 0.5 + towardCamera * forward
+                positions += [ea - side * halfWidth * taper(k), eb - side * halfWidth * taper(k + 1),
+                              eb + side * halfWidth * taper(k + 1), ea + side * halfWidth * taper(k)]
                 quad([base, base + 1, base + 2, base + 3], positions, facing: nil, into: &indices)
             }
             var descriptor = MeshDescriptor(name: "discharge.\(site).\(variant).\(material)")
@@ -836,6 +1176,56 @@ nonisolated enum RimOutline {
             descriptor.materials = .allFaces(material)
             return descriptor
         }
-        return [ribbon(halfWidth: 0.011, forward: 0, material: 0), ribbon(halfWidth: 0.0042, forward: 0.003, material: 1)]
+        return [ribbon(halfWidth: 0.034, forward: -0.004, material: 0),
+                ribbon(halfWidth: 0.015, forward: 0, material: 1),
+                ribbon(halfWidth: 0.0065, forward: 0.004, material: 2)]
+    }
+
+    /// The expanding energy ring: a band round the whole outline from just outside the rim lip,
+    /// 10 cm out and rising 3.5 cm (so it reads from the gameplay camera), its light fading outward
+    /// (the field's texture: v 0.03 at the rim, 0.97 at the outer edge), both sides drawn.
+    static func pulse() -> MeshDescriptor {
+        let columns = 96
+        var positions: [SIMD3<Float>] = [], uvs: [SIMD2<Float>] = []
+        for c in 0...columns {
+            let r = rim(Float(c) / Float(columns), ox: -0.004, oy: -0.004, height: 0.016)
+            positions.append(r.position)
+            positions.append(r.position + r.outward * 0.1 + SIMD3(0, 0.035, 0))
+            uvs.append([0.5, 0.03]); uvs.append([0.5, 0.97])
+        }
+        var indices: [UInt32] = []
+        for c in 0..<columns {
+            let i = UInt32(c * 2)
+            quad([i, i + 2, i + 3, i + 1], positions, facing: nil, into: &indices)
+        }
+        var descriptor = MeshDescriptor(name: "energyPulse")
+        descriptor.positions = MeshBuffers.Positions(positions)
+        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates(uvs)
+        descriptor.primitives = .triangles(indices)
+        descriptor.materials = .allFaces(0)
+        return descriptor
+    }
+
+    /// Where a site's sparks leave the board: the middle of its rim span, or the end cap's foot.
+    static func sparkSite(_ site: Int) -> SIMD3<Float> {
+        if site < arcSpans.count {
+            let (u0, u1) = arcSpans[site]
+            let r = rim((u0 + u1) / 2, ox: 0, oy: 0, height: 0.02)
+            return r.position + r.outward * 0.01
+        }
+        let side: Float = site == 4 ? -1 : 1
+        return SIMD3(endCapBase.x * side, endCapBase.y + 0.01, endCapBase.z)
+    }
+
+    /// Which way a site's sparks fly: out from the board and up (CLEAR rises higher).
+    static func sparkDirection(_ site: Int, rising: Bool) -> SIMD3<Float> {
+        let outward: SIMD3<Float>
+        if site < arcSpans.count {
+            let (u0, u1) = arcSpans[site]
+            outward = rim((u0 + u1) / 2, ox: 0, oy: 0, height: 0).outward
+        } else {
+            outward = [site == 4 ? -1 : 1, 0, 0.3]
+        }
+        return simd_normalize(outward * (rising ? 0.35 : 0.8) + SIMD3(0, rising ? 1 : 0.7, 0))
     }
 }
