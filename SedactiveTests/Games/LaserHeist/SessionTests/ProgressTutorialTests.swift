@@ -51,6 +51,6 @@ import Testing
     }
     @Test func copyIsExact() {
         #expect(ProgressTutorialPhase.bar.copy == "This bar shows how far\nyou've gone")
-        #expect(ProgressTutorialPhase.vault.copy == "Each circle is a vault door\nto open")
+        #expect(ProgressTutorialPhase.vault.copy == "Each circle is a vault\ndoor to open")
     }
 }

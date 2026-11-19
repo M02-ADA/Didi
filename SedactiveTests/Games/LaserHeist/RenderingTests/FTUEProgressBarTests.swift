@@ -4,6 +4,26 @@ import Testing
 @testable import Sedactive
 
 @MainActor struct FTUEProgressBarTests {
+    @Test(arguments: [CGSize(width: 1376, height: 1032), CGSize(width: 1210, height: 834)])
+    func spotlightTracksTheHUDWithRoomForCopy(viewport: CGSize) {
+        let k = viewport.width / 1210
+        let bar = CGRect(x: 360 * k, y: 58 * k, width: 667 * k, height: 65 * k)
+        let full = ProgressTutorialSpotlightLayout(bar: bar, viewport: viewport, phase: .bar)
+        let checkpoint = ProgressTutorialSpotlightLayout(bar: bar, viewport: viewport, phase: .vault)
+        #expect(full.highlight.insetBy(dx: full.stroke, dy: full.stroke).contains(bar))
+        #expect(checkpoint.highlight.width == checkpoint.highlight.height)
+        #expect(checkpoint.highlight.width < bar.width)
+        for layout in [full, checkpoint] {
+            #expect(abs(layout.highlight.midX - bar.midX) < 0.001)
+            #expect(abs(layout.highlight.midY - bar.midY) < 0.001)
+            #expect(abs(layout.connector.midX - bar.midX) < 0.001)
+            #expect(abs(layout.connector.minY - (layout.highlight.maxY - layout.stroke / 2)) < 0.001)
+            #expect(layout.connector.height > 0)
+            #expect(layout.connector.maxY < layout.textTop)
+        }
+        #expect(full.textTop == checkpoint.textTop)
+    }
+
     @Test(arguments: [CGFloat(1), CGFloat(1376.0 / 1210)])
     func artworkContainsOnlyOneCenteredCreamCheckpoint(k: CGFloat) throws {
         let renderer = ImageRenderer(content: FTUEProgressBar(k: k).frame(width: 667 * k, height: 65 * k))

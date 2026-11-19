@@ -5,10 +5,34 @@ enum ProgressTutorialPhase: String, CaseIterable {
     var copy: String {
         switch self {
         case .bar: "This bar shows how far\nyou've gone"
-        case .vault: "Each circle is a vault door\nto open"
+        case .vault: "Each circle is a vault\ndoor to open"
         }
     }
     static let duration = 4.0
+}
+
+/// Geometry is resolved from the rendered HUD slot. Its center is also the checkpoint anchor
+/// because FTUEProgressBar places the checkpoint at the midpoint on both axes.
+struct ProgressTutorialSpotlightLayout {
+    let bar: CGRect
+    let viewport: CGSize
+    let phase: ProgressTutorialPhase
+
+    var scale: CGFloat { bar.height / 65 }
+    var stroke: CGFloat { 8 * scale }
+    var connectorWidth: CGFloat { 5 * scale }
+    var cutout: CGRect { bar.insetBy(dx: -2 * scale, dy: -2 * scale) }
+    var highlight: CGRect {
+        if phase == .bar { return bar.insetBy(dx: -18 * scale, dy: -18 * scale) }
+        let diameter = bar.height * 1.42
+        return CGRect(x: bar.midX - diameter / 2, y: bar.midY - diameter / 2, width: diameter, height: diameter)
+    }
+    var textTop: CGFloat { max(viewport.height * 0.39, highlight.maxY + 104 * scale) }
+    var connector: CGRect {
+        let start = highlight.maxY - stroke / 2
+        return CGRect(x: bar.midX - connectorWidth / 2, y: start, width: connectorWidth,
+                      height: textTop - 28 * scale - start)
+    }
 }
 
 /// Highlights the ONE existing HUD bar. The pointer uses that bar's measured checkpoint center.
@@ -24,35 +48,36 @@ struct ProgressTutorialOverlay: View {
     var body: some View {
         GeometryReader { proxy in
             if active, let measured = tutorial.progressHUDFrame {
-                let k = min(proxy.size.width / 1210, proxy.size.height / 834)
                 let origin = proxy.frame(in: .global).origin
-                let bar = measured.offsetBy(dx: -origin.x, dy: -origin.y)
-                let textY = max(bar.maxY + 140 * k, proxy.size.height * 0.46)
-                ZStack {
+                let layout = ProgressTutorialSpotlightLayout(
+                    bar: measured.offsetBy(dx: -origin.x, dy: -origin.y),
+                    viewport: proxy.size, phase: phase)
+                ZStack(alignment: .topLeading) {
                     Path { path in
                         path.addRect(CGRect(origin: .zero, size: proxy.size))
-                        path.addRoundedRect(in: bar.insetBy(dx: -4 * k, dy: -4 * k),
-                            cornerSize: CGSize(width: 36 * k, height: 36 * k))
+                        path.addRoundedRect(in: layout.cutout,
+                            cornerSize: CGSize(width: layout.cutout.height / 2, height: layout.cutout.height / 2))
                     }.fill(.black.opacity(0.55), style: FillStyle(eoFill: true))
-                    if phase == .bar {
-                        Rectangle().fill(LaserHeistDesign.cream.opacity(0.5))
-                            .frame(width: bar.width, height: 0.6 * k)
-                            .position(x: bar.midX, y: bar.maxY + 15 * k)
-                    } else {
-                        let start = bar.midY + 13 * k
-                        let end = textY - 72 * k
-                        Rectangle().fill(LaserHeistDesign.cream.opacity(0.6))
-                            .frame(width: k, height: max(0, end - start))
-                            .position(x: bar.midX, y: (start + end) / 2)
-                            .accessibilityLabel("Pointer to the centered vault checkpoint")
-                            .accessibilityIdentifier("ftueVaultPointer")
-                    }
+                    Capsule()
+                        .fill(LaserHeistDesign.cream)
+                        .frame(width: layout.connector.width, height: layout.connector.height)
+                        .position(x: layout.connector.midX, y: layout.connector.midY)
+                        .accessibilityElement()
+                        .accessibilityLabel(phase == .bar ? "Pointer to the progress bar" : "Pointer to the centered vault checkpoint")
+                        .accessibilityIdentifier(phase == .bar ? "ftueProgressPointer" : "ftueVaultPointer")
+                    Capsule()
+                        .strokeBorder(LaserHeistDesign.cream, lineWidth: layout.stroke)
+                        .frame(width: layout.highlight.width, height: layout.highlight.height)
+                        .position(x: layout.highlight.midX, y: layout.highlight.midY)
+                        .accessibilityHidden(true)
                     Text(phase.copy)
-                        .font(.system(size: 60 * k, weight: .bold, design: .rounded))
+                        .font(.system(size: 67 * layout.scale, weight: .bold, design: .rounded))
                         .foregroundStyle(LaserHeistDesign.cream)
-                        .multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.8)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
                         .frame(width: proxy.size.width * 0.78)
-                        .position(x: phase == .vault ? bar.midX : proxy.size.width / 2, y: textY)
+                        .offset(x: layout.bar.midX - proxy.size.width * 0.39, y: layout.textTop)
                         .accessibilityIdentifier("progressTutorialTitle")
                 }
             }

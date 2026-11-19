@@ -2,6 +2,55 @@ import XCTest
 
 /// Real Home and LaserScene; only the explicit DEBUG fixture supplies SYNTHETIC practice input.
 final class HomeTutorialHelpUITests: XCTestCase {
+    func testProgressExplanationSpotlightsInActualScene() {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        // Use the existing DEBUG scene with the first three modules already completed.
+        app.launchArguments = ["-replay", "-leanFTUEPreview", "-hideDebugOverlay",
+            "-laserHeist.ftue.lean.v1.completed", "YES",
+            "-laserHeist.ftue.heart.v1.completed", "YES",
+            "-laserHeist.ftue.jumpDuck.v1.completed", "YES",
+            "-laserHeist.ftue.progress.v1.completed", "NO"]
+        app.launch()
+        let elements = app.descendants(matching: .any)
+        let title = elements["progressTutorialTitle"]
+        let bar = elements["ftueProgressBar"]
+        let barPointer = elements["ftueProgressPointer"]
+        let vaultPointer = elements["ftueVaultPointer"]
+        let checkpoint = app.images["ftueCenterCheckpoint"]
+
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+
+        XCTAssertTrue(barPointer.waitForExistence(timeout: 25))
+        capture("progress-bar-explanation")
+        XCTAssertEqual(title.label, "This bar shows how far\nyou've gone")
+        XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.500")
+        XCTAssertEqual(barPointer.frame.midX, bar.frame.midX, accuracy: 1)
+        XCTAssertLessThan(barPointer.frame.maxY, title.frame.minY)
+        XCTAssertFalse(vaultPointer.exists)
+
+        XCTAssertTrue(vaultPointer.waitForExistence(timeout: 10))
+        capture("vault-checkpoint-explanation")
+        XCTAssertEqual(title.label, "Each circle is a vault\ndoor to open")
+        XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.500")
+        XCTAssertEqual(vaultPointer.frame.midX, checkpoint.frame.midX, accuracy: 1)
+        XCTAssertGreaterThan(vaultPointer.frame.minY, checkpoint.frame.maxY)
+        XCTAssertLessThan(vaultPointer.frame.maxY, title.frame.minY)
+        XCTAssertFalse(barPointer.exists)
+
+        XCTAssertTrue(elements["gameplayProgressBar"].waitForExistence(timeout: 15))
+        XCTAssertFalse(title.exists)
+        XCTAssertFalse(bar.exists)
+        XCTAssertFalse(barPointer.exists)
+        XCTAssertFalse(vaultPointer.exists)
+    }
+
     func testCollectibleJourneyInActualSceneForFirstPlayAndHomeHelp() {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft
@@ -158,10 +207,10 @@ final class HomeTutorialHelpUITests: XCTestCase {
             XCTAssertEqual(explanation.label, "This bar shows how far\nyou've gone")
             XCTAssertEqual(app.descendants(matching: .any)["ftueProgressBar"].value as? String, "Tutorial fill endpoint 0.500")
             capture("\(prefix)-progress-explanation")
-            expectation(for: NSPredicate(format: "label CONTAINS 'Each circle is a vault door'"), evaluatedWith: explanation)
+            expectation(for: NSPredicate(format: "label BEGINSWITH 'Each circle is a vault'"), evaluatedWith: explanation)
             waitForExpectations(timeout: 12)
             capture("\(prefix)-vault-explanation")
-            XCTAssertEqual(explanation.label, "Each circle is a vault door\nto open")
+            XCTAssertEqual(explanation.label, "Each circle is a vault\ndoor to open")
             let pointer = app.descendants(matching: .any)["ftueVaultPointer"]
             XCTAssertTrue(pointer.exists)
             XCTAssertEqual(pointer.frame.midX, app.images["ftueCenterCheckpoint"].frame.midX, accuracy: 1)
