@@ -19,6 +19,7 @@ enum SoundCue: String, CaseIterable {
     case laserHit = "laser-hit"
     case vaultButton = "vault-button"
     case vaultOpen = "vault-open"
+    case finalVaultTurn = "final-vault-turn"
     case vaultWarning = "vault-warning"
     case diamondTimeTick = "diamond-time-tick"
     case diamondTimeUrgentTick = "diamond-time-urgent-tick"

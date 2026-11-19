@@ -91,6 +91,7 @@ write(level(beep + silence(0.035) + resample(beep, by: 1.335), peakDB: -6), "cue
 write(level(fade(cut(load("reward-chime-144757.mp3"), 0.46, 1.30), out: 0.30), peakDB: -12), "laser-clear")
 write(level(fade(cut(load("laser-zap-90575.mp3"), 0.07, 0.70), out: 0.15), peakDB: -7), "laser-hit")
 write(level(fade(cut(load("safe-open-close-443345.mp3"), 0.06, 0.58), out: 0.08), peakDB: -8), "vault-open")
+write(level(fade(cut(load("bank-vault-100469.mp3"), 5.495, 6.495), out: 0.09), peakDB: -8), "final-vault-turn")
 write(level(fade(cut(load("clock-ticking-down-376897.mp3"), 0.055, 0.19), in: 0.001, out: 0.025), peakDB: -4), "vault-warning")
 let diamondTimeCountdown = load("countdown-8-bit-151797.mp3")
 write(level(fade(cut(diamondTimeCountdown, 0.005, 0.255), in: 0.003, out: 0.025), peakDB: -7), "diamond-time-tick")
