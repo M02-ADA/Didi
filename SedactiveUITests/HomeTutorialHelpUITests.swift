@@ -41,6 +41,38 @@ final class HomeTutorialHelpUITests: XCTestCase {
         }
     }
 
+    func testFreeLeanMovementAndTimeoutAcrossModeChanges() {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        let practice = app.descendants(matching: .any)["ftueFreeLean"]
+        let overlay = app.descendants(matching: .any)["ftueCollectiblesTitle"]
+
+        for (solo, moves) in [(false, true), (true, true), (false, false), (true, false)] {
+            app.launchArguments = ["-homeHelpFTUEPreview"]
+                + (solo ? ["-leanFTUESolo"] : []) + (moves ? [] : ["-leanFTUENoMotion"])
+            app.launch()
+            let help = app.buttons["replayTutorial"]
+            XCTAssertTrue(help.waitForExistence(timeout: 30))
+            if solo { app.segmentedControls["playerModeSelector"].buttons["1 Player · Solo Practice"].tap() }
+            help.tap()
+            app.buttons["setupNext"].tap()
+            app.buttons["setupNext"].tap()
+            XCTAssertTrue(practice.waitForExistence(timeout: 45))
+            let started = ProcessInfo.processInfo.systemUptime
+            XCTAssertTrue(overlay.waitForExistence(timeout: 20))
+            let elapsed = ProcessInfo.processInfo.systemUptime - started
+            let scenario = "\(solo ? "solo" : "coop")-\(moves ? "movement" : "timeout")"
+            print("[FreeLean UI] \(scenario) practice-to-overlay observed \(elapsed)s")
+            XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "ftueCollectiblesTitle").count, 1)
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = "synthetic-\(scenario)-collectibles"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            app.terminate()
+        }
+    }
+
     func testHomeHelpReturningPlayerReplayAndCancellation() {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft

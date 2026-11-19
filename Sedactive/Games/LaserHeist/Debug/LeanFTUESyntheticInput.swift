@@ -21,6 +21,7 @@ import Foundation
     private var stageStart = 0.0
     private var wasSuspended = false
     private let hold: Bool
+    private let skipsLeanMotion = ProcessInfo.processInfo.arguments.contains("-leanFTUENoMotion")
 
     init(configuration: BodyInputConfiguration, geometry: UInt64, tutorial: LeanTutorial,
          roster: [PlayerID], hold: Bool) {
@@ -49,7 +50,7 @@ import Foundation
         }
         let boundarySetup = ProcessInfo.processInfo.arguments.contains("-leanFTUEBoundary") && stage == .introduction
         let share: Double = boundarySetup ? 0.08 : hold || tutorial.isSuspended || now - stageStart < 3 ? 0
-            : stage == .freeLean ? 0.08 : 0
+            : stage == .freeLean && !skipsLeanMotion ? 0.08 : 0
         var players: [PlayerID: PlayerBodySample] = [:]
         var poses: [PlayerID: PresentationPoseSample] = [:]
         func value(_ x: Double) throws -> EstimatedScalar { try .init(value: x, validity: .valid) }

@@ -280,6 +280,53 @@ import Testing
         #expect(tutorial.stage == .notStarted && tutorial.leanExit == nil)
     }
 
+    @Test func repeatedHelpVisitsReplaceRosterClockAndProof() {
+        let tutorial = LeanTutorial(defaults: Fixture().defaults)
+        var retiredGeneration: UUID?
+        for solo in [false, true, false, false] {
+            var f = Fixture()
+            f.roster = solo ? [.player1] : PlayerID.allCases
+            tutorial.prepare(generation: f.generation, roster: f.roster, replayRequested: true)
+            tutorial.beginIfEligible(generation: f.generation, eligible: true)
+            tutorial.introductionVisible(true, generation: f.generation)
+            tutorial.finishIntroduction(generation: f.generation)
+            tutorial.practiceVisible(.freeLean, generation: f.generation, at: 0)
+            #expect(tutorial.roster == f.roster && tutorial.demonstrated.isEmpty && tutorial.leanExit == nil)
+            if let retiredGeneration {
+                for i in 0...80 {
+                    tutorial.advancePractice(generation: retiredGeneration, at: Double(i) / 8, ready: true)
+                }
+                #expect(tutorial.stage == .freeLean)
+            }
+            if solo {
+                f.send(tutorial, 1, 0, 0, 0)
+                f.send(tutorial, 2, 1, 1, 0.1)
+                f.send(tutorial, 3, 1, 1, 0.2)
+            }
+            let deadline = solo ? 32 : 80
+            f.tick(tutorial, 0...(deadline - 1))
+            #expect(tutorial.stage == .freeLean)
+            f.tick(tutorial, deadline...(deadline + 2))
+            #expect(tutorial.stage == .collectiblesIntroduction)
+            #expect(tutorial.leanExit == (solo ? .verifiedMovement : .explorationTimeout))
+            tutorial.finishCollectiblesIntroduction(generation: f.generation)
+            f.tick(tutorial, (deadline + 3)...100)
+            #expect(tutorial.stage == .collection(.diamond))
+            tutorial.abandon()
+            retiredGeneration = f.generation
+        }
+    }
+
+    @Test func transientReadinessLossKeepsActiveTimeWithoutCountingTheGap() {
+        let f = Fixture(), tutorial = f.tutorial()
+        f.tick(tutorial, 0...32)
+        f.tick(tutorial, 33...160, ready: false)
+        f.tick(tutorial, 161...208)
+        #expect(tutorial.stage == .freeLean)
+        f.tick(tutorial, 209...209)
+        #expect(tutorial.stage == .collectiblesIntroduction && tutorial.leanExit == .explorationTimeout)
+    }
+
     @Test(arguments: [false, true]) func flowRequiresAcceptedSetupAndRetainsCompletionAcrossRetry(solo: Bool) async throws {
         let f = Fixture(), tutorial = f.tutorial(); f.finish(tutorial)
         defer { f.defaults.removeObject(forKey: LeanTutorial.completionKey); f.defaults.removeObject(forKey: LeanTutorial.heartCompletionKey) }

@@ -68,6 +68,35 @@ import Testing
         await session.stop()
     }
 
+    @Test func freeLeanUsesSessionFreshnessAndRejectsExpiredReadiness() async throws {
+        let rig = try Self.rig(), session = rig.session
+        session.setPreRoundTutorialPending(true)
+        let time = try await Self.linkAndCalibrate(rig)
+        let host = try session.attachLiveFrameHost()
+        session.advanceLive(frameHost: host)
+        _ = try await Self.frames(rig, from: time, seconds: 2)
+        let last = try #require(session.latestSnapshot)
+        let tutorial = LeanTutorial(defaults: UserDefaults(suiteName: "LeanReady.\(UUID())")!)
+        tutorial.prepare(generation: session.inputConfiguration.sessionGeneration,
+                         roster: session.inputConfiguration.roster, replayRequested: true)
+        try #require(tutorial.canExploreLean(in: session))
+
+        let delayed = last.capturedAt + 0.375
+        rig.controls.fixture.clock.time = delayed
+        session.advanceLive(frameHost: host)
+        #expect(delayed - last.capturedAt > LiveAvatarPresenter.maximumPoseAge)
+        #expect(session.canStartLiveRound)
+        #expect(tutorial.canExploreLean(in: session))
+        #expect(session.state == nil && session.events.isEmpty)
+
+        rig.controls.fixture.clock.time = last.capturedAt + 0.5
+        session.advanceLive(frameHost: host)
+        #expect(!tutorial.canExploreLean(in: session))
+        #expect(session.state == nil && session.liveReadiness?.gameTime == 0)
+        await session.stop()
+        #expect(!tutorial.canExploreLean(in: session))
+    }
+
     @Test func detectedPlayersReachGameplayWithoutAnyButton() async throws {
         let rig = try Self.rig(), session = rig.session
         var time = try await Self.linkAndCalibrate(rig)

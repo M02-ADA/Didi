@@ -10,6 +10,10 @@ final class LeanTutorial {
     private(set) var leanExit: LeanExit?
     @ObservationIgnored private var practiceTime = 0.0
     @ObservationIgnored private var previousPracticeTick: Double?
+    #if DEBUG
+    @ObservationIgnored private var practiceBlockedSince: Double?
+    @ObservationIgnored private var loggedPracticeBlock = false
+    #endif
     static let completionKey = "laserHeist.ftue.lean.v1.completed"
     static let jumpDuckCompletionKey = "laserHeist.ftue.jumpDuck.v1.completed"
     static let progressCompletionKey = "laserHeist.ftue.progress.v1.completed"
@@ -83,15 +87,42 @@ final class LeanTutorial {
         guard self.generation == generation, self.stage == stage, isPractising, !isSuspended else { return }
         guard visiblePractice == nil else { return }
         visiblePractice = stage; activation = time; attempts = [:]
+        #if DEBUG
+        logPractice("visible", generation: generation, at: time)
+        #endif
     }
     func setSuspended(_ value: Bool, generation: UUID) {
         guard self.generation == generation, isActive, isSuspended != value else { return }
         isSuspended = value; introVisible = false; visibleHeart = nil; visibleProgress = nil; clearPractice()
     }
+    func canExploreLean(in session: GameSessionCoordinator) -> Bool {
+        guard let input = session.inputContext, input.isActive, input.sessionGeneration == generation,
+              roster == session.inputConfiguration.roster,
+              roster.allSatisfy({ input.calibrationRevisions[$0] != nil }) else { return false }
+        return session.preRoundTutorialPending && session.canStartLiveRound
+            && session.inputStatus == .running && session.setup?.hasConfirmedReliablePair == true
+    }
+
     func suspendPracticeClock() { previousPracticeTick = nil }
     func advancePractice(generation: UUID, at now: Double, ready: Bool) {
         guard self.generation == generation, isPractising else { return }
-        guard ready, !isSuspended, visiblePractice == stage, now.isFinite, now >= activation else {
+        let eligible = ready && !isSuspended && visiblePractice == stage && now.isFinite && now >= activation
+        #if DEBUG
+        if eligible {
+            if loggedPracticeBlock { logPractice("resumed", generation: generation, at: now) }
+            practiceBlockedSince = nil
+            loggedPracticeBlock = false
+        } else if now.isFinite {
+            let since = practiceBlockedSince ?? now
+            practiceBlockedSince = since
+            if !loggedPracticeBlock && now - since >= 1 {
+                logPractice("waiting ready=\(ready) paused=\(isSuspended) visible=\(visiblePractice == stage)",
+                            generation: generation, at: now)
+                loggedPracticeBlock = true
+            }
+        }
+        #endif
+        guard eligible else {
             previousPracticeTick = nil
             return
         }
@@ -104,6 +135,10 @@ final class LeanTutorial {
         // This flag records completion of exploration, regardless of its exit reason.
         defaults.set(true, forKey: Self.completionKey)
         stage = .collectiblesIntroduction
+        #if DEBUG
+        logPractice("accepted transition to collectiblesIntroduction exit=\(String(describing: leanExit))",
+                    generation: generation, at: now)
+        #endif
         clearPractice()
     }
     func finishCollectiblesIntroduction(generation: UUID) {
@@ -220,7 +255,20 @@ final class LeanTutorial {
     }
     private func clearPractice() {
         demonstrated = []; attempts = [:]; visiblePractice = nil; activation = .infinity; suppressed = false; previousPracticeTick = nil
+        #if DEBUG
+        practiceBlockedSince = nil
+        loggedPracticeBlock = false
+        #endif
     }
+
+    #if DEBUG
+    private func logPractice(_ event: String, generation: UUID, at now: Double) {
+        let required = roster.map(\.rawValue).joined(separator: ",")
+        let proof = demonstrated.map(\.rawValue).sorted().joined(separator: ",")
+        print(String(format: "[FreeLean] t=%.3f active=%.3f generation=%@ required=%@ proof=%@ %@",
+                     now, practiceTime, generation.uuidString, required, proof, event))
+    }
+    #endif
     #if DEBUG
     func resetForNextPlay() { defaults.removeObject(forKey: Self.completionKey); defaults.removeObject(forKey: Self.heartCompletionKey); defaults.removeObject(forKey: Self.jumpDuckCompletionKey); defaults.removeObject(forKey: Self.progressCompletionKey); abandon() }
     /// Static screenshot route ONLY; never completes/persists a tutorial or reaches live input.

@@ -172,11 +172,16 @@ private struct ReplayRoundView: View {
                     }
                 }
                 if let scene, let tutorial, let suppliedSession, tutorial.isPractising || tutorial.collection != nil {
+                    // The session already evaluates CP1 freshness for ready. The stricter pose-age
+                    // window belongs to movement proof and collectible contacts, not exploration time.
+                    let ready = tutorial.isPractising
+                        ? tutorial.canExploreLean(in: suppliedSession)
+                        : suppliedSession.preRoundTutorialPending && suppliedSession.canStartLiveRound
+                            && suppliedSession.setup?.hasConfirmedReliablePair == true
+                            && hasFreshTutorialTracking(suppliedSession, at: now)
                     updateLeanAndCollectibles(tutorial, scene: scene, context: suppliedSession.inputContext,
                         input: suppliedSession.inputConfiguration, configuration: suppliedSession.configuration,
-                        eligible: suppliedSession.preRoundTutorialPending && suppliedSession.canStartLiveRound
-                            && suppliedSession.setup?.hasConfirmedReliablePair == true
-                            && hasFreshTutorialTracking(suppliedSession, at: now),
+                        eligible: ready,
                         at: now)
                 }
                 if activeTutorial?.collection == nil { collectiblePresentation.clear() }

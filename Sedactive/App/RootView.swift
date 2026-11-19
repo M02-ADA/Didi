@@ -103,7 +103,10 @@ struct ContentView: View {
           // hidden over the game: attaching or detaching the preview layer reconfigures the running
           // capture session and stalls frames 220–500 ms (iPad, 11 November 2026), which aborted
           // every countdown and, repeated, lost the player and restarted setup.
-          let stageShown = Self.showsSetupStage(flow.session) && !flow.leanTutorial.isActive
+          let recoveringLean = flow.leanTutorial.isPractising && flow.session.map {
+            !flow.leanTutorial.canExploreLean(in: $0)
+          } == true
+          let stageShown = Self.showsSetupStage(flow.session) && (!flow.leanTutorial.isActive || recoveringLean)
             && !(flow.leanTutorial.stage == .completed && flow.session?.canStartLiveRound == true)
           liveSetupStage(flow, preview: cameraPreview)
             .opacity(stageShown ? 1 : 0)
