@@ -5,6 +5,7 @@ struct LeanTutorialOverlay: View {
     let tutorial: LeanTutorial
     let solo: Bool
     var posterOnly = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         GeometryReader { proxy in
@@ -43,21 +44,36 @@ struct LeanTutorialOverlay: View {
                 } else if let move = tutorial.practiceMove {
                     Color.clear.accessibilityElement().accessibilityLabel(move == .jump ? "JUMP practice" : "DUCK practice")
                         .accessibilityIdentifier("ftueLaserPractice")
-                } else {
-                    if let placement = LeanCuePlacement.make(viewport: proxy.size, headTopFraction: tutorial.headTopFraction) {
-                        Image(uiImage: tutorial.stage == .practiceLeft ? LeanInstructionArtwork.left : LeanInstructionArtwork.right)
-                            .resizable().frame(width: placement.frame.width, height: placement.frame.height)
-                            .position(x: placement.frame.midX, y: placement.frame.midY)
-                            .accessibilityLabel(tutorial.stage == .practiceLeft ? "← LEAN LEFT" : "LEAN RIGHT →")
-                            .accessibilityIdentifier("leanTutorialTitle")
-                            .task(id: tutorial.stage) {
-                                if let generation = tutorial.generation {
-                                    tutorial.practiceVisible(tutorial.stage, generation: generation, at: CameraHostClock.now())
-                                }
+                } else if tutorial.stage == .collectiblesIntroduction {
+                    Color.black.opacity(0.55)
+                    Image("LaserHeistUI/ftue-collectibles")
+                        .resizable().scaledToFit()
+                        .frame(width: 250 * k)
+                        .position(x: proxy.size.width / 2, y: proxy.size.height * 0.39)
+                        .accessibilityHidden(true)
+                    Text("Collect some collectibles\nalong the way")
+                        .font(.system(size: 60 * k, weight: .bold, design: .rounded))
+                        .foregroundStyle(LaserHeistDesign.cream)
+                        .multilineTextAlignment(.center)
+                        .position(x: proxy.size.width / 2, y: proxy.size.height * 0.59)
+                        .accessibilityIdentifier("ftueCollectiblesTitle")
+                        .task(id: scenePhase) {
+                            guard scenePhase == .active, let generation = tutorial.generation else { return }
+                            do { try await Task.sleep(for: .seconds(4)) } catch { return }
+                            guard !Task.isCancelled else { return }
+                            tutorial.finishCollectiblesIntroduction(generation: generation)
+                        }
+                } else if let kind = tutorial.collection {
+                    Color.clear.accessibilityElement().accessibilityLabel("Collect " + kind.rawValue)
+                        .accessibilityIdentifier("ftueCollection-" + kind.rawValue)
+                } else if tutorial.isPractising {
+                    Color.clear.accessibilityElement().accessibilityLabel("Free lean practice")
+                        .accessibilityIdentifier("ftueFreeLean")
+                        .onAppear {
+                            if let generation = tutorial.generation {
+                                tutorial.practiceVisible(.freeLean, generation: generation, at: CameraHostClock.now())
                             }
-                    } else {
-                        ProgressView("Preparing movement guide…").tint(.white)
-                    }
+                        }
                 }
             }.frame(width: proxy.size.width, height: proxy.size.height)
         }

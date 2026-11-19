@@ -19,17 +19,12 @@ import Testing
         }
         tick(1); tick(1.1)
         #expect(abs(scene.travelOffset - scene.layout.travelSpeed * 0.1) < 0.00001)
-        #expect(group.position.z == scene.travelOffset && tutorial.stage == .practiceLeft)
+        #expect(group.position.z == scene.travelOffset && tutorial.stage == .freeLean)
         let before = scene.travelOffset
         tick(1.2); #expect(scene.travelOffset > before)
         #expect(tutorial.demonstrated.isEmpty, "travel cannot fabricate Lean completion or progress")
         #expect(tutorial.progressJourney.fillEnd == FTUEProgressJourney.initial)
-        // Complete LEFT with existing accepted synthetic evidence; travel continues in RIGHT.
-        f.send(tutorial, 1, 0, 0, 0); f.send(tutorial, 2, -1, -1, -0.1); f.send(tutorial, 3, -1, -1, -0.2)
-        #expect(tutorial.stage == .practiceRight)
-        tick(1.3); #expect(scene.travelOffset > before)
-        tutorial.practiceVisible(.practiceRight, generation: f.generation, at: 0.31)
-        f.send(tutorial, 4, 0, 0, -0.2); f.send(tutorial, 5, 1, 1, -0.1); f.send(tutorial, 6, 1, 1, 0)
+        f.finishLean(tutorial)
         #expect(tutorial.heartPhase == .introduction)
         let handoff = scene.travelOffset
         tick(1.4); tick(1.5)

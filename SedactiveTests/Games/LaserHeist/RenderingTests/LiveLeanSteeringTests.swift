@@ -107,7 +107,7 @@ struct LiveLeanSteeringTests {
         tutorial.prepare(generation: generation, roster: roster)
         tutorial.beginIfEligible(generation: generation, eligible: true)
         tutorial.introductionVisible(true, generation: generation); tutorial.finishIntroduction(generation: generation)
-        tutorial.practiceVisible(.practiceLeft, generation: generation, at: 0)
+        tutorial.practiceVisible(.freeLean, generation: generation, at: 0)
         let context = BodyInputContext(sessionGeneration: generation, cameraGeometryRevision: live.source.context.geometryRevision,
             calibrationRevisions: live.calibrations.mapValues(\.revision),
             cutovers: live.calibrations.mapValues { .init(frameID: $0.sourceFrameID, capturedAt: $0.capturedAt) },
@@ -125,16 +125,13 @@ struct LiveLeanSteeringTests {
         for _ in 0..<20 { try live.frame(neutral); try observe() }
         for _ in 0..<90 {
             try live.frame(Dictionary(uniqueKeysWithValues: roster.map { ($0, 0.08) })); try observe()
-            if tutorial.stage == .practiceRight { break }
+            if tutorial.demonstrated == Set(roster) { break }
         }
-        #expect(tutorial.stage == .practiceRight)
-        tutorial.practiceVisible(.practiceRight, generation: generation, at: live.time + 0.02)
-        for _ in 0..<30 { try live.frame(neutral); try observe() }
-        for _ in 0..<90 {
-            try live.frame(Dictionary(uniqueKeysWithValues: roster.map { ($0, -0.08) })); try observe()
-            if tutorial.stage == .heart(.introduction) { break }
+        #expect(tutorial.stage == .freeLean && tutorial.demonstrated == Set(roster))
+        for tick in 0...32 {
+            tutorial.advancePractice(generation: generation, at: live.time + Double(tick) / 8, ready: true)
         }
-        #expect(tutorial.stage == .heart(.introduction) && tutorial.hasCompletedLean && !tutorial.isCompleted)
+        #expect(tutorial.stage == .collectiblesIntroduction && tutorial.hasCompletedLean && !tutorial.isCompleted)
         #expect(Set(live.avatars.robots.keys) == Set(roster))
         live.scene.detachLiveAvatars()
     }
@@ -154,7 +151,7 @@ struct LiveLeanSteeringTests {
         tutorial.prepare(generation: generation, roster: roster)
         tutorial.beginIfEligible(generation: generation, eligible: true)
         tutorial.introductionVisible(true, generation: generation); tutorial.finishIntroduction(generation: generation)
-        tutorial.practiceVisible(.practiceLeft, generation: generation, at: live.time)
+        tutorial.practiceVisible(.freeLean, generation: generation, at: live.time)
         let context = BodyInputContext(sessionGeneration: generation, cameraGeometryRevision: live.source.context.geometryRevision,
             calibrationRevisions: live.calibrations.mapValues(\.revision),
             cutovers: live.calibrations.mapValues { .init(frameID: $0.sourceFrameID, capturedAt: $0.capturedAt) },
@@ -167,11 +164,11 @@ struct LiveLeanSteeringTests {
                 generation: generation, at: live.time + 0.02)
         }
         for _ in 0..<10 { try live.frame(left); try observe() }
-        #expect(tutorial.stage == .practiceLeft, "already-held input is not a new action")
+        #expect(tutorial.stage == .freeLean, "already-held input is not a new action")
         for _ in 0..<40 { try live.frame(neutral); try observe() }
         let positions = Dictionary(uniqueKeysWithValues: roster.map { ($0, live.mascotX($0)) })
         for _ in 0..<40 { try live.frame(left); try observe() }
-        #expect(tutorial.stage == .practiceRight)
+        #expect(tutorial.demonstrated == Set(tutorial.roster))
         for p in roster {
             let reading = try #require(live.avatars.steeringReading(p))
             #expect(reading.constraint == .leftLimit || reading.constraint == .partner)
@@ -179,19 +176,7 @@ struct LiveLeanSteeringTests {
             #expect(reading.velocity == 0 && reading.leanSpeed < 0)
             #expect(abs(live.mascotX(p) - positions[p]!) < 0.0001, "no impossible extra displacement")
         }
-        let right = Dictionary(uniqueKeysWithValues: roster.map { ($0, -0.08) })
-        _ = try live.hold(right, seconds: 6) // reach the opposite REAL limit before RIGHT is visible
-        tutorial.practiceVisible(.practiceRight, generation: generation, at: live.time + 0.02)
-        for _ in 0..<40 { try live.frame(neutral); try observe() }
-        let rightPositions = Dictionary(uniqueKeysWithValues: roster.map { ($0, live.mascotX($0)) })
-        for _ in 0..<40 { try live.frame(right); try observe() }
-        for p in roster {
-            let reading = try #require(live.avatars.steeringReading(p))
-            #expect(reading.constraint == .rightLimit || reading.constraint == .partner)
-            #expect(reading.velocity == 0 && reading.leanSpeed > 0)
-            #expect(abs(live.mascotX(p) - rightPositions[p]!) < 0.0001)
-        }
-        #expect(tutorial.stage == .heart(.introduction))
+
     }
 
     @Test(arguments: PlayerID.allCases)
@@ -208,7 +193,7 @@ struct LiveLeanSteeringTests {
         tutorial.prepare(generation: generation, roster: PlayerID.allCases)
         tutorial.beginIfEligible(generation: generation, eligible: true)
         tutorial.introductionVisible(true, generation: generation); tutorial.finishIntroduction(generation: generation)
-        tutorial.practiceVisible(.practiceLeft, generation: generation, at: live.time)
+        tutorial.practiceVisible(.freeLean, generation: generation, at: live.time)
         let context = BodyInputContext(sessionGeneration: generation, cameraGeometryRevision: live.source.context.geometryRevision,
             calibrationRevisions: live.calibrations.mapValues(\.revision),
             cutovers: live.calibrations.mapValues { .init(frameID: $0.sourceFrameID, capturedAt: $0.capturedAt) },
@@ -227,12 +212,12 @@ struct LiveLeanSteeringTests {
         let reading = try #require(live.avatars.steeringReading(blockedPlayer))
         #expect(reading.constraint == (blockedPlayer == .player1 ? .leftLimit : .partner))
         #expect(abs(live.mascotX(blockedPlayer) - x) < 0.0001)
-        #expect(tutorial.stage == .practiceLeft && tutorial.demonstrated == [blockedPlayer])
+        #expect(tutorial.stage == .freeLean && tutorial.demonstrated == [blockedPlayer])
         // The other bound player must now supply its OWN fresh movement.
         for _ in 0..<40 {
             try live.frame([blockedPlayer: 0, other: 0.08]); try observe()
         }
-        #expect(tutorial.stage == .practiceRight)
+        #expect(tutorial.demonstrated == Set(tutorial.roster))
     }
 
     @Test(arguments: [false, true])

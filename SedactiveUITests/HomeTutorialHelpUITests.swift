@@ -2,64 +2,43 @@ import XCTest
 
 /// Real Home and LaserScene; only the explicit DEBUG fixture supplies SYNTHETIC practice input.
 final class HomeTutorialHelpUITests: XCTestCase {
-    func testCoopBoundaryLeanWithForwardTravel() {
+    func testCollectibleJourneyInActualSceneForFirstPlayAndHomeHelp() {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
-        app.launchArguments = ["-replay", "-leanFTUEPreview", "-leanFTUEReset", "-leanFTUEBoundary", "-hideDebugOverlay"]
-        app.launch()
-        func capture(_ name: String) {
-            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
-        }
-        func waitTitle(_ copy: String, id: String = "leanTutorialTitle") {
-            let title = app.descendants(matching: .any)[id]
-            XCTAssertTrue(title.waitForExistence(timeout: 45))
-            expectation(for: NSPredicate(format: "label CONTAINS %@", copy), evaluatedWith: title)
-            waitForExpectations(timeout: 25)
+        func element(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id] }
+        func capture(_ id: String, _ prefix: String) {
+            XCTAssertTrue(element(id).waitForExistence(timeout: 30), id)
+            let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            shot.name = "synthetic-\(prefix)-\(id)"; shot.lifetime = .keepAlways; add(shot)
             XCTAssertEqual(app.images.matching(identifier: "ftueCenterCheckpoint").count, 1)
-            XCTAssertFalse(app.descendants(matching: .any)["gameplayProgressBar"].exists)
+            XCTAssertFalse(element("gameplayProgressBar").exists)
         }
-        waitTitle("Lean your head"); capture("synthetic-coop-introduction")
-        waitTitle("LEAN LEFT"); capture("synthetic-coop-left-neutral-a")
-        // The fixture holds BODY neutral for three seconds after stage entry. Compare the
-        // world while mascot steering is at rest, not lateral motion masquerading as travel.
-        Thread.sleep(forTimeInterval: 0.6)
-        XCTAssertTrue(app.descendants(matching: .any)["leanTutorialTitle"].label.contains("LEAN LEFT"))
-        capture("synthetic-coop-left-neutral-b")
-        waitTitle("LEAN RIGHT"); capture("synthetic-coop-right-neutral-a")
-        Thread.sleep(forTimeInterval: 0.6)
-        XCTAssertTrue(app.descendants(matching: .any)["leanTutorialTitle"].label.contains("LEAN RIGHT"))
-        capture("synthetic-coop-right-neutral-b")
-        waitTitle("This is your shared health", id: "heartTutorialTitle")
-        capture("synthetic-coop-heart-handoff")
-        XCTAssertEqual(app.descendants(matching: .any)["sharedHealthHUD"].label, "Team health 5 of 5")
-        XCTAssertFalse(app.buttons["leanTutorialContinue"].exists)
-        app.terminate()
-    }
-
-    func testBoundaryLimitedLeanRearmsAndReachesHeart() {
-        continueAfterFailure = false
-        XCUIDevice.shared.orientation = .landscapeLeft
-        let app = XCUIApplication()
-        app.launchArguments = ["-replay", "-leanFTUEPreview", "-leanFTUEReset", "-leanFTUESolo",
-                               "-leanFTUEBoundary", "-hideDebugOverlay"]
-        app.launch()
-        func waitTitle(_ label: String, id: String = "leanTutorialTitle") {
-            let title = app.descendants(matching: .any)[id]
-            XCTAssertTrue(title.waitForExistence(timeout: 45))
-            expectation(for: NSPredicate(format: "label CONTAINS %@", label), evaluatedWith: title)
-            waitForExpectations(timeout: 25)
-            let image = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-            image.name = "synthetic-boundary-\(label)"; image.lifetime = .keepAlways; add(image)
-            XCTAssertEqual(app.images.matching(identifier: "ftueCenterCheckpoint").count, 1)
-            XCTAssertFalse(app.buttons["leanTutorialContinue"].exists)
+        for help in [false, true] {
+            let prefix = help ? "home-help-solo" : "first-play-coop"
+            app.launchArguments = help ? ["-homeHelpFTUEPreview", "-leanFTUESolo"]
+                : ["-replay", "-leanFTUEPreview", "-leanFTUEReset", "-leanFTUEBoundary", "-hideDebugOverlay"]
+            app.launch()
+            if help {
+                let replay = app.buttons["replayTutorial"]
+                XCTAssertTrue(replay.waitForExistence(timeout: 30))
+                app.segmentedControls["playerModeSelector"].buttons["1 Player · Solo Practice"].tap()
+                replay.tap(); app.buttons["setupNext"].tap(); app.buttons["setupNext"].tap()
+            }
+            XCTAssertTrue(element("leanTutorialTitle").waitForExistence(timeout: 45))
+            capture("ftueFreeLean", prefix)
+            XCTAssertFalse(element("leanTutorialTitle").exists)
+            capture("ftueCollectiblesTitle", prefix)
+            XCTAssertFalse(element("heartTutorialTitle").exists)
+            capture("ftueCollection-diamond", prefix)
+            XCTAssertFalse(element("ftueCollection-heart").exists)
+            capture("ftueCollection-heart", prefix)
+            XCTAssertFalse(element("heartTutorialTitle").exists)
+            capture("heartTutorialTitle", prefix)
+            XCTAssertTrue(element("heartTutorialTitle").label.contains("This is your shared health"))
+            XCTAssertEqual(element("sharedHealthHUD").label, "Team health 5 of 5")
+            app.terminate()
         }
-        waitTitle("Lean your head")
-        waitTitle("LEAN LEFT")
-        waitTitle("LEAN RIGHT")
-        waitTitle("This is your shared health", id: "heartTutorialTitle")
-        app.terminate()
     }
 
     func testHomeHelpReturningPlayerReplayAndCancellation() {
@@ -169,7 +148,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
         }
         // Existing first-play path still works without an explicit Help replay request.
         app.launchArguments = ["-replay", "-leanFTUEPreview", "-leanFTUEReset", "-hideDebugOverlay"]
-        app.launch(); waitTitle("Lean your head"); waitTitle("LEAN LEFT"); waitTitle("LEAN RIGHT"); heartSequence("first-time"); practiceSequence("first-time"); complete(); app.terminate()
+        app.launch(); waitTitle("Lean your head"); XCTAssertTrue(app.descendants(matching: .any)["ftueFreeLean"].waitForExistence(timeout: 15)); heartSequence("first-time"); practiceSequence("first-time"); complete(); app.terminate()
 
         for solo in [false, true] {
             let mode = solo ? "solo" : "coop"
@@ -197,8 +176,8 @@ final class HomeTutorialHelpUITests: XCTestCase {
             XCTAssertTrue(help.waitForExistence(timeout: 10))
             help.tap(); app.buttons["setupNext"].tap(); app.buttons["setupNext"].tap()
             waitTitle("Lean your head"); capture("\(mode)-manual-introduction")
-            waitTitle("LEAN LEFT"); capture("\(mode)-manual-left")
-            waitTitle("LEAN RIGHT"); capture("\(mode)-manual-right")
+            XCTAssertTrue(app.descendants(matching: .any)["ftueFreeLean"].waitForExistence(timeout: 15))
+            capture("\(mode)-free-lean")
             heartSequence(mode, pause: !solo)
             practiceSequence(mode)
             complete(); capture("\(mode)-manual-completed")

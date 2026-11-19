@@ -28,7 +28,7 @@ import Testing
             tutorial.beginIfEligible(generation: generation, eligible: true)
             tutorial.introductionVisible(true, generation: generation)
             tutorial.finishIntroduction(generation: generation)
-            tutorial.practiceVisible(.practiceLeft, generation: generation, at: 0)
+            tutorial.practiceVisible(.freeLean, generation: generation, at: 0)
             return tutorial
         }
         func send(_ tutorial: LeanTutorial, _ id: UInt64, _ command: Float, _ velocity: Float, _ x: Float,
@@ -36,10 +36,24 @@ import Testing
             let t = Double(id) / 10
             tutorial.observe(observation(id, t, command, velocity, x, players: players), generation: generation, at: t + 0.01)
         }
+        func tick(_ tutorial: LeanTutorial, _ range: ClosedRange<Int>, ready: Bool = true) {
+            for i in range { tutorial.advancePractice(generation: generation, at: Double(i) / 8, ready: ready) }
+        }
         func finishLean(_ tutorial: LeanTutorial) {
             send(tutorial, 1, 0, 0, 0); send(tutorial, 2, -1, -1, -0.1); send(tutorial, 3, -1, -1, -0.2)
-            tutorial.practiceVisible(.practiceRight, generation: generation, at: 0.31)
-            send(tutorial, 4, 0, 0, -0.2); send(tutorial, 5, 1, 1, -0.1); send(tutorial, 6, 1, 1, 0)
+            tick(tutorial, 0...32)
+            finishCollections(tutorial)
+        }
+        func finishCollections(_ tutorial: LeanTutorial, context: BodyInputContext? = nil) {
+            let active = context ?? self.context
+            tutorial.finishCollectiblesIntroduction(generation: active.sessionGeneration)
+            for kind: FTUECollectible in [.diamond, .heart] {
+                var encounter = try! FTUECollectibleEncounter(kind: kind, configuration: LaserReplayScript.load().configuration,
+                    context: active, position: .init(x: 0, y: 1), roster: Set(roster))
+                try! encounter.advance(to: 2)
+                try! encounter.collect(Set(roster), context: active)
+                tutorial.acceptPickup(encounter.receipt!)
+            }
         }
         func finishPhase(_ tutorial: LeanTutorial, _ phase: HeartTutorialPhase, generation: UUID? = nil) {
             let gen = generation ?? self.generation
@@ -94,9 +108,9 @@ import Testing
         #expect(tutorial.stage == .introduction)
         tutorial.finishIntroduction(generation: f.generation)
         tutorial.finishIntroduction(generation: f.generation)
-        #expect(tutorial.stage == .practiceLeft && !tutorial.isCompleted)
+        #expect(tutorial.stage == .freeLean && !tutorial.isCompleted)
     }
-    @Test(arguments: [false, true]) func bothDirectionsPersistOnlyAfterRosterDemonstration(coop: Bool) {
+    @Test(arguments: [false, true]) func wholeTutorialPersistsAfterRosterDemonstration(coop: Bool) {
         var f = Fixture(); if coop { f.roster = PlayerID.allCases }
         defer { f.defaults.removeObject(forKey: LeanTutorial.completionKey); f.defaults.removeObject(forKey: LeanTutorial.heartCompletionKey) }
         let tutorial = f.tutorial(); f.finish(tutorial)
@@ -117,9 +131,9 @@ import Testing
         #expect(tutorial.demonstrated.isEmpty, "a static wall position is not proof")
         f.send(tutorial, 8, 0, 0, -4); f.send(tutorial, 9, -1, -1, -4.1)
         f.send(tutorial, 9, -1, -1, -4.2)
-        #expect(tutorial.stage == .practiceLeft)
+        #expect(tutorial.stage == .freeLean)
         f.send(tutorial, 10, -1, -1, -4.3)
-        #expect(tutorial.stage == .practiceRight)
+        #expect(tutorial.demonstrated == Set(f.roster))
     }
     @Test(arguments: ["valid", "free", "wrong", "held", "stale", "paused", "generation", "missing"])
     func boundaryProofRequiresFreshRearmedDirectionalInput(scenario: String) {
@@ -135,7 +149,7 @@ import Testing
         if scenario == "paused" {
             tutorial.setSuspended(true, generation: f.generation)
             tutorial.setSuspended(false, generation: f.generation)
-            tutorial.practiceVisible(.practiceLeft, generation: f.generation, at: 0.15)
+            tutorial.practiceVisible(.freeLean, generation: f.generation, at: 0.15)
         }
         if scenario == "missing" { tutorial.observe(nil, generation: f.generation, at: 0.15) }
         let command: Float = scenario == "wrong" ? 1 : -1
@@ -144,17 +158,14 @@ import Testing
         send(scenario == "stale" ? 2 : 3, command: command, blocked: blocked,
              generation: scenario == "generation" ? UUID() : nil)
         let accepted = scenario == "valid"
-        #expect(tutorial.stage == (accepted ? .practiceRight : .practiceLeft))
+        #expect(tutorial.demonstrated.contains(.player1) == accepted)
         if !accepted {
             // BODY neutral rearms at the SAME world position, no opposite translation.
             send(4, command: 0, blocked: 0)
             send(5, command: -1, blocked: -1); send(6, command: -1, blocked: -1)
-            #expect(tutorial.stage == .practiceRight)
+            #expect(tutorial.demonstrated == Set(f.roster))
         }
-        tutorial.practiceVisible(.practiceRight, generation: f.generation, at: 0.65)
-        send(7, command: 0, blocked: 0)
-        send(8, command: 1, blocked: 1); send(9, command: 1, blocked: 1)
-        #expect(tutorial.stage == .heart(.introduction))
+
     }
 
     @Test func coopBoundaryProofBelongsOnlyToTheObservedPlayer() {
@@ -169,16 +180,16 @@ import Testing
         for id: UInt64 in [2, 3] {
             send(id, [.player1: .init(command: -1, velocity: 0, x: -2, blockedDirection: -1)])
         }
-        #expect(tutorial.stage == .practiceLeft && tutorial.demonstrated == [.player1])
+        #expect(tutorial.stage == .freeLean && tutorial.demonstrated == [.player1])
         // Missing P2, static position, and inward-to-the-wrong-constraint cannot substitute.
         send(4, [.player2: .init(command: 0, velocity: 0, x: -1)])
         send(5, [.player2: .init(command: -1, velocity: 0, x: -1, blockedDirection: 1)])
-        #expect(tutorial.stage == .practiceLeft)
+        #expect(tutorial.stage == .freeLean)
         send(6, [.player2: .init(command: 0, velocity: 0, x: -1)])
         for id: UInt64 in [7, 8] {
             send(id, [.player2: .init(command: -1, velocity: 0, x: -1, blockedDirection: -1)])
         }
-        #expect(tutorial.stage == .practiceRight)
+        #expect(tutorial.demonstrated == Set(f.roster))
     }
 
     @Test func coopPlayersDemonstrateIndependentlyAndNeitherCanSubstituteForTheOther() {
@@ -187,27 +198,27 @@ import Testing
         f.send(tutorial, 1, 0, 0, 0, players: [.player1])
         f.send(tutorial, 2, -1, -1, -0.1, players: [.player1])
         f.send(tutorial, 3, -1, -1, -0.2, players: [.player1])
-        #expect(tutorial.demonstrated == [.player1] && tutorial.stage == .practiceLeft)
+        #expect(tutorial.demonstrated == [.player1] && tutorial.stage == .freeLean)
         f.send(tutorial, 4, 0, 0, 0, players: [.player2])
         f.send(tutorial, 5, -1, -1, -0.1, players: [.player2])
         f.send(tutorial, 6, -1, -1, -0.2, players: [.player2])
-        #expect(tutorial.stage == .practiceRight && tutorial.demonstrated.isEmpty)
+        #expect(tutorial.stage == .freeLean && tutorial.demonstrated == Set(f.roster))
     }
     @Test func missingEvidencePauseAndGenerationCutoverRequireFreshNeutral() {
         let f = Fixture(), tutorial = f.tutorial()
         f.send(tutorial, 1, 0, 0, 0); f.send(tutorial, 2, -1, -1, -0.1)
         tutorial.observe(nil, generation: f.generation, at: 0.21)
         f.send(tutorial, 3, -1, -1, -0.2); f.send(tutorial, 4, -1, -1, -0.3)
-        #expect(tutorial.stage == .practiceLeft)
+        #expect(tutorial.stage == .freeLean)
         tutorial.setSuspended(true, generation: f.generation)
         f.send(tutorial, 5, 0, 0, -0.3); f.send(tutorial, 6, -1, -1, -0.4)
         tutorial.setSuspended(false, generation: f.generation)
-        tutorial.practiceVisible(.practiceLeft, generation: f.generation, at: 0.65)
+        tutorial.practiceVisible(.freeLean, generation: f.generation, at: 0.65)
         tutorial.observe(f.observation(7, 0.7, -1, -1, -0.5), generation: UUID(), at: 0.71)
         f.send(tutorial, 7, -1, -1, -0.5)
         #expect(tutorial.demonstrated.isEmpty)
         f.send(tutorial, 8, 0, 0, -0.5); f.send(tutorial, 9, -1, -1, -0.6); f.send(tutorial, 10, -1, -1, -0.7)
-        #expect(tutorial.stage == .practiceRight)
+        #expect(tutorial.demonstrated == Set(f.roster))
         tutorial.abandon()
         tutorial.finishIntroduction(generation: f.generation)
         #expect(!tutorial.isCompleted && tutorial.generation == nil)
@@ -217,13 +228,58 @@ import Testing
         f.send(tutorial, 1, 0, 0, 0); f.send(tutorial, 2, -1, -1, -0.1)
         let old = f.observation(3, 0.3, -1, -1, -0.2)
         tutorial.observe(old, generation: f.generation, at: 2)
-        #expect(tutorial.stage == .practiceLeft)
+        #expect(tutorial.stage == .freeLean)
         let changed = BodyInputContext(sessionGeneration: f.generation, cameraGeometryRevision: 2,
             calibrationRevisions: f.context.calibrationRevisions, cutovers: f.context.cutovers,
             isActive: true, wristContact: f.context.wristContact)
         tutorial.observe(.init(source: old.source, context: changed, players: old.players), generation: f.generation, at: 0.31)
         #expect(tutorial.demonstrated.isEmpty)
     }
+    @Test(arguments: [0, 1, 2])
+    func freeLeanUsesIndependentEitherDirectionEvidenceOrTimesOut(proofCount: Int) {
+        var f = Fixture(); f.roster = PlayerID.allCases
+        let tutorial = f.tutorial()
+        if proofCount >= 1 {
+            f.send(tutorial, 1, 0, 0, 0, players: [.player1])
+            f.send(tutorial, 2, -1, -1, -0.1, players: [.player1])
+            f.send(tutorial, 3, -1, -1, -0.2, players: [.player1])
+        }
+        if proofCount == 2 {
+            f.send(tutorial, 4, 0, 0, 0, players: [.player2])
+            f.send(tutorial, 5, 1, 1, 0.1, players: [.player2])
+            f.send(tutorial, 6, 1, 1, 0.2, players: [.player2])
+        }
+        f.tick(tutorial, 0...31)
+        #expect(tutorial.stage == .freeLean)
+        f.tick(tutorial, 32...32)
+        if proofCount < 2 {
+            #expect(tutorial.stage == .freeLean)
+            f.tick(tutorial, 33...79)
+            #expect(tutorial.stage == .freeLean)
+            f.tick(tutorial, 80...80)
+        }
+        #expect(tutorial.stage == .collectiblesIntroduction)
+        #expect(tutorial.leanExit == (proofCount == 2 ? .verifiedMovement : .explorationTimeout))
+    }
+
+    @Test func freeLeanSuspendsForReadinessPauseAndStop() {
+        let f = Fixture(), tutorial = f.tutorial()
+        f.tick(tutorial, 0...16)
+        f.tick(tutorial, 17...100, ready: false)
+        tutorial.setSuspended(true, generation: f.generation)
+        f.tick(tutorial, 101...200)
+        #expect(tutorial.stage == .freeLean && tutorial.leanExit == nil)
+        tutorial.setSuspended(false, generation: f.generation)
+        tutorial.practiceVisible(.freeLean, generation: f.generation, at: 26)
+        f.tick(tutorial, 208...271)
+        #expect(tutorial.stage == .freeLean)
+        f.tick(tutorial, 272...272)
+        #expect(tutorial.leanExit == .explorationTimeout)
+        tutorial.abandon()
+        f.tick(tutorial, 273...400)
+        #expect(tutorial.stage == .notStarted && tutorial.leanExit == nil)
+    }
+
     @Test(arguments: [false, true]) func flowRequiresAcceptedSetupAndRetainsCompletionAcrossRetry(solo: Bool) async throws {
         let f = Fixture(), tutorial = f.tutorial(); f.finish(tutorial)
         defer { f.defaults.removeObject(forKey: LeanTutorial.completionKey); f.defaults.removeObject(forKey: LeanTutorial.heartCompletionKey) }

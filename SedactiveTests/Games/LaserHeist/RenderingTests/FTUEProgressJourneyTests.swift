@@ -8,7 +8,7 @@ import Testing
         journey.reset(generation: generation)
         #expect(journey.fillEnd == FTUEProgressJourney.initial)
         var time = 0.0
-        for stage: LeanTutorial.Stage in [.introduction, .practiceLeft, .practiceRight, .heart(.introduction),
+        for stage: LeanTutorial.Stage in [.introduction, .freeLean, .collectiblesIntroduction, .collection(.diamond), .collection(.heart), .heart(.introduction),
             .heart(.hurt), .heart(.warning), .jumpDuckIntroduction, .laserPractice(.jump), .laserPractice(.duck)] {
             let before = journey.fillEnd
             for _ in 0..<80 {
@@ -24,14 +24,14 @@ import Testing
     @Test func animationFreezesWithoutCatchupAndGenerationResetStartsAtInitial() {
         let journey = FTUEProgressJourney(), generation = UUID()
         journey.reset(generation: generation)
-        journey.update(stage: .practiceRight, generation: generation, at: 1, active: true)
-        journey.update(stage: .practiceRight, generation: generation, at: 1.1, active: true)
+        journey.update(stage: .freeLean, generation: generation, at: 1, active: true)
+        journey.update(stage: .freeLean, generation: generation, at: 1.1, active: true)
         let partial = journey.fillEnd
-        #expect(partial > FTUEProgressJourney.initial && partial < 0.27)
+        #expect(partial > FTUEProgressJourney.initial && partial < 0.22)
         journey.update(stage: .completed, generation: generation, at: 10, active: false)
         journey.update(stage: .completed, generation: UUID(), at: 11, active: true)
         #expect(journey.fillEnd == partial)
-        journey.update(stage: .practiceRight, generation: generation, at: 12, active: true)
+        journey.update(stage: .freeLean, generation: generation, at: 12, active: true)
         #expect(journey.fillEnd == partial, "no paused time catch-up")
         journey.reset(generation: UUID())
         #expect(journey.fillEnd == FTUEProgressJourney.initial)

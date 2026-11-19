@@ -15,6 +15,8 @@ final class LeanFTUEUITests: XCTestCase {
             expectation(for: NSPredicate(format: "label CONTAINS %@", text), evaluatedWith: title)
             waitForExpectations(timeout: 25)
         }
+        let freeLean = app.descendants(matching: .any)["ftueFreeLean"]
+        func waitPractice() { XCTAssertTrue(freeLean.waitForExistence(timeout: 15)) }
         func tutorialBar() {
             let bar = app.descendants(matching: .any)["ftueProgressBar"]
             let checkpoint = app.images["ftueCenterCheckpoint"]
@@ -46,18 +48,14 @@ final class LeanFTUEUITests: XCTestCase {
             app.launchArguments = args + ["-leanFTUEReset"]
             app.launch()
             waitTitle("Lean your head"); noBottomControls(); capture("\(mode)-introduction")
-            waitTitle("LEAN LEFT"); noBottomControls(); capture("\(mode)-lean-left")
-            let left = title.frame
+            waitPractice(); noBottomControls(); capture("\(mode)-lean-left")
             if solo {
                 app.buttons["pauseMenu"].tap()
                 XCTAssertTrue(app.buttons["resume"].waitForExistence(timeout: 10))
                 capture("paused-through-existing-hud")
                 app.buttons["resume"].tap()
-                waitTitle("LEAN LEFT")
+                waitPractice()
             }
-            waitTitle("LEAN RIGHT"); noBottomControls(); capture("\(mode)-lean-right")
-            XCTAssertEqual(left.midY, title.frame.midY, accuracy: 1)
-            XCTAssertEqual(left.height, title.frame.height, accuracy: 1)
             complete(); capture("\(mode)-completed-gameplay")
             app.buttons["leanPreviewRetry"].tap(); complete()
             app.terminate(); app.launchArguments = args; app.launch(); complete(); app.terminate()
@@ -67,7 +65,7 @@ final class LeanFTUEUITests: XCTestCase {
             for (index, layout) in ["center", "left", "right"].enumerated() {
                 app.launchArguments = ["-replay", "-leanFTUEPreview", "-leanFTUEReset", "-hideDebugOverlay",
                     "-leanFTUEHold", index == 0 ? "left" : "right", "-leanFTUELayout", layout] + (solo ? ["-leanFTUESolo"] : [])
-                app.launch(); waitTitle(index == 0 ? "LEAN LEFT" : "LEAN RIGHT"); noBottomControls()
+                app.launch(); waitPractice(); noBottomControls()
                 let audit = app.staticTexts["leanPreviewAudit"]
                 XCTAssertTrue(audit.waitForExistence(timeout: 15))
                 let text = audit.label
@@ -75,17 +73,17 @@ final class LeanFTUEUITests: XCTestCase {
                 if let data = text.data(using: .utf8), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let avatars = json["avatars"] as? [[String: Any]] {
                     XCTAssertEqual(avatars.count, solo ? 1 : 2)
-                    for avatar in avatars { if let top = avatar["y"] as? Double { XCTAssertLessThan(title.frame.maxY + 12, top, text) } }
+                    XCTAssertFalse(title.exists)
                 } else { XCTFail("Missing actual RealityView projection") }
                 capture("\(solo ? "solo" : "coop")-\(layout)-layout")
                 app.terminate()
             }
         }
-        // No movement: the tutorial must wait indefinitely for evidence, while ordinary Exit works.
+        // A held DEBUG layout can be exited through the existing pause menu.
         app.launchArguments = ["-replay", "-leanFTUEPreview", "-leanFTUEReset", "-hideDebugOverlay", "-leanFTUEHold", "left"]
-        app.launch(); waitTitle("LEAN LEFT")
+        app.launch(); waitPractice()
         Thread.sleep(forTimeInterval: 4)
-        XCTAssertTrue(title.label.contains("LEAN LEFT"))
+        XCTAssertTrue(freeLean.exists)
         app.buttons["pauseMenu"].tap()
         XCTAssertTrue(app.buttons["leaveGame"].waitForExistence(timeout: 10))
         app.buttons["leaveGame"].tap()
@@ -96,6 +94,6 @@ final class LeanFTUEUITests: XCTestCase {
         app.launch(); waitTitle("Lean your head"); noBottomControls()
         XCTAssertEqual(app.descendants(matching: .any)["leanIntroductionAnimation"].value as? String, "Static poster")
         capture("reduce-motion-poster")
-        waitTitle("LEAN LEFT"); complete(); app.terminate()
+        waitPractice(); complete(); app.terminate()
     }
 }

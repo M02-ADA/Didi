@@ -17,8 +17,10 @@ import Observation
     static func endpoint(for stage: LeanTutorial.Stage) -> Double {
         switch stage {
         case .notStarted, .introduction: initial
-        case .practiceLeft: 0.22
-        case .practiceRight: 0.27
+        case .freeLean: 0.22
+        case .collectiblesIntroduction: 0.25
+        case .collection(.diamond): 0.27
+        case .collection(.heart): 0.29
         case .heart(.introduction): 0.31
         case .heart(.hurt): 0.34
         case .heart(.warning): 0.36

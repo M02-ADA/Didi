@@ -49,7 +49,7 @@ import Foundation
         }
         let boundarySetup = ProcessInfo.processInfo.arguments.contains("-leanFTUEBoundary") && stage == .introduction
         let share: Double = boundarySetup ? 0.08 : hold || tutorial.isSuspended || now - stageStart < 3 ? 0
-            : stage == .practiceLeft ? 0.08 : stage == .practiceRight ? -0.08 : 0
+            : stage == .freeLean ? 0.08 : 0
         var players: [PlayerID: PlayerBodySample] = [:]
         var poses: [PlayerID: PresentationPoseSample] = [:]
         func value(_ x: Double) throws -> EstimatedScalar { try .init(value: x, validity: .valid) }

@@ -52,6 +52,8 @@ private struct ReplayRoundView: View {
     @State private var practicePresentation = FTUEPracticePresentation()
     @State private var heartTutorialDemo = HeartTutorialDemo()
     @State private var leanTravel = LeanTutorialTravel()
+    @State private var collectiblePresentation = FTUECollectiblePresentation()
+    @State private var tutorialHeartArt: HeartArt?
     let retry: () -> Void
     @State private var scene = LaserScene()
     @State private var presentation = LaserReplayPresentation()
@@ -80,7 +82,7 @@ private struct ReplayRoundView: View {
     private var leanHeldStage: LeanTutorial.Stage? {
         let args = ProcessInfo.processInfo.arguments
         guard let i = args.firstIndex(of: "-leanFTUEHold"), args.indices.contains(i + 1) else { return nil }
-        return args[i + 1] == "left" ? .practiceLeft : args[i + 1] == "right" ? .practiceRight : .introduction
+        return ["left", "right", "free"].contains(args[i + 1]) ? .freeLean : .introduction
     }
     private var leanRequestedLayout: Int {
         let args = ProcessInfo.processInfo.arguments
@@ -169,11 +171,15 @@ private struct ReplayRoundView: View {
                         needsLeanProjection = false
                     }
                 }
-                if let scene, let tutorial, let suppliedSession, tutorial.isPractising {
-                    observeLean(tutorial, scene: scene, context: suppliedSession.inputContext,
-                        eligible: suppliedSession.canStartLiveRound && suppliedSession.setup?.hasConfirmedReliablePair == true,
+                if let scene, let tutorial, let suppliedSession, tutorial.isPractising || tutorial.collection != nil {
+                    updateLeanAndCollectibles(tutorial, scene: scene, context: suppliedSession.inputContext,
+                        input: suppliedSession.inputConfiguration, configuration: suppliedSession.configuration,
+                        eligible: suppliedSession.preRoundTutorialPending && suppliedSession.canStartLiveRound
+                            && suppliedSession.setup?.hasConfirmedReliablePair == true
+                            && hasFreshTutorialTracking(suppliedSession, at: now),
                         at: now)
                 }
+                if activeTutorial?.collection == nil { collectiblePresentation.clear() }
                 #if DEBUG
                 if isLeanPreview, let scene, let input = leanPreviewInput {
                     if leanHeldStage != nil, !leanPreviewLayoutDone, !needsLeanProjection {
@@ -183,8 +189,9 @@ private struct ReplayRoundView: View {
                         }
                         leanPreviewLayoutDone = true
                     }
-                    if leanHeldStage == nil, leanPreview.isPractising {
-                        observeLean(leanPreview, scene: scene, context: input.context, eligible: true, at: now)
+                    if leanHeldStage == nil, leanPreview.isPractising || leanPreview.collection != nil {
+                        updateLeanAndCollectibles(leanPreview, scene: scene, context: input.context,
+                            input: input.configuration, configuration: leanPreviewConfiguration, eligible: true, at: now)
                     }
                 }
                 heartPreview.update(now: now)
@@ -548,7 +555,7 @@ private struct ReplayRoundView: View {
 
     private var gameplaySurface: some View {
         world
-        .blur(radius: (activeTutorial?.heartPhase?.usesOverlay == true || activeTutorial?.progressPhase != nil) && activeTutorial?.isSuspended == false ? 5 : 0)
+        .blur(radius: (activeTutorial?.heartPhase?.usesOverlay == true || activeTutorial?.progressPhase != nil || activeTutorial?.stage == .collectiblesIntroduction) && activeTutorial?.isSuspended == false ? 5 : 0)
         #if DEBUG
         .blur(radius: isLeanPreview && (leanPreview.stage == .introduction || leanPreview.stage == .jumpDuckIntroduction) && !leanPreview.isSuspended ? 5 : 0)
         #endif
@@ -738,10 +745,16 @@ private struct ReplayRoundView: View {
             }.ignoresSafeArea()
         }
         #endif
+        .task(id: activeTutorial?.isActive == true) {
+            guard activeTutorial?.isActive == true, tutorialHeartArt == nil else { return }
+            tutorialHeartArt = try? await HeartArt.load()
+        }
         .onAppear { trainingSceneActive = scenePhase == .active }
         .onChange(of: scenePhase) { _, phase in
             trainingSceneActive = phase == .active
+            activeTutorial?.suspendPracticeClock()
             leanTravel.suspend()
+            collectiblePresentation.suspend()
             guard activeTutorial?.heartPhase == .hurt || activeTutorial?.practiceMove != nil else { return }
             teamCallouts.setTutorialSuspended(phase != .active || activeTutorial?.isSuspended == true)
             updateHeartTraining(scene: scene, at: CACurrentMediaTime())
@@ -789,6 +802,7 @@ private struct ReplayRoundView: View {
             suppliedSession?.retireHeartTraining()
             suppliedSession?.retireFTUELaserPractice()
             practicePresentation.stop(callouts: teamCallouts)
+            collectiblePresentation.clear()
             leanTravel.stop()
             #if DEBUG
             leanPreviewTask?.cancel(); leanPreviewTask = nil
@@ -946,19 +960,43 @@ private struct ReplayRoundView: View {
         }
     }
 
-    private func observeLean(_ tutorial: LeanTutorial, scene: LaserScene, context: BodyInputContext?,
-                             eligible: Bool, at now: Double) {
-        guard !tutorial.isSuspended else { return }
-        guard let frame = scene.liveAvatars?.lastAppliedFrame else {
-            tutorial.observe(nil, generation: generation, at: now); return
+    private func hasFreshTutorialTracking(_ session: GameSessionCoordinator, at now: Double) -> Bool {
+        guard let snapshot = session.latestSnapshot, let context = session.inputContext,
+              now >= snapshot.capturedAt, now - snapshot.capturedAt <= LiveAvatarPresenter.maximumPoseAge else { return false }
+        return session.inputConfiguration.roster.allSatisfy {
+            context.accepts(snapshot, playerID: $0) && snapshot.players[$0]?.trackingStatus == .reliable
         }
-        guard tutorial.shouldRead(frame.source) else { return }
-        #if DEBUG
-        guard RobotAvatarLayer.debugTestSteer == nil else { tutorial.observe(nil, generation: generation, at: now); return }
-        #endif
-        let value = LeanMovementObservation.make(frame: frame, context: context, generation: generation,
-            roster: tutorial.roster, eligible: eligible, now: now, bounds: scene.robotAvatars?.steering?.bounds) { scene.robotAvatars?.steeringReading($0) }
-        tutorial.observe(value, generation: generation, at: now)
+    }
+
+    private func updateLeanAndCollectibles(_ tutorial: LeanTutorial, scene: LaserScene,
+                                          context: BodyInputContext?, input: BodyInputConfiguration,
+                                          configuration: LaserRoundConfiguration?, eligible: Bool, at now: Double) {
+        let allowed = eligible && trainingSceneActive && !tutorial.isSuspended
+        let value = scene.liveAvatars?.lastAppliedFrame.flatMap { frame in
+            LeanMovementObservation.make(frame: frame, context: context, generation: generation,
+                roster: tutorial.roster, eligible: allowed, now: now, bounds: scene.robotAvatars?.steering?.bounds) {
+                    scene.robotAvatars?.steeringReading($0)
+                }
+        }
+        let players = Set(value?.players.keys.map { $0 } ?? [])
+        if tutorial.isPractising {
+            #if DEBUG
+            if RobotAvatarLayer.debugTestSteer != nil {
+                tutorial.advancePractice(generation: generation, at: now, ready: false)
+                return
+            }
+            #endif
+            if let value {
+                if tutorial.shouldRead(value.source) { tutorial.observe(value, generation: generation, at: now) }
+            } else { tutorial.observe(nil, generation: generation, at: now) }
+            tutorial.advancePractice(generation: generation, at: now, ready: allowed)
+        } else if let kind = tutorial.collection, let context, let configuration {
+            if let receipt = collectiblePresentation.update(scene: scene, kind: kind,
+                configuration: configuration, input: input, context: context, at: now,
+                contactsFrom: players, heartArt: tutorialHeartArt) {
+                tutorial.acceptPickup(receipt)
+            }
+        } else { collectiblePresentation.suspend() }
     }
 
     /// Live pause/continue intents go to the session. Replay retains its fixture-driven controls.

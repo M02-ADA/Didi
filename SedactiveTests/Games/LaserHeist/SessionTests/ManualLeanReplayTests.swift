@@ -36,7 +36,7 @@ import Testing
         #expect(!flow.tutorialReplayRequested && tutorial.generation == nil)
     }
 
-    @Test func completedPlayerReplaysBothDirectionsWithoutResettingCompletion() {
+    @Test func completedPlayerReplaysFreeLeanAndCollectiblesWithoutResettingCompletion() {
         let f = LeanTutorialTests.Fixture()
         f.defaults.set(true, forKey: LeanTutorial.completionKey)
         f.defaults.set(true, forKey: LeanTutorial.heartCompletionKey)
@@ -49,7 +49,7 @@ import Testing
         #expect(tutorial.stage == .introduction && tutorial.isCompleted)
         tutorial.introductionVisible(true, generation: f.generation)
         tutorial.finishIntroduction(generation: f.generation)
-        tutorial.practiceVisible(.practiceLeft, generation: f.generation, at: 0)
+        tutorial.practiceVisible(.freeLean, generation: f.generation, at: 0)
         f.finish(tutorial)
         #expect(tutorial.stage == .completed && tutorial.isCompleted)
         tutorial.prepare(generation: UUID(), roster: f.roster)

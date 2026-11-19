@@ -5,7 +5,7 @@ import Testing
 
 @MainActor struct HeartTutorialFlowTests {
     @Test(arguments: [false, true])
-    func leanFeedsImmediatelyIntoHeartAndOnlyFinalWarningCompletes(coop: Bool) {
+    func collectiblesFeedIntoHeartAndOnlyFinalWarningCompletes(coop: Bool) {
         var f = LeanTutorialTests.Fixture(); if coop { f.roster = PlayerID.allCases }
         let tutorial = f.tutorial()
         defer { tutorial.resetForNextPlay() }
@@ -26,7 +26,7 @@ import Testing
         tutorial.prepare(generation: UUID(), roster: f.roster)
         #expect(tutorial.stage == .completed)
     }
-    @Test func existingLeanGraduateGetsOnlyMissingHeartButHelpStartsAtLean() {
+    @Test func existingLeanGraduateGetsCollectiblesBeforeMissingHeartButHelpStartsAtLean() {
         let f = LeanTutorialTests.Fixture()
         // A valid completed Lean record exists from the previous version.
         f.defaults.set(true, forKey: LeanTutorial.completionKey)
@@ -36,6 +36,8 @@ import Testing
         returning.beginIfEligible(generation: f.generation, eligible: false)
         #expect(returning.stage == .notStarted)
         returning.beginIfEligible(generation: f.generation, eligible: true)
+        #expect(returning.stage == .collectiblesIntroduction)
+        f.finishCollections(returning)
         #expect(returning.heartPhase == .introduction)
         f.finishHeart(returning)
         #expect(returning.stage == .jumpDuckIntroduction && !returning.isCompleted)
@@ -89,6 +91,9 @@ import Testing
         #expect(tutorial.stage == .notStarted)
         // Unit-only presentation completion events do not make the actual session ready.
         tutorial.beginIfEligible(generation: gen, eligible: true)
+        let context = BodyInputContext(sessionGeneration: gen, cameraGeometryRevision: 1,
+            calibrationRevisions: f.context.calibrationRevisions, cutovers: f.context.cutovers, isActive: true)
+        f.finishCollections(tutorial, context: context)
         for phase in HeartTutorialPhase.allCases {
             flow.releaseCompletedLeanTutorial()
             #expect(session.preRoundTutorialPending && session.state == nil && session.events.isEmpty)
