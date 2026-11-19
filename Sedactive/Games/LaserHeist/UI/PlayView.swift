@@ -51,6 +51,7 @@ private struct ReplayRoundView: View {
     @State private var trainingSceneActive = false
     @State private var practicePresentation = FTUEPracticePresentation()
     @State private var heartTutorialDemo = HeartTutorialDemo()
+    @State private var leanTravel = LeanTutorialTravel()
     let retry: () -> Void
     @State private var scene = LaserScene()
     @State private var presentation = LaserReplayPresentation()
@@ -146,6 +147,10 @@ private struct ReplayRoundView: View {
                 let now = CACurrentMediaTime()
                 scene?.refreshLiveCutouts(now: now)
                 scene?.refreshLiveAvatars(now: now)
+                if let scene, let tutorial = activeTutorial {
+                    leanTravel.update(scene: scene, tutorial: tutorial, generation: generation, at: now,
+                        eligible: trainingSceneActive && (suppliedSession == nil || suppliedSession?.canStartLiveRound == true))
+                }
                 if let scene { updateHeartTraining(scene: scene, at: now); updateLaserPractice(scene: scene, at: now) }
                 if let tutorial = activeTutorial {
                     tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: now,
@@ -736,6 +741,7 @@ private struct ReplayRoundView: View {
         .onAppear { trainingSceneActive = scenePhase == .active }
         .onChange(of: scenePhase) { _, phase in
             trainingSceneActive = phase == .active
+            leanTravel.suspend()
             guard activeTutorial?.heartPhase == .hurt || activeTutorial?.practiceMove != nil else { return }
             teamCallouts.setTutorialSuspended(phase != .active || activeTutorial?.isSuspended == true)
             updateHeartTraining(scene: scene, at: CACurrentMediaTime())
@@ -783,6 +789,7 @@ private struct ReplayRoundView: View {
             suppliedSession?.retireHeartTraining()
             suppliedSession?.retireFTUELaserPractice()
             practicePresentation.stop(callouts: teamCallouts)
+            leanTravel.stop()
             #if DEBUG
             leanPreviewTask?.cancel(); leanPreviewTask = nil
             leanPreviewInput?.stop(); leanPreviewInput = nil; leanPreviewStart = nil

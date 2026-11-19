@@ -2,6 +2,42 @@ import XCTest
 
 /// Real Home and LaserScene; only the explicit DEBUG fixture supplies SYNTHETIC practice input.
 final class HomeTutorialHelpUITests: XCTestCase {
+    func testCoopBoundaryLeanWithForwardTravel() {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments = ["-replay", "-leanFTUEPreview", "-leanFTUEReset", "-leanFTUEBoundary", "-hideDebugOverlay"]
+        app.launch()
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        func waitTitle(_ copy: String, id: String = "leanTutorialTitle") {
+            let title = app.descendants(matching: .any)[id]
+            XCTAssertTrue(title.waitForExistence(timeout: 45))
+            expectation(for: NSPredicate(format: "label CONTAINS %@", copy), evaluatedWith: title)
+            waitForExpectations(timeout: 25)
+            XCTAssertEqual(app.images.matching(identifier: "ftueCenterCheckpoint").count, 1)
+            XCTAssertFalse(app.descendants(matching: .any)["gameplayProgressBar"].exists)
+        }
+        waitTitle("Lean your head"); capture("synthetic-coop-introduction")
+        waitTitle("LEAN LEFT"); capture("synthetic-coop-left-neutral-a")
+        // The fixture holds BODY neutral for three seconds after stage entry. Compare the
+        // world while mascot steering is at rest, not lateral motion masquerading as travel.
+        Thread.sleep(forTimeInterval: 0.6)
+        XCTAssertTrue(app.descendants(matching: .any)["leanTutorialTitle"].label.contains("LEAN LEFT"))
+        capture("synthetic-coop-left-neutral-b")
+        waitTitle("LEAN RIGHT"); capture("synthetic-coop-right-neutral-a")
+        Thread.sleep(forTimeInterval: 0.6)
+        XCTAssertTrue(app.descendants(matching: .any)["leanTutorialTitle"].label.contains("LEAN RIGHT"))
+        capture("synthetic-coop-right-neutral-b")
+        waitTitle("This is your shared health", id: "heartTutorialTitle")
+        capture("synthetic-coop-heart-handoff")
+        XCTAssertEqual(app.descendants(matching: .any)["sharedHealthHUD"].label, "Team health 5 of 5")
+        XCTAssertFalse(app.buttons["leanTutorialContinue"].exists)
+        app.terminate()
+    }
+
     func testBoundaryLimitedLeanRearmsAndReachesHeart() {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft
