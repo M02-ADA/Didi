@@ -195,6 +195,9 @@ struct GameplayHUD: View {
         }
         .ignoresSafeArea()
         .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: model.banner)
+        .onChange(of: model.diamondSecondsLeft) { previous, current in
+            AudioService.shared.playDiamondTimeTick(from: previous, to: current)
+        }
     }
 
     // MARK: - Top bar

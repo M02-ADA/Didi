@@ -23,3 +23,11 @@ Both source files are stereo MP3s at 44.1 kHz. The durations above are estimates
 |---|---:|---|
 | `60s-special-agent-3352.mp3` | 5,422,602 | `003d4ba8a0be0feff6bcbb707be1b01cb78303375dc9aceb7916bedc6ca088e2` |
 | `silky-spy-462303.mp3` | 1,878,308 | `4dfff5cf31785b07f7058c9947121d0677c3604d5a33827c64aa380f809c1e23` |
+
+## Diamond Time
+
+Silky Spy stops when the Game Bonus sting starts. The entry sequence then has no background music. Slick Spy by Sonican plays once the team is inside the final vault and the sting has finished. It fades in over 0.35 seconds at a gain about 4 dB above regular gameplay music. On digits 2 and 1, music and diamond pickup cues drop to 40% and 60% of their respective levels while the 8-bit beep plays. The results screen fades it out with the existing music transition.
+
+The app bundles the original MP3 from the official page player. Pixabay lists it under the Content License and shows a Content ID badge. [Slick Spy, Pixabay #425009](https://pixabay.com/music/crime-scene-slick-spy-60-seconds-secret-mission-music-425009/)
+
+Bundle resource `lh-music-slick-spy.mp3` · 1,930,135 bytes · SHA-256 `30338ac96f7f90dc75c9ebd406ca35ddbfe94816ab5d8b202a0b7709aead1dcb`
