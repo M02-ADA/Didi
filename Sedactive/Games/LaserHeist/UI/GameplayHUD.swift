@@ -168,6 +168,7 @@ struct GameplayHUD: View {
     /// `-hudPauseMenu` opens the menu at launch, for reviewing its layout (Debug
     /// only). Without a session pause it is a labelled preview: the round runs on.
     @Environment(\.developerTools) private var developerTools
+    @State private var restorePauseMenuOnClose = false
     @State private var menuShown = GameplayHUDActions.previewsPauseMenu
     #else
     @State private var menuShown = false
@@ -195,6 +196,14 @@ struct GameplayHUD: View {
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
         }
         .ignoresSafeArea()
+        #if DEBUG
+        .onChange(of: developerTools.showsRoundPanel) { _, isOpen in
+            if !isOpen, restorePauseMenuOnClose {
+                restorePauseMenuOnClose = false
+                menuShown = true
+            }
+        }
+        #endif
         .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: model.banner)
         .onChange(of: model.diamondSecondsLeft) { previous, current in
             AudioService.shared.playDiamondTimeTick(from: previous, to: current)
@@ -434,6 +443,9 @@ struct GameplayHUD: View {
                            style: LayeredPillButtonStyle(top: Color(sketch: 0xEAA551), bottom: Color(sketch: 0xE97434),
                                                          rim: Color(sketch: 0xFFC73A), base: Color(sketch: 0xD75C41),
                                                          rimHeight: 3 * k, baseHeight: 2 * k)) {
+                    #if DEBUG
+                    restorePauseMenuOnClose = false
+                    #endif
                     actions.resume?()
                     menuShown = false
                 }
@@ -441,6 +453,7 @@ struct GameplayHUD: View {
                 #if DEBUG
                 if developerTools.isEnabled {
                     Button("Developer Tools", systemImage: "wrench.and.screwdriver") {
+                        restorePauseMenuOnClose = actions.canPause
                         developerTools.openRoundPanel()
                         menuShown = false
                     }
