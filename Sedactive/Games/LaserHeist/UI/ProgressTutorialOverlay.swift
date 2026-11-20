@@ -1,18 +1,32 @@
 import SwiftUI
 
 enum ProgressTutorialPhase: String, CaseIterable {
-    case bar, vault
+    case bar, vault, diamond
     var copy: String {
         switch self {
         case .bar: "This bar shows how far\nyou've gone"
         case .vault: "Each circle is a vault\ndoor to open"
+        case .diamond: "Reach the Diamond\nVault at the end!"
+        }
+    }
+    var pointerIdentifier: String {
+        switch self {
+        case .bar: "ftueProgressPointer"
+        case .vault: "ftueVaultPointer"
+        case .diamond: "ftueDiamondPointer"
+        }
+    }
+    var pointerLabel: String {
+        switch self {
+        case .bar: "Pointer to the progress bar"
+        case .vault: "Pointer to the centered vault checkpoint"
+        case .diamond: "Pointer to the Diamond at the end of the progress bar"
         }
     }
     static let duration = 4.0
 }
 
-/// Geometry is resolved from the rendered HUD slot. Its center is also the checkpoint anchor
-/// because FTUEProgressBar places the checkpoint at the midpoint on both axes.
+/// Geometry uses the measured HUD slot and the same endpoint fraction as FTUEProgressBar.
 struct ProgressTutorialSpotlightLayout {
     let bar: CGRect
     let viewport: CGSize
@@ -22,20 +36,24 @@ struct ProgressTutorialSpotlightLayout {
     var stroke: CGFloat { 8 * scale }
     var connectorWidth: CGFloat { 5 * scale }
     var cutout: CGRect { bar.insetBy(dx: -2 * scale, dy: -2 * scale) }
+    var anchorX: CGFloat {
+        phase == .diamond ? bar.minX + bar.width * GameplayHUDModel.diamondPosition : bar.midX
+    }
+    var textCenterX: CGFloat { phase == .diamond ? bar.midX + 0.13 * bar.width : bar.midX }
     var highlight: CGRect {
         if phase == .bar { return bar.insetBy(dx: -18 * scale, dy: -18 * scale) }
         let diameter = bar.height * 1.42
-        return CGRect(x: bar.midX - diameter / 2, y: bar.midY - diameter / 2, width: diameter, height: diameter)
+        return CGRect(x: anchorX - diameter / 2, y: bar.midY - diameter / 2, width: diameter, height: diameter)
     }
     var textTop: CGFloat { max(viewport.height * 0.39, highlight.maxY + 104 * scale) }
     var connector: CGRect {
         let start = highlight.maxY - stroke / 2
-        return CGRect(x: bar.midX - connectorWidth / 2, y: start, width: connectorWidth,
+        return CGRect(x: anchorX - connectorWidth / 2, y: start, width: connectorWidth,
                       height: textTop - 28 * scale - start)
     }
 }
 
-/// Highlights the ONE existing HUD bar. The pointer uses that bar's measured checkpoint center.
+/// Highlights a subject on the single existing FTUE bar.
 struct ProgressTutorialOverlay: View {
     let tutorial: LeanTutorial
     let phase: ProgressTutorialPhase
@@ -63,8 +81,8 @@ struct ProgressTutorialOverlay: View {
                         .frame(width: layout.connector.width, height: layout.connector.height)
                         .position(x: layout.connector.midX, y: layout.connector.midY)
                         .accessibilityElement()
-                        .accessibilityLabel(phase == .bar ? "Pointer to the progress bar" : "Pointer to the centered vault checkpoint")
-                        .accessibilityIdentifier(phase == .bar ? "ftueProgressPointer" : "ftueVaultPointer")
+                        .accessibilityLabel(phase.pointerLabel)
+                        .accessibilityIdentifier(phase.pointerIdentifier)
                     Capsule()
                         .strokeBorder(LaserHeistDesign.cream, lineWidth: layout.stroke)
                         .frame(width: layout.highlight.width, height: layout.highlight.height)
@@ -77,7 +95,7 @@ struct ProgressTutorialOverlay: View {
                         .lineLimit(2)
                         .minimumScaleFactor(0.8)
                         .frame(width: proxy.size.width * 0.78)
-                        .offset(x: layout.bar.midX - proxy.size.width * 0.39, y: layout.textTop)
+                        .offset(x: layout.textCenterX - proxy.size.width * 0.39, y: layout.textTop)
                         .accessibilityIdentifier("progressTutorialTitle")
                 }
             }

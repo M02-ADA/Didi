@@ -87,7 +87,7 @@ import Testing
         func finishProgress(_ tutorial: LeanTutorial, generation: UUID? = nil) {
             let generation = generation ?? self.generation
             for i in 0...40 { tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: Double(i) / 50, active: true) }
-            for phase in ProgressTutorialPhase.allCases {
+            for phase: ProgressTutorialPhase in [.bar, .vault] {
                 tutorial.progressVisible(phase, visible: true, generation: generation)
                 tutorial.finishProgress(phase, generation: generation)
             }

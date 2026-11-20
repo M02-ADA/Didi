@@ -618,7 +618,8 @@ private struct ReplayRoundView: View {
                     if !leanPreview.isSuspended {
                         if scenePhase == .active { LaserTeamCalloutView(model: teamCallouts) }
                         LeanTutorialOverlay(tutorial: leanPreview, solo: isLeanPreviewSolo,
-                            posterOnly: ProcessInfo.processInfo.arguments.contains("-leanFTUEReduceMotion"))
+                            posterOnly: ProcessInfo.processInfo.arguments.contains("-leanFTUEReduceMotion"),
+                            previewsVaultButtonHandoff: ProcessInfo.processInfo.arguments.contains("-ftueVaultVisualPreview"))
                     }
                 }
             }

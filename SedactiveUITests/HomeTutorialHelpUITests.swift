@@ -51,6 +51,58 @@ final class HomeTutorialHelpUITests: XCTestCase {
         XCTAssertFalse(vaultPointer.exists)
     }
 
+    func testVaultButtonAndDiamondVisualHandoffInActualScene() {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        let arguments = ["-replay", "-leanFTUEPreview", "-hideDebugOverlay",
+            "-laserHeist.ftue.lean.v1.completed", "YES",
+            "-laserHeist.ftue.heart.v1.completed", "YES",
+            "-laserHeist.ftue.jumpDuck.v1.completed", "YES",
+            "-laserHeist.ftue.progress.v1.completed", "NO"]
+        let elements = app.descendants(matching: .any)
+        let vault = elements["ftueVaultPointer"]
+        let intro = elements["ftueVaultButtonTitle"]
+        let handoff = elements["ftueSyntheticVaultHandoff"]
+        let diamond = elements["ftueDiamondPointer"]
+        let bar = elements["ftueProgressBar"]
+        let gameplay = elements["gameplayProgressBar"]
+
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+
+        for preview in [false, true] {
+            app.launchArguments = arguments + (preview ? ["-ftueVaultVisualPreview"] : [])
+            app.launch()
+            XCTAssertTrue(vault.waitForExistence(timeout: 25))
+            if preview { capture("vault-checkpoint") }
+            XCTAssertTrue(intro.waitForExistence(timeout: 10))
+            XCTAssertEqual(intro.label, "Press the buttons\nto open vault door")
+            XCTAssertFalse(diamond.exists)
+            if preview {
+                capture("press-button")
+                XCTAssertTrue(handoff.waitForExistence(timeout: 10))
+                capture("synthetic-handoff")
+                XCTAssertFalse(intro.exists)
+                XCTAssertTrue(diamond.waitForExistence(timeout: 8))
+                capture("diamond-vault")
+                XCTAssertEqual(elements["progressTutorialTitle"].label, "Reach the Diamond\nVault at the end!")
+                XCTAssertEqual(diamond.frame.midX, bar.frame.minX + 0.949 * bar.frame.width, accuracy: 1)
+                XCTAssertGreaterThan(diamond.frame.midX, app.images["ftueCenterCheckpoint"].frame.maxX)
+                XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.500")
+            }
+            XCTAssertTrue(gameplay.waitForExistence(timeout: 15))
+            XCTAssertFalse(intro.exists)
+            XCTAssertFalse(handoff.exists)
+            XCTAssertFalse(diamond.exists)
+            app.terminate()
+        }
+    }
+
     func testCollectibleJourneyInActualSceneForFirstPlayAndHomeHelp() {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft

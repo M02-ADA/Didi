@@ -57,7 +57,51 @@ import Testing
         tutorial.beginIfEligible(generation: tutorial.generation!, eligible: true)
         #expect(tutorial.stage == .introduction)
     }
+    @Test func syntheticOutcomeRequiresCurrentUnpausedEncounterAndIsConsumedOnce() throws {
+        let f = LeanTutorialTests.Fixture()
+        for key in [LeanTutorial.completionKey, LeanTutorial.heartCompletionKey, LeanTutorial.jumpDuckCompletionKey] {
+            f.defaults.set(true, forKey: key)
+        }
+        let tutorial = LeanTutorial(defaults: f.defaults)
+        func reachIntroduction(_ generation: UUID) {
+            tutorial.prepare(generation: generation)
+            tutorial.beginIfEligible(generation: generation, eligible: true)
+            for i in 0...40 {
+                tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: Double(i) / 50, active: true)
+            }
+            for phase: ProgressTutorialPhase in [.bar, .vault] {
+                tutorial.progressVisible(phase, visible: true, generation: generation)
+                tutorial.finishProgress(phase, generation: generation)
+            }
+        }
+        let generation = f.generation
+        reachIntroduction(generation)
+        tutorial.acceptSyntheticVaultButtonPreview(generation: generation, encounterID: UUID())
+        #expect(tutorial.stage == .vaultButtonIntroduction)
+        tutorial.beginVaultButtonPreview(generation: generation)
+        let encounter = try #require(tutorial.vaultButtonEncounterID)
+        tutorial.finishVaultButtonIntroduction(generation: generation)
+        tutorial.acceptSyntheticVaultButtonPreview(generation: UUID(), encounterID: encounter)
+        tutorial.acceptSyntheticVaultButtonPreview(generation: generation, encounterID: UUID())
+        tutorial.setSuspended(true, generation: generation)
+        tutorial.acceptSyntheticVaultButtonPreview(generation: generation, encounterID: encounter)
+        #expect(tutorial.vaultButtonEncounterID == encounter && !tutorial.isCompleted)
+        tutorial.setSuspended(false, generation: generation)
+        tutorial.acceptSyntheticVaultButtonPreview(generation: generation, encounterID: encounter)
+        tutorial.acceptSyntheticVaultButtonPreview(generation: generation, encounterID: encounter)
+        #expect(tutorial.progressPhase == .diamond && tutorial.vaultButtonEncounterID == nil)
+        #expect(tutorial.progressJourney.fillEnd == 0.5)
+        tutorial.abandon()
+        let next = UUID()
+        reachIntroduction(next)
+        tutorial.beginVaultButtonPreview(generation: next)
+        tutorial.acceptSyntheticVaultButtonPreview(generation: generation, encounterID: encounter)
+        #expect(tutorial.vaultButtonEncounterID != nil && tutorial.progressPhase == nil)
+    }
+
     @Test func copyIsExact() {
+        #expect(VaultButtonIntroduction.copy == "Press the buttons\nto open vault door")
+        #expect(ProgressTutorialPhase.diamond.copy == "Reach the Diamond\nVault at the end!")
         #expect(ProgressTutorialPhase.bar.copy == "This bar shows how far\nyou've gone")
         #expect(ProgressTutorialPhase.vault.copy == "Each circle is a vault\ndoor to open")
     }

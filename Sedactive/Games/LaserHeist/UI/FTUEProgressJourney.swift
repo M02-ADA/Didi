@@ -28,7 +28,7 @@ import Observation
         case .laserPractice(.jump): 0.40
         case .laserPractice(.duck): 0.46
         case .laserPractice: 0.40
-        case .progressExplanation, .vaultButtonIntroduction, .completed: checkpoint
+        case .progressExplanation, .vaultButtonIntroduction, .vaultButtonHandoff, .completed: checkpoint
         }
     }
     func reset(generation: UUID?) {

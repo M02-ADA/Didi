@@ -22,6 +22,11 @@ import Testing
             #expect(layout.connector.maxY < layout.textTop)
         }
         #expect(full.textTop == checkpoint.textTop)
+        let diamond = ProgressTutorialSpotlightLayout(bar: bar, viewport: viewport, phase: .diamond)
+        #expect(abs(diamond.highlight.midX - (bar.minX + bar.width * GameplayHUDModel.diamondPosition)) < 0.001)
+        #expect(abs(diamond.connector.midX - diamond.highlight.midX) < 0.001)
+        #expect(diamond.highlight.minX > checkpoint.highlight.maxX)
+        #expect(diamond.connector.maxY < diamond.textTop)
     }
 
     @Test(arguments: [CGFloat(1), CGFloat(1376.0 / 1210)])
