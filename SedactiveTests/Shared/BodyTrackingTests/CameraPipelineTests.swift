@@ -365,6 +365,32 @@ actor ControlledCameraSink: CameraFrameSink {
     #expect(!store.isCurrent(context))
   }
   @Test
+  func autoSelectionUsesACompatibleExternalCameraBeforeTheIPadCamera() throws {
+    let valid = CameraFormatCapability(index: 0, width: 1280, height: 720,
+      minimumFPS: 30, maximumFPS: 30, centerStageSupported: false)
+    let invalid = CameraFormatCapability(index: 0, width: 320, height: 240,
+      minimumFPS: 30, maximumFPS: 30, centerStageSupported: false)
+    let front = CameraDeviceCapability(id: "ipad", name: "iPad", kind: .ultraWide,
+      isFront: true, formats: [valid])
+    let unsupported = CameraDeviceCapability(id: "a-unsupported", name: "Unsupported", kind: .external,
+      isFront: false, formats: [invalid])
+    let webcam = CameraDeviceCapability(id: "webcam", name: "Webcam", kind: .external,
+      isFront: false, formats: [valid])
+    #expect(try CameraCapabilities.select([front, unsupported, webcam], configuration: .experimental).0.id == "webcam")
+    #expect(try CameraCapabilities.select([front, unsupported], configuration: .experimental).0.id == "ipad")
+    #expect(try CameraCapabilities.select([webcam], configuration: .experimental).0.id == "webcam")
+    let vga = CameraFormatCapability(index: 0, width: 640, height: 480,
+      minimumFPS: 30, maximumFPS: 30, centerStageSupported: false)
+    let fullFrame = CameraFormatCapability(index: 1, width: 1920, height: 1440,
+      minimumFPS: 30, maximumFPS: 30, centerStageSupported: true)
+    let displayCamera = CameraDeviceCapability(id: "display", name: "Display", kind: .external,
+      isFront: false, formats: [vga, fullFrame])
+    let (device, format) = try CameraCapabilities.select([front, displayCamera], configuration: .experimental)
+    let size = try #require(CameraCapabilities.outputSize(for: format, kind: device.kind, configuration: .experimental))
+    #expect(device.id == "display" && format.index == 1 && size.width == 960 && size.height == 720)
+  }
+
+  @Test
   func capabilitySelectionSupportsCenterStageFrontAndNeverUsesRearOrSilentlyTriesAnotherDevice()
     throws
   {
