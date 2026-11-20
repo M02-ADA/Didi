@@ -7,16 +7,12 @@
 
 import SwiftUI
 
-/// Game Set Up (Sketch "Hi-Fi Revisi 6 NOV" › Game Set Up): "Put your iPad on
-/// the Floor", in the two artboards' order: the iPad held in both hands
-/// ("Home Copy 15"), then the mascot standing it on the floor ("Home Copy 23").
-/// Back returns one step; the check button goes on.
+/// Alternates the two iPad placement illustrations while waiting for confirmation.
 struct SetupInstructionView: View {
-    enum Step: Int, CaseIterable {
-        case holdIPad, standIPadOnFloor
-    }
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showsMascot = false
 
-    let step: Step
     let onBack: () -> Void
     let onNext: () -> Void
 
@@ -24,18 +20,22 @@ struct SetupInstructionView: View {
         SketchArtboard {
             SunburstBackground()
         } content: { k in
-            switch step {
-            case .holdIPad:
+            ZStack(alignment: .topLeading) {
                 Image("LaserHeistUI/setup-hands")
                     .resizable()
                     .sketchFrame(x: 83, y: 263, width: 1075, height: 655, k: k)
+                    .opacity(showsMascot ? 0 : 1)
                     .accessibilityLabel("Two hands holding an iPad")
-            case .standIPadOnFloor:
+                    .accessibilityHidden(showsMascot)
+
                 Image("LaserHeistUI/setup-mascot")
                     .resizable()
                     .sketchFrame(x: 419, y: 224, width: 371, height: 474, k: k)
+                    .opacity(showsMascot ? 1 : 0)
                     .accessibilityLabel("The mascot standing an iPad up on the floor")
+                    .accessibilityHidden(!showsMascot)
             }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.65), value: showsMascot)
 
             Text("Put your iPad on the Floor")
                 .font(.system(size: 58.3 * k, weight: .bold, design: .rounded))
@@ -52,10 +52,22 @@ struct SetupInstructionView: View {
             SetupNextButton(k: k, action: onNext)
                 .sketchFrame(x: 1005, y: 663, width: 143, height: 110, k: k)
         }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(2))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                showsMascot.toggle()
+            }
+        }
     }
 }
 
-/// The orange check button (Sketch "Group 3"): Next on the Set Up screens.
+/// The orange check button confirms placement and opens calibration.
 struct SetupNextButton: View {
     let k: CGFloat
     let action: () -> Void
@@ -69,15 +81,11 @@ struct SetupNextButton: View {
         .buttonStyle(LayeredPillButtonStyle(top: LaserHeistDesign.orangeTop, bottom: LaserHeistDesign.orangeBottom,
                                             rim: LaserHeistDesign.orangeRim, base: LaserHeistDesign.orangeBase,
                                             rimHeight: 4 * k, baseHeight: 2 * k))
-        .accessibilityLabel("Next")
+        .accessibilityLabel("Continue to calibration")
         .accessibilityIdentifier("setupNext")
     }
 }
 
-#Preview("Hold the iPad", traits: .landscapeLeft) {
-    SetupInstructionView(step: .holdIPad, onBack: {}, onNext: {})
-}
-
-#Preview("Stand it on the floor", traits: .landscapeLeft) {
-    SetupInstructionView(step: .standIPadOnFloor, onBack: {}, onNext: {})
+#Preview("iPad placement", traits: .landscapeLeft) {
+    SetupInstructionView(onBack: {}, onNext: {})
 }
