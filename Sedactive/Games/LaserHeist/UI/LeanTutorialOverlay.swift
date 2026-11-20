@@ -87,8 +87,6 @@ struct LeanTutorialOverlay: View {
                             guard !Task.isCancelled else { return }
                             tutorial.finishDiamondCollectionIntroduction(generation: generation)
                         }
-                } else if tutorial.stage == .diamondTimeDemo {
-                    FTUEDiamondTimeDemoView(demo: tutorial.diamondTimeDemo, solo: solo)
                 } else if let phase = tutorial.progressPhase {
                     ProgressTutorialOverlay(tutorial: tutorial, phase: phase).id(phase)
                 } else if let phase = tutorial.heartPhase {

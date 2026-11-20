@@ -19,7 +19,6 @@ final class LeanTutorial {
     static let progressCompletionKey = "laserHeist.ftue.progress.v1.completed"
     static let heartCompletionKey = "laserHeist.ftue.heart.v1.completed"
     let progressJourney = FTUEProgressJourney()
-    let diamondTimeDemo = FTUEDiamondTimeDemo()
     private(set) var stage: Stage = .notStarted
     private(set) var generation: UUID?
     private(set) var roster: [PlayerID] = []
@@ -61,7 +60,6 @@ final class LeanTutorial {
     /// Explicit replay overrides completion for this generation without clearing its saved record.
     func prepare(generation: UUID, roster: [PlayerID] = PlayerID.allCases, replayRequested: Bool = false) {
         progressJourney.reset(generation: generation)
-        diamondTimeDemo.reset()
         self.generation = generation; self.roster = roster; replayForVisit = replayRequested
         headTopFraction = nil; healthHUDFrame = nil; progressHUDFrame = nil; visibleProgress = nil; isSuspended = false; introVisible = false; visibleHeart = nil
         clearPractice(); context = nil; lastSource = nil; practiceTime = 0; leanExit = nil
@@ -99,7 +97,6 @@ final class LeanTutorial {
     }
     func setSuspended(_ value: Bool, generation: UUID) {
         guard self.generation == generation, isActive, isSuspended != value else { return }
-        diamondTimeDemo.pause()
         isSuspended = value; introVisible = false; visibleHeart = nil; visibleProgress = nil; clearPractice()
     }
     func canExploreLean(in session: GameSessionCoordinator) -> Bool {
@@ -257,16 +254,13 @@ final class LeanTutorial {
 
     func finishDiamondCollectionIntroduction(generation: UUID) {
         guard self.generation == generation, stage == .diamondCollectionIntroduction, !isSuspended else { return }
-        diamondTimeDemo.reset()
         stage = .diamondTimeDemo
     }
 
-    func advanceDiamondTimeDemo(generation: UUID, at now: Double, active: Bool) {
-        guard self.generation == generation, stage == .diamondTimeDemo else { return }
-        if diamondTimeDemo.advance(at: now, active: active && !isSuspended) {
-            diamondTimeDemo.reset()
-            completeProgressModule()
-        }
+    func finishDiamondTime(_ round: FTUEDiamondTimeSession, generation: UUID) {
+        guard self.generation == generation, round.inputs.context.sessionGeneration == generation,
+              stage == .diamondTimeDemo, !isSuspended, round.isComplete else { return }
+        completeProgressModule()
     }
 
     func finishVaultButtonIntroduction(generation: UUID) {
@@ -299,7 +293,6 @@ final class LeanTutorial {
     func abandon() {
         replayForVisit = false; visibleHeart = nil; healthHUDFrame = nil; progressHUDFrame = nil; visibleProgress = nil
         progressJourney.reset(generation: nil)
-        diamondTimeDemo.reset()
         generation = nil; stage = .notStarted; isSuspended = false; introVisible = false
         clearPractice(); context = nil; lastSource = nil; practiceTime = 0; leanExit = nil
     }

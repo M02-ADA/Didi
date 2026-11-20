@@ -171,7 +171,9 @@ final class LaserReplayPresentation {
                 self.updateHeart(scene: scene, session: session, frameHost: attachment) { world in
                     content.project(point: world, to: .named(DiamondHUDFlightModel.space))
                 }
-                self.renderPawBoard(on: content, scene: scene, session: session)
+                self.renderPawBoard(on: content, scene: scene,
+                                    state: session.showsDiamondTimePaws ? session.state : nil,
+                                    diamonds: session.diamondStates)
                 session.collectAvatarDiamondContacts(self.avatarDiamondContacts(scene: scene, session: session),
                                                      frameHost: attachment)
                 return
@@ -324,8 +326,8 @@ final class LaserReplayPresentation {
     }
 
     private func renderPawBoard(on content: RealityViewCameraContent, scene: LaserScene,
-                                session: GameSessionCoordinator) {
-        guard session.showsDiamondTimePaws, let state = session.state,
+                                state: LaserGameState?, diamonds: [UUID: LaserDiamondState]) {
+        guard let state,
               let camera = scene.root.findEntity(named: "camera") as? PerspectiveCamera else {
             pawBoardDiamonds.clear()
             return
@@ -335,7 +337,7 @@ final class LaserReplayPresentation {
             cameraPosition: camera.position(relativeTo: nil), rotation: camera.orientation(relativeTo: nil),
             verticalFieldOfView: camera.camera.fieldOfViewInDegrees)
         let space: NamedCoordinateSpace = .named(DiamondHUDFlightModel.space)
-        pawBoardDiamonds.update(states: session.diamondStates, time: state.gameTime, scene: scene,
+        pawBoardDiamonds.update(states: diamonds, time: state.gameTime, scene: scene,
                                onCollected: { [weak self] id, world in
             guard let bonusID = Int(id.uuidString.suffix(12), radix: 16) else { return }
             self?.diamondFlights?.collect(.bonus(bonusID), generation: state.sessionGeneration, world: world,
@@ -359,14 +361,14 @@ final class LaserReplayPresentation {
         if !pawBoardDiamonds.pickupLevels.isEmpty { pawBoardDiamonds.pickupLevels = [:] }
     }
 
-    private func updatePawPickupFeedback(session: GameSessionCoordinator, at time: Double) {
-        guard session.showsDiamondTimePaws else { resetPawPickupFeedback(); return }
-        guard session.phase == .running else { return }
-        let count = session.diamondsCollected
+    private func updatePawPickupFeedback(showsPaws: Bool, running: Bool, count: Int,
+                                         diamonds: [UUID: LaserDiamondState], at time: Double) {
+        guard showsPaws else { resetPawPickupFeedback(); return }
+        guard running else { return }
         guard count != pawPickupCount else { return }
         let previous = pawPickupCount
         pawPickupCount = count
-        let beats = DiamondTimePickupRhythm.beats(in: session.diamondStates)
+        let beats = DiamondTimePickupRhythm.beats(in: diamonds)
         pawBoardDiamonds.pickupLevels = Dictionary(uniqueKeysWithValues: beats.flatMap { beat in
             beat.ids.map { ($0, beat.level) }
         })
@@ -392,9 +394,38 @@ final class LaserReplayPresentation {
         lastPawAccentLevel = beat.level
     }
 
+    private func applyPawShake(showsPaws: Bool, running: Bool, at time: Double) {
+        if showsPaws, running, !UIAccessibility.isReduceMotionEnabled, let pawShake {
+            presenter?.finalVault.applyDiamondTimeShake(
+                DiamondTimePickupRhythm.shake(age: time - pawShake.time, level: pawShake.level))
+        }
+    }
+
+    /// A separate adapter instance renders the tutorial-owned round on the same scene.
+    func renderTutorialDiamondTime(_ round: FTUEDiamondTimeSession, on content: RealityViewCameraContent,
+                                   scene: LaserScene, running: Bool) {
+        if presenter == nil {
+            presenter = GameplayScenePresenter(scene: scene, configuration: round.inputs.configuration,
+                                               encounters: [], showsDebugMarkers: false)
+            presenter?.onSound = { AudioService.shared.play($0) }
+        }
+        let state = round.state(health: nil)
+        diamondFlights?.session(state.sessionGeneration, running: running)
+        updatePawPickupFeedback(showsPaws: round.showsPawBoard, running: running,
+                                count: round.game.diamondsCollected, diamonds: round.game.diamonds,
+                                at: state.gameTime)
+        presenter?.apply(state: state, events: round.events, snapshot: nil,
+                         finalVault: round.entry, showsPawBoard: round.showsPawBoard)
+        applyPawShake(showsPaws: round.showsPawBoard, running: running, at: state.gameTime)
+        renderPawBoard(on: content, scene: scene, state: round.showsPawBoard ? state : nil,
+                       diamonds: round.game.diamonds)
+    }
+
     private func render(scene: LaserScene, session: GameSessionCoordinator) {
         guard let state = session.state else { return }
-        updatePawPickupFeedback(session: session, at: state.gameTime)
+        updatePawPickupFeedback(showsPaws: session.showsDiamondTimePaws, running: session.phase == .running,
+                                count: session.diamondsCollected, diamonds: session.diamondStates,
+                                at: state.gameTime)
         if flightScenePhase != state.phase { diamondFlights?.clear(); flightScenePhase = state.phase }
         diamondFlights?.session(state.sessionGeneration, running: session.phase == .running && session.summary == nil)
         presenter?.apply(state: state, events: session.events, snapshot: session.latestSnapshot,
@@ -402,11 +433,8 @@ final class LaserReplayPresentation {
                             ? Self.upcomingVaultIn(state: state, activityDuration: session.activityDuration)
                             : session.liveVaultIn,
                          finalVault: session.finalVaultEntry, showsPawBoard: session.showsDiamondTimePaws)
-        if session.showsDiamondTimePaws, session.phase == .running,
-           !UIAccessibility.isReduceMotionEnabled, let pawShake {
-            presenter?.finalVault.applyDiamondTimeShake(
-                DiamondTimePickupRhythm.shake(age: state.gameTime - pawShake.time, level: pawShake.level))
-        }
+        applyPawShake(showsPaws: session.showsDiamondTimePaws, running: session.phase == .running,
+                      at: state.gameTime)
         // The wrists' reach cursors (the tracked wrist the gate judges) are an engineering view only
         // (owner, 12 November 2026: players see the mascots and the buttons, no helper circles):
         // DEBUG `-showReachCursors`, while a vault's buttons wait. Contact is judged either way.

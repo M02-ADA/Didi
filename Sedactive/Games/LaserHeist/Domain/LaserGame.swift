@@ -197,6 +197,19 @@ nonisolated struct LaserGame: Sendable {
         }
     }
 
+    /// Starts an isolated tutorial bonus round with the production Diamond Time rules.
+    /// Its caller owns the game value and must already have authorized the tutorial transition.
+    static func tutorialDiamondTime(configuration: LaserRoundConfiguration,
+                                    context: BodyInputContext) throws -> Self {
+        try requireLaserValue(configuration.diamondPoints == LaserRoundConfiguration.approvedDiamondPoints,
+                              "tutorial Diamond Time points")
+        var game = try Self(configuration: configuration, context: context, historyCapacityPerPlayer: 1)
+        game.roundPhase = .diamondTime
+        game.bonusDeadline = game.bonusDuration
+        game.emit(.phaseChanged(.diamondTime), at: 0)
+        return game
+    }
+
     /// Installs the round's boards (once, before any LEAN encounter), at the current game time.
     mutating func configureBoards(_ field: LaserBoardField) {
         var field = field

@@ -102,18 +102,19 @@ final class HomeTutorialHelpUITests: XCTestCase {
                 XCTAssertEqual(collection.label, "Collect as many diamonds as you can!")
                 XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.949")
                 capture("diamond-collection-instruction")
-                let demo = elements["ftueDiamondTimeDemo"]
-                XCTAssertTrue(demo.waitForExistence(timeout: 8))
+                let title = app.staticTexts["RETRIEVE THE DIAMONDS"]
+                XCTAssertTrue(title.waitForExistence(timeout: 16))
                 XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.949")
                 XCTAssertFalse(gameplay.exists)
                 capture("ftue-diamond-time")
-                let pickup = NSPredicate(format: "value BEGINSWITH '1 tutorial'")
-                XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: pickup, object: demo)], timeout: 4), .completed)
+                let counter = elements.matching(NSPredicate(format: "label MATCHES %@", "[1-9][0-9]* diamonds")).firstMatch
+                XCTAssertTrue(counter.waitForExistence(timeout: 8))
+                XCTAssertTrue(elements.matching(NSPredicate(format: "label ENDSWITH %@", "seconds left")).firstMatch.exists)
                 XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.949")
                 capture("ftue-diamond-time-pickup")
             }
-            XCTAssertTrue(gameplay.waitForExistence(timeout: 15))
-            XCTAssertFalse(elements["ftueDiamondTimeDemo"].exists)
+            XCTAssertTrue(gameplay.waitForExistence(timeout: 25))
+            XCTAssertFalse(app.staticTexts["RETRIEVE THE DIAMONDS"].exists)
             XCTAssertNotEqual(gameplay.value as? String, "Diamond reached")
             XCTAssertFalse(bar.exists)
             XCTAssertFalse(intro.exists)

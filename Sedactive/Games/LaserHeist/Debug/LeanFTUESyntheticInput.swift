@@ -9,6 +9,9 @@ import Foundation
     let configuration: BodyInputConfiguration
     var practice: (() -> FTUELaserPractice?)?
     var onBodySnapshot: ((BodySnapshot, Double) -> Void)?
+    private(set) var latestSnapshot: BodySnapshot?
+    private var diamondCycle: Int?
+    private var diamondTarget: LaserDiamondPosition?
     private var currentAttempt: UUID?
     private var stageAttempts: [LaserMove: Int] = [:]
     let context: BodyInputContext
@@ -93,10 +96,67 @@ import Foundation
             capturedAt: capture, cameraGeometryRevision: source.context.geometryRevision, players: players)
         let pose = PresentationPoseFrame(sessionGeneration: source.context.generation, frameID: frame,
             capturedAt: capture, players: poses)
+        latestSnapshot = snapshot
         mailbox.offer(source.output(snapshot, joints: pose))
         onBodySnapshot?(snapshot, now)
         return true
     }
+    func diamondTimeInputs() -> FTUEDiamondTimeSession.Inputs? {
+        guard let plan = try? LaserLiveWristRoundPlan.completeRound(context: context,
+            calibrations: configuration.calibrations, layout: configuration.playerPlaneLayout,
+            seed: 7, roster: roster) else { return nil }
+        return .init(configuration: plan.configuration, diamonds: plan.diamonds, context: context, roster: roster)
+    }
+
+    /// Deterministic wrist trajectories for the labeled preview. Scoring still requires
+    /// fresh, outside-to-inside contact through the production consumer.
+    func diamondTimeSnapshot(_ snapshot: BodySnapshot, round: FTUEDiamondTimeSession) throws -> BodySnapshot {
+        guard let authority = context.wristContact else { return snapshot }
+        let time = round.game.gameTime
+        let cycle = Int(time / 1.15)
+        let moment = time - Double(cycle) * 1.15
+        if moment >= 0.62, diamondCycle != cycle {
+            diamondCycle = cycle
+            diamondTarget = round.game.activeDiamonds.min { $0.id.uuidString < $1.id.uuidString }?.position
+        }
+        let reaching = roster[cycle % roster.count]
+        var hands: [PlayerID: PlayerWristContactV1] = [:]
+        for player in PlayerID.allCases {
+            let absent = WristContactObservationV1(observed: nil, observationRefusal: .missingJoint,
+                                                  playerPlane: nil, contactRefusal: .missingJoint)
+            let height = round.inputs.diamonds.standingHeights[player]
+            func observation(_ wrist: LaserContactWrist) throws -> WristContactObservationV1 {
+                guard let height else { return absent }
+                let home = LaserDiamondTimeBoard.homeX(player: player, solo: roster.count == 1)
+                var position = try LaserDiamondPosition(x: home + (wrist == .left ? -0.23 : 0.23), y: 0.904)
+                if player == reaching, wrist == .left, moment >= 0.62, let diamondTarget {
+                    position = diamondTarget
+                }
+                let lane = round.inputs.diamonds.layout.centerX(for: player)
+                let span = LaserDiamondTimeBoard.height - 2 * LaserDiamondTimeBoard.inset
+                let lifted = (LaserDiamondTimeBoard.height - LaserDiamondTimeBoard.inset - position.y) / span
+                let y = LaserDiamondTimeBoard.lowWristHeight
+                    + lifted * (LaserDiamondTimeBoard.highWristHeight - LaserDiamondTimeBoard.lowWristHeight)
+                let point = WristPlanePoint(x: lane + (home - position.x) * height / LaserDiamondTimeBoard.lateralGain,
+                                            y: y * height)
+                return .init(observed: .init(x: 0.5, y: 0.5, confidence: 0.9), observationRefusal: nil,
+                             playerPlane: point, contactRefusal: nil)
+            }
+            hands[player] = try .init(playerID: player, trackingStatus: snapshot.players[player]?.trackingStatus ?? .lost,
+                requiresRebind: false, candidateID: height == nil ? nil : (player == .player1 ? 10 : 20),
+                calibrationRevision: context.calibrationRevisions[player], cutover: context.cutovers[player],
+                left: observation(.left), right: observation(.right))
+        }
+        let attachment = WristContactAttachmentV1(sourceEpoch: authority.sourceEpoch,
+            sourceFrameID: snapshot.frameID, sourceCapturedAt: snapshot.capturedAt,
+            controlRevision: authority.controlRevision, bindingRequestID: authority.bindingRequestID,
+            bindingFrameID: authority.bindingFrameID, bindingCapturedAt: authority.bindingCapturedAt,
+            acceptedContextRevision: authority.acceptedContextRevision, players: hands)
+        return BodySnapshot(sessionGeneration: snapshot.sessionGeneration, frameID: snapshot.frameID,
+            capturedAt: snapshot.capturedAt, cameraGeometryRevision: snapshot.cameraGeometryRevision,
+            players: snapshot.players, wristContact: attachment)
+    }
+
     func stop() { stopped = true; practice = nil; onBodySnapshot = nil; mailbox.revoke() }
 }
 #endif

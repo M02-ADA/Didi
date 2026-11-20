@@ -133,6 +133,16 @@ final class GameSessionCoordinator {
     var canStartLiveRound: Bool {
         hasLiveRoundPlan && liveFrameHostReady && phase == .awaitingSetup && liveReadiness?.phase == .ready
     }
+    /// Read-only inputs for an independently owned pre-round tutorial bonus round.
+    func tutorialDiamondTimeInputs(generation: UUID) -> FTUEDiamondTimeSession.Inputs? {
+        guard preRoundTutorialPending, state == nil, canStartLiveRound, pairInPlay, provider.status == .running,
+              let context = provider.currentContext, context == installedLiveWristContext,
+              context.sessionGeneration == generation, context.isActive, context.wristContact != nil,
+              let configuration, let diamonds = wristDiamondConfiguration else { return nil }
+        return .init(configuration: configuration, diamonds: diamonds, context: context,
+                     roster: inputConfiguration.roster)
+    }
+
     var hasWristDiamondPlan: Bool { wristDiamondConfiguration != nil }
     var liveWristBlockers: [LaserLiveWristBlocker] {
         var result: [LaserLiveWristBlocker] = []
