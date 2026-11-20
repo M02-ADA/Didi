@@ -60,8 +60,8 @@ struct ProgressTutorialOverlay: View {
     @Environment(\.scenePhase) private var scenePhase
     private struct Visibility: Equatable { let phase: ProgressTutorialPhase; let active: Bool; let generation: UUID? }
     private var active: Bool {
-        scenePhase == .active && !tutorial.isSuspended && tutorial.progressJourney.isActivePresentation
-            && tutorial.progressJourney.fillEnd == FTUEProgressJourney.checkpoint && tutorial.progressHUDFrame != nil
+        scenePhase == .active && !tutorial.isSuspended && tutorial.progressJourney.hasReachedExplanationEndpoint(phase)
+            && tutorial.progressHUDFrame != nil
     }
     var body: some View {
         GeometryReader { proxy in

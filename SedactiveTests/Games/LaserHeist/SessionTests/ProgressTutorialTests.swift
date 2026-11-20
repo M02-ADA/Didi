@@ -91,8 +91,27 @@ import Testing
         tutorial.acceptSyntheticVaultButtonPreview(generation: generation, encounterID: encounter)
         #expect(tutorial.progressPhase == .diamond && tutorial.vaultButtonEncounterID == nil)
         #expect(tutorial.progressJourney.fillEnd == 0.5)
+        #expect(!tutorial.progressJourney.hasReachedExplanationEndpoint(.diamond))
+        tutorial.progressVisible(.diamond, visible: true, generation: generation)
+        tutorial.finishProgress(.diamond, generation: generation)
+        #expect(tutorial.progressPhase == .diamond && !tutorial.isCompleted)
+        for i in 41...90 {
+            tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: Double(i) / 50, active: true)
+        }
+        #expect(tutorial.progressJourney.fillEnd == GameplayHUDModel.diamondPosition)
+        #expect(tutorial.progressJourney.hasReachedExplanationEndpoint(.diamond))
+        tutorial.finishProgress(.diamond, generation: generation)
+        #expect(tutorial.stage == .completed && tutorial.isCompleted)
+
         tutorial.abandon()
+        #expect(tutorial.progressJourney.fillEnd == FTUEProgressJourney.initial)
         let next = UUID()
+        tutorial.prepare(generation: next, replayRequested: true)
+        tutorial.beginIfEligible(generation: next, eligible: true)
+        tutorial.progressJourney.update(stage: .progressExplanation(.diamond), generation: generation, at: 2, active: true)
+        #expect(tutorial.stage == .introduction && tutorial.progressJourney.fillEnd == FTUEProgressJourney.initial)
+
+        f.defaults.removeObject(forKey: LeanTutorial.progressCompletionKey)
         reachIntroduction(next)
         tutorial.beginVaultButtonPreview(generation: next)
         tutorial.acceptSyntheticVaultButtonPreview(generation: generation, encounterID: encounter)

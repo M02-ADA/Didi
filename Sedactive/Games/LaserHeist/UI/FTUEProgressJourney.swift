@@ -28,9 +28,15 @@ import Observation
         case .laserPractice(.jump): 0.40
         case .laserPractice(.duck): 0.46
         case .laserPractice: 0.40
+        // A destination illustration. The Diamond sits inside the HUD's outer edge.
+        case .progressExplanation(.diamond): GameplayHUDModel.diamondPosition
         case .progressExplanation, .vaultButtonIntroduction, .vaultButtonHandoff, .completed: checkpoint
         }
     }
+    func hasReachedExplanationEndpoint(_ phase: ProgressTutorialPhase) -> Bool {
+        isActivePresentation && fillEnd == Self.endpoint(for: .progressExplanation(phase))
+    }
+
     func reset(generation: UUID?) {
         self.generation = generation; isActivePresentation = false; fillEnd = Self.initial
         origin = Self.initial; target = Self.initial; previous = nil; elapsed = 0
@@ -46,7 +52,7 @@ import Observation
         guard let previous, now > previous, now - previous <= 0.25 else { return }
         elapsed = min(Self.duration, elapsed + now - previous)
         let u = elapsed / Self.duration
-        let next = origin + (target - origin) * u * u * (3 - 2 * u)
+        let next = elapsed == Self.duration ? target : origin + (target - origin) * u * u * (3 - 2 * u)
         if fillEnd != next { fillEnd = next }
     }
 }

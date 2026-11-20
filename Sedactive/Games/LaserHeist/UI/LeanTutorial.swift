@@ -243,7 +243,7 @@ final class LeanTutorial {
     }
     func finishProgress(_ phase: ProgressTutorialPhase, generation: UUID) {
         guard self.generation == generation, progressPhase == phase, visibleProgress == phase, !isSuspended,
-              progressJourney.isActivePresentation, progressJourney.fillEnd == FTUEProgressJourney.checkpoint else { return }
+              progressJourney.hasReachedExplanationEndpoint(phase) else { return }
         visibleProgress = nil
         switch phase {
         case .bar: stage = .progressExplanation(.vault)
