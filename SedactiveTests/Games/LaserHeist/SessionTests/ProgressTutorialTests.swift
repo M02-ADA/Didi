@@ -101,6 +101,12 @@ import Testing
         #expect(tutorial.progressJourney.fillEnd == GameplayHUDModel.diamondPosition)
         #expect(tutorial.progressJourney.hasReachedExplanationEndpoint(.diamond))
         tutorial.finishProgress(.diamond, generation: generation)
+        #expect(tutorial.stage == .diamondCollectionIntroduction && !tutorial.isCompleted)
+        tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: 1.84, active: true)
+        #expect(tutorial.progressJourney.fillEnd == GameplayHUDModel.diamondPosition)
+        tutorial.finishDiamondCollectionIntroduction(generation: UUID())
+        #expect(tutorial.stage == .diamondCollectionIntroduction)
+        tutorial.finishDiamondCollectionIntroduction(generation: generation)
         #expect(tutorial.stage == .completed && tutorial.isCompleted)
 
         tutorial.abandon()

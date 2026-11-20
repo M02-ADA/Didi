@@ -560,7 +560,7 @@ private struct ReplayRoundView: View {
 
     private var gameplaySurface: some View {
         world
-        .blur(radius: (activeTutorial?.heartPhase?.usesOverlay == true || activeTutorial?.progressPhase != nil || activeTutorial?.stage == .vaultButtonIntroduction || activeTutorial?.stage == .collectiblesIntroduction) && activeTutorial?.isSuspended == false ? 5 : 0)
+        .blur(radius: (activeTutorial?.heartPhase?.usesOverlay == true || activeTutorial?.progressPhase != nil || activeTutorial?.stage == .vaultButtonIntroduction || activeTutorial?.stage == .collectiblesIntroduction || activeTutorial?.stage == .diamondCollectionIntroduction) && activeTutorial?.isSuspended == false ? 5 : 0)
         #if DEBUG
         .blur(radius: isLeanPreview && (leanPreview.stage == .introduction || leanPreview.stage == .jumpDuckIntroduction) && !leanPreview.isSuspended ? 5 : 0)
         #endif

@@ -97,6 +97,11 @@ final class HomeTutorialHelpUITests: XCTestCase {
                 XCTAssertEqual(diamond.frame.midX, bar.frame.minX + 0.949 * bar.frame.width, accuracy: 1)
                 XCTAssertGreaterThan(diamond.frame.midX, app.images["ftueCenterCheckpoint"].frame.maxX)
                 XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.949")
+                let collection = elements["ftueDiamondCollectionTitle"]
+                XCTAssertTrue(collection.waitForExistence(timeout: 8))
+                XCTAssertEqual(collection.label, "Collect as many diamonds as you can!")
+                XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.949")
+                capture("diamond-collection-instruction")
             }
             XCTAssertTrue(gameplay.waitForExistence(timeout: 15))
             XCTAssertNotEqual(gameplay.value as? String, "Diamond reached")

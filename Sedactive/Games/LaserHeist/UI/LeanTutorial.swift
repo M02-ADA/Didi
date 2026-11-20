@@ -5,7 +5,7 @@ import CoreGraphics
 /// Tutorial flow for the current setup generation.
 @MainActor @Observable
 final class LeanTutorial {
-    enum Stage: Equatable { case notStarted, introduction, freeLean, collectiblesIntroduction, collection(FTUECollectible), heart(HeartTutorialPhase), jumpDuckIntroduction, laserPractice(LaserMove), progressExplanation(ProgressTutorialPhase), vaultButtonIntroduction, vaultButtonHandoff(encounterID: UUID), completed }
+    enum Stage: Equatable { case notStarted, introduction, freeLean, collectiblesIntroduction, collection(FTUECollectible), heart(HeartTutorialPhase), jumpDuckIntroduction, laserPractice(LaserMove), progressExplanation(ProgressTutorialPhase), vaultButtonIntroduction, vaultButtonHandoff(encounterID: UUID), diamondCollectionIntroduction, completed }
     enum LeanExit: Equatable { case verifiedMovement, explorationTimeout }
     private(set) var leanExit: LeanExit?
     @ObservationIgnored private var practiceTime = 0.0
@@ -47,7 +47,7 @@ final class LeanTutorial {
         return nil
     }
     var heartPhase: HeartTutorialPhase? { if case .heart(let phase) = stage { return phase }; return nil }
-    var isActive: Bool { [.introduction, .freeLean, .collectiblesIntroduction, .vaultButtonIntroduction].contains(stage) || collection != nil || heartPhase != nil || stage == .jumpDuckIntroduction || practiceMove != nil || progressPhase != nil || vaultButtonEncounterID != nil }
+    var isActive: Bool { [.introduction, .freeLean, .collectiblesIntroduction, .vaultButtonIntroduction, .diamondCollectionIntroduction].contains(stage) || collection != nil || heartPhase != nil || stage == .jumpDuckIntroduction || practiceMove != nil || progressPhase != nil || vaultButtonEncounterID != nil }
     var practiceMove: LaserMove? { if case .laserPractice(let move) = stage { return move }; return nil }
     var isPractising: Bool { stage == .freeLean }
     var collection: FTUECollectible? { if case .collection(let kind) = stage { return kind }; return nil }
@@ -248,8 +248,13 @@ final class LeanTutorial {
         switch phase {
         case .bar: stage = .progressExplanation(.vault)
         case .vault: stage = .vaultButtonIntroduction
-        case .diamond: completeProgressModule()
+        case .diamond: stage = .diamondCollectionIntroduction
         }
+    }
+
+    func finishDiamondCollectionIntroduction(generation: UUID) {
+        guard self.generation == generation, stage == .diamondCollectionIntroduction, !isSuspended else { return }
+        completeProgressModule()
     }
 
     func finishVaultButtonIntroduction(generation: UUID) {

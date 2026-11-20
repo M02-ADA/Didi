@@ -10,6 +10,11 @@ struct LeanTutorialOverlay: View {
     #endif
     @Environment(\.scenePhase) private var scenePhase
 
+    private struct Presentation: Equatable {
+        let generation: UUID
+        let phase: ScenePhase
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let k = min(proxy.size.width / 1210, proxy.size.height / 834)
@@ -61,6 +66,27 @@ struct LeanTutorialOverlay: View {
                             .id(encounterID)
                     }
                     #endif
+                } else if tutorial.stage == .diamondCollectionIntroduction, let generation = tutorial.generation {
+                    Color.black.opacity(0.55)
+                    Image("LaserHeistUI/ftue-diamond-collection")
+                        .resizable().scaledToFit()
+                        .frame(width: 255 * k)
+                        .shadow(color: LaserHeistDesign.cream.opacity(0.16), radius: 18 * k)
+                        .position(x: proxy.size.width / 2, y: proxy.size.height * 0.375)
+                        .accessibilityHidden(true)
+                    Text("Collect as many diamonds as you can!")
+                        .font(.system(size: 67 * k, weight: .bold, design: .rounded))
+                        .foregroundStyle(LaserHeistDesign.cream)
+                        .multilineTextAlignment(.center)
+                        .frame(width: 710 * k)
+                        .position(x: proxy.size.width / 2, y: proxy.size.height * 0.59)
+                        .accessibilityIdentifier("ftueDiamondCollectionTitle")
+                        .task(id: Presentation(generation: generation, phase: scenePhase)) {
+                            guard scenePhase == .active else { return }
+                            do { try await Task.sleep(for: .seconds(4)) } catch { return }
+                            guard !Task.isCancelled else { return }
+                            tutorial.finishDiamondCollectionIntroduction(generation: generation)
+                        }
                 } else if let phase = tutorial.progressPhase {
                     ProgressTutorialOverlay(tutorial: tutorial, phase: phase).id(phase)
                 } else if let phase = tutorial.heartPhase {
