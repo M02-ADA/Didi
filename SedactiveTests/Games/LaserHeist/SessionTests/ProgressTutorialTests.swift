@@ -107,7 +107,21 @@ import Testing
         tutorial.finishDiamondCollectionIntroduction(generation: UUID())
         #expect(tutorial.stage == .diamondCollectionIntroduction)
         tutorial.finishDiamondCollectionIntroduction(generation: generation)
+        #expect(tutorial.stage == .diamondTimeDemo && !tutorial.isCompleted)
+        tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: 1.86, active: true)
+        #expect(tutorial.progressJourney.fillEnd == GameplayHUDModel.diamondPosition)
+        tutorial.advanceDiamondTimeDemo(generation: generation, at: 2, active: true)
+        tutorial.setSuspended(true, generation: generation)
+        tutorial.advanceDiamondTimeDemo(generation: generation, at: 2.1, active: true)
+        #expect(tutorial.diamondTimeDemo.elapsed == 0)
+        tutorial.setSuspended(false, generation: generation)
+        tutorial.advanceDiamondTimeDemo(generation: UUID(), at: 2.15, active: true)
+        #expect(tutorial.diamondTimeDemo.elapsed == 0)
+        for i in 11...42 {
+            tutorial.advanceDiamondTimeDemo(generation: generation, at: Double(i) / 5, active: true)
+        }
         #expect(tutorial.stage == .completed && tutorial.isCompleted)
+        #expect(tutorial.diamondTimeDemo.elapsed == 0)
 
         tutorial.abandon()
         #expect(tutorial.progressJourney.fillEnd == FTUEProgressJourney.initial)

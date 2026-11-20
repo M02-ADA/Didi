@@ -155,9 +155,10 @@ private struct ReplayRoundView: View {
                 }
                 if let scene { updateHeartTraining(scene: scene, at: now); updateLaserPractice(scene: scene, at: now) }
                 if let tutorial = activeTutorial {
-                    tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: now,
-                        active: tutorial.isActive && !tutorial.isSuspended && trainingSceneActive
-                            && (suppliedSession == nil || suppliedSession?.canStartLiveRound == true))
+                    let active = tutorial.isActive && !tutorial.isSuspended && trainingSceneActive
+                        && (suppliedSession == nil || suppliedSession?.canStartLiveRound == true)
+                    tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: now, active: active)
+                    tutorial.advanceDiamondTimeDemo(generation: generation, at: now, active: active)
                 }
                 if needsLeanProjection, wantsLeanProjection, let scene {
                     let viewport = presentation.pawBoardDiamonds.viewportFrame.size

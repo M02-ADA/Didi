@@ -29,7 +29,7 @@ import Observation
         case .laserPractice(.duck): 0.46
         case .laserPractice: 0.40
         // A destination illustration. The Diamond sits inside the HUD's outer edge.
-        case .progressExplanation(.diamond), .diamondCollectionIntroduction: GameplayHUDModel.diamondPosition
+        case .progressExplanation(.diamond), .diamondCollectionIntroduction, .diamondTimeDemo: GameplayHUDModel.diamondPosition
         case .progressExplanation, .vaultButtonIntroduction, .vaultButtonHandoff, .completed: checkpoint
         }
     }
