@@ -21,6 +21,7 @@ import SwiftUI
 /// controls take touches.
 struct DebugRoundControls: View {
     let session: GameSessionCoordinator
+    var onClose: (() -> Void)? = nil
 
     @State private var showsAdvanced = false
     @State private var isMinimized = false
@@ -112,8 +113,12 @@ struct DebugRoundControls: View {
                        id: "debugAdvancedToggle", active: showsAdvanced) {
                 toggle { showsAdvanced.toggle() }
             }
-            iconButton("minus", label: "Minimize debug controls", id: "debugMinimize") {
-                toggle { isMinimized = true }
+            if let onClose {
+                iconButton("xmark", label: "Close debug controls", id: "debugClose") { onClose() }
+            } else {
+                iconButton("minus", label: "Minimize debug controls", id: "debugMinimize") {
+                    toggle { isMinimized = true }
+                }
             }
         }
     }

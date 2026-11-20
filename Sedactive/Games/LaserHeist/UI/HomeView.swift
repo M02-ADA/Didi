@@ -16,6 +16,7 @@ struct HomeView: View {
     let onStart: () -> Void
     #if DEBUG
     @State private var showsSFXReplayLab = false
+    @Environment(\.developerTools) private var developerTools
     #endif
 
     var body: some View {
@@ -31,6 +32,11 @@ struct HomeView: View {
                 .sketchFrame(x: 336, y: 184, width: 539, height: 260, k: k)
                 .accessibilityLabel("DIDI")
                 .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("homeLogo")
+                #if DEBUG
+                .onLongPressGesture(minimumDuration: 3) { developerTools.toggleEnabled() }
+                .accessibilityAction(named: "Toggle Developer Mode") { developerTools.toggleEnabled() }
+                #endif
 
             Button(action: onStart) {
                 Text("START MISSION!")
@@ -58,14 +64,20 @@ struct HomeView: View {
         }
         #if DEBUG
         .overlay(alignment: .topTrailing) {
-            Button("SFX Replay Lab", systemImage: "waveform") {
-                AudioService.shared.play(.uiTap)
-                showsSFXReplayLab = true
+            if developerTools.isEnabled {
+                VStack(alignment: .trailing, spacing: 12) {
+                    Button("Developer Mode · Turn off") { developerTools.toggleEnabled() }
+                        .accessibilityIdentifier("disableDeveloperMode")
+                    Button("SFX Replay Lab", systemImage: "waveform") {
+                        AudioService.shared.play(.uiTap)
+                        showsSFXReplayLab = true
+                    }
+                    .accessibilityIdentifier("openSFXReplayLab")
+                }
+                .buttonStyle(.bordered)
+                .tint(LaserHeistDesign.cream)
+                .padding()
             }
-            .buttonStyle(.bordered)
-            .tint(LaserHeistDesign.cream)
-            .padding()
-            .accessibilityIdentifier("openSFXReplayLab")
         }
         .fullScreenCover(isPresented: $showsSFXReplayLab) { SFXReplayLabView() }
         #endif

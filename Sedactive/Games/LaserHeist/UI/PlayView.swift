@@ -58,6 +58,7 @@ private struct ReplayRoundView: View {
     /// The per-frame host-clock tick: live cutout expiry and live avatars.
     @State private var frameRefresh: EventSubscription?
     #if DEBUG
+    @Environment(\.developerTools) private var developerTools
     @State private var heartPreview = HeartAnimationPreview()
     @State private var diamondReadout = DebugDiamondVisualReadout()
     @State private var preview = LaserApproachPreview()
@@ -447,7 +448,7 @@ private struct ReplayRoundView: View {
         .coordinateSpace(name: DiamondHUDFlightModel.space)
         .safeAreaInset(edge: .bottom) {
             // Results carry their own Back to Home (the same `leave`).
-            if onExit != nil, session?.summary == nil {
+            if onExit != nil, session?.summary == nil, suppliedSession == nil {
                 Button("Back to input selection", systemImage: "chevron.backward") { leave() }
                 .buttonStyle(.borderedProminent).controlSize(.large)
                 .disabled(leaving).accessibilityIdentifier("leaveReplay")
@@ -527,7 +528,8 @@ private struct ReplayRoundView: View {
         .overlay(alignment: .bottomTrailing) {
             GeometryReader { geometry in
                 VStack { Spacer(); HStack { Spacer()
-                    if !HeartAnimationPreview.isRequested {
+                    if !HeartAnimationPreview.isRequested,
+                       (developerTools.isEnabled && developerTools.showsRoundPanel) || TimingIndicatorControls.isComparison {
                         TimingIndicatorControls(session: session, scene: scene, retry: retry, viewport: geometry.size)
                     }
                 } }
@@ -553,7 +555,13 @@ private struct ReplayRoundView: View {
         .overlay {
             // `-replay -debugRoundControlsPreview`: the live round's DEBUG card over the replay, to
             // review its placement in the Simulator (no camera). A replay offers no skips: both stay off.
-            if let session, session.summary == nil, DebugRoundControls.previewRequested { DebugRoundControls(session: session) }
+            if let session, session.summary == nil, suppliedSession == nil {
+                if DebugRoundControls.previewRequested {
+                    DebugRoundControls(session: session)
+                } else if developerTools.isEnabled, developerTools.showsRoundPanel {
+                    DebugRoundControls(session: session, onClose: { developerTools.closeRoundPanel() })
+                }
+            }
         }
         #endif
         .onChange(of: session?.summary?.sessionGeneration) { _, final in

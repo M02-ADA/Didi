@@ -9,14 +9,16 @@ import SwiftUI
 /// `LaserInputFlow`'s selection route. Which of these screens shows is local
 /// presentation state only: the route, the input source and every session
 /// belong to `LaserInputFlow` (Jevon). The last step's check button asks the
-/// flow to start camera setup; the replay demo and Debug diagnostics stay one
-/// tap away on Home.
+/// flow to start camera setup. Developer Mode reveals replay and diagnostic tools on Home.
 struct LaserHeistIntroView: View {
     let flow: LaserInputFlow
     /// DEBUG: opens the real-camera game scene preview (Edo's PR #31 route,
     /// owned by `ContentView`); `nil` hides the entry.
     var onInGameCamera: (() -> Void)? = nil
     @State private var screen: Screen = .home
+    #if DEBUG
+    @Environment(\.developerTools) private var developerTools
+    #endif
 
     enum Screen: Equatable {
         case home
@@ -83,7 +85,7 @@ struct LaserHeistIntroView: View {
             #if DEBUG
             // TEMPORARY player-mode selector for testing (remove with `LaserInputFlow`'s selector
             // section). Chosen here before starting; the setup and round keep it.
-            if flow.canSelectPlayerMode || flow.selectsSoloPractice {
+            if developerTools.isEnabled, flow.canSelectPlayerMode || flow.selectsSoloPractice {
                 Picker("Players", selection: Binding(get: { flow.selectsSoloPractice },
                                                      set: { flow.selectPlayerMode(soloPractice: $0) })) {
                     Text("2 Players · Co-op").tag(false)
@@ -97,20 +99,22 @@ struct LaserHeistIntroView: View {
             }
             #endif
             HStack(spacing: 24) {
-                Button {
-                    AudioService.shared.play(.uiTap)
-                    flow.showReplay()
-                } label: {
-                    Label("Replay demo", systemImage: "play.rectangle")
-                }
-                .accessibilityIdentifier("chooseReplay")
-                .accessibilityHint("A sample round with no camera.")
                 #if DEBUG
-                Button("Camera diagnostics") { flow.showDiagnostics() }
-                    .accessibilityIdentifier("cameraDiagnostics")
-                if let onInGameCamera {
-                    Button("Real camera · game scene preview", action: onInGameCamera)
-                        .accessibilityIdentifier("chooseInGameCamera")
+                if developerTools.isEnabled {
+                    Button {
+                        AudioService.shared.play(.uiTap)
+                        flow.showReplay()
+                    } label: {
+                        Label("Replay demo", systemImage: "play.rectangle")
+                    }
+                    .accessibilityIdentifier("chooseReplay")
+                    .accessibilityHint("A sample round with no camera.")
+                    Button("Camera diagnostics") { flow.showDiagnostics() }
+                        .accessibilityIdentifier("cameraDiagnostics")
+                    if let onInGameCamera {
+                        Button("Real camera · game scene preview", action: onInGameCamera)
+                            .accessibilityIdentifier("chooseInGameCamera")
+                    }
                 }
                 #endif
             }

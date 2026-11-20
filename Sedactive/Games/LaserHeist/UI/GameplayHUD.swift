@@ -167,6 +167,7 @@ struct GameplayHUD: View {
     #if DEBUG
     /// `-hudPauseMenu` opens the menu at launch, for reviewing its layout (Debug
     /// only). Without a session pause it is a labelled preview: the round runs on.
+    @Environment(\.developerTools) private var developerTools
     @State private var menuShown = GameplayHUDActions.previewsPauseMenu
     #else
     @State private var menuShown = false
@@ -437,6 +438,17 @@ struct GameplayHUD: View {
                     menuShown = false
                 }
                 .accessibilityIdentifier("resume")
+                #if DEBUG
+                if developerTools.isEnabled {
+                    Button("Developer Tools", systemImage: "wrench.and.screwdriver") {
+                        developerTools.openRoundPanel()
+                        menuShown = false
+                    }
+                    .font(.title3.bold())
+                    .foregroundStyle(Self.cream)
+                    .accessibilityIdentifier("openDeveloperTools")
+                }
+                #endif
                 if let leave = actions.leave {
                     menuButton("Leave Game", text: Color(sketch: 0xBEAB8D), k: k,
                                style: LayeredPillButtonStyle(top: Color(sketch: 0x3E3A5E), bottom: Color(sketch: 0x4E4A7A),

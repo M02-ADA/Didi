@@ -15,6 +15,7 @@ final class LaserHeistJourneyUITests: XCTestCase {
 
     func testHomeSetUpCameraSetupReplayResultsAndBackToHome() {
         let app = XCUIApplication()
+        app.launchArguments = ["-showDebugTools"]
         app.launch()
         let start = app.buttons["startMission"]
         let next = app.buttons["setupNext"]
@@ -69,6 +70,7 @@ final class LaserHeistJourneyUITests: XCTestCase {
     /// replay (no calibration is forged), then Results, Play Again and Home.
     func testDebugSkipFromCalibrationPlaysTheFullReplay() {
         let app = XCUIApplication()
+        app.launchArguments = ["-showDebugTools"]
         app.launch()
         let start = app.buttons["startMission"]
         XCTAssertTrue(start.waitForExistence(timeout: timeout))

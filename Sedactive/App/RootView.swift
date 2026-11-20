@@ -11,9 +11,17 @@ struct ContentView: View {
   private let dependencies = AppDependencies.shared
   @Environment(\.scenePhase) private var scenePhase
   #if DEBUG
+  @Environment(\.developerTools) private var developerTools
   @State private var showingLiveWrist = InGameCameraPreviewView.wristRequested(ProcessInfo.processInfo.arguments)
   @State private var showingGameCamera = InGameCameraPreviewView.requested(ProcessInfo.processInfo.arguments)
   #endif
+  private var showsDeveloperTools: Bool {
+    #if DEBUG
+    developerTools.isEnabled
+    #else
+    false
+    #endif
+  }
   var body: some View {
     let flow = dependencies.inputFlow
     Group {
@@ -33,6 +41,7 @@ struct ContentView: View {
       #endif
     }
     #if DEBUG
+    .onChange(of: flow.route) { _, _ in developerTools.closeRoundPanel() }
     // Device checks: `-startCameraSetup` opens Camera Setup at launch (same flow as the button).
     .task {
       let arguments = ProcessInfo.processInfo.arguments
@@ -63,7 +72,7 @@ struct ContentView: View {
         liveSetup(flow: flow)
         #if DEBUG
           .overlay(alignment: .top) {
-            if flow.session?.isSoloPractice == true {
+            if showsDeveloperTools, flow.session?.isSoloPractice == true {
               Text("SOLO PRACTICE · 1 Player · not a co-op result")
                 .font(.system(size: 13, weight: .heavy, design: .monospaced))
                 .padding(.horizontal, 12).padding(.vertical, 5)
@@ -103,7 +112,7 @@ struct ContentView: View {
           // capture session and stalls frames 220–500 ms (iPad, 11 November 2026), which aborted
           // every countdown and, repeated, lost the player and restarted setup.
           let stageShown = Self.showsSetupStage(flow.session)
-          liveSetupStage(flow, preview: cameraPreview)
+          liveSetupStage(flow, preview: cameraPreview, showsDeveloperTools: showsDeveloperTools)
             .opacity(stageShown ? 1 : 0)
             .allowsHitTesting(stageShown)
             .accessibilityHidden(!stageShown)
@@ -118,11 +127,10 @@ struct ContentView: View {
             RoundCountdownOverlay(value: Int(remaining.rounded(.up)))
           }
           #if DEBUG
-          // DEBUG test round controls (Kevin): from the round's start to its Results, above the
-          // setup stage too, so a tracking pause never hides them. They place themselves under the
-          // HUD's pause button, clear of both players' gate consoles.
-          if let session = flow.session, session.hasLiveRoundPlan, session.state != nil, session.summary == nil {
-            DebugRoundControls(session: session)
+          // Developer Tools opened from Pause, above the setup stage and clear of gate consoles.
+          if developerTools.isEnabled, developerTools.showsRoundPanel,
+             let session = flow.session, session.hasLiveRoundPlan, session.state != nil, session.summary == nil {
+            DebugRoundControls(session: session, onClose: { developerTools.closeRoundPanel() })
           }
           #endif
         }
@@ -167,7 +175,7 @@ struct ContentView: View {
 
 /// Jevon's setup controls on the Sketch "stand here" stage (Kevin's presentation).
 @MainActor
-private func liveSetupStage(_ flow: LaserInputFlow, preview: AnyView?) -> some View {
+private func liveSetupStage(_ flow: LaserInputFlow, preview: AnyView?, showsDeveloperTools: Bool) -> some View {
   CalibrationStageView(cameraPreview: preview,
     cameraAspect: AppDependencies.shared.camera.negotiated.map {
       CGFloat($0.outputWidth) / CGFloat(max(1, $0.outputHeight)) } ?? 16 / 9,
@@ -177,7 +185,7 @@ private func liveSetupStage(_ flow: LaserInputFlow, preview: AnyView?) -> some V
     PlayerSetupView(flow: flow, isOverlay: true)
   }
   .overlay(alignment: .bottom) {
-    if let camera = AppDependencies.shared.camera.negotiated {
+    if showsDeveloperTools, let camera = AppDependencies.shared.camera.negotiated {
       Text("Camera: \(camera.deviceName)")
         .font(.caption.weight(.semibold))
         .padding(.horizontal, 10)
@@ -189,27 +197,31 @@ private func liveSetupStage(_ flow: LaserInputFlow, preview: AnyView?) -> some V
     }
   }
   #if DEBUG
-  .overlay(alignment: .bottomTrailing) { SetupDiagnosticsToggle(flow: flow) }
+  .overlay(alignment: .bottomTrailing) {
+    if showsDeveloperTools { SetupDiagnosticsToggle(flow: flow) }
+  }
   #endif
   #if DEBUG
   // DEBUG only, for testing without an iPad: ends camera setup (nothing is
   // calibrated or marked ready) and opens the seeded synthetic replay through
   // the same flow. Never compiled into Release.
   .overlay(alignment: .bottomLeading) {
-    Button("DEBUG · Skip camera & play synthetic replay") {
-      Task {
-        await flow.closeLiveSetup()
-        flow.showReplay()
+    if showsDeveloperTools {
+      Button("DEBUG · Skip camera & play synthetic replay") {
+        Task {
+          await flow.closeLiveSetup()
+          flow.showReplay()
+        }
       }
+      .font(.system(size: 15, weight: .heavy, design: .monospaced))
+      .padding(.horizontal, 14).padding(.vertical, 8)
+      .background(Color(sketch: 0xFFC83A), in: Capsule())
+      .foregroundStyle(Color(sketch: 0x16123A))
+      .buttonStyle(.plain)
+      .disabled(flow.isClosing)
+      .padding([.leading, .bottom], 16)
+      .accessibilityIdentifier("debugSkipToReplay")
     }
-    .font(.system(size: 15, weight: .heavy, design: .monospaced))
-    .padding(.horizontal, 14).padding(.vertical, 8)
-    .background(Color(sketch: 0xFFC83A), in: Capsule())
-    .foregroundStyle(Color(sketch: 0x16123A))
-    .buttonStyle(.plain)
-    .disabled(flow.isClosing)
-    .padding([.leading, .bottom], 16)
-    .accessibilityIdentifier("debugSkipToReplay")
   }
   #endif
   .onAppear { AudioService.shared.setMusic(.menu) }

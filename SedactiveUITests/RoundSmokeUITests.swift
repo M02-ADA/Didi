@@ -21,6 +21,7 @@ final class RoundSmokeUITests: XCTestCase {
 
     func testLaunchEndRoundAndRetryBuildANewRound() {
         let app = XCUIApplication()
+        app.launchArguments = ["-showDebugTools"]
         app.launchArguments = ["--synthetic-gameplay-preview"]
         app.launch()
         LaserHeistJourney.enterRound(app, timeout: timeout)
@@ -42,6 +43,7 @@ final class RoundSmokeUITests: XCTestCase {
 
     func testInputSelectionCanOpenReplayAndReturnWithoutStartingCamera() {
         let app = XCUIApplication()
+        app.launchArguments = ["-showDebugTools"]
         app.launch()
         let replay = app.buttons["chooseReplay"]
         let camera = app.buttons["startMission"]   // Sketch Home: camera setup follows the two Set Up steps
@@ -64,6 +66,7 @@ final class RoundSmokeUITests: XCTestCase {
     func testSimulatorCameraUnavailableCanRetryAndReturnToSelection() throws {
         #if targetEnvironment(simulator)
         let app = XCUIApplication()
+        app.launchArguments = ["-showDebugTools"]
         app.launch()
         let camera = app.buttons["startMission"]
         XCTAssertTrue(camera.waitForExistence(timeout: timeout))
