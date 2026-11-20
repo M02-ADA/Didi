@@ -91,6 +91,7 @@ import Testing
                 tutorial.progressVisible(phase, visible: true, generation: generation)
                 tutorial.finishProgress(phase, generation: generation)
             }
+            tutorial.finishVaultButtonIntroduction(generation: generation)
         }
         func finish(_ tutorial: LeanTutorial) { finishLean(tutorial); finishHeart(tutorial); finishPractice(tutorial); finishProgress(tutorial) }
     }

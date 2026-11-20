@@ -73,6 +73,7 @@ import Testing
             tutorial.progressVisible(phase, visible: true, generation: p.generation)
             tutorial.finishProgress(phase, generation: p.generation)
         }
+        tutorial.finishVaultButtonIntroduction(generation: p.generation)
         #expect(tutorial.stage == .completed && tutorial.isCompleted)
         tutorial.prepare(generation: UUID(), roster: p.roster)
         #expect(tutorial.stage == .completed)

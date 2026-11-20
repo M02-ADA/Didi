@@ -30,6 +30,11 @@ struct LeanTutorialOverlay: View {
                         .foregroundStyle(LaserHeistDesign.cream).multilineTextAlignment(.center)
                         .position(x: proxy.size.width / 2, y: proxy.size.height * 0.61)
                         .accessibilityIdentifier("leanTutorialTitle")
+                } else if tutorial.stage == .vaultButtonIntroduction, let generation = tutorial.generation {
+                    VaultButtonIntroduction(posterOnly: posterOnly) {
+                        tutorial.finishVaultButtonIntroduction(generation: generation)
+                    }
+                    .id(generation)
                 } else if let phase = tutorial.progressPhase {
                     ProgressTutorialOverlay(tutorial: tutorial, phase: phase).id(phase)
                 } else if let phase = tutorial.heartPhase {
