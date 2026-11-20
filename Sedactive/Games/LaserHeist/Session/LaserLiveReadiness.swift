@@ -59,7 +59,7 @@ nonisolated struct LaserLiveReadiness: Sendable {
     private var settlingStart: Double?
     private var distinctSamples = 0
     private var lastEvaluation = 0.0
-    private var manualPause = false
+    private(set) var manualPause = false
     private var evidenceCutover: Double?
     /// The session holds the clock still while RUNNING for a scripted scene (the final vault
     /// entry). Any block or pause ends the hold; the session holds again once running.

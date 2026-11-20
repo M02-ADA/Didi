@@ -121,6 +121,28 @@ import Testing
         await session.stop()
     }
 
+    @Test func coopSkipToDiamondTimeResumesManualPause() async throws {
+        let rig = try Self.rig(), session = rig.session
+        var time = try await Self.runningCoop(rig)
+        session.pauseLiveRound()
+        try #require(session.phase == .paused && session.liveReadiness?.manualPause == true)
+
+        let score = session.state?.teamScore
+        session.debugSkipToDiamondTime()
+        #expect(session.debugPendingSkipToDiamondTime)
+        #expect(session.liveReadiness?.manualPause == false)
+        #expect(session.state?.phase != .diamondTime, "wait for fresh tracking and the normal countdown")
+
+        for _ in 0..<80 where session.state?.phase != .diamondTime {
+            try await rig.send(time)
+            session.advanceSetupAutomatically()
+            time += 0.125
+        }
+        #expect(session.phase == .running && session.state?.phase == .diamondTime)
+        #expect(session.debugSkips.count == 1 && session.state?.teamScore == score)
+        await session.stop()
+    }
+
     /// While the round is paused for tracking, "Skip to Diamond Time" stays available, queues
     /// once, and the real Diamond Time starts on resume. Nothing is scored by the skip.
     @Test func coopSkipToDiamondTimeQueuesThroughATrackingPause() async throws {

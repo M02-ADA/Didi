@@ -117,11 +117,11 @@ final class GameSessionCoordinator {
     private(set) var debugGateSkips: [DebugGateSkip] = []
     private(set) var debugSoloTrackingLost = false
     private var debugPendingVaultPress: LaserVaultButton?
-    /// A "Skip to Diamond Time" waiting for the next running frame (a paused round applies it on resume).
+    /// A "Skip to Diamond Time" waiting for the next running frame.
     private(set) var debugPendingSkipToDiamondTime = false
 
     /// "Skip to Diamond Time" is available: a live test round (Solo or co-op) before Diamond Time,
-    /// running or paused for tracking (then it applies on resume). Tracking is not required.
+    /// running or paused. Tracking is not required to queue the skip.
     var canDebugSkipToDiamondTime: Bool {
         guard !isReplay, phase == .running || phase == .paused, summary == nil, !debugPendingSkipToDiamondTime,
               let roundPhase = game?.roundPhase else { return false }
@@ -134,7 +134,13 @@ final class GameSessionCoordinator {
     func debugSkipToDiamondTime() {
         guard canDebugSkipToDiamondTime else { return }
         debugPendingSkipToDiamondTime = true
-        advanceLive()
+        // Opening Developer Tools from Pause leaves a manual pause in place.
+        // Use the normal resume path, including fresh tracking and countdown.
+        if liveReadiness?.manualPause == true {
+            continueLiveRound()
+        } else {
+            advanceLive()
+        }
     }
 
     /// "Skip to Next Gate" is available: a running live test round in its activity, with a vault

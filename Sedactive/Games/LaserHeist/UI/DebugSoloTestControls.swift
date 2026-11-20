@@ -8,8 +8,8 @@ import SwiftUI
 /// - "Next Gate" shortens the current activity minute so its vault arrives in a few seconds
 ///   (`GameSessionCoordinator.debugSkipToNextGate`); off at a gate, after the last one, and while
 ///   the round is paused (a resume may still plan replacement lasers before it).
-/// - "Diamond Time" enters the real Diamond Time through the coordinator; a paused round applies
-///   it on resume. Off from Diamond Time on.
+/// - "Diamond Time" requests resume from a manual pause and enters the real phase once the
+///   round is running. If tracking is blocked, the skip waits for recovery. Off from Diamond Time on.
 /// Skips never score. In a Solo Test, P1's three gate buttons can also be tapped as a fallback for
 /// the wrist press (shown only at an open gate). Tracking, steering, gate contact and the steering
 /// test sit under Advanced (collapsed; it scrolls). Tracking is shown as the producer reports it;
