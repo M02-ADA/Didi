@@ -52,3 +52,7 @@ Both pickup clips come from separate passages in the original source and alterna
 The vault uses one Clock Ticking Down tick per displayed second (0.055–0.19 s, −4 dBFS). Diamond Time uses Countdown Sound Effect 8-bit. Digits 5–4–3–2 use the first beep (0.005–0.255 s, −7 dBFS). Digit 1 uses the final beep (3.005–3.255 s, −3 dBFS). The new sources came from the official Pixabay players.
 
 The final Diamond Time vault uses Bank Vault (5.495–6.495 s, −8 dBFS) as its wheel begins to turn. The source came from the official Pixabay player.
+
+### Movement timing bar
+
+- [timer_countdown](https://pixabay.com/sound-effects/film-special-effects-timer-countdown-345137/) by u_lfmkadc0ha (Pixabay Content License). The first and final pulses are excerpted for the READY and GO cues.

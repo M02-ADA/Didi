@@ -83,6 +83,10 @@ let click = load("digital-click-357350.mp3")
 write(level(fade(cut(click, 0, 0.20), out: 0.06), peakDB: -14), "ui-tap")
 write(level(fade(resample(cut(click, 0, 0.22), by: 1.12), out: 0.06), peakDB: -9), "vault-button")
 
+let movementCountdown = load("timer-countdown-345137.mp3")
+write(level(fade(cut(movementCountdown, 0, 0.30), out: 0.07), peakDB: -9), "movement-ready")
+write(level(fade(cut(movementCountdown, 8.82, 9.68), out: 0.10), peakDB: -6), "movement-go")
+
 // DUCK falls, JUMP rises: one clean 725 Hz beep, twice, the second a fourth lower or higher.
 let beep = fade(cut(load("futuristic-ui-beeps-356129.mp3"), 0.995, 1.065), in: 0.003, out: 0.02)
 write(level(beep + silence(0.035) + resample(beep, by: 0.75), peakDB: -6), "cue-duck")
