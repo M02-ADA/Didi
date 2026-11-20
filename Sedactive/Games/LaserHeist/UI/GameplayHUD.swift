@@ -32,6 +32,8 @@ struct GameplayHUDModel: Equatable {
     /// Whether the round has reached its diamond (Diamond Time or after it).
     var diamondReached: Bool
     var banner: Banner
+    /// A DEBUG Solo Practice round (one player, one gate button): the gate's instruction says so.
+    var soloPractice = false
     /// Whole seconds of Diamond Time left: the authoritative phase-change time
     /// plus the configured duration, against game time. `nil` outside Diamond Time.
     var diamondTimeRemaining: Double?
@@ -99,7 +101,8 @@ struct GameplayHUDModel: Equatable {
     ///     `finalVaultEntry`, on held game time): Diamond Time's title and seconds wait for it.
     init(state: LaserGameState?, events: [GameEvent], configuration: LaserRoundConfiguration,
          activityDuration: Double, stageProgress: Double? = nil, diamondsCollected: Int? = nil,
-         diamondsAreFixture: Bool = false, enteringFinalVault: Bool = false) {
+         diamondsAreFixture: Bool = false, enteringFinalVault: Bool = false, soloPractice: Bool = false) {
+        self.soloPractice = soloPractice
         maxHealth = configuration.initialTeamHealth
         health = state?.teamHealth ?? configuration.initialTeamHealth
         score = state?.teamScore ?? 0
@@ -344,11 +347,14 @@ struct GameplayHUD: View {
             EmptyView()
         case .pressButtons:
             VStack(spacing: 2 * k) {
-                Text("PRESS THE BUTTONS").font(.system(size: 52.7 * k, weight: .black, design: .rounded))
+                // One activation switch per player (19 November 2026): co-op needs both, Solo
+                // Practice its one. The hint says how a live press works (one wrist zone on the
+                // player's outer side, `LaserLiveRoundGeometryV1`). Not Sketch copy; pending Theo.
+                Text(model.soloPractice ? "PRESS YOUR BUTTON" : "PRESS THE BUTTONS")
+                    .font(.system(size: 52.7 * k, weight: .black, design: .rounded))
                 Text("TO OPEN THE DOOR").font(.system(size: 18.7 * k, weight: .black, design: .rounded))
-                // How a live press works (wrist zones on each player's outer side,
-                // `LaserLiveRoundGeometryV1`). Not Sketch copy; pending Theo.
-                Text("Reach toward your wall: high, middle, low")
+                Text(model.soloPractice ? "Reach toward your wall and press it"
+                                        : "Each player: reach toward your wall and press your button")
                     .font(.system(size: 16 * k, weight: .bold, design: .rounded))
                     .padding(.top, 4 * k)
             }

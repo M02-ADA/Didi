@@ -3,48 +3,229 @@ import RealityKit
 import Testing
 @testable import Sedactive
 
-/// The unified wall console's buttons (owner, 12 November 2026): one state system for all three,
-/// RED available → (press) → GREEN completed, once per button per gate, kept until the gate ends,
-/// driven only by the game's `vault.buttons`. Presentation tests: no judge here.
+/// Each player's ONE activation button on the corridor's side wall, the Blender asset `GateButton.usdz`
+/// (Kevin, task owner, 19–20 November 2026; it replaced the HIGH / MIDDLE / LOW buttons): UNAVAILABLE
+/// (cap sunk, accents dark) while the gate comes in, AVAILABLE (red cap and halo) during the gate,
+/// (press) → ACTIVATED (cap locked down and green, green halo and light) once per gate, kept until the gate
+/// ends, a surge when the gate opens; driven only by the game's `vault.buttons`. Presentation tests:
+/// no judge here.
 @MainActor
 struct GateConsoleViewTests {
     private static let arm = LaserGateConsole.Arm(shoulder: [0.154, 0.693], length: 0.369)
     private static func console(_ player: PlayerID) -> LaserGateConsole {
-        LaserGateConsole(player: player, arm: arm, visibleHalfWidth: 2.583, wallHalfWidth: 3.15, planeZ: 0)
+        LaserGateConsole(player: player, arm: arm, visibleHalfWidth: 2.583, wallHalfWidth: 4.41, planeZ: 0)
     }
 
-    @Test func eachButtonGoesRedToGreenOnceAndStaysGreen() {
-        let view = GateConsoleView(console: Self.console(.player1))
-        for b in LaserVaultButton.allCases {
-            #expect(view.states[b] == .available && view.glowColor(b) == GateConsoleView.Palette.redGlow && !view.isCheckShown(b))
-            #expect(view.capDepth(b) == GateConsoleView.capRest, "unpressed: the cap stands proud")
+    private static func near(_ depth: Float?, _ expected: Float) -> Bool { depth.map { abs($0 - expected) < 1e-5 } ?? false }
+
+    private static func all(_ entity: Entity) -> [Entity] { [entity] + entity.children.flatMap { all($0) } }
+
+    /// A console view drawing the loaded Blender asset.
+    private static func view(_ player: PlayerID) async throws -> GateConsoleView {
+        _ = try #require(await GateConsoleView.sharedTemplate(), "GateButton.usdz loads from RealityKitContent")
+        let view = GateConsoleView(console: console(player))
+        #expect(view.usesAsset)
+        return view
+    }
+
+    @Test func theButtonGoesFromUnavailableToLiveToActivatedOnceAndStaysActivated() async throws {
+        let view = try await Self.view(.player1)
+        typealias P = GateConsoleView.Palette
+        #expect(view.state == .unavailable && view.glowColor() == P.accentOff)
+        #expect(Self.near(view.capDepth(), GateConsoleView.capLowered), "not ready: the cap sits sunk in its socket")
+        view.reset(ready: true, reduceMotion: true)
+        #expect(view.state == .available && view.glowColor() == P.accent)
+        #expect(Self.near(view.capDepth(), GateConsoleView.capRest) && view.arms == 0, "ready: the cap stands proud (Reduce Motion: no spring)")
+        view.complete(reduceMotion: true)
+        #expect(view.state == .completed && view.glowColor() == P.success)
+        #expect(Self.near(view.capDepth(), GateConsoleView.capSettled), "activated: locked down, still red")
+        view.complete(reduceMotion: true)
+        view.complete(.activate, reduceMotion: false)
+        #expect(view.presses[.activate] == 1, "one press per gate")
+        #expect(view.state == .completed, "stays activated")
+        view.setUnavailable()
+        #expect(view.state == .completed, "a pressed button stays activated when the gate ends")
+        view.reset(ready: true, reduceMotion: true)
+        #expect(view.state == .available && view.presses.isEmpty && Self.near(view.capDepth(), GateConsoleView.capRest), "a new gate: back up and live")
+        view.setUnavailable()
+        #expect(view.state == .unavailable && Self.near(view.capDepth(), GateConsoleView.capLowered), "timed out unpressed: sunk, dark")
+        #expect(GateConsoleView.capPressed < GateConsoleView.capSettled && GateConsoleView.capSettled < GateConsoleView.capLowered
+                && GateConsoleView.capLowered < GateConsoleView.capRest, "travel: bottomed < locked < sunk < rest")
+    }
+
+    /// The modelled cap really moves along its own axis: proud of the collar at rest, its edge down
+    /// to the collar when bottomed, never into the socket floor; the housing never moves.
+    @Test func theCapTravelsInItsSocket() async throws {
+        let view = try await Self.view(.player2)
+        let entities = Self.all(view.root)
+        let cap = try #require(entities.first { $0.name == "Cap" })
+        let housing = try #require(entities.first { $0.name == "Housing" })
+        let mount = view.buttonMount
+        view.reset(ready: true, reduceMotion: true)
+        let rest = cap.visualBounds(relativeTo: mount)
+        let housingRest = housing.visualBounds(relativeTo: mount)
+        print(String(format: "CAP rest front %.3f, radius %.3f · housing z %.3f…%.3f, %.3f across", rest.max.z, rest.extents.x / 2,
+                     housingRest.min.z, housingRest.max.z, housingRest.extents.x))
+        #expect(abs(rest.max.z - LaserGateConsole.capFront) < 0.003, "the asset's cap front is the console's: \(rest.max.z)")
+        #expect(abs(rest.extents.x / 2 - LaserGateConsole.radius) < 0.003 && abs(rest.extents.y / 2 - LaserGateConsole.radius) < 0.003)
+        #expect(abs(housingRest.extents.x / 2 - LaserGateConsole.plateHalf) < 0.005, "the plate: \(housingRest.extents.x) m across")
+        #expect(housingRest.max.z < 0.01 && housingRest.min.z < -LaserGateConsole.bodyDepth + 0.01, "the housing is behind the plate's front")
+        #expect(rest.max.z - LaserGateConsole.collarFront >= 0.04, "rest: proud of the collar by \(rest.max.z - LaserGateConsole.collarFront) m")
+        view.complete(reduceMotion: true)
+        let locked = cap.visualBounds(relativeTo: mount)
+        #expect(abs(locked.max.z - rest.max.z - GateConsoleView.capSettled) < 1e-3, "it travels along its own axis")
+        #expect(abs(locked.center.x - rest.center.x) < 1e-4 && abs(locked.center.y - rest.center.y) < 1e-4)
+        let bottom = LaserGateConsole.capEdgeFront + GateConsoleView.capPressed
+        #expect(abs(bottom - LaserGateConsole.collarFront) < 0.001, "bottomed: its edge level with the collar")
+        #expect(rest.min.z + GateConsoleView.capPressed > -0.035, "never past the socket floor (3.5 cm behind the plate)")
+        #expect(housing.visualBounds(relativeTo: mount) == housingRest, "the housing never moves")
+        #expect(GateConsoleView.capRest - GateConsoleView.capPressed >= 0.02, "a real travel")
+    }
+
+    /// The button on the gate's door frame (owner, 20 November 2026): the button model on a compact collar
+    /// standing off the frame's jamb, its glow and its light, and nothing else: no jamb block, toe-kick,
+    /// niche, bezel, ribs, box or stand.
+    @Test func theButtonIsMountedOnTheGateFrameOnACompactCollar() async throws {
+        for player in PlayerID.allCases {
+            let console = Self.console(player)
+            let view = try await Self.view(player)
+            let entities = Self.all(view.root)
+            #expect(!entities.contains { ["vault.console.housing", "vault.console.toeKick", "vault.console.panel", "vault.console.wallModule",
+                                          "vault.console.bezel", "vault.console.rib", "vault.console.strip", "Head", "Post", "PostStrip", "Foot",
+                                          "vault.console.pedestal", "vault.console.base"].contains($0.name) }, "\(player): no extra structure")
+            // The collar: from the door's surface to the plate's back, wholly on the jamb, inside the plate's outline.
+            let collar = try #require(entities.first { $0.name == "vault.console.collar" }).visualBounds(relativeTo: nil)
+            print(String(format: "MOUNT %@ collar x %.3f…%.3f y %.3f…%.3f z %.3f…%.3f · door %+.3f", player.rawValue,
+                         collar.min.x, collar.max.x, collar.min.y, collar.max.y, collar.min.z, collar.max.z, console.doorZ))
+            #expect(abs(collar.min.z - console.doorZ) < 0.005 && abs(collar.max.z - (console.doorZ + LaserGateConsole.standoff)) < 0.005,
+                    "\(player): the collar spans the door to the plate")
+            #expect(LaserGateConsole.jamb.contains(min(abs(collar.min.x), abs(collar.max.x)) + 1e-3)
+                    && LaserGateConsole.jamb.contains(max(abs(collar.min.x), abs(collar.max.x)) - 1e-3), "\(player): on the jamb")
+            #expect(collar.extents.y <= LaserGateConsole.collarSize + 1e-3, "\(player): compact")
+            // The button model in front of the collar, compact (the plate's size).
+            let b = try #require(entities.first { $0.name == "vault.console.buttonModel" }).visualBounds(relativeTo: nil)
+            #expect(b.extents.x < 2 * LaserGateConsole.plateHalf + 0.02 && b.extents.y < 2 * LaserGateConsole.plateHalf + 0.02,
+                    "\(player): compact, the plate's size")
+            #expect(b.max.z - console.doorZ < LaserGateConsole.standoff + LaserGateConsole.plateDepth + LaserGateConsole.capFront + 0.01,
+                    "\(player): stands \(b.max.z - console.doorZ) m off the door")
+            let glow = try #require(entities.first { $0.name == "vault.console.glow" })
+            #expect(simd_distance(glow.position(relativeTo: nil), console.button.center) < 1e-5)
+            #expect(simd_distance(glow.orientation(relativeTo: nil).act([0, 0, 1]), console.button.normal) < 1e-4, "the glow faces the camera")
+            let halo = try #require(entities.first { $0.name == "vault.console.halo" })
+            #expect(abs(halo.position(relativeTo: nil).z - console.doorZ) < 0.01, "\(player): the halo on the door's surface")
+            #expect(entities.filter { $0.name == "vault.console.light" }.count == 1)
         }
-        view.complete(.middle, reduceMotion: true)
-        #expect(view.states[.middle] == .completed && view.glowColor(.middle) == GateConsoleView.Palette.greenGlow)
-        #expect(view.isCheckShown(.middle) && view.capDepth(.middle) == GateConsoleView.capSettled, "green, checked, settled into its bezel")
-        #expect(view.states[.top] == .available && view.states[.bottom] == .available, "the others stay red")
-        view.complete(.middle, reduceMotion: true)
-        view.complete(.middle, reduceMotion: false)
-        #expect(view.presses[.middle] == 1, "one press per button per gate")
-        #expect(view.states[.middle] == .completed && view.glowColor(.middle) == GateConsoleView.Palette.greenGlow, "stays green")
-        view.reset()
-        #expect(LaserVaultButton.allCases.allSatisfy { view.states[$0] == .available && !view.isCheckShown($0) }, "a new gate starts red")
     }
 
-    /// The animated press: the cap sinks and settles, the colour changes at the bottom of the press.
-    @Test func theAnimatedPressSettlesIntoTheSameGreenButton() async throws {
-        let view = GateConsoleView(console: Self.console(.player2))
-        view.complete(.top, reduceMotion: false)
-        #expect(view.states[.top] == .completed, "completed at once (the game decided)")
-        #expect(view.capDepth(.top) == GateConsoleView.capSettled, "ends settled (the animation plays from the rest depth)")
-        // The colour changes 60 ms in (on the main actor; allow for a busy test host).
-        for _ in 0..<40 where !view.isCheckShown(.top) { try await Task.sleep(for: .milliseconds(50)) }
-        #expect(view.isCheckShown(.top) && view.glowColor(.top) == GateConsoleView.Palette.greenGlow)
-        #expect(GateConsoleView.capPressed < GateConsoleView.capSettled && GateConsoleView.capSettled < GateConsoleView.capRest)
+    /// Idle: a strong red cap with a soft red halo; activated: the cap turns green, a bright green
+    /// halo and a green light. Reset brings the red back.
+    @Test func idleIsRedAndActivatedGlowsGreen() async throws {
+        let view = try await Self.view(.player1)
+        view.reset(ready: true, reduceMotion: true)
+        #expect(!view.capIsGreen && view.haloColor == GateConsoleView.Palette.haloRed && view.haloOpacity > 0 && view.lightLevel == 0)
+        view.complete(reduceMotion: true)
+        #expect(view.capIsGreen && view.haloColor == GateConsoleView.Palette.haloGreen && view.haloOpacity == GateConsoleView.haloActive)
+        #expect(view.lightLevel == GateConsoleView.lightIntensity)
+        view.reset(ready: true, reduceMotion: true)
+        #expect(!view.capIsGreen && view.haloColor == GateConsoleView.Palette.haloRed && view.lightLevel == 0, "a new gate: red again")
+        view.setUnavailable()
+        #expect(view.haloOpacity == 0 && !view.capIsGreen, "timed out: dark")
+        // Animated: green at the bottom of the press.
+        view.reset(ready: true, reduceMotion: false)
+        view.complete(reduceMotion: false)
+        for _ in 0..<40 where !view.capIsGreen { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(view.capIsGreen && view.haloColor == GateConsoleView.Palette.haloGreen)
     }
 
-    /// Through the vault presentation: the game's activations drive the console; completed buttons
-    /// stay green while the gate is active; a side's three greens light its edge strips.
+    /// The accents build up as the fist reaches toward the live button, from the existing reach
+    /// readings; nothing builds up otherwise.
+    @Test func theLiveButtonBuildsUpAsTheFistApproaches() async throws {
+        let view = try await Self.view(.player1)
+        view.setApproach(1)
+        #expect(view.approachLevel == 0, "unavailable: nothing")
+        view.reset(ready: true, reduceMotion: false)
+        #expect(view.approachLevel == 0 && view.glowColor() == GateConsoleView.Palette.accent)
+        view.setApproach(0.5)
+        #expect(view.approachLevel == 2)
+        view.setApproach(1)
+        #expect(view.approachLevel == 3 && view.glowColor() == GateConsoleView.Palette.accentHot, "the fist on the button: full build-up")
+        view.complete(reduceMotion: false)
+        view.setApproach(1)
+        #expect(view.approachLevel == 0, "activated: no build-up")
+    }
+
+    /// Arming: when the gate's time starts the cap springs up (once per gate).
+    @Test func theCapArmsWithASpringWhenTheGateStarts() async throws {
+        let view = try await Self.view(.player2)
+        view.reset(ready: false, reduceMotion: false)
+        #expect(view.arms == 0 && Self.near(view.capDepth(), GateConsoleView.capLowered))
+        view.reset(ready: true, reduceMotion: false)
+        #expect(view.arms == 1 && Self.near(view.capDepth(), GateConsoleView.capRest), "rises to rest")
+        view.reset(ready: true, reduceMotion: false)
+        #expect(view.arms == 1, "already up: no second spring")
+    }
+
+    /// The animated press: the cap drives in and locks, the accents flash and settle green, and the
+    /// stand turns green.
+    @Test func theAnimatedPressLocksTheCapAndLightsTheConsole() async throws {
+        let view = try await Self.view(.player2)
+        view.reset(ready: true, reduceMotion: false)
+        view.complete(reduceMotion: false)
+        view.setSideComplete(true, reduceMotion: false)
+        #expect(view.state == .completed, "completed at once (the game decided)")
+        #expect(view.glowColor() == GateConsoleView.Palette.flash, "the impact flash")
+        #expect(abs((view.capDepth() ?? 0) - GateConsoleView.capSettled) < 1e-5, "ends locked down (the animation plays from rest)")
+        #expect(view.sideComplete)
+        view.surge(reduceMotion: false)
+        #expect(view.surges == 1)
+        let other = try await Self.view(.player1)
+        other.reset(ready: true, reduceMotion: true)
+        other.surge(reduceMotion: true)
+        #expect(other.surges == 0, "no surge on an unpressed button")
+        // The flash settles green (polled: other main-actor tests may delay the tasks).
+        for _ in 0..<60 where view.glowColor() != GateConsoleView.Palette.success { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(view.state == .completed && abs((view.capDepth() ?? 0) - GateConsoleView.capSettled) < 1e-5)
+        #expect(view.glowColor() == GateConsoleView.Palette.success, "settled green")
+    }
+
+    /// One modelled button where the console puts it, facing the way it faces, on the approved stand;
+    /// nothing left of the three-button column, and no hit targets (the game alone decides).
+    @Test func oneDrawnButtonAndNoLeftoverTargets() async throws {
+        for player in PlayerID.allCases {
+            let console = Self.console(player)
+            let view = try await Self.view(player)
+            let entities = Self.all(view.root)
+            let buttons = entities.filter { $0.name.hasPrefix("vault.console.button.") }
+            #expect(buttons.count == 1 && buttons.first?.name == "vault.console.button.activate")
+            // The asset's separate parts (each a USD Xform holding its mesh), in one button model.
+            #expect(entities.filter { $0.name == "vault.console.buttonModel" }.count == 1)
+            for part in ["Housing", "Collar", "Socket", "Cap", "Accents"] {
+                #expect(entities.contains { $0.name == part && $0.components.has(ModelComponent.self) }, "\(player) \(part)")
+            }
+            // The glow's parts; nothing left of the wall module, the floor stand, the column or its plate.
+            for part in ["vault.console.glow", "vault.console.halo", "vault.console.light", "vault.console.collar"] {
+                #expect(entities.filter { $0.name == part }.count == 1, "\(player) \(part)")
+            }
+            #expect(!entities.contains { ["Head", "Post", "PostStrip", "Foot", "vault.console.pedestal", "vault.console.base", "vault.console.plate",
+                                          "vault.console.check", "vault.console.label"].contains($0.name) })
+            #expect(!entities.contains { ["vault.console.wallModule", "vault.console.housing", "vault.console.toeKick", "vault.console.bezel"].contains($0.name) })
+            #expect(!entities.contains { $0.name.contains("top") || $0.name.contains("middle") || $0.name.contains("bottom") })
+            #expect(entities.allSatisfy { $0.components[CollisionComponent.self] == nil && $0.components[InputTargetComponent.self] == nil })
+            let mount = view.buttonMount
+            #expect(simd_distance(mount.position, console.button.center) < 1e-5)
+            #expect(simd_distance(mount.orientation.act([0, 0, 1]), console.button.normal) < 1e-4, "its axis is the button's normal")
+            #expect(simd_distance(mount.orientation.act([0, 1, 0]), console.button.up) < 1e-4)
+            // The contact point is on the modelled cap's front face at rest (where the fist lands).
+            view.reset(ready: true, reduceMotion: true)
+            let local = mount.convert(position: console.button.contact, from: view.root)
+            let cap = try #require(entities.first { $0.name == "Cap" }).visualBounds(relativeTo: mount)
+            #expect(hypot(local.x, local.y) < LaserGateConsole.radius && local.z <= cap.max.z + 1e-4 && local.z >= LaserGateConsole.capEdgeFront - 1e-4,
+                    "\(player): the contact is on the cap's face: \(local)")
+        }
+    }
+
+    /// Through the vault presentation: unavailable while the gate comes in, available when it begins,
+    /// the game's activation completes it and lights the console; a timeout darkens an unpressed one.
     @Test func theVaultPresentationDrivesTheConsolesFromGameState() throws {
         let scene = LaserScene()
         let configuration = try LaserRoundConfiguration(evidenceTiming: .init(windowBefore: 0.125, windowAfter: 0.125, deliveryAllowance: 0.125),
@@ -53,25 +234,28 @@ struct GateConsoleViewTests {
         vault.reducesMotion = { true }
         vault.liveConsoles = { Self.console($0) }
         let id = UUID(), generation = UUID()
-        func state(_ buttons: [PlayerID: Set<LaserVaultButton>], at t: Double) -> LaserGameState {
-            LaserGameState(sessionGeneration: generation, phase: .vault, gameTime: t, activityProgress: 0, teamHealth: 5, teamScore: 0,
+        func state(_ buttons: [PlayerID: Set<LaserVaultButton>], at t: Double, phase: LaserRoundPhase = .vault) -> LaserGameState {
+            LaserGameState(sessionGeneration: generation, phase: phase, gameTime: t, activityProgress: 0, teamHealth: 5, teamScore: 0,
                            encounters: [], vault: LaserVaultState(id: id, deadline: 5, buttons: buttons))
         }
         vault.update(state: state([:], at: 0), travelDistance: 0)
         let p1 = try #require(vault.consoleViews[.player1]), p2 = try #require(vault.consoleViews[.player2])
         #expect(p1.root.isEnabled && p2.root.isEnabled)
-        vault.update(state: state([.player1: [.bottom]], at: 1), travelDistance: 0)
-        #expect(p1.states[.bottom] == .completed && p2.states[.bottom] == .available)
-        vault.update(state: state([.player1: [.bottom, .top]], at: 2), travelDistance: 0)
-        #expect(p1.states[.bottom] == .completed && p1.states[.top] == .completed && p1.presses[.bottom] == 1, "stays green, pressed once")
-        vault.update(state: state([.player1: [.bottom, .top, .middle]], at: 3), travelDistance: 0)
+        #expect(p1.state == .available && p2.state == .available, "the gate's time runs: both ready")
+        vault.update(state: state([.player1: [.activate]], at: 1), travelDistance: 0)
+        #expect(p1.state == .completed && p2.state == .available, "each player's own button")
         #expect(p1.sideComplete && !p2.sideComplete)
+        vault.update(state: state([.player1: [.activate]], at: 2), travelDistance: 0)
+        #expect(p1.presses[.activate] == 1, "stays green, pressed once")
+        // Timeout (the game ends the round as vaultFailed): P2's unpressed button goes dark, P1 stays green.
+        vault.update(state: state([.player1: [.activate]], at: 5, phase: .ended(.vaultFailed)), travelDistance: 0)
+        #expect(p2.state == .unavailable && p1.state == .completed)
     }
 
-    /// The gate is one structure (iPad, 12 November 2026): with wall consoles the door stops just
-    /// beyond the players, and the consoles come down the corridor with it, a fixed distance in front
-    /// of it, arriving beside the mascots exactly when the door reaches its stop. Without consoles
-    /// the door keeps its authored stop.
+    /// The gate is one structure: the buttons on the side walls come down the corridor with the door,
+    /// a fixed distance in front of it, arriving at their places exactly when the door reaches its
+    /// stop, just behind the players (20 November 2026: the buttons on the gate's frame). Without the
+    /// buttons the door keeps its authored stop.
     @Test func theConsolesComeInWithTheDoorAndArriveBesideThePlayers() throws {
         let scene = LaserScene()
         scene.installVaultDoor(nil)
@@ -83,8 +267,10 @@ struct GateConsoleViewTests {
         vault.reducesMotion = { true }
         vault.liveConsoles = { Self.console($0) }
         let stop = vault.doorStopZ
-        #expect(abs(stop - (scene.mapping.interactionPlaneZ - VaultPresentation.consoleDoorGap)) < 1e-5 && stop > scene.layout.vaultDoorStopZ,
-                "with consoles the door stops \(VaultPresentation.consoleDoorGap) m beyond the players")
+        #expect(abs(stop - (scene.mapping.interactionPlaneZ - LaserGateConsole.doorDepth)) < 1e-5 && stop > scene.layout.vaultDoorStopZ,
+                "with the buttons the door stops \(LaserGateConsole.doorDepth) m beyond the players")
+        let button = Self.console(.player1).button
+        #expect(abs(button.center.z - LaserGateConsole.plateDepth - LaserGateConsole.standoff - stop) < 1e-5, "the collar stands on the door")
         let generation = UUID()
         func activity(_ t: Double) -> LaserGameState {
             LaserGameState(sessionGeneration: generation, phase: .activity, gameTime: t, activityProgress: 0.2, teamHealth: 5, teamScore: 0, encounters: [])
@@ -92,7 +278,7 @@ struct GateConsoleViewTests {
         // Far: the consoles are already part of the approaching gate, riding with the door.
         vault.update(state: activity(50), travelDistance: 0, upcomingVaultIn: 3)
         let p1 = try #require(vault.consoleViews[.player1])
-        #expect(p1.root.isEnabled && LaserVaultButton.allCases.allSatisfy { p1.states[$0] == .available })
+        #expect(p1.root.isEnabled && p1.state == .unavailable, "coming in with the door: not ready yet")
         let far = vault.buttons.position.z
         #expect(abs(far + GateTravelEase.distance(lead: 3, speed: scene.layout.travelSpeed)) < 1e-4, "the consoles ride \(far) m out, with the door")
         // Arriving: both at their places, the consoles beside the players.
@@ -103,7 +289,8 @@ struct GateConsoleViewTests {
                                            teamScore: 0, encounters: [], vault: LaserVaultState(id: id, deadline: 58, buttons: [:])),
                      travelDistance: 0)
         #expect(vault.buttons.position.z == 0, "at the gate the consoles stand beside the players")
-        #expect(p1.root.isEnabled && vault.indicator(.player1, .top) == .idle)
+        #expect(p1.root.isEnabled && vault.indicator(.player1, .activate) == .idle)
+        #expect(p1.state == .available, "the gate's time starts: ready")
     }
 
     /// After the gate opens the consoles are corridor structure (iPad, 12 November 2026: they had
@@ -134,7 +321,8 @@ struct GateConsoleViewTests {
         #expect(abs(vault.buttons.position.z - 1.2) < 1e-4, "passing the players with the corridor")
         #expect(vault.buttons.isEnabled && LaserVaultButton.allCases.allSatisfy { p1.states[$0] == .completed })
         // Past the camera: cleaned up with the door.
-        vault.update(state: state(.activity, 3, opened: true), travelDistance: 10 + 6)
+        // (The door keeps its authored stop, 7.5 m down the corridor, so that is further.)
+        vault.update(state: state(.activity, 3, opened: true), travelDistance: 10 + 12)
         #expect(!vault.buttons.isEnabled, "removed once out of view (with the door)")
     }
 

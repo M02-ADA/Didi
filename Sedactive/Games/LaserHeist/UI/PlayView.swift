@@ -642,7 +642,8 @@ private struct ReplayRoundView: View {
         return GameplayHUDModel(state: session.state, events: session.events, configuration: configuration,
                                 activityDuration: session.activityDuration, stageProgress: session.stageProgress,
                                 diamondsCollected: collected, diamondsAreFixture: fixture,
-                                enteringFinalVault: session.finalVaultEntry.map { !$0.isComplete } ?? false)
+                                enteringFinalVault: session.finalVaultEntry.map { !$0.isComplete } ?? false,
+                                soloPractice: session.isSoloPractice)
     }
 
     #if DEBUG

@@ -198,7 +198,7 @@ import Testing
     }
 
     /// The whole DEBUG Solo Test round on the same schedule and game: P1's lasers, a P1-only
-    /// gate after every minute (three P1 presses open it), Diamond Time after the fifth, then
+    /// gate after every minute (P1's one press opens it), Diamond Time after the fifth, then
     /// the round completes with a summary for Results. No body evidence is given, so no laser
     /// is CLEAR and nothing is scored from movement.
     @Test(arguments: [15.0, 60.0])
@@ -217,15 +217,11 @@ import Testing
                 case .normalDiamond(let spawn, let boundary):
                     try game.spawnNormalDiamonds([spawn], beforeVaultAt: boundary); diamonds.append(spawn)
                 case .openVault(let id, let zones):
-                    #expect(zones.count == 3 && zones.allSatisfy { $0.playerID == .player1 }, "P1's three buttons only")
+                    #expect(zones.count == 1 && zones.allSatisfy { $0.playerID == .player1 }, "P1's one button only")
                     try game.openVault(id: id, at: game.gameTime)
                     gates.append(game.gameTime)
-                    // Two presses do not open it; the third (P1's last) does.
-                    try game.touchVaultBatch(id: id, contacts: [.init(playerID: .player1, button: .top, calibrationRevision: revision),
-                        .init(playerID: .player1, button: .middle, calibrationRevision: revision)],
-                        generation: context.sessionGeneration, at: game.gameTime + 0.5)
-                    #expect(game.roundPhase == .vault && game.vault?.opened == false)
-                    try game.touchVaultBatch(id: id, contacts: [.init(playerID: .player1, button: .bottom, calibrationRevision: revision)],
+                    #expect(game.roundPhase == .vault && game.vault?.opened == false, "never open before the press")
+                    try game.touchVaultBatch(id: id, contacts: [.init(playerID: .player1, button: .activate, calibrationRevision: revision)],
                         generation: context.sessionGeneration, at: game.gameTime + 0.5)
                     #expect(game.vault?.opened == true && game.missionProgress == gates.count)
                 }
@@ -251,7 +247,7 @@ import Testing
         #expect(game.playerStats[.player2] == nil)
     }
 
-    /// Co-op is unchanged: P1's three presses never open a co-op vault on their own.
+    /// Co-op is unchanged: P1's press never opens a co-op vault on its own.
     @Test func coopVaultStillNeedsBothPlayers() throws {
         let script = try LaserReplayScript.load()
         let input = script.input.configuration

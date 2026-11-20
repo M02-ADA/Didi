@@ -35,7 +35,9 @@ nonisolated struct LaserGameState: Equatable, Sendable {
     var boards: [PlayerID: LaserBoardReading] = [:]
 }
 
-nonisolated enum LaserVaultButton: String, CaseIterable, Hashable, Sendable { case top, middle, bottom }
+/// The gate's activation button: ONE per player (Kevin, task owner, 19 November 2026). It replaced the
+/// HIGH / MIDDLE / LOW buttons; a vault opens once every player in the roster has pressed theirs.
+nonisolated enum LaserVaultButton: String, CaseIterable, Hashable, Sendable { case activate }
 
 /// A verified domain command, not raw wrist evidence or a CP1 contract.
 nonisolated struct LaserVaultContact: Hashable, Sendable {

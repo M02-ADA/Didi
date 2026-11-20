@@ -20,12 +20,14 @@ struct LaserBoardGeometryConsistencyTests {
         let consoles = robots.consoles
         print(String(format: "DRAWN corridor: half-width %.4f, bounds %.4f…%.4f, docks P1 %.4f P2 %.4f",
                      steering.halfWidth, steering.bounds.lowerBound, steering.bounds.upperBound,
-                     consoles[.player1]?.dockX ?? .nan, consoles[.player2]?.dockX ?? .nan))
+                     consoles[.player1]?.wallStopX ?? .nan, consoles[.player2]?.wallStopX ?? .nan))
         #expect(abs(Double(steering.halfWidth) - LaserBoardGeometry.boardHalfWidth) < 0.002)
         #expect(abs(Double(steering.bounds.lowerBound) - LaserBoardGeometry.bounds.lowerBound) < 0.002)
         #expect(abs(Double(steering.bounds.upperBound) - LaserBoardGeometry.bounds.upperBound) < 0.002)
         for player in PlayerID.allCases {
-            #expect(abs(Double(consoles[player]?.dockX ?? .nan) - LaserBoardGeometry.docks[player]!) < 0.002)
+            // The game state's dock is the console's wall stop; the gate's dock (`dockX`, `dockBack` inside
+            // it) is presentation only (the mascot is drawn held there while the gate's consoles show).
+            #expect(abs(Double(consoles[player]?.wallStopX ?? .nan) - LaserBoardGeometry.docks[player]!) < 0.002)
             #expect(abs(Double(scene.mapping.laneCenterX[player]!) - LaserBoardGeometry.laneX[player]!) < 1e-6)
             #expect(abs(scene.mapping.laneCorridorX(player) - LaserBoardGeometry.laneX[player]!) < 1e-6)
         }

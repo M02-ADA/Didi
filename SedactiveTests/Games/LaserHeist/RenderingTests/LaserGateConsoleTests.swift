@@ -3,9 +3,9 @@ import RealityKit
 import Testing
 @testable import Sedactive
 
-/// Owner Option A (12 November 2026): each player's vault buttons on a console mounted on their
-/// corridor wall; the mascot steers to its dock, stops clear of it, and its own fist lands on the
-/// button the player's real wrist is judged in. Geometry from the real mascot rig and mesh, the
+/// Owner (20 November 2026): each player's gate button on its side of the gate's door frame, on a compact
+/// collar; the mascot leans to its dock, glides (presentation only) a short way sideways to the button's
+/// station, and its own fist lands on the button the player's real wrist is judged in. Geometry from the real mascot rig and mesh, the
 /// real scene and camera; hand positions from the real retargeter and solver. SYNTHETIC poses.
 @MainActor
 struct LaserGateConsoleTests {
@@ -40,95 +40,121 @@ struct LaserGateConsoleTests {
         return out
     }
 
-    @Test func eachConsoleIsMountedOnItsWallOnScreenAtTheMascotsReachHeights() async throws {
+    @Test func eachButtonIsOnItsSideOfTheGateFrameInViewWithinASidewaysReach() async throws {
         let (scene, layer) = try await Self.layer(Set(PlayerID.allCases))
         let arm = try #require(layer.arm)
         print(String(format: "CONSOLE arm: shoulder (%.3f, %.3f) m, reach to the fist %.3f m", arm.shoulder.x, arm.shoulder.y, arm.length))
+        let planeZ = scene.mapping.interactionPlaneZ
         for player in PlayerID.allCases {
             let c = try #require(layer.consoles[player])
             let side: Float = player == .player1 ? -1 : 1
             #expect(c.side == side)
-            // A compact unit standing on the floor (not a block stretched to the wider wall): a fixed-depth
-            // housing on a pedestal whose foot is on the corridor floor and whose top is inside the housing.
-            let main = c.blocks[0], post = c.blocks[1]
-            #expect(abs(main.size.x - LaserGateConsole.housingDepth) < 1e-5 && main.size.x < 0.6, "\(player): compact housing")
-            #expect(abs(main.center.x + side * main.size.x / 2) < scene.layout.environmentWidth / 2 - 1, "\(player): well inside the walls")
-            #expect(abs(post.center.y - post.size.y / 2 - scene.layout.corridorFloorY) < 1e-5, "\(player): the pedestal stands on the floor")
-            #expect(abs(post.center.y + post.size.y / 2 - main.center.y) < 1e-5 && abs(post.center.z - main.center.z) < 1e-5,
-                    "\(player): the pedestal rises into the housing")
-            #expect(abs(post.center.x - main.center.x) + post.size.x / 2 < main.size.x / 2, "\(player): under the housing")
-            let screen = try #require(scene.screenFraction(of: [c.faceX, 0.6, 0], aspect: 4 / 3))
-            #expect(player == .player1 ? (screen > 0.02 && screen < 0.2) : (screen > 0.8 && screen < 0.98), "\(player): face on screen at \(screen)")
-            // HIGH just under the head, MIDDLE at the chest, LOW at the hips; one column, no gaps closed.
-            let high = try #require(c.buttons[.top]), mid = try #require(c.buttons[.middle]), low = try #require(c.buttons[.bottom])
-            #expect(high.center.y > 0.78 && high.center.y < 0.9 && mid.center.y > 0.55 && mid.center.y < 0.7 && low.center.y > 0.38 && low.center.y < 0.5)
-            // One unified column: one face, one size, even spacing with clear gaps, all facing inward.
-            for b in [high, mid, low] {
-                #expect(b.center.x == c.faceX && b.radius == high.radius, "one face, one size")
-                #expect(b.normal == SIMD3(-side, 0, 0), "faces into the corridor (no tilted pad)")
-                // The column leans toward the camera: LOW in the players' plane, HIGH `lean` in front.
-                let lean = (b.center.y - low.center.y) / (high.center.y - low.center.y) * LaserGateConsole.lean
-                #expect(abs(b.center.z - scene.mapping.interactionPlaneZ - lean) < 1e-4)
-                // Within the mascot's reach from its dock (to the cap's front).
-                let shoulder = SIMD3(c.dockX + side * arm.shoulder.x, arm.shoulder.y, 0) // the console-side shoulder
-                #expect(simd_distance(b.contact, shoulder) <= arm.length, "\(player): reachable, \(simd_distance(b.contact, shoulder)) of \(arm.length) m")
+            #expect(c.buttons.count == 1 && c.buttons.keys.first == .activate, "one button, no other targets")
+            let b = c.button
+            // On the gate's door frame (its stop `doorDepth` behind the players), on a compact collar,
+            // facing the camera, level.
+            #expect(abs(c.doorZ - (planeZ - LaserGateConsole.doorDepth)) < 1e-6)
+            #expect(simd_distance(b.center, [side * LaserGateConsole.frameX, LaserGateConsole.buttonHeight,
+                                             c.doorZ + LaserGateConsole.standoff + LaserGateConsole.plateDepth]) < 1e-6)
+            #expect(b.normal == [0, 0, 1] && b.up == [0, 1, 0], "\(player): faces the camera, level")
+            #expect(simd_distance(b.contact, b.center + b.normal * LaserGateConsole.capFront) < 1e-6, "\(player): touched on the cap's front")
+            #expect(simd_distance(c.head.center, b.center) < 1e-6 && simd_distance(c.head.orientation.act([0, 0, 1]), b.normal) < 1e-5)
+            #expect(b.radius == LaserGateConsole.radius && b.radius / 0.086 > 1.7, "large button: a \(2 * b.radius) m cap")
+            // The collar is wholly on the jamb (the authored frame band; the door's panels slide behind it),
+            // compact (inside the plate's outline) and only as deep as the standoff.
+            let collar = c.blocks[1]
+            let inner = abs(collar.center.x) - collar.size.x / 2, outer = abs(collar.center.x) + collar.size.x / 2
+            #expect(LaserGateConsole.jamb.contains(inner) && LaserGateConsole.jamb.contains(outer), "\(player): collar on the jamb \(inner)…\(outer)")
+            #expect(abs(collar.center.z - collar.size.z / 2 - c.doorZ) < 1e-5 && collar.size.z == LaserGateConsole.standoff)
+            #expect(abs(abs(b.center.x) - abs(collar.center.x)) + collar.size.x / 2 <= LaserGateConsole.plateHalf + 1e-5, "\(player): under the plate")
+            // The whole plate in view on the narrowest (4:3) display and on the iPad (2420×1668).
+            for aspect: Float in [4 / 3, 2420.0 / 1668.0] {
+                for dx: Float in [-1, 1] {
+                    for dy: Float in [-1, 1] {
+                        let f = try #require(scene.screenFraction(of: b.center + SIMD3<Float>(dx, dy, 0) * LaserGateConsole.plateHalf, aspect: aspect))
+                        #expect(f > 0.005 && f < 0.995, "\(player): plate corner on screen at \(f) (aspect \(aspect))")
+                    }
+                }
             }
-            let gapHigh = high.center.y - mid.center.y, gapLow = mid.center.y - low.center.y
-            #expect(abs(gapHigh - gapLow) < 0.005, "evenly spaced: \(gapHigh) / \(gapLow)")
-            let ring = high.radius + LaserGateConsole.bezel
-            #expect(gapLow - 2 * ring > 0.0, "bezels never touch")
-            #expect(high.radius > 0.085, "large buttons: \(high.radius) m")
-            _ = main
-            print(String(format: "CONSOLE %@ dock %+.3f face %+.3f wall %+.3f · HIGH (%+.3f, %.3f) r %.3f · MIDDLE (%+.3f, %.3f) r %.3f · LOW (%+.3f, %.3f) r %.3f · screen %.3f",
-                         player.rawValue, c.dockX, c.faceX, c.wallX, high.center.x, high.center.y, high.radius,
-                         mid.center.x, mid.center.y, mid.radius, low.center.x, low.center.y, low.radius, screen))
+            // The station: on the players' plane (the mascot's normal size), a short glide out from the
+            // dock; its arm opened sideways, `armReach` of its length, ends on the cap's front.
+            #expect(c.station.y == 0 && c.station.z == planeZ, "\(player): at the players' depth")
+            let shoulder = SIMD3(c.station.x + side * arm.shoulder.x, arm.shoulder.y, c.station.z)
+            let toFist = b.contact - shoulder
+            #expect(abs(simd_length(toFist) - LaserGateConsole.armReach * arm.length) < 1e-4, "\(player): within the arm, nearly straight")
+            #expect(toFist.x * side > 0.85 * simd_length(toFist), "\(player): mostly sideways (\(toFist))")
+            let glide = (c.station.x - c.dockX) * side
+            #expect(glide > 0 && glide < 0.3, "\(player): a short glide out from the dock (\(glide) m)")
+            // The dock (where the lean stops) is unchanged: the wall stop.
+            #expect(abs(abs(c.dockX) - (abs(c.faceX) - LaserGateConsole.faceShare * arm.length - arm.shoulder.x - LaserGateConsole.pressSurface)) < 1e-5)
+            #expect(c.dockX == c.wallStopX)
+            print(String(format: "BUTTON %@ centre (%+.3f, %.3f, %+.3f) r %.3f · door %+.3f · collar %.3f…%.3f · dock %+.3f · station %+.3f (glide %.3f) · arm %.0f%% sideways %.3f m",
+                         player.rawValue, b.center.x, b.center.y, b.center.z, b.radius, c.doorZ, inner, outer, c.dockX, c.station.x, glide,
+                         simd_length(toFist) / arm.length * 100, toFist.x * side))
         }
         layer.remove()
     }
 
-    /// At its dock nothing of the mascot or its board is inside its console: the body (arms
-    /// excluded: they reach) stays clear at every console height, the board rides below it.
-    @Test func atTheDockTheBodyHeadAndBoardStayClearOfTheConsole() async throws {
+    /// At its station nothing of the mascot or its board is inside the button, its collar or the door;
+    /// the cap is mostly in view beside the mascot, the board on screen; and when the opened door later
+    /// rides past the docked mascot, the button misses it.
+    @Test func atTheStationTheBodyAndBoardStayClearOfTheButtonAndTheDoor() async throws {
         let (scene, layer) = try await Self.layer(Set(PlayerID.allCases))
         let robot = try #require(layer.robots[.player1]), steering = try #require(layer.steering)
         let body = Self.bodyVertices(robot)
         #expect(body.count > 1000)
         for player in PlayerID.allCases {
             let c = try #require(layer.consoles[player])
-            #expect(player == .player1 ? steering.bounds.lowerBound == c.dockX : steering.bounds.upperBound == c.dockX, "the steering stops at the dock")
-            var closest = Float.infinity
-            let dock = abs(c.dockX)
-            // Each cap's front against the body where the cap is (height and depth).
-            for (key, b) in c.buttons {
-                var worst = Float.infinity, at = SIMD3<Float>()
-                for v in body where abs(v.y - b.center.y) <= b.radius && abs(v.z - b.center.z) <= b.radius {
-                    let gap = abs(b.contact.x) - (dock + abs(v.x))
-                    if gap < worst { worst = gap; at = v }
+            #expect(player == .player1 ? steering.bounds.lowerBound == c.wallStopX : steering.bounds.upperBound == c.wallStopX,
+                    "the steering stops at the wall stop")
+            let b = c.button, s = c.station
+            func at(_ v: SIMD3<Float>, _ x: Float) -> SIMD3<Float> { SIMD3(x + v.x, v.y, s.z + v.z) }
+            // Distance from a point to the button (plate and collar boxes, the cap's cylinder).
+            func gap(_ p: SIMD3<Float>, sweep: Bool = false) -> Float {
+                var best = Float.infinity
+                for box in c.blocks {
+                    var d = simd_abs(p - box.center) - box.size / 2
+                    if sweep { d.z = -1 } // the door riding past along the corridor: x and y only
+                    let outside = simd_length(simd_max(d, .zero))
+                    best = min(best, outside > 0 ? outside : max(d.x, d.y, d.z))
                 }
-                print(String(format: "CLEAR %@ %@ cap gap %.3f at body (%.3f, %.3f, %.3f)", player.rawValue, key.rawValue, worst, at.x, at.y, at.z))
-                closest = min(closest, worst)
+                let r = hypot(p.x - b.center.x, p.y - b.center.y) - b.radius
+                let dz = sweep ? -1 : max(p.z - b.contact.z, b.center.z - p.z)
+                best = min(best, r > 0 && dz > 0 ? hypot(r, dz) : max(r, dz))
+                return best
             }
-            // The plate (housing face, leaning with the column) against the body where the housing is.
-            let h = c.housing, unlean = simd_quatf(angle: -h.tilt, axis: [1, 0, 0])
-            var plateGap = Float.infinity
-            for v in body {
-                let local = unlean.act(SIMD3(0, v.y, v.z) - SIMD3(0, h.center.y, h.center.z))
-                guard abs(local.y) <= h.size.y / 2, abs(local.z) <= h.size.z / 2 else { continue }
-                plateGap = min(plateGap, abs(c.faceX) - (dock + abs(v.x)))
+            let buttonGap = body.map { gap(at($0, s.x)) }.min() ?? 0
+            let doorGap = body.map { c.doorClearance(at($0, s.x)) }.min() ?? 0
+            print(String(format: "CLEAR %@ at the station: button %.3f m, door %.3f m", player.rawValue, buttonGap, doorGap))
+            #expect(buttonGap > 0.02 && doorGap > 0.02, "\(player): the body clears the button (\(buttonGap)) and the door (\(doorGap))")
+            // The opened door rides past the mascot back at its dock (travel waits for the panels).
+            let passGap = body.map { gap(at($0, c.dockX), sweep: true) }.min() ?? 0
+            let boardTop: Float = 0.05
+            print(String(format: "CLEAR %@ door passing the docked mascot: %.3f m · board top %.2f under the plate's bottom %.2f", player.rawValue,
+                         passGap, boardTop, b.center.y - LaserGateConsole.plateHalf))
+            #expect(passGap > 0.02 && b.center.y - LaserGateConsole.plateHalf > boardTop + 0.2, "\(player): the passing button misses the docked mascot")
+            // The board at the station on screen (iPad and 4:3).
+            for aspect: Float in [4 / 3, 2420.0 / 1668.0] {
+                let edge = try #require(scene.screenFraction(of: [s.x + c.side * steering.halfWidth, -0.1, s.z], aspect: aspect))
+                #expect(edge > 0 && edge < 1, "\(player): the board at the station on screen (\(edge), aspect \(aspect))")
             }
-            print(String(format: "CLEAR %@ plate gap %.3f", player.rawValue, plateGap))
-            closest = min(closest, plateGap)
-            let lowY = c.blocks[0].center.y - c.blocks[0].size.y / 2
-            #expect(lowY > 0.05, "\(player): board clear under the console (housing bottom \(lowY))")
-            // The pedestal stands beyond the docked board's outer edge (steering never takes it further out).
-            let post = c.blocks[1], postInner = abs(post.center.x) - post.size.x / 2
-            print(String(format: "CLEAR %@ board edge %.3f · pedestal inner face %.3f", player.rawValue, abs(c.dockX) + steering.halfWidth, postInner))
-            #expect(postInner - (abs(c.dockX) + steering.halfWidth) > 0.05, "\(player): the board clears the pedestal")
-            print(String(format: "CONSOLE %@ closest body-to-console gap at the dock %.3f m", player.rawValue, closest))
-            #expect(closest > 0.02, "\(player): head and body clear by \(closest) m")
-            let screenEdge = LateralSteering.visibleHalfWidth(depth: scene.layout.cameraPosition.z, verticalFieldOfViewDegrees: scene.layout.cameraVerticalFieldOfView,
-                                                              aspect: RobotAvatarLayer.narrowestDisplayAspect)
-            #expect(abs(c.dockX) + steering.halfWidth < screenEdge, "\(player): the docked board is on screen")
+            // On screen (the iPad's frame): how much of the cap's width the body at the station hides.
+            let aspect: Float = 2420.0 / 1668.0
+            var capInner = player == .player1 ? -Float.infinity : Float.infinity, capOuter = player == .player1 ? Float.infinity : -Float.infinity
+            for k in 0..<64 {
+                let t = Float(k) / 64 * 2 * .pi
+                if let f = scene.screenFraction(of: b.center + SIMD3(cos(t), sin(t), 0) * LaserGateConsole.radius, aspect: aspect) {
+                    capInner = player == .player1 ? max(capInner, f) : min(capInner, f)
+                    capOuter = player == .player1 ? min(capOuter, f) : max(capOuter, f)
+                }
+            }
+            var bodyOuter = player == .player1 ? Float.infinity : -Float.infinity
+            for v in body where abs(v.y - b.center.y) <= LaserGateConsole.radius {
+                if let f = scene.screenFraction(of: at(v, s.x), aspect: aspect) { bodyOuter = player == .player1 ? min(bodyOuter, f) : max(bodyOuter, f) }
+            }
+            let covered = max(0, (player == .player1 ? capInner - bodyOuter : bodyOuter - capInner) / abs(capInner - capOuter))
+            print(String(format: "SCREEN %@ the body at the station hides %.0f%% of the cap's width", player.rawValue, covered * 100))
+            #expect(covered < 0.2, "\(player): the cap stays mostly in view beside the mascot (\(covered))")
         }
         layer.remove()
     }
@@ -206,76 +232,136 @@ struct LaserGateConsoleTests {
     }
 
     @Test(arguments: PlayerID.allCases)
-    func afterLeaningToTheDockTheMascotsFistLandsOnTheButtonTheWristIsJudgedIn(_ player: PlayerID) async throws {
+    func afterLeaningToTheDockTheMascotGlidesToItsButtonAndItsFistLandsOnIt(_ player: PlayerID) async throws {
         let (scene, layer) = try await Self.layer([player])
-        layer.consolesActive = true // a live gate shows the consoles (and the dock assist runs)
+        layer.consolesActive = true // a live gate shows the buttons
+        layer.docksActive = true // and its dock assist and stop run
         let input = try LaserReplayScript.load().input
         let calibrations = input.configuration.calibrations
         let r = AvatarReference(calibration: calibrations[player]!, layout: input.configuration.playerPlaneLayout)
         let outward = LaserLiveRoundGeometryV1.outward(player), h = r.standingHeight
-        let c = try #require(layer.consoles[player]), arm = try #require(layer.arm)
+        let c = try #require(layer.consoles[player])
         let generation = UUID()
         var n = 0
         func send(_ j: [PresentationJoint: PresentationPoint], frames: Int) throws {
             for _ in 0..<frames { n += 1; try Self.frame(layer, generation, n, [player: j], calibrations, centers: [player: r.laneCenterX]) }
         }
-        // 1–4: lean toward the own wall (the player's own outer side), the board travels and stops at the dock.
+        // Lean toward the own wall (the player's own outer side): the board travels and stops at the dock.
         try send(Self.pose(r, outward: outward, lean: outward * 0.09), frames: 120)
-        _ = h
         try send(Self.pose(r, outward: outward), frames: 20) // upright again: it stays
         let docked = try #require(layer.steeringReading(player))
         print(String(format: "DOCK %@ board x %+.3f (dock %+.3f) · %@", player.rawValue, docked.targetX, c.dockX, docked.constraint.rawValue))
         #expect(abs(docked.targetX - c.dockX) < 0.01, "\(player): stopped at the dock")
         let shiftDocked = try #require(layer.vaultReachShift(player, capturedAt: Double(n) / 30))
         #expect(abs(shiftDocked) < 0.02, "the judge's zones need no extra reach at the dock: \(shiftDocked)")
-        // 6–8: a straight outer arm into each approved zone: the fist lands on that button.
+        // Docked with the button live: the drawn mascot has glided to its station (the steering has not moved).
         let robot = try #require(layer.robots[player])
-        _ = arm
+        let drawn = robot.container.position(relativeTo: nil)
+        print(String(format: "GLIDE %@ drawn root (%+.3f, %+.3f) · station (%+.3f, %+.3f) · board stays %+.3f",
+                     player.rawValue, drawn.x, drawn.z, c.station.x, c.station.z, layer.steering?.boardX(player) ?? .nan))
+        #expect(abs(drawn.x - c.station.x) < 0.03 && abs(drawn.z - c.station.z) < 0.03, "\(player): drawn at the station")
+        #expect(abs((layer.steering?.boardX(player) ?? 0) - c.dockX) < 0.01, "\(player): the steering stays at the dock")
+        // A straight outer arm into the approved zone: the fist snaps onto the cap.
         for (button, share) in LaserLiveRoundGeometryV1.vaultShares {
             let zone = SIMD2(outward * share.out * h, share.y * h)
-            // The natural press: a straight arm toward the button, wrist inside its zone.
-            let lean = 0.0
-            let straight = Self.pose(r, outward: outward, lean: lean, toward: zone)
+            let straight = Self.pose(r, outward: outward, toward: zone)
             let wristJoint: PresentationJoint = outward > 0 ? .leftWrist : .rightWrist
             let w = try #require(straight[wristJoint])
             #expect(hypot(w.x - r.laneCenterX - zone.x, w.y - zone.y) <= LaserLiveRoundGeometryV1.vaultRadiusShare * h + 1e-9,
                     "\(player) \(button): the straight-arm wrist is inside the judged zone")
-            try send(straight, frames: 20)
             let b = try #require(c.buttons[button])
-            let fists = Self.fistTips(robot, tip: RobotAvatarLayer.handTipLength ?? 0.076)
-            let fist = try #require(fists.min { simd_distance($0, b.center) < simd_distance($1, b.center) })
-            // On the cap's face (yz) and at its front surface (x): touching, not through.
-            let capFront = abs(c.faceX) - LaserGateConsole.pressSurface
-            let offAxis = simd_length(SIMD2(fist.y - b.center.y, fist.z - b.center.z))
-            let gap = capFront - abs(fist.x)
-            print(String(format: "REACH %@ %@: fist (%+.3f, %.3f, %+.3f) button (%+.3f, %.3f) off its axis %.3f m (radius %.3f) · %.3f m from its front",
-                         player.rawValue, button.rawValue, fist.x, fist.y, fist.z, b.center.x, b.center.y, offAxis, b.radius, gap))
+            // Arms down first (no snap), then the reach: within 0.1 s of the wrist entering the zone the
+            // fist is locked onto the cap (the snap), and stays there.
+            try send(Self.pose(r, outward: outward), frames: 15)
+            let resting = try #require(Self.fistTips(robot, tip: RobotAvatarLayer.handTipLength ?? 0.076)
+                .min { simd_distance($0, b.contact) < simd_distance($1, b.contact) })
+            #expect(simd_distance(resting, b.contact) > 0.1, "\(player): arms down, no fist on the cap")
+            try send(straight, frames: 3)
+            let snapped = try #require(Self.fistTips(robot, tip: RobotAvatarLayer.handTipLength ?? 0.076)
+                .min { simd_distance($0, b.contact) < simd_distance($1, b.contact) })
+            print(String(format: "SNAP %@ fist %.3f m from the contact 0.1 s after entering", player.rawValue, simd_distance(snapped, b.contact)))
+            #expect(simd_distance(snapped, b.contact) < 0.02, "\(player): snapped onto the cap within 0.1 s")
+            try send(straight, frames: 17)
+            let fist = try #require(Self.fistTips(robot, tip: RobotAvatarLayer.handTipLength ?? 0.076)
+                .min { simd_distance($0, b.center) < simd_distance($1, b.center) })
+            // On the cap's face (off its axis by less than its radius) and at its front: touching, not through.
+            let along = simd_dot(fist - b.center, b.normal)
+            let offAxis = simd_length(fist - b.center - b.normal * along)
+            let gap = simd_dot(fist - b.contact, b.normal)
+            print(String(format: "REACH %@ %@: fist (%+.3f, %.3f, %+.3f) button (%+.3f, %.3f, %+.3f) off its axis %.3f m (radius %.3f) · %.3f m from its front",
+                         player.rawValue, button.rawValue, fist.x, fist.y, fist.z, b.center.x, b.center.y, b.center.z, offAxis, b.radius, gap))
             #expect(offAxis < b.radius, "\(player) \(button): the fist is on its button")
             #expect(gap > -0.01 && gap < 0.04, "\(player) \(button): the fist touches its front, never passes it (\(gap))")
-            // The other buttons are not under the fist.
-            for (other, ob) in c.buttons where other != button {
-                #expect(simd_length(SIMD2(fist.y - ob.center.y, fist.z - ob.center.z)) > ob.radius, "\(player) \(button): not on \(other)")
-            }
-            // A bent arm with the wrist on the zone's centre: still a press; the fist is over the
-            // button, short of its face by the bend (reported).
-            try send(Self.pose(r, outward: outward, lean: lean, toward: zone, bent: true), frames: 20)
-            if let bentFist = Self.fistTips(robot, tip: RobotAvatarLayer.handTipLength ?? 0.076)
-                .min(by: { simd_distance($0, b.center) < simd_distance($1, b.center) }) {
-                print(String(format: "REACH %@ %@ bent: fist (%+.3f, %.3f, %+.3f) · %.3f m short of its front · %.3f m off the button's axis",
-                             player.rawValue, button.rawValue, bentFist.x, bentFist.y, bentFist.z,
-                             abs(c.faceX) - LaserGateConsole.pressSurface - abs(bentFist.x),
-                             simd_length(SIMD2(bentFist.y - b.center.y, bentFist.z - b.center.z))))
-            }
         }
-        // Lean alone (no reach) at the dock: no fist on any button.
+        // Lean alone (no reach): no fist on the button.
         try send(Self.pose(r, outward: outward, lean: outward * 0.09), frames: 20)
-        let fists = Self.fistTips(robot, tip: 0.076)
-        for b in c.buttons.values {
-            #expect(fists.allSatisfy { abs(c.faceX) - LaserGateConsole.pressSurface - abs($0.x) > 0.05 || simd_length(SIMD2($0.y - b.center.y, $0.z - b.center.z)) > b.radius },
-                    "a lean alone puts no fist on a button")
-        }
+        let b = c.button
+        #expect(Self.fistTips(robot, tip: 0.076).allSatisfy { f in
+            let along = simd_dot(f - b.center, b.normal)
+            return simd_dot(f - b.contact, b.normal) > 0.05 || simd_length(f - b.center - b.normal * along) > b.radius
+        }, "a lean alone puts no fist on the button")
+        // The gate opens (the button is no longer live): the mascot glides back onto its board's position.
+        layer.consolesActive = false
+        try send(Self.pose(r, outward: outward), frames: 45)
+        let back = robot.container.position(relativeTo: nil)
+        let lane = try #require(scene.players[player]?.position)
+        print(String(format: "GLIDE BACK %@ drawn (%+.3f, %+.3f) · board %+.3f", player.rawValue, back.x, back.z, layer.steering?.boardX(player) ?? .nan))
+        #expect(simd_length(layer.gateTravel[player] ?? .zero) < 0.02 && abs(back.z - lane.z) < 0.03, "\(player): back on its board's position")
         layer.remove()
         withExtendedLifetime(scene) {} // the lanes (the mascots' parents) live with the scene
+    }
+
+    /// Live play (authoritative game-state boards): while the gate's button is live, a mascot whose
+    /// game-state board is at its wall stop (the gate's dock) is drawn there and glides to its button's
+    /// station; when the gate opens it glides back to the game state's position. The game state
+    /// itself is never moved.
+    @Test func theGatesStopHoldsAnAuthoritativeMascotBackWhileTheConsolesShow() async throws {
+        let (scene, layer) = try await Self.layer([.player1])
+        let input = try LaserReplayScript.load().input
+        let calibrations = input.configuration.calibrations
+        let r = AvatarReference(calibration: calibrations[.player1]!, layout: input.configuration.playerPlaneLayout)
+        let c = try #require(layer.consoles[.player1])
+        let generation = UUID()
+        var n = 0
+        func send(_ frames: Int) throws {
+            for _ in 0..<frames { n += 1; try Self.frame(layer, generation, n, [.player1: Self.pose(r, outward: 1)], calibrations,
+                                                         centers: [.player1: r.laneCenterX]) }
+        }
+        layer.authoritativeBoardX = [.player1: c.wallStopX]
+        try send(10)
+        #expect(abs((layer.steering?.boardX(.player1) ?? 0) - c.wallStopX) < 0.005, "between gates: the game state's position")
+        layer.consolesActive = true
+        try send(60) // the glide to the station settles in about a second
+        let held = try #require(layer.steering?.boardX(.player1))
+        print(String(format: "GATE HOLD drawn %+.3f (game state %+.3f, gate dock %+.3f)", held, c.wallStopX, c.dockX))
+        #expect(abs(held - c.dockX) < 0.005, "during the gate: steered at the gate's dock")
+        #expect(simd_distance(try #require(layer.robots[.player1]).container.position(relativeTo: nil) * [1, 0, 1], c.station) < 0.03,
+                "during the gate: drawn at the button's station")
+        #expect(abs(try #require(layer.vaultReachShift(.player1, capturedAt: Double(n) / 30))) < 0.01, "the judged zone needs no extra reach")
+        layer.consolesActive = false
+        try send(60)
+        #expect(abs((layer.steering?.boardX(.player1) ?? 0) - c.wallStopX) < 0.005, "after the gate: back to the game state's position")
+        #expect(simd_length(layer.gateTravel[.player1] ?? .zero) < 0.02, "after the gate: glided back")
+        layer.authoritativeBoardX = [:]
+        layer.remove()
+        withExtendedLifetime(scene) {}
+    }
+
+    /// A hand never goes inside the button or the door: a point behind the cap's face, the collar or the
+    /// door's surface is brought onto that surface; points in front of it are untouched.
+    @Test func aHandIsKeptOnTheButtonAndTheDoor() {
+        let c = LaserGateConsole(player: .player1, arm: .init(shoulder: [0.154, 0.693], length: 0.369),
+                                 visibleHalfWidth: 2.583, wallHalfWidth: 4.41, planeZ: 0)
+        func local(_ p: SIMD3<Float>) -> SIMD3<Float> { c.head.orientation.inverse.act(p - c.head.center) }
+        func world(_ l: SIMD3<Float>) -> SIMD3<Float> { c.head.center + c.head.orientation.act(l) }
+        let capCentre = local(c.outsideConsole(world([0, 0, 0.0])))
+        #expect(abs(capCentre.z - LaserGateConsole.capFront) < 1e-4 && abs(capCentre.x) < 1e-4, "onto the cap's face")
+        #expect(abs(local(c.outsideConsole(world([0.18, 0, -0.1]))).z - LaserGateConsole.collarFront) < 1e-4, "onto the collar")
+        let onDoor = c.outsideConsole(world([0.5, -0.05, -0.25]))
+        #expect(abs(local(onDoor).z + LaserGateConsole.plateDepth + LaserGateConsole.standoff) < 1e-4 && abs(c.doorClearance(onDoor)) < 1e-4,
+                "onto the door's surface")
+        let front = world([0.05, 0, 0.2]), beside = world([0.5, 0, 0.1])
+        #expect(simd_distance(c.outsideConsole(front), front) < 1e-6 && simd_distance(c.outsideConsole(beside), beside) < 1e-6)
     }
 
     /// Away from the dock the judge wants the wrist that much further out: a wrist in the
@@ -291,7 +377,7 @@ struct LaserGateConsoleTests {
         let k = try #require(layer.robots[.player1]).retargeter.motionScale
         let lane = try #require(layer.steering?.riders[.player1]).laneX
         #expect(abs(shift - Double((lane - c.dockX) / k)) < 0.02, "at the lane: \(shift)")
-        #expect(shift > 0.9, "far beyond any arm: \(shift) game units")
+        #expect(shift > 0.7, "far beyond any arm: \(shift) game units")
         layer.remove()
         withExtendedLifetime(scene) {}
     }
@@ -325,9 +411,18 @@ struct LaserGateConsoleTests {
             print(String(format: "DOCK ASSIST from %+.3f to %+.3f (dock %+.3f)", short, docked, c.dockX))
             #expect(abs(docked - c.dockX) < 0.005, "glided onto the dock")
             #expect(abs(try #require(layer.vaultReachShift(.player1, capturedAt: Double(n) / 30))) < 0.01)
+            // Leaning on toward the wall during the gate: it stays at the dock (the gate's stop).
+            try send(0.09, 60)
+            #expect(abs((layer.steering?.boardX(.player1) ?? 0) - c.dockX) < 0.005, "the gate stops it at its dock")
             // Leaning away releases it.
             try send(-0.09, 20)
             #expect((layer.steering?.boardX(.player1) ?? 0) > c.dockX + 0.1, "leaning away leaves the dock")
+            // Outside a gate it rides on to the wall stop, past the dock.
+            layer.docksActive = false
+            try send(0.09, 120)
+            let free = try #require(layer.steering?.boardX(.player1))
+            print(String(format: "WALL STOP outside a gate %+.3f (dock %+.3f, wall stop %+.3f)", free, c.dockX, c.wallStopX))
+            #expect(abs(free - c.wallStopX) < 0.005, "outside a gate the board reaches the wall stop")
         }
         layer.remove()
         withExtendedLifetime(scene) {}

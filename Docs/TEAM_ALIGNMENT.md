@@ -112,6 +112,59 @@ The **producer** defines each contract type once. Consumers import it and do not
 
 ## G. Decisions
 
+- **Confirmed — task owner (Kevin), 19 November 2026:** one gate activation button per player, drawn as a Blender asset.
+  - **Rule (Jevon's `LaserGame`):** `LaserVaultButton` has one case, `activate`. A vault opens once every player in the roster has pressed their own button: both players in co-op, P1 in the DEBUG Solo Test.
+  - **Unchanged:** deadline, timeout, entry and freshness rules, deduplication, scoring, health and stage progression.
+  - **Judged zone (`LaserLiveRoundGeometryV1`):** the former MIDDLE zone, unchanged: (0.42 h out, 0.715 h up), radius 0.105 h. The HIGH and LOW zones are removed. The zone was not widened for the larger drawn button; that would need device data.
+  - **Asset (Kevin):** `GateButton.usdz`, modelled in Blender (`Art/LaserHeist/GateButton/`: `.blend` master, build and export scripts, README).
+    - Shape: a 0.30 m red cap in a recessed socket and bevelled collar, on a 0.44 m octagonal plate with screws.
+    - Parts: `Housing`, `Collar`, `Socket`, `Cap` and `Accents` are separate prims.
+    - Size: 11,464 triangles, about 0.5 MB, UsdPreviewSurface only.
+  - **Stand (Kevin, same day):** `GateConsole.usdz`, modelled in Blender (`Art/LaserHeist/GateConsole/`), replaces the leaning column housing. That housing's open face pointed along the wall, so the game camera saw it side-on.
+    - Shape: a front-facing octagonal head (0.58 × 0.54 m, 0.50 m deep at the bottom, chamfered top-back) with a recessed dark panel the button plate sits on, a 0.17 m post with an emissive strip, and a floor foot.
+    - Size: 1,196 triangles, about 57 KB.
+    - The head is symmetric; P1 and P2 mirror the placement, never the mesh.
+  - **Console (Kevin):** the dock, the stand's floor position (the post 0.36 m outward of the console face), the corridor, the camera and the player positions are unchanged.
+    - **Mounting:** the button is level and keeps the orientation it had on the former column's inner front corner: turned 80 % of the way from the corridor toward the game camera. P1 and P2 mirror each other. The head is built round it, and the post is yawed with the head.
+    - **Hand alignment:** the button sits at chest height at the mascot's depth (0.011 m in front of the players' plane), 0.075 m outward of the console face.
+      - Its contact point lies on the reach plane the mascot's hand already stops at. A straight arm's fist now ends 0.10 m from it, sideways only, instead of 0.26 m (0.20 m of that toward the camera).
+      - The stand's post moved 5.5 cm to stay under the head.
+      - The docked body clears the head by at least 8 cm.
+      - The reach, the judged zone and the thresholds are unchanged.
+    - **Mascot stop and arm (20 November 2026, iPad review):** during a gate only, the mascot's stop (dock) is 20 cm further from its wall, so it stands clearly apart from its console. The button's contact is where its arm ends when it opens wide toward the wall: 97 % straight, 15° down, 20° into the scene.
+      - **Presentation only; the game state is unchanged:** `LaserBoards` docks and bounds stay ±1.746, and LEAN placement is unaffected. A first version that moved the game state's docks left boards 17 cm off the wall after a gate and voided a LEAN laser in the full co-op replay, so it was reverted.
+      - While a gate's consoles show (no laser is judged then), the drawn mascot is eased back from its game-state board onto the gate's dock (0.2 s), and eased out again when the gate opens (`RobotAvatarLayer.gateHold`). Covered by `LaserGateConsoleTests`.
+      - Rendering's own steering (replays, previews) docks at the gate dock while `docksActive`; its bounds are the wall stops (`LaserGateConsole.wallStopX`, matched by `LaserBoardGeometryConsistencyTests`).
+      - The judge still measures from the dock (`vaultReachShift`).
+      - The fist snaps onto the cap within 1.2 radii of the judged zone (in about 0.05 s) and lets go beyond 1.4. The hand is kept on the console's surface, never inside it. This is presentation only.
+      - Earlier depth-only passes were superseded because they did not read on screen.
+      - The docked body clears the button by at least 15 cm.
+      - DEBUG launch arguments (`-gateDockBack`, `-gateArmBack`, `-gateSetBack`, `-gateSetOut`) tried other placements on a device. They were removed with the side-wall mount.
+    - **Fist contact:** the fist lands on the cap's face, on its side toward the mascot. The docked body keeps 0.038 m of clearance from the whole button.
+    - **States:**
+      - unavailable: cap sunk 12 mm, accents dark;
+      - available: the cap springs up, red accents that brighten as the fist approaches (`RobotAvatarLayer.consoleApproach`, presentation only);
+      - pressed: 25 mm travel along the cap's own axis with an overshoot and rebound, then locked at 20 mm; the accents flash white, then settle green, and the post strip turns green;
+      - gate opened: a white surge.
+    - **Fallback:** a stand-in with the same part names is shown only while the asset has not loaded.
+  - **On the gate's door frame (Kevin, 20 November 2026, after the iPad review of the side-wall mount):** this replaces the free-standing stand, the wall-mounted box, the wall jamb, and then buttons on the corridor's side walls. Nothing new is built: the corridor and the door look as they always did.
+    - **Why not the side walls:** the walls (±4.41 m) are outside the camera's view at the players' depth (±2.58 m on 4:3, ±2.81 m on the iPad). A mascot beside a wall button had to stop 2.8 m deep, where it showed at 53 % of its size. No camera position fixes this in co-op (measured).
+    - **Mount:** one button per player on its side of the door's frame (`LaserGateConsole.frameX` ±2.45 m, 0.62 m high), facing the camera, on a compact 0.26 m collar 0.15 m deep (`standoff`). The collar sits wholly on the frame's jamb (2.405–2.785 m), under the plate, so the panels slide open behind it.
+    - **Door:** with the buttons, the door stops 0.35 m behind the players (`doorDepth`; `VaultPresentation.doorStopZ`). The mascot's head reaches 0.31 m forward of its root and stays 3.7 cm clear of the door. Without the buttons the door keeps its authored stop.
+    - **Why the collar:** a cap flat on the door would sit 0.27 m in front of the shoulder, so the 0.37 m arm could reach only 0.22 m sideways and the body would hide 84–90 % of the cap. With the collar the arm reaches 0.34 m sideways and the body hides 0–2 % of the cap (measured on the iPad).
+    - **Mascot:** it stays at the players' depth and normal size. The lean still steers the board to its dock (±1.746, unchanged). While the gate's button is live and the board is at its dock, the drawn mascot glides 0.21 m sideways to its `station` (±1.952 m), where the arm opened sideways (97 % straight) ends on the cap's front (`RobotAvatarLayer.gateTravel`, presentation only). It glides back when the gate opens, and is at its dock before travel resumes (0.85 s).
+    - **Unchanged:** the steering, `LaserBoards`, the judge (the tracked wrist, the approved zone and `vaultReachShift`), the snap and all gate rules. The hand is kept on the cap, collar or door surface (`outsideConsole`).
+    - **Clearances:** the body at the station clears the button by at least 2.8 cm and the door by 3.7 cm. When the opened door rides past, the button misses the docked mascot by at least 12.6 cm, and the board passes under the plate. The board at the station stays on both 4:3 and iPad screens.
+    - **Look:**
+      - the button, its materials and its press are unchanged;
+      - idle: a red cap with a red halo on the door's surface;
+      - activated: a green cap, green halo and a green point light;
+      - the halo does not write depth, so it never cuts into the translucent mascot.
+    - **Check:** Simulator checked only; it still needs an iPad check.
+  - **Instruction:** in co-op the gate says each player presses their own button; in Solo Practice it says "PRESS YOUR BUTTON".
+  - **Replay fixtures:** P1 presses at 18.6 s and P2 at 21 s, so the gate opens when it did before.
+  - **Integration for Jevon:** review the domain change (`LaserGameState.swift`, `LaserGame.swift`, `LaserLiveRoundDirector.swift`, `LaserReplayScript.swift`) and the updated domain and session tests.
+
 - **Confirmed — task owner (Kevin, calibration implementation ownership), 18 November 2026:** standing calibration `StandingCollectionPolicyV1.2` and setup reliability.
   - **Stability rule:** a player is stable once 10 valid samples within the existing 10 s span agree within the unchanged tolerance (max of 3 px and 2 mask rows) on head-top and both soles.
     - The samples must come after the feet last moved (both soles elsewhere for two samples in a row).
