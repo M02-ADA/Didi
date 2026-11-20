@@ -21,8 +21,10 @@ import SwiftUI
 /// controls take touches.
 struct DebugRoundControls: View {
     let session: GameSessionCoordinator
+    var isHidden = false
     var onClose: (() -> Void)? = nil
 
+    var onHide: (() -> Void)? = nil
     @State private var showsAdvanced = false
     @State private var isMinimized = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -65,10 +67,14 @@ struct DebugRoundControls: View {
                     pill
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
-                        header
+                        if isHidden {
+                            Color.clear.frame(height: 26).allowsHitTesting(false)
+                        } else {
+                            header.frame(height: 26)
+                        }
                         skips
-                        if let pressed = session.debugSoloVaultPressed { soloVaultButtons(pressed) }
-                        if showsAdvanced {
+                        if !isHidden, let pressed = session.debugSoloVaultPressed { soloVaultButtons(pressed) }
+                        if !isHidden, showsAdvanced {
                             Divider().overlay(Self.hairline)
                             // What is left under the header, the skips and (at a Solo gate) P1's buttons.
                             advanced(maxHeight: maxHeight - (session.debugSoloVaultPressed == nil ? 104 : 144))
@@ -77,8 +83,9 @@ struct DebugRoundControls: View {
                     }
                     .padding(10)
                     .frame(width: showsAdvanced ? Self.advancedWidth : Self.width, alignment: .leading)
-                    .background(Self.surface, in: .rect(cornerRadius: 14, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Self.hairline, lineWidth: 1))
+                    .background(isHidden ? Color.clear : Self.surface, in: .rect(cornerRadius: 14, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(isHidden ? Color.clear : Self.hairline, lineWidth: 1)
+                        .allowsHitTesting(false))
                     .frame(maxHeight: maxHeight, alignment: .top)
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("debugRoundControls")
@@ -114,6 +121,9 @@ struct DebugRoundControls: View {
                 toggle { showsAdvanced.toggle() }
             }
             if let onClose {
+                if let onHide {
+                    iconButton("eye.slash", label: "Hide developer tools", id: "debugHide", action: onHide)
+                }
                 iconButton("xmark", label: "Close debug controls", id: "debugClose") { onClose() }
             } else {
                 iconButton("minus", label: "Minimize debug controls", id: "debugMinimize") {
@@ -139,7 +149,7 @@ struct DebugRoundControls: View {
             .accessibilityIdentifier("debugSkipToDiamondTime")
             .accessibilityHint(session.debugPendingSkipToDiamondTime ? "Diamond Time applies on resume" : "")
         }
-        .buttonStyle(DebugSkipButtonStyle())
+        .buttonStyle(DebugSkipButtonStyle(isHidden: isHidden))
     }
 
     /// Solo Test fallback for P1's gate buttons, only while P1's gate is open.
@@ -349,6 +359,7 @@ struct DebugRoundControls: View {
 
 /// The two skips: compact yellow buttons, 40 pt tall, the card's full width.
 private struct DebugSkipButtonStyle: ButtonStyle {
+    let isHidden: Bool
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
@@ -357,8 +368,9 @@ private struct DebugSkipButtonStyle: ButtonStyle {
             .font(.system(size: 14, weight: .bold, design: .rounded))
             .lineLimit(1).minimumScaleFactor(0.8)
             .foregroundStyle(.black.opacity(isEnabled ? 1 : 0.45))
+            .opacity(isHidden ? 0 : 1)
             .frame(maxWidth: .infinity, minHeight: 40)
-            .background(Color.yellow.opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.35),
+            .background(isHidden ? Color.clear : Color.yellow.opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.35),
                         in: .rect(cornerRadius: 10, style: .continuous))
             .contentShape(.rect(cornerRadius: 10))
     }

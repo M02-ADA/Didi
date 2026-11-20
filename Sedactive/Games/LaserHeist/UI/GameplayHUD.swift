@@ -452,7 +452,8 @@ struct GameplayHUD: View {
                 .accessibilityIdentifier("resume")
                 #if DEBUG
                 if developerTools.isEnabled {
-                    Button("Developer Tools", systemImage: "wrench.and.screwdriver") {
+                    Button(developerTools.hidesRoundPanel ? "Show Developer Tools" : "Developer Tools",
+                           systemImage: "wrench.and.screwdriver") {
                         restorePauseMenuOnClose = actions.canPause
                         developerTools.openRoundPanel()
                         menuShown = false

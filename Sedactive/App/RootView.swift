@@ -130,7 +130,9 @@ struct ContentView: View {
           // Developer Tools opened from Pause, above the setup stage and clear of gate consoles.
           if developerTools.isEnabled, developerTools.showsRoundPanel,
              let session = flow.session, session.hasLiveRoundPlan, session.state != nil, session.summary == nil {
-            DebugRoundControls(session: session, onClose: { developerTools.closeRoundPanel() })
+            DebugRoundControls(session: session, isHidden: developerTools.hidesRoundPanel,
+                               onClose: { developerTools.closeRoundPanel() },
+                               onHide: { developerTools.hideRoundPanel() })
           }
           #endif
         }

@@ -65,4 +65,29 @@ final class DeveloperModeUITests: XCTestCase {
         XCTAssertFalse(flights.exists)
         XCTAssertTrue(app.buttons["leaveReplay"].isHittable)
     }
+
+    func testHideKeepsTheSkipTargetsAndRemovesDiagnostics() {
+        let app = launch(["-replay", "-showDebugTools", "-hudPauseMenu", "-hideDebugOverlay"])
+        let open = app.buttons["openDeveloperTools"]
+        XCTAssertTrue(open.waitForExistence(timeout: 60))
+        open.tap()
+
+        let nextGate = app.buttons["debugSkipToNextGate"]
+        let diamondTime = app.buttons["debugSkipToDiamondTime"]
+        let hide = app.buttons["debugHide"]
+        XCTAssertTrue(hide.waitForExistence(timeout: 5))
+        XCTAssertTrue(nextGate.exists && diamondTime.exists)
+        let gateFrame = nextGate.frame
+        let diamondFrame = diamondTime.frame
+        hide.tap()
+
+        XCTAssertTrue(hide.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(nextGate.exists && diamondTime.exists)
+        XCTAssertEqual(nextGate.frame, gateFrame)
+        XCTAssertEqual(diamondTime.frame, diamondFrame)
+        XCTAssertFalse(app.buttons["debugClose"].exists)
+        XCTAssertFalse(app.buttons["timingSelector"].exists)
+        XCTAssertFalse(app.staticTexts["diamondFlightDiagnostics"].exists)
+        XCTAssertTrue(app.buttons["leaveReplay"].isHittable)
+    }
 }

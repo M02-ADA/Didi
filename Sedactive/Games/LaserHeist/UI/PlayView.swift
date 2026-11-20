@@ -533,7 +533,7 @@ private struct ReplayRoundView: View {
         .overlay(alignment: .bottomTrailing) {
             GeometryReader { geometry in
                 VStack { Spacer(); HStack { Spacer()
-                    if !HeartAnimationPreview.isRequested,
+                    if !HeartAnimationPreview.isRequested, !developerTools.hidesRoundPanel,
                        (developerTools.isEnabled && developerTools.showsRoundPanel) || TimingIndicatorControls.isComparison {
                         TimingIndicatorControls(session: session, scene: scene, retry: retry, viewport: geometry.size)
                     }
@@ -564,7 +564,9 @@ private struct ReplayRoundView: View {
                 if DebugRoundControls.previewRequested {
                     DebugRoundControls(session: session)
                 } else if developerTools.isEnabled, developerTools.showsRoundPanel {
-                    DebugRoundControls(session: session, onClose: { developerTools.closeRoundPanel() })
+                    DebugRoundControls(session: session, isHidden: developerTools.hidesRoundPanel,
+                                       onClose: { developerTools.closeRoundPanel() },
+                                       onHide: { developerTools.hideRoundPanel() })
                 }
             }
         }
@@ -614,7 +616,8 @@ private struct ReplayRoundView: View {
 
     private var showsDiamondFlightDiagnostics: Bool {
         #if DEBUG
-        developerTools.isEnabled && (developerTools.showsRoundPanel || session?.isDebugWristPreview == true)
+        developerTools.isEnabled && !developerTools.hidesRoundPanel
+            && (developerTools.showsRoundPanel || session?.isDebugWristPreview == true)
         #else
         false
         #endif
