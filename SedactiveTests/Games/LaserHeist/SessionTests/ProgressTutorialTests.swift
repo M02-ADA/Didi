@@ -4,7 +4,7 @@ import Testing
 
 @MainActor struct ProgressTutorialTests {
     @Test(arguments: [false, true])
-    func duckClearAndFeedbackMustFinishBeforeExplanationsAndFullCompletion(coop: Bool) {
+    func duckClearAndFeedbackMustFinishBeforeExplanations(coop: Bool) {
         var f = LeanTutorialTests.Fixture(); if coop { f.roster = PlayerID.allCases }
         let tutorial = f.tutorial()
         f.finishLean(tutorial); f.finishHeart(tutorial)
@@ -31,19 +31,6 @@ import Testing
         tutorial.progressVisible(.vault, visible: true, generation: f.generation)
         tutorial.finishProgress(.vault, generation: f.generation)
         #expect(tutorial.stage == .vaultButtonIntroduction && !tutorial.isCompleted)
-        tutorial.finishVaultButtonIntroduction(generation: UUID())
-        #expect(tutorial.stage == .vaultButtonIntroduction)
-        tutorial.setSuspended(true, generation: f.generation)
-        tutorial.finishVaultButtonIntroduction(generation: f.generation)
-        #expect(tutorial.stage == .vaultButtonIntroduction)
-        tutorial.setSuspended(false, generation: f.generation)
-        tutorial.finishVaultButtonIntroduction(generation: f.generation)
-        #expect(tutorial.stage == .completed && tutorial.isCompleted)
-        tutorial.prepare(generation: UUID())
-        #expect(tutorial.stage == .completed)
-        tutorial.prepare(generation: UUID(), replayRequested: true)
-        tutorial.beginIfEligible(generation: tutorial.generation!, eligible: true)
-        #expect(tutorial.stage == .introduction && tutorial.progressJourney.fillEnd == FTUEProgressJourney.initial)
     }
     @Test func existingGraduatesGetOnlyNewModuleAndCancellationDoesNotEraseOldFlags() {
         let f = LeanTutorialTests.Fixture()
@@ -57,39 +44,29 @@ import Testing
         tutorial.beginIfEligible(generation: tutorial.generation!, eligible: true)
         #expect(tutorial.stage == .introduction)
     }
-    @Test func syntheticOutcomeRequiresCurrentUnpausedEncounterAndIsConsumedOnce() throws {
+    @Test(arguments: [true, false])
+    func vaultBypassAndDiamondTimeRequireCurrentUnpausedTutorial(solo: Bool) throws {
         let f = LeanTutorialTests.Fixture()
         for key in [LeanTutorial.completionKey, LeanTutorial.heartCompletionKey, LeanTutorial.jumpDuckCompletionKey] {
             f.defaults.set(true, forKey: key)
         }
         let tutorial = LeanTutorial(defaults: f.defaults)
         func reachIntroduction(_ generation: UUID) {
-            tutorial.prepare(generation: generation)
+            tutorial.prepare(generation: generation, roster: solo ? [.player1] : PlayerID.allCases)
             tutorial.beginIfEligible(generation: generation, eligible: true)
-            for i in 0...40 {
-                tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: Double(i) / 50, active: true)
-            }
-            for phase: ProgressTutorialPhase in [.bar, .vault] {
-                tutorial.progressVisible(phase, visible: true, generation: generation)
-                tutorial.finishProgress(phase, generation: generation)
-            }
+            f.reachVaultIntroduction(tutorial, generation: generation)
         }
         let generation = f.generation
         reachIntroduction(generation)
-        tutorial.acceptSyntheticVaultButtonPreview(generation: generation, encounterID: UUID())
+        tutorial.finishVaultButtonIntroduction(generation: UUID())
         #expect(tutorial.stage == .vaultButtonIntroduction)
-        tutorial.beginVaultButtonPreview(generation: generation)
-        let encounter = try #require(tutorial.vaultButtonEncounterID)
-        tutorial.finishVaultButtonIntroduction(generation: generation)
-        tutorial.acceptSyntheticVaultButtonPreview(generation: UUID(), encounterID: encounter)
-        tutorial.acceptSyntheticVaultButtonPreview(generation: generation, encounterID: UUID())
         tutorial.setSuspended(true, generation: generation)
-        tutorial.acceptSyntheticVaultButtonPreview(generation: generation, encounterID: encounter)
-        #expect(tutorial.vaultButtonEncounterID == encounter && !tutorial.isCompleted)
+        tutorial.finishVaultButtonIntroduction(generation: generation)
+        #expect(tutorial.stage == .vaultButtonIntroduction && !tutorial.isCompleted)
         tutorial.setSuspended(false, generation: generation)
-        tutorial.acceptSyntheticVaultButtonPreview(generation: generation, encounterID: encounter)
-        tutorial.acceptSyntheticVaultButtonPreview(generation: generation, encounterID: encounter)
-        #expect(tutorial.progressPhase == .diamond && tutorial.vaultButtonEncounterID == nil)
+        tutorial.finishVaultButtonIntroduction(generation: generation)
+        tutorial.finishVaultButtonIntroduction(generation: generation)
+        #expect(tutorial.progressPhase == .diamond && tutorial.isActive && !tutorial.isCompleted)
         #expect(tutorial.progressJourney.fillEnd == 0.5)
         #expect(!tutorial.progressJourney.hasReachedExplanationEndpoint(.diamond))
         tutorial.progressVisible(.diamond, visible: true, generation: generation)
@@ -110,12 +87,10 @@ import Testing
         #expect(tutorial.stage == .diamondTimeDemo && !tutorial.isCompleted)
         tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: 1.86, active: true)
         #expect(tutorial.progressJourney.fillEnd == GameplayHUDModel.diamondPosition)
-        let round = try FTUEDiamondTimeSessionTests.makeRound(generation: generation)
+        let round = try FTUEDiamondTimeSessionTests.makeRound(generation: generation, solo: solo)
         tutorial.finishDiamondTime(round, generation: generation)
         #expect(tutorial.stage == .diamondTimeDemo)
-        let entered = round.entry.timeline.total
-        try round.update(at: entered, snapshot: nil)
-        try round.update(at: entered + LaserRoundConfiguration.defaultDiamondTimeDuration + 0.01, snapshot: nil)
+        try FTUEDiamondTimeSessionTests.finishRound(round)
         #expect(round.isComplete)
         tutorial.setSuspended(true, generation: generation)
         tutorial.finishDiamondTime(round, generation: generation)
@@ -128,7 +103,10 @@ import Testing
         #expect(tutorial.stage == .completed && tutorial.isCompleted)
 
         tutorial.abandon()
-        #expect(tutorial.progressJourney.fillEnd == FTUEProgressJourney.initial)
+        tutorial.finishVaultButtonIntroduction(generation: generation)
+        tutorial.finishDiamondCollectionIntroduction(generation: generation)
+        tutorial.finishDiamondTime(round, generation: generation)
+        #expect(tutorial.stage == .notStarted && tutorial.progressJourney.fillEnd == FTUEProgressJourney.initial)
         let next = UUID()
         tutorial.prepare(generation: next, replayRequested: true)
         tutorial.beginIfEligible(generation: next, eligible: true)
@@ -137,9 +115,10 @@ import Testing
 
         f.defaults.removeObject(forKey: LeanTutorial.progressCompletionKey)
         reachIntroduction(next)
-        tutorial.beginVaultButtonPreview(generation: next)
-        tutorial.acceptSyntheticVaultButtonPreview(generation: generation, encounterID: encounter)
-        #expect(tutorial.vaultButtonEncounterID != nil && tutorial.progressPhase == nil)
+        tutorial.finishVaultButtonIntroduction(generation: generation)
+        #expect(tutorial.stage == .vaultButtonIntroduction)
+        tutorial.finishVaultButtonIntroduction(generation: next)
+        #expect(tutorial.progressPhase == .diamond && !tutorial.isCompleted)
     }
 
     @Test func copyIsExact() {

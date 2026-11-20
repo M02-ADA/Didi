@@ -44,18 +44,20 @@ final class HomeTutorialHelpUITests: XCTestCase {
         XCTAssertLessThan(vaultPointer.frame.maxY, title.frame.minY)
         XCTAssertFalse(barPointer.exists)
 
-        XCTAssertTrue(elements["gameplayProgressBar"].waitForExistence(timeout: 15))
+        XCTAssertTrue(elements["ftueVaultButtonTitle"].waitForExistence(timeout: 10))
         XCTAssertFalse(title.exists)
-        XCTAssertFalse(bar.exists)
+        XCTAssertTrue(bar.exists)
         XCTAssertFalse(barPointer.exists)
         XCTAssertFalse(vaultPointer.exists)
+        XCTAssertFalse(elements["roundCountdown"].exists)
+        XCTAssertFalse(elements["gameplayProgressBar"].exists)
     }
 
-    func testVaultButtonAndDiamondVisualHandoffInActualScene() {
+    func testVaultButtonBypassesToDiamondTimeInActualScene() {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
-        let arguments = ["-replay", "-leanFTUEPreview", "-hideDebugOverlay",
+        app.launchArguments = ["-replay", "-leanFTUEPreview", "-hideDebugOverlay",
             "-laserHeist.ftue.lean.v1.completed", "YES",
             "-laserHeist.ftue.heart.v1.completed", "YES",
             "-laserHeist.ftue.jumpDuck.v1.completed", "YES",
@@ -63,7 +65,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
         let elements = app.descendants(matching: .any)
         let vault = elements["ftueVaultPointer"]
         let intro = elements["ftueVaultButtonTitle"]
-        let handoff = elements["ftueSyntheticVaultHandoff"]
+        let countdown = elements["roundCountdown"]
         let diamond = elements["ftueDiamondPointer"]
         let bar = elements["ftueProgressBar"]
         let gameplay = elements["gameplayProgressBar"]
@@ -75,53 +77,55 @@ final class HomeTutorialHelpUITests: XCTestCase {
             add(attachment)
         }
 
-        for preview in [false, true] {
-            app.launchArguments = arguments + (preview ? ["-ftueVaultVisualPreview"] : [])
-            app.launch()
-            XCTAssertTrue(vault.waitForExistence(timeout: 25))
-            XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.500")
-            if preview { capture("vault-checkpoint") }
-            XCTAssertTrue(intro.waitForExistence(timeout: 10))
-            XCTAssertEqual(intro.label, "Press the buttons\nto open vault door")
-            XCTAssertFalse(diamond.exists)
-            XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.500")
-            if preview {
-                capture("press-button")
-                XCTAssertTrue(handoff.waitForExistence(timeout: 10))
-                capture("synthetic-handoff")
-                XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.500")
-                XCTAssertFalse(intro.exists)
-                XCTAssertTrue(diamond.waitForExistence(timeout: 8))
-                capture("diamond-vault")
-                XCTAssertEqual(elements["progressTutorialTitle"].label, "Reach the Diamond\nVault at the end!")
-                XCTAssertEqual(diamond.frame.midX, bar.frame.minX + 0.949 * bar.frame.width, accuracy: 1)
-                XCTAssertGreaterThan(diamond.frame.midX, app.images["ftueCenterCheckpoint"].frame.maxX)
-                XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.949")
-                let collection = elements["ftueDiamondCollectionTitle"]
-                XCTAssertTrue(collection.waitForExistence(timeout: 8))
-                XCTAssertEqual(collection.label, "Collect as many diamonds as you can!")
-                XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.949")
-                capture("diamond-collection-instruction")
-                let title = app.staticTexts["RETRIEVE THE DIAMONDS"]
-                XCTAssertTrue(title.waitForExistence(timeout: 16))
-                XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.949")
-                XCTAssertFalse(gameplay.exists)
-                capture("ftue-diamond-time")
-                let counter = elements.matching(NSPredicate(format: "label MATCHES %@", "[1-9][0-9]* diamonds")).firstMatch
-                XCTAssertTrue(counter.waitForExistence(timeout: 8))
-                XCTAssertTrue(elements.matching(NSPredicate(format: "label ENDSWITH %@", "seconds left")).firstMatch.exists)
-                XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.949")
-                capture("ftue-diamond-time-pickup")
-            }
-            XCTAssertTrue(gameplay.waitForExistence(timeout: 25))
-            XCTAssertFalse(app.staticTexts["RETRIEVE THE DIAMONDS"].exists)
-            XCTAssertNotEqual(gameplay.value as? String, "Diamond reached")
-            XCTAssertFalse(bar.exists)
-            XCTAssertFalse(intro.exists)
-            XCTAssertFalse(handoff.exists)
-            XCTAssertFalse(diamond.exists)
-            app.terminate()
+        func assertTutorialHUD() {
+            XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.949")
+            XCTAssertEqual(app.images.matching(identifier: "ftueCenterCheckpoint").count, 1)
+            XCTAssertFalse(countdown.exists)
+            XCTAssertFalse(gameplay.exists)
         }
+
+        app.launch()
+        XCTAssertTrue(vault.waitForExistence(timeout: 25))
+        XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.500")
+        capture("vault-checkpoint")
+        XCTAssertTrue(intro.waitForExistence(timeout: 10))
+        XCTAssertEqual(intro.label, "Press the buttons\nto open vault door")
+        XCTAssertFalse(diamond.exists)
+        XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.500")
+        XCTAssertFalse(countdown.exists)
+        XCTAssertFalse(gameplay.exists)
+        capture("press-button")
+
+        XCTAssertTrue(diamond.waitForExistence(timeout: 10))
+        XCTAssertFalse(intro.exists)
+        XCTAssertEqual(elements["progressTutorialTitle"].label, "Reach the Diamond\nVault at the end!")
+        XCTAssertEqual(diamond.frame.midX, bar.frame.minX + 0.949 * bar.frame.width, accuracy: 1)
+        assertTutorialHUD()
+        capture("diamond-vault")
+
+        let collection = elements["ftueDiamondCollectionTitle"]
+        XCTAssertTrue(collection.waitForExistence(timeout: 8))
+        XCTAssertEqual(collection.label, "Collect as many diamonds as you can!")
+        assertTutorialHUD()
+        capture("diamond-collection-instruction")
+
+        let title = app.staticTexts["RETRIEVE THE DIAMONDS"]
+        XCTAssertTrue(title.waitForExistence(timeout: 16))
+        assertTutorialHUD()
+        capture("ftue-diamond-time")
+        let counter = elements.matching(NSPredicate(format: "label MATCHES %@", "[1-9][0-9]* diamonds")).firstMatch
+        XCTAssertTrue(counter.waitForExistence(timeout: 8))
+        XCTAssertTrue(elements.matching(NSPredicate(format: "label ENDSWITH %@", "seconds left")).firstMatch.exists)
+        assertTutorialHUD()
+        capture("ftue-diamond-time-pickup")
+
+        XCTAssertTrue(gameplay.waitForExistence(timeout: 25))
+        XCTAssertFalse(title.exists)
+        XCTAssertNotEqual(gameplay.value as? String, "Diamond reached")
+        XCTAssertFalse(bar.exists)
+        XCTAssertFalse(diamond.exists)
+        capture("normal-hud-after-tutorial")
+        app.terminate()
     }
 
     func testCollectibleJourneyInActualSceneForFirstPlayAndHomeHelp() {
@@ -248,35 +252,37 @@ final class HomeTutorialHelpUITests: XCTestCase {
             XCTAssertFalse(app.descendants(matching: .any)["gameplayProgressBar"].exists)
             for id in ["leanTutorialLeave", "leanTutorialSkip", "leanTutorialContinue"] { XCTAssertFalse(app.buttons[id].exists) }
         }
-        func practiceSequence(_ prefix: String) {
+        func practiceSequence(_ prefix: String, verifyRetries: Bool) {
             waitTitle("Jump or Duck"); capture("\(prefix)-jump-duck-introduction")
-            let status = app.staticTexts["ftuePracticeStatus"]
-            let health = app.descendants(matching: .any)["sharedHealthHUD"]
-            func waitStatus(_ text: String) {
-                XCTAssertTrue(status.waitForExistence(timeout: 15))
-                expectation(for: NSPredicate(format: "label CONTAINS %@", text), evaluatedWith: status)
-                waitForExpectations(timeout: 15)
+            if verifyRetries {
+                let status = app.staticTexts["ftuePracticeStatus"]
+                let health = app.descendants(matching: .any)["sharedHealthHUD"]
+                func waitStatus(_ text: String) {
+                    XCTAssertTrue(status.waitForExistence(timeout: 15))
+                    expectation(for: NSPredicate(format: "label CONTAINS %@", text), evaluatedWith: status)
+                    waitForExpectations(timeout: 15)
+                }
+                func feedback(_ label: String, _ name: String) {
+                    let word = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+                    XCTAssertTrue(word.waitForExistence(timeout: 12))
+                    capture("\(prefix)-\(name)")
+                    XCTAssertEqual(health.label, "Team health 4 of 5", "practice never adds damage")
+                }
+                waitStatus("jump attempt 1"); capture("\(prefix)-jump-first-approach")
+                feedback("Zapped!", "jump-failure")
+                XCTAssertEqual(app.descendants(matching: .any)["ftueProgressBar"].value as? String, "Tutorial fill endpoint 0.400")
+                waitStatus("jump attempt 2"); capture("\(prefix)-jump-retry")
+                XCTAssertEqual(app.descendants(matching: .any)["ftueProgressBar"].value as? String, "Tutorial fill endpoint 0.400")
+                feedback("Perfect!", "jump-clear")
+                waitStatus("duck attempt 3"); capture("\(prefix)-duck-first-approach")
+                feedback("Zapped!", "duck-failure")
+                XCTAssertEqual(app.descendants(matching: .any)["ftueProgressBar"].value as? String, "Tutorial fill endpoint 0.460")
+                waitStatus("duck attempt 4"); capture("\(prefix)-duck-retry")
+                XCTAssertEqual(app.descendants(matching: .any)["ftueProgressBar"].value as? String, "Tutorial fill endpoint 0.460")
+                feedback("Perfect!", "duck-clear")
             }
-            func feedback(_ label: String, _ name: String) {
-                let word = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
-                XCTAssertTrue(word.waitForExistence(timeout: 12))
-                capture("\(prefix)-\(name)")
-                XCTAssertEqual(health.label, "Team health 4 of 5", "practice never adds damage")
-            }
-            waitStatus("jump attempt 1"); capture("\(prefix)-jump-first-approach")
-            feedback("Zapped!", "jump-failure")
-            XCTAssertEqual(app.descendants(matching: .any)["ftueProgressBar"].value as? String, "Tutorial fill endpoint 0.400")
-            waitStatus("jump attempt 2"); capture("\(prefix)-jump-retry")
-            XCTAssertEqual(app.descendants(matching: .any)["ftueProgressBar"].value as? String, "Tutorial fill endpoint 0.400")
-            feedback("Perfect!", "jump-clear")
-            waitStatus("duck attempt 3"); capture("\(prefix)-duck-first-approach")
-            feedback("Zapped!", "duck-failure")
-            XCTAssertEqual(app.descendants(matching: .any)["ftueProgressBar"].value as? String, "Tutorial fill endpoint 0.460")
-            waitStatus("duck attempt 4"); capture("\(prefix)-duck-retry")
-            XCTAssertEqual(app.descendants(matching: .any)["ftueProgressBar"].value as? String, "Tutorial fill endpoint 0.460")
-            feedback("Perfect!", "duck-clear")
             let explanation = app.descendants(matching: .any)["progressTutorialTitle"]
-            XCTAssertTrue(explanation.waitForExistence(timeout: 12))
+            XCTAssertTrue(explanation.waitForExistence(timeout: verifyRetries ? 12 : 35))
             XCTAssertEqual(explanation.label, "This bar shows how far\nyou've gone")
             XCTAssertEqual(app.descendants(matching: .any)["ftueProgressBar"].value as? String, "Tutorial fill endpoint 0.500")
             capture("\(prefix)-progress-explanation")
@@ -290,7 +296,11 @@ final class HomeTutorialHelpUITests: XCTestCase {
             XCTAssertEqual(app.images.matching(identifier: "ftueCenterCheckpoint").count, 1)
             XCTAssertFalse(app.descendants(matching: .any)["gameplayProgressBar"].exists)
         }
-        func complete() {
+        func complete(finishingTutorial: Bool = false) {
+            if finishingTutorial {
+                XCTAssertTrue(app.staticTexts["RETRIEVE THE DIAMONDS"].waitForExistence(timeout: 25))
+                XCTAssertFalse(app.descendants(matching: .any)["gameplayProgressBar"].exists)
+            }
             let status = app.staticTexts["leanPreviewStatus"]
             XCTAssertTrue(status.waitForExistence(timeout: 60))
             expectation(for: NSPredicate(format: "label CONTAINS 'tutorial complete'"), evaluatedWith: status)
@@ -302,7 +312,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
         }
         // Existing first-play path still works without an explicit Help replay request.
         app.launchArguments = ["-replay", "-leanFTUEPreview", "-leanFTUEReset", "-hideDebugOverlay"]
-        app.launch(); waitTitle("Lean your head"); XCTAssertTrue(app.descendants(matching: .any)["ftueFreeLean"].waitForExistence(timeout: 15)); heartSequence("first-time"); practiceSequence("first-time"); complete(); app.terminate()
+        app.launch(); waitTitle("Lean your head"); XCTAssertTrue(app.descendants(matching: .any)["ftueFreeLean"].waitForExistence(timeout: 15)); heartSequence("first-time"); practiceSequence("first-time", verifyRetries: true); complete(finishingTutorial: true); app.terminate()
 
         for solo in [false, true] {
             let mode = solo ? "solo" : "coop"
@@ -333,8 +343,10 @@ final class HomeTutorialHelpUITests: XCTestCase {
             XCTAssertTrue(app.descendants(matching: .any)["ftueFreeLean"].waitForExistence(timeout: 15))
             capture("\(mode)-free-lean")
             heartSequence(mode, pause: !solo)
-            practiceSequence(mode)
-            complete(); capture("\(mode)-manual-completed")
+            // The first-time run checks attempt-level feedback. Replay checks the
+            // stable checkpoints so transient feedback cannot be read from another attempt.
+            practiceSequence(mode, verifyRetries: false)
+            complete(finishingTutorial: true); capture("\(mode)-manual-completed")
             app.buttons["leanPreviewRetry"].tap(); complete()
             app.buttons["leaveReplay"].tap()
             XCTAssertTrue(help.waitForExistence(timeout: 15))

@@ -68,12 +68,7 @@ import Testing
             tutorial.synchronizePractice(p, generation: p.generation)
         }
         #expect(tutorial.stage == .progressExplanation(.bar) && !tutorial.isCompleted)
-        for i in 0...40 { tutorial.progressJourney.update(stage: tutorial.stage, generation: p.generation, at: Double(i) / 50, active: true) }
-        for phase: ProgressTutorialPhase in [.bar, .vault] {
-            tutorial.progressVisible(phase, visible: true, generation: p.generation)
-            tutorial.finishProgress(phase, generation: p.generation)
-        }
-        tutorial.finishVaultButtonIntroduction(generation: p.generation)
+        LeanTutorialTests.Fixture().finishProgress(tutorial, generation: p.generation)
         #expect(tutorial.stage == .completed && tutorial.isCompleted)
         tutorial.prepare(generation: UUID(), roster: p.roster)
         #expect(tutorial.stage == .completed)

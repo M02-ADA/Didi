@@ -8,6 +8,12 @@ import Testing
         return try makeRound(fixture, solo: solo)
     }
 
+    static func finishRound(_ round: FTUEDiamondTimeSession) throws {
+        let entered = round.entry.timeline.total
+        try round.update(at: entered, snapshot: nil)
+        try round.update(at: entered + LaserRoundConfiguration.defaultDiamondTimeDuration + 0.01, snapshot: nil)
+    }
+
     private static func makeRound(_ fixture: WristGameplayFixture, solo: Bool) throws -> FTUEDiamondTimeSession {
         let roster: [PlayerID] = solo ? [.player1] : PlayerID.allCases
         let calibration = try LaserReplayScript.load().input.configuration.calibrations.filter { roster.contains($0.key) }

@@ -5,9 +5,6 @@ struct LeanTutorialOverlay: View {
     let tutorial: LeanTutorial
     let solo: Bool
     var posterOnly = false
-    #if DEBUG
-    var previewsVaultButtonHandoff = false
-    #endif
     @Environment(\.scenePhase) private var scenePhase
 
     private struct Presentation: Equatable {
@@ -40,32 +37,9 @@ struct LeanTutorialOverlay: View {
                         .accessibilityIdentifier("leanTutorialTitle")
                 } else if tutorial.stage == .vaultButtonIntroduction, let generation = tutorial.generation {
                     VaultButtonIntroduction(posterOnly: posterOnly) {
-                        #if DEBUG
-                        if previewsVaultButtonHandoff {
-                            tutorial.beginVaultButtonPreview(generation: generation)
-                            return
-                        }
-                        #endif
                         tutorial.finishVaultButtonIntroduction(generation: generation)
                     }
                     .id(generation)
-                } else if let encounterID = tutorial.vaultButtonEncounterID, let generation = tutorial.generation {
-                    #if DEBUG
-                    if previewsVaultButtonHandoff {
-                        Text("SYNTHETIC VAULT HANDOFF · no button input")
-                            .font(.caption).padding(8)
-                            .foregroundStyle(.white).background(.black.opacity(0.7), in: Capsule())
-                            .position(x: proxy.size.width / 2, y: proxy.size.height * 0.84)
-                            .accessibilityIdentifier("ftueSyntheticVaultHandoff")
-                            .task(id: scenePhase) {
-                                guard scenePhase == .active else { return }
-                                do { try await Task.sleep(for: .seconds(2)) } catch { return }
-                                guard !Task.isCancelled else { return }
-                                tutorial.acceptSyntheticVaultButtonPreview(generation: generation, encounterID: encounterID)
-                            }
-                            .id(encounterID)
-                    }
-                    #endif
                 } else if tutorial.stage == .diamondCollectionIntroduction, let generation = tutorial.generation {
                     Color.black.opacity(0.55)
                     Image("LaserHeistUI/ftue-diamond-collection")

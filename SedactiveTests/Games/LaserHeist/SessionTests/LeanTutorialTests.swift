@@ -84,15 +84,30 @@ import Testing
                 tutorial.synchronizePractice(p, generation: gen)
             }
         }
-        func finishProgress(_ tutorial: LeanTutorial, generation: UUID? = nil) {
+        func reachVaultIntroduction(_ tutorial: LeanTutorial, generation: UUID? = nil) {
             let generation = generation ?? self.generation
             for i in 0...40 { tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: Double(i) / 50, active: true) }
             for phase: ProgressTutorialPhase in [.bar, .vault] {
                 tutorial.progressVisible(phase, visible: true, generation: generation)
                 tutorial.finishProgress(phase, generation: generation)
             }
-            tutorial.finishVaultButtonIntroduction(generation: generation)
         }
+
+        func finishProgress(_ tutorial: LeanTutorial, generation: UUID? = nil) {
+            let generation = generation ?? self.generation
+            reachVaultIntroduction(tutorial, generation: generation)
+            tutorial.finishVaultButtonIntroduction(generation: generation)
+            for i in 41...90 {
+                tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: Double(i) / 50, active: true)
+            }
+            tutorial.progressVisible(.diamond, visible: true, generation: generation)
+            tutorial.finishProgress(.diamond, generation: generation)
+            tutorial.finishDiamondCollectionIntroduction(generation: generation)
+            let round = try! FTUEDiamondTimeSessionTests.makeRound(generation: generation, solo: roster.count == 1)
+            try! FTUEDiamondTimeSessionTests.finishRound(round)
+            tutorial.finishDiamondTime(round, generation: generation)
+        }
+
         func finish(_ tutorial: LeanTutorial) { finishLean(tutorial); finishHeart(tutorial); finishPractice(tutorial); finishProgress(tutorial) }
     }
 
