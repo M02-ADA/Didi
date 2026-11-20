@@ -46,6 +46,15 @@ nonisolated struct LaserTimingPresentation: Equatable, Sendable {
     let phase: Phase
     let verdicts: [PlayerID: Judgement]
     let successCommitted: Bool
+    /// Start moving on green. Leave time for reaction and takeoff before the beam arrives.
+    static let jumpReactionLead: Double = 0.40
+    var arrowGoTime: Double {
+        move == .jump ? max(cueTime, crossingTime - Self.jumpReactionLead) : crossingTime
+    }
+    var showsArrowBar: Bool {
+        (move == .jump || move == .duck) && (phase == .prepare || phase == .crossing)
+            && (move != .jump || gameTime <= crossingTime)
+    }
     var label: String {
         switch phase {
         case .approach: "APPROACH"
@@ -457,15 +466,16 @@ private extension Judgement {
     }
 
     func apply(_ timing: LaserTimingPresentation?, reduceMotion: Bool) {
-        guard let timing, timing.phase == .prepare || timing.phase == .crossing,
-              arrows[timing.move] != nil else {
+        guard let timing, timing.showsArrowBar else {
             root.isEnabled = false
             return
         }
+        let goTime = timing.arrowGoTime
         root.isEnabled = true
-        // Use the actual crossing as the cue. Keep the glow inside the capture window.
-        let go = timing.phase == .crossing && timing.evidenceWindow.contains(timing.gameTime)
-        let duration = timing.crossingTime - timing.cueTime
+        // Jump's GO cue can precede evidence collection while the player reacts and takes off.
+        let go = timing.gameTime >= goTime
+            && (timing.move == .jump || timing.evidenceWindow.contains(timing.gameTime))
+        let duration = goTime - timing.cueTime
         let progress = duration > 0 ? min(1, max(0, (timing.gameTime - timing.cueTime) / duration)) : 1
         let fraction = Self.arrowWidth / Self.width
         bar.scale.x = reduceMotion && !go ? 1 : 1 - (1 - fraction) * Float(progress)

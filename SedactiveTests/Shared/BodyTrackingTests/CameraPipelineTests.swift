@@ -365,7 +365,38 @@ actor ControlledCameraSink: CameraFrameSink {
     #expect(!store.isCurrent(context))
   }
   @Test
-  func capabilitySelectionSupportsCenterStageFrontAndNeverUsesRearOrSilentlyTriesAnotherDevice()
+  func autoSelectionUsesACompatibleExternalCameraBeforeTheIPadCamera() throws {
+    let valid = CameraFormatCapability(index: 0, width: 1280, height: 720,
+      minimumFPS: 30, maximumFPS: 30, centerStageSupported: false)
+    let invalid = CameraFormatCapability(index: 0, width: 320, height: 240,
+      minimumFPS: 30, maximumFPS: 30, centerStageSupported: false)
+    let front = CameraDeviceCapability(id: "ipad", name: "iPad", kind: .ultraWide,
+      isFront: true, formats: [valid])
+    let unsupported = CameraDeviceCapability(id: "a-unsupported", name: "Unsupported", kind: .external,
+      isFront: false, formats: [invalid])
+    let webcam = CameraDeviceCapability(id: "webcam", name: "Webcam", kind: .external,
+      isFront: false, formats: [valid])
+    #expect(try CameraCapabilities.candidates([front, unsupported, webcam], configuration: .experimental).map(\.device.id) == ["webcam", "ipad"])
+    #expect(try CameraCapabilities.candidates([front, unsupported], configuration: .experimental).map(\.device.id) == ["ipad"])
+    #expect(try CameraCapabilities.candidates([webcam], configuration: .experimental).map(\.device.id) == ["webcam"])
+    let vga = CameraFormatCapability(index: 0, width: 640, height: 480,
+      minimumFPS: 30, maximumFPS: 30, centerStageSupported: false)
+    let fullFrame = CameraFormatCapability(index: 1, width: 1920, height: 1440,
+      minimumFPS: 30, maximumFPS: 30, centerStageSupported: true)
+    let displayCamera = CameraDeviceCapability(id: "display", name: "Display", kind: .external,
+      isFront: false, formats: [vga, fullFrame])
+    let candidates = try CameraCapabilities.candidates([front, displayCamera], configuration: .experimental)
+    #expect(candidates.map(\.device.id) == ["display", "display", "ipad"])
+    #expect(candidates.map(\.format.index) == [1, 0, 0])
+    let first = try #require(candidates.first)
+    let device = first.device
+    let format = first.format
+    let size = try #require(CameraCapabilities.outputSize(for: format, kind: device.kind, configuration: .experimental))
+    #expect(device.id == "display" && format.index == 1 && size.width == 960 && size.height == 720)
+  }
+
+  @Test
+  func capabilitySelectionFallsBackToAnotherFrontCameraAndExcludesRearCameras()
     throws
   {
     let valid = CameraFormatCapability(
@@ -376,9 +407,9 @@ actor ControlledCameraSink: CameraFrameSink {
     let rear = CameraDeviceCapability(
       id: "rear", name: "rear", kind: .ultraWide, isFront: false, formats: [valid])
     #expect(
-      try CameraCapabilities.select([rear, front], configuration: .experimental).0.id == "front")
+      try CameraCapabilities.candidates([rear, front], configuration: .experimental).map(\.device.id) == ["front"])
     #expect(throws: CameraFailure.self) {
-      try CameraCapabilities.select([rear], configuration: .experimental)
+      try CameraCapabilities.candidates([rear], configuration: .experimental)
     }
     for bad in [
       CameraFormatCapability(
@@ -390,9 +421,30 @@ actor ControlledCameraSink: CameraFrameSink {
     ] {
       let preferred = CameraDeviceCapability(
         id: "preferred", name: "ultra", kind: .ultraWide, isFront: true, formats: [bad])
-      #expect(throws: CameraFailure.self) {
-        try CameraCapabilities.select([preferred, front], configuration: .experimental)
-      }
+      #expect(try CameraCapabilities.candidates([preferred, front], configuration: .experimental)
+        .map(\.device.id) == ["front"])
     }
   }
+
+  @Test
+  func externalCamerasCanUseLowerFrameRatesAndOrdinaryFrontCamerasRemainEligible() throws {
+    let fullHD25 = CameraFormatCapability(index: 1, width: 1920, height: 1080,
+      minimumFPS: 25, maximumFPS: 25, centerStageSupported: false)
+    let vga30 = CameraFormatCapability(index: 2, width: 640, height: 480,
+      minimumFPS: 30, maximumFPS: 30, centerStageSupported: false)
+    let vga24 = CameraFormatCapability(index: 3, width: 640, height: 480,
+      minimumFPS: 24, maximumFPS: 24, centerStageSupported: false)
+    let fullHD30 = CameraFormatCapability(index: 0, width: 1920, height: 1080,
+      minimumFPS: 30, maximumFPS: 30, centerStageSupported: false)
+    let external = CameraDeviceCapability(id: "webcam", name: "Webcam", kind: .external,
+      isFront: false, formats: [vga24, fullHD25, vga30])
+    let front = CameraDeviceCapability(id: "front", name: "Front", kind: .wide,
+      isFront: true, formats: [fullHD25, fullHD30])
+
+    let candidates = try CameraCapabilities.candidates([front, external], configuration: .experimental)
+    #expect(candidates.map(\.device.id) == ["webcam", "webcam", "webcam", "front"])
+    #expect(candidates.map(\.format.index) == [2, 1, 3, 0])
+    #expect(candidates.map(\.framesPerSecond) == [30, 25, 24, 30])
+  }
+
 }

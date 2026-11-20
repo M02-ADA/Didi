@@ -45,7 +45,7 @@ actor SystemCameraPermission: CameraPermissionChecking {
     return granted
   }
 }
-nonisolated enum CameraDeviceKind: Sendable { case ultraWide, trueDepth, wide }
+nonisolated enum CameraDeviceKind: Sendable { case external, ultraWide, trueDepth, wide }
 nonisolated struct CameraFormatCapability: Sendable {
   let index: Int, width: Int, height: Int
   let minimumFPS: Double, maximumFPS: Double
@@ -57,43 +57,86 @@ nonisolated struct CameraDeviceCapability: Sendable {
   let isFront: Bool
   let formats: [CameraFormatCapability]
 }
+nonisolated struct CameraCaptureCandidate: Sendable {
+  let device: CameraDeviceCapability
+  let format: CameraFormatCapability
+  let framesPerSecond: Int
+}
+
 nonisolated enum CameraCapabilities {
-  /// Center Stage front cameras can be advertised as TrueDepth, not as an UltraWide device type.
-  static func select(_ devices: [CameraDeviceCapability], configuration: CameraCaptureConfiguration)
-    throws -> (CameraDeviceCapability, CameraFormatCapability)
+  static func candidates(_ devices: [CameraDeviceCapability], configuration: CameraCaptureConfiguration)
+    throws -> [CameraCaptureCandidate]
   {
-    let front = devices.filter { $0.isFront }
-    let eligible = front.filter {
-      $0.kind == .ultraWide || $0.formats.contains(where: \.centerStageSupported)
-    }
-    let selected = eligible.sorted {
-      let a = $0.kind == .ultraWide ? 0 : ($0.kind == .trueDepth ? 1 : 2)
-      let b = $1.kind == .ultraWide ? 0 : ($1.kind == .trueDepth ? 1 : 2)
+    let external = devices.filter { $0.kind == .external }.sorted { $0.id < $1.id }
+    let front = devices.filter { $0.kind != .external && $0.isFront }.sorted {
+      let a = frontPriority($0), b = frontPriority($1)
       return a == b ? $0.id < $1.id : a < b
-    }.first
-    let alternatives = Array(
-      front.flatMap { device in
+    }
+    let orderedDevices = external + front
+    let candidates = orderedDevices.flatMap { device in
+      compatibleFormats(for: device, configuration: configuration).prefix(device.kind == .external ? 3 : 1)
+    }
+    guard !candidates.isEmpty else {
+      let alternatives = orderedDevices.flatMap { device in
         device.formats.prefix(8).map {
           "\(device.name): \($0.width)x\($0.height) \($0.minimumFPS)...\($0.maximumFPS) FPS"
         }
-      }.prefix(12))
-    guard let selected else {
+      }
       throw CameraFailure.unsupported(
-        "front Ultra Wide / Center Stage camera", alternatives: alternatives)
+        "external UVC or front camera with a compatible landscape format",
+        alternatives: Array(alternatives.prefix(12)))
     }
-    let formats = selected.formats.filter {
-      $0.width >= configuration.width && $0.height >= configuration.height
-        && $0.width <= Int(Int32.max) && $0.height <= Int(Int32.max)
-        && $0.minimumFPS.isFinite && $0.maximumFPS.isFinite
-        && Int64($0.width) * Int64(configuration.height) == Int64($0.height)
-          * Int64(configuration.width)
-        && $0.minimumFPS <= Double(configuration.framesPerSecond)
-        && $0.maximumFPS >= Double(configuration.framesPerSecond)
-    }.sorted { Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height) }
-    guard let format = formats.first else {
-      throw CameraFailure.unsupported("1280x720 aspect / 30 FPS", alternatives: alternatives)
+    return candidates
+  }
+
+  private static func frontPriority(_ device: CameraDeviceCapability) -> Int {
+    if device.kind == .ultraWide { return 0 }
+    // Some Center Stage front cameras are advertised as TrueDepth or Wide.
+    if device.formats.contains(where: \.centerStageSupported) { return 1 }
+    return 2
+  }
+
+  private static func compatibleFormats(for device: CameraDeviceCapability, configuration: CameraCaptureConfiguration)
+    -> [CameraCaptureCandidate]
+  {
+    let fps = configuration.framesPerSecond
+    let rates = device.kind == .external ? [fps, 25, 24] : [fps]
+    let ranked = device.formats.compactMap { format -> (candidate: CameraCaptureCandidate, outputPixels: Int, nativePixels: Int64)? in
+      guard format.minimumFPS.isFinite, format.maximumFPS.isFinite,
+            format.minimumFPS <= format.maximumFPS,
+            let rate = rates.first(where: { (format.minimumFPS...format.maximumFPS).contains(Double($0)) }),
+            let size = outputSize(for: format, kind: device.kind, configuration: configuration) else { return nil }
+      let candidate = CameraCaptureCandidate(device: device, format: format, framesPerSecond: rate)
+      return (candidate, size.width * size.height, Int64(format.width) * Int64(format.height))
+    }.sorted {
+      // Prefer the target frame rate, then sharper output within the Vision pixel budget.
+      if $0.candidate.framesPerSecond != $1.candidate.framesPerSecond {
+        return $0.candidate.framesPerSecond > $1.candidate.framesPerSecond
+      }
+      if $0.outputPixels != $1.outputPixels { return $0.outputPixels > $1.outputPixels }
+      if $0.nativePixels != $1.nativePixels { return $0.nativePixels < $1.nativePixels }
+      return $0.candidate.format.index < $1.candidate.format.index
     }
-    return (selected, format)  // Never try a second device to hide a configuration failure.
+    var seenFormats: Set<Int> = []
+    return ranked.map(\.candidate).filter { seenFormats.insert($0.format.index).inserted }
+  }
+
+  /// Preserve the active format's aspect without sending more pixels to Vision than 720p.
+  static func outputSize(for format: CameraFormatCapability, kind: CameraDeviceKind,
+                         configuration: CameraCaptureConfiguration) -> (width: Int, height: Int)? {
+    guard format.width > 0, format.height > 0, format.width <= Int(Int32.max),
+          format.height <= Int(Int32.max) else { return nil }
+    if format.width >= configuration.width, format.height >= configuration.height,
+       Int64(format.width) * Int64(configuration.height) == Int64(format.height) * Int64(configuration.width) {
+      return (configuration.width, configuration.height)
+    }
+    guard kind == .external, format.width > format.height else { return nil }
+    var a = format.width, b = format.height
+    while b > 0 { (a, b) = (b, a % b) }
+    let unitWidth = format.width / a, unitHeight = format.height / a
+    let multiple = min(configuration.width / unitWidth, configuration.height / unitHeight, a) / 2 * 2
+    let width = unitWidth * multiple, height = unitHeight * multiple
+    return width >= 640 && height >= 360 ? (width, height) : nil
   }
 }
 nonisolated struct CameraNegotiatedConfiguration: Equatable, Sendable {
@@ -667,6 +710,10 @@ nonisolated final class CameraSampleDelegate: NSObject, AVCaptureVideoDataOutput
 }
 
 /// One native session for this pipeline's lifetime. All mutations/blocking start/stop run on this actor.
+private nonisolated final class CameraStartupError: Sendable {
+  let code = Mutex<Int?>(nil)
+}
+
 actor AVCameraDriver: CameraDriving {
   /// The one retained native session, readable for display only (an
   /// `AVCaptureVideoPreviewLayer`). Every configuration change still happens
@@ -689,38 +736,65 @@ actor AVCameraDriver: CameraDriving {
     frames: FrameStore, events: CameraEventChannel
   ) throws -> CameraNegotiatedConfiguration {
     guard self.context == nil else { throw CameraFailure.operationConflict }
+    let builtIn = AVCaptureDevice.DiscoverySession(
+      deviceTypes: [.builtInUltraWideCamera, .builtInTrueDepthCamera, .builtInWideAngleCamera],
+      mediaType: .video, position: .front
+    ).devices
+    let external = AVCaptureDevice.DiscoverySession(
+      deviceTypes: [.external], mediaType: .video, position: .unspecified
+    ).devices
+    let devices = (external + builtIn).filter(\.isConnected)
+    let summaries = devices.map { d in
+      CameraDeviceCapability(
+        id: d.uniqueID, name: d.localizedName,
+        kind: d.deviceType == .external ? .external : (d.deviceType == .builtInUltraWideCamera
+          ? .ultraWide : (d.deviceType == .builtInTrueDepthCamera ? .trueDepth : .wide)),
+        isFront: d.position == .front,
+        formats: d.formats.enumerated().flatMap { index, format in
+          let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+          return format.videoSupportedFrameRateRanges.map {
+            CameraFormatCapability(
+              index: index, width: Int(size.width), height: Int(size.height),
+              minimumFPS: $0.minFrameRate, maximumFPS: $0.maxFrameRate,
+              centerStageSupported: format.isCenterStageSupported)
+          }
+        })
+    }
+    let candidates = try CameraCapabilities.candidates(summaries, configuration: c)
+    var firstFailure: CameraFailure?
+    for candidate in candidates {
+      guard !Task.isCancelled, frames.containsContext(context) else { throw CameraFailure.staleOperation }
+      guard let device = devices.first(where: { $0.uniqueID == candidate.device.id && $0.isConnected }) else {
+        firstFailure = firstFailure ?? .cameraUnavailable
+        continue
+      }
+      do {
+        return try startCandidate(candidate, device: device, configuration: c, context: context, frames: frames, events: events)
+      } catch let failure as CameraFailure {
+        firstFailure = firstFailure ?? failure
+      }
+    }
+    throw firstFailure ?? .cameraUnavailable
+  }
+
+  private func startCandidate(
+    _ candidate: CameraCaptureCandidate, device: AVCaptureDevice, configuration c: CameraCaptureConfiguration,
+    context: CameraSourceContext, frames: FrameStore, events: CameraEventChannel
+  ) throws -> CameraNegotiatedConfiguration {
+    let format = candidate.format
+    let fps = candidate.framesPerSecond
+    guard let size = CameraCapabilities.outputSize(for: format, kind: candidate.device.kind, configuration: c)
+    else { throw CameraFailure.cameraUnavailable }
+
     let session = self.session ?? previewSession
     self.session = session
     self.context = context
+    var startupStage = "camera input"
     do {
-      let devices = AVCaptureDevice.DiscoverySession(
-        deviceTypes: [.builtInUltraWideCamera, .builtInTrueDepthCamera, .builtInWideAngleCamera],
-        mediaType: .video, position: .front
-      ).devices
-      let summaries = devices.map { d in
-        CameraDeviceCapability(
-          id: d.uniqueID, name: d.localizedName,
-          kind: d.deviceType == .builtInUltraWideCamera
-            ? .ultraWide : (d.deviceType == .builtInTrueDepthCamera ? .trueDepth : .wide),
-          isFront: d.position == .front,
-          formats: d.formats.enumerated().flatMap { index, format in
-            let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-            return format.videoSupportedFrameRateRanges.map {
-              CameraFormatCapability(
-                index: index, width: Int(size.width), height: Int(size.height),
-                minimumFPS: $0.minFrameRate, maximumFPS: $0.maxFrameRate,
-                centerStageSupported: format.isCenterStageSupported)
-            }
-          })
-      }
-      let (selected, format) = try CameraCapabilities.select(summaries, configuration: c)
-      guard let device = devices.first(where: { $0.uniqueID == selected.id }) else {
-        throw CameraFailure.cameraUnavailable
-      }
       frames.metrics.configuration(
         context,
         description:
-          "\(device.localizedName) / \(device.deviceType.rawValue); native \(format.width)x\(format.height), range \(format.minimumFPS)...\(format.maximumFPS) FPS; Center Stage supported \(format.centerStageSupported), active \(device.isCenterStageActive); requested BGRA 1280x720 @30"
+          "\(device.localizedName) / \(device.deviceType.rawValue); native \(format.width)x\(format.height), range \(format.minimumFPS)...\(format.maximumFPS) FPS; Center Stage supported \(format.centerStageSupported), active \(device.isCenterStageActive); requested BGRA \(size.width)x\(size.height) @\(fps)"
       )
       let input = try AVCaptureDeviceInput(device: device)
       let video = AVCaptureVideoDataOutput()
@@ -729,12 +803,14 @@ actor AVCameraDriver: CameraDriving {
         defer { session.commitConfiguration() }
         for old in session.inputs { session.removeInput(old) }
         for old in session.outputs { session.removeOutput(old) }
-        // Explicit active-format ownership; output resizes only to the requested 720p, no preset fallback.
-        guard session.canSetSessionPreset(.inputPriority), session.canAddInput(input) else {
-          throw CameraFailure.unsupported("input-priority preset / front input", alternatives: [])
+        guard session.canAddInput(input) else { throw CameraFailure.unsupported("camera input connection", alternatives: []) }
+        session.addInput(input)
+        // Validate the preset against the actual input, since webcams expose different capabilities.
+        guard session.canSetSessionPreset(.inputPriority) else {
+          throw CameraFailure.unsupported("input-priority preset", alternatives: [])
         }
         session.sessionPreset = .inputPriority
-        session.addInput(input)
+        startupStage = "camera format and frame rate"
         try device.lockForConfiguration()
         do {
           defer { device.unlockForConfiguration() }
@@ -747,16 +823,17 @@ actor AVCameraDriver: CameraDriving {
           if device.activeFormat.isAutoVideoFrameRateSupported {
             device.isAutoVideoFrameRateEnabled = false
           }
-          let duration = CMTime(value: 1, timescale: CMTimeScale(c.framesPerSecond))
+          let duration = CMTime(value: 1, timescale: CMTimeScale(fps))
           device.activeVideoMinFrameDuration = duration
           device.activeVideoMaxFrameDuration = duration
           guard device.minAvailableVideoZoomFactor <= 1, device.maxAvailableVideoZoomFactor >= 1
           else {
             throw CameraFailure.unsupported("uncropped zoom 1", alternatives: [])
           }
-          device.videoZoomFactor = 1
+          if device.videoZoomFactor != 1 { device.videoZoomFactor = 1 }
         }
-        guard session.canAddOutput(video) else { throw CameraFailure.cameraUnavailable }
+        startupStage = "video output"
+        guard session.canAddOutput(video) else { throw CameraFailure.unsupported(startupStage, alternatives: []) }
         session.addOutput(video)
         guard video.availableVideoPixelFormatTypes.contains(kCVPixelFormatType_32BGRA) else {
           throw CameraFailure.unsupported(
@@ -767,7 +844,7 @@ actor AVCameraDriver: CameraDriving {
         video.automaticallyConfiguresOutputBufferDimensions = false
         video.deliversPreviewSizedOutputBuffers = false
         guard let connection = video.connection(with: .video) else {
-          throw CameraFailure.cameraUnavailable
+          throw CameraFailure.unsupported("video output connection", alternatives: [])
         }
         let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
         let angle = Double(coordinator.videoRotationAngleForHorizonLevelCapture)
@@ -789,7 +866,7 @@ actor AVCameraDriver: CameraDriving {
         }
         video.videoSettings = [
           kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-          kCVPixelBufferWidthKey as String: c.width, kCVPixelBufferHeightKey as String: c.height,
+          kCVPixelBufferWidthKey as String: size.width, kCVPixelBufferHeightKey as String: size.height,
         ]
         self.device = device
         output = video
@@ -799,20 +876,42 @@ actor AVCameraDriver: CameraDriving {
           deviceID: device.uniqueID, deviceName: device.localizedName,
           deviceType: device.deviceType.rawValue, nativeWidth: Int(actual.width),
           nativeHeight: Int(actual.height),
-          outputWidth: c.width, outputHeight: c.height, framesPerSecond: c.framesPerSecond,
+          outputWidth: size.width, outputHeight: size.height, framesPerSecond: fps,
           rotationAngle: angle, mirrored: false, centerStageActive: device.isCenterStageActive,
           stabilizationEnabled: false, sessionPreset: session.sessionPreset.rawValue)
       }
       guard let expected else { throw CameraFailure.cameraUnavailable }
-      installObservers(session: session, device: device, events: events, expected: expected)
+      startupStage = "starting capture"
+      // Failed candidates must stay private until a camera is ready to publish frames.
+      let startupError = CameraStartupError()
+      let center = NotificationCenter.default
+      let startupObserver = center.addObserver(
+        forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil
+      ) { notification in
+        let code = (notification.userInfo?[AVCaptureSessionErrorKey] as? NSError)?.code ?? 0
+        startupError.code.withLock { $0 = code }
+      }
+      defer { center.removeObserver(startupObserver) }
       session.startRunning()  // Configuration is committed before this blocking operation.
-      guard session.isRunning else { throw CameraFailure.cameraUnavailable }
-      // Some configurations establish their clock only on startup. No sample delegate yet.
+      if let code = startupError.code.withLock({ $0 }) { throw CameraFailure.runtimeError(code) }
+      guard session.isRunning else { throw CameraFailure.unsupported(startupStage, alternatives: []) }
       guard let clock = session.synchronizationClock else {
         throw CameraFailure.clockNormalizationFailure
       }
       synchronizationClock = clock
       try validateGeometry()
+      guard !Task.isCancelled, frames.containsContext(context) else { throw CameraFailure.staleOperation }
+      installObservers(session: session, device: device, events: events, expected: expected)
+      if let code = startupError.code.withLock({ $0 }) {
+        events.emit(.failure(.runtimeError(code)))
+        return expected
+      }
+      if session.isInterrupted {
+        events.emit(.interrupted(nil))
+      } else if !session.isRunning || !device.isConnected {
+        events.emit(.failure(.cameraUnavailable))
+        return expected
+      }
       let delegate = CameraSampleDelegate(
         context: context, clock: clock, store: frames, events: events, expected: expected)
       self.delegate = delegate
@@ -824,8 +923,12 @@ actor AVCameraDriver: CameraDriving {
       return expected
     } catch {
       cleanup(context)
+      #if DEBUG
+      print("[SedactiveCamera] \(device.localizedName) · \(startupStage) · \(error)")
+      #endif
       if let error = error as? CameraFailure { throw error }
-      throw CameraFailure.cameraUnavailable
+      let failure = error as NSError
+      throw CameraFailure.unsupported("\(startupStage) (\(failure.domain) \(failure.code))", alternatives: [])
     }
   }
   func stop(context: CameraSourceContext) { cleanup(context) }
@@ -840,17 +943,18 @@ actor AVCameraDriver: CameraDriving {
       CFEqual(synchronizationClock, currentClock)
     else { throw CameraFailure.clockNormalizationFailure }
     guard let device, let output, let expected, let rotation,
-      let connection = output.connection(with: .video)
+      device.isConnected, let connection = output.connection(with: .video)
     else { throw CameraFailure.cameraUnavailable }
     let dimensions = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+    let duration = CMTime(value: 1, timescale: CMTimeScale(expected.framesPerSecond))
     guard Int(dimensions.width) == expected.nativeWidth,
       Int(dimensions.height) == expected.nativeHeight,
       !device.isCenterStageActive, device.videoZoomFactor == 1,
       !connection.isVideoMirrored, Double(connection.videoRotationAngle) == expected.rotationAngle,
       Double(rotation.videoRotationAngleForHorizonLevelCapture) == expected.rotationAngle,
       connection.activeVideoStabilizationMode == .off,
-      CMTimeCompare(device.activeVideoMinFrameDuration, CMTime(value: 1, timescale: 30)) == 0,
-      CMTimeCompare(device.activeVideoMaxFrameDuration, CMTime(value: 1, timescale: 30)) == 0
+      CMTimeCompare(device.activeVideoMinFrameDuration, duration) == 0,
+      CMTimeCompare(device.activeVideoMaxFrameDuration, duration) == 0
     else {
       throw CameraFailure.geometryChanged
     }
@@ -861,6 +965,12 @@ actor AVCameraDriver: CameraDriving {
   ) {
     let center = NotificationCenter.default
     notifications = [
+      center.addObserver(
+        forName: AVCaptureDevice.wasDisconnectedNotification, object: device, queue: nil
+      ) { _ in
+        // A new camera needs a new source generation and its own calibration.
+        events.emit(.failure(.cameraUnavailable))
+      },
       center.addObserver(
         forName: AVCaptureSession.wasInterruptedNotification, object: session, queue: nil
       ) {
@@ -885,8 +995,8 @@ actor AVCameraDriver: CameraDriving {
       center.addObserver(
         forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil
       ) {
-        let code = ($0.userInfo?[AVCaptureSessionErrorKey] as? NSError)?.code ?? 0
-        events.emit(.failure(.runtimeError(code)))
+        let code = ($0.userInfo?[AVCaptureSessionErrorKey] as? NSError)?.code
+        events.emit(.failure(.runtimeError(code ?? 0)))
       },
     ]
     observations = [
@@ -915,7 +1025,15 @@ actor AVCameraDriver: CameraDriving {
     notifications = []
     observations = []
     output?.setSampleBufferDelegate(nil, queue: nil)
-    session?.stopRunning()
+    if let session {
+      session.stopRunning()
+      // Release the device on Stop, including after a failed start. The preview keeps
+      // its session object, but Retry attaches a fresh set of camera connections.
+      session.beginConfiguration()
+      for output in session.outputs { session.removeOutput(output) }
+      for input in session.inputs { session.removeInput(input) }
+      session.commitConfiguration()
+    }
     delegate = nil
     output = nil
     device = nil

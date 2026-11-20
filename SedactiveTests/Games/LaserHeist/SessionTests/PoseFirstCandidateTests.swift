@@ -378,6 +378,16 @@ nonisolated struct PoseFirstCandidateTests {
         #expect(try jumpVerdict(airborne: { (9.8...10.2).contains($0) }) == .clear)
     }
 
+    @Test func reactingAfterTheGreenJumpCueCanClearTheCrossing() throws {
+        let crossing = 10.0
+        let green = crossing - LaserTimingPresentation.jumpReactionLead
+        // A slower reaction plus takeoff takes 520 ms. The player is still grounded at crossing.
+        let takeoff = green + 0.52
+        #expect(takeoff > crossing)
+        #expect(try jumpVerdict(airborne: { (takeoff ... takeoff + 0.18).contains($0) }) == .clear)
+        #expect(try jumpVerdict(airborne: { _ in false }) == .hit(.notAirborne))
+    }
+
     @Test func theFloorIsThePlayersOwnNotTheCalibratedOne() throws {
         // iPad logs: resting soles read −0.02…−0.07 below the calibrated floor. A small jump then
         // never puts the soles above the drawn laser, so production scores HIT; the jump event clears.
@@ -392,12 +402,10 @@ nonisolated struct PoseFirstCandidateTests {
     }
 
     @Test func aJumpThatEndsTooEarlyOrStartsTooLateIsAHit() throws {
-        // Both in the 0.6 s evidence window, neither in the air at the crossing (± 0.05 s).
-        #expect(try jumpVerdict(airborne: { (9.66...9.90).contains($0) }) == .hit(.notAirborne), "landed 0.1 s early")
-        #expect(try jumpVerdict(airborne: { (10.10...10.25).contains($0) }) == .hit(.notAirborne), "took off 0.1 s late")
-        // Just inside the tolerance on each side.
-        #expect(try jumpVerdict(airborne: { (9.80...9.97).contains($0) }) == .clear, "landed 0.03 s before")
-        #expect(try jumpVerdict(airborne: { (10.03...10.2).contains($0) }) == .clear, "took off 0.03 s after")
+        #expect(try jumpVerdict(airborne: { (9.66...9.83).contains($0) }) == .hit(.notAirborne), "landed over 150 ms early")
+        #expect(try jumpVerdict(airborne: { (10.16...10.25).contains($0) }) == .hit(.notAirborne), "took off over 150 ms late")
+        #expect(try jumpVerdict(airborne: { (9.70...9.88).contains($0) }) == .clear, "last airborne frame about 133 ms early")
+        #expect(try jumpVerdict(airborne: { (10.12...10.25).contains($0) }) == .clear, "first airborne frame about 133 ms late")
     }
 
     @Test func aBriefSoleDropoutInsideTheFlightDoesNotSplitIt() throws {
