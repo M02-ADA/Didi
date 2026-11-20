@@ -52,13 +52,17 @@ final class DeveloperModeUITests: XCTestCase {
         XCTAssertTrue(app.buttons["openDeveloperTools"].waitForExistence(timeout: 60))
         XCTAssertFalse(app.otherElements["debugRoundControls"].exists)
         XCTAssertFalse(app.buttons["timingSelector"].exists)
+        let flights = app.staticTexts["diamondFlightDiagnostics"]
+        XCTAssertFalse(flights.exists)
         app.buttons["openDeveloperTools"].tap()
         XCTAssertTrue(app.otherElements["debugRoundControls"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["timingSelector"].exists)
+        XCTAssertTrue(flights.exists)
         app.buttons["debugClose"].tap()
         XCTAssertTrue(app.otherElements["debugRoundControls"].waitForNonExistence(timeout: 5))
         XCTAssertFalse(app.buttons["debugExpand"].exists)
         XCTAssertFalse(app.buttons["timingSelector"].exists)
+        XCTAssertFalse(flights.exists)
         XCTAssertTrue(app.buttons["leaveReplay"].isHittable)
     }
 }

@@ -443,7 +443,12 @@ private struct ReplayRoundView: View {
             if let final = session?.summary { ResultsView(summary: final, onRetry: retry, onHome: homeAction) }
         }
         .overlayPreferenceValue(PickupHUDAnchorKey.self) { anchors in
-            DiamondHUDFlightOverlay(model: diamondFlights, scoreAnchor: anchors[.score], healthAnchor: anchors[.health])
+            DiamondHUDFlightOverlay(
+                model: diamondFlights,
+                scoreAnchor: anchors[.score],
+                healthAnchor: anchors[.health],
+                showsDiagnostics: showsDiamondFlightDiagnostics
+            )
         }
         .coordinateSpace(name: DiamondHUDFlightModel.space)
         .safeAreaInset(edge: .bottom) {
@@ -606,6 +611,14 @@ private struct ReplayRoundView: View {
     #else
     private static let showsReplayDebugHUD = false
     #endif
+
+    private var showsDiamondFlightDiagnostics: Bool {
+        #if DEBUG
+        developerTools.isEnabled && (developerTools.showsRoundPanel || session?.isDebugWristPreview == true)
+        #else
+        false
+        #endif
+    }
 
     /// Results › Back to Home, when this round has somewhere to return to.
     private var homeAction: (() -> Void)? {
