@@ -131,6 +131,10 @@ struct DiamondHUDFlightOverlay: View {
     let scoreAnchor: Anchor<CGRect>?
     var healthAnchor: Anchor<CGRect>? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #if DEBUG
+    @Environment(\.developerTools) private var developerTools
+    #endif
+
     var body: some View {
         GeometryReader { proxy in
             let viewport = proxy.frame(in: .named(DiamondHUDFlightModel.space))
@@ -160,9 +164,11 @@ struct DiamondHUDFlightOverlay: View {
                     }
                 }
                 #if DEBUG
-                Text("Flights \(model.started) · arrivals \(model.arrivals) · active \(model.flights.count)")
-                    .font(.caption2.monospaced()).foregroundStyle(.cyan).frame(maxHeight: .infinity, alignment: .bottom)
-                    .accessibilityIdentifier("diamondFlightDiagnostics")
+                if developerTools.isEnabled {
+                    Text("Flights \(model.started) · arrivals \(model.arrivals) · active \(model.flights.count)")
+                        .font(.caption2.monospaced()).foregroundStyle(.cyan).frame(maxHeight: .infinity, alignment: .bottom)
+                        .accessibilityIdentifier("diamondFlightDiagnostics")
+                }
                 #endif
             }
             .onAppear { model.geometry(layout) }
