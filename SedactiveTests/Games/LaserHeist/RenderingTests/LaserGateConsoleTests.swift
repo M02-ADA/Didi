@@ -60,13 +60,20 @@ struct LaserGateConsoleTests {
             #expect(simd_distance(b.contact, b.center + b.normal * LaserGateConsole.capFront) < 1e-6, "\(player): touched on the cap's front")
             #expect(simd_distance(c.head.center, b.center) < 1e-6 && simd_distance(c.head.orientation.act([0, 0, 1]), b.normal) < 1e-5)
             #expect(b.radius == LaserGateConsole.radius && b.radius / 0.086 > 1.7, "large button: a \(2 * b.radius) m cap")
-            // The collar is wholly on the jamb (the authored frame band; the door's panels slide behind it),
-            // compact (inside the plate's outline) and only as deep as the standoff.
-            let collar = c.blocks[1]
-            let inner = abs(collar.center.x) - collar.size.x / 2, outer = abs(collar.center.x) + collar.size.x / 2
-            #expect(LaserGateConsole.jamb.contains(inner) && LaserGateConsole.jamb.contains(outer), "\(player): collar on the jamb \(inner)…\(outer)")
-            #expect(abs(collar.center.z - collar.size.z / 2 - c.doorZ) < 1e-5 && collar.size.z == LaserGateConsole.standoff)
-            #expect(abs(abs(b.center.x) - abs(collar.center.x)) + collar.size.x / 2 <= LaserGateConsole.plateHalf + 1e-5, "\(player): under the plate")
+            // The access module: its panel wholly on the jamb's lavender band (the authored frame art,
+            // 2.41–2.67 m; the door's panels slide behind it), flush on the door; its neck (the collar) from
+            // the panel to the plate's back, under the plate's outline. Together exactly the standoff deep.
+            let collar = c.blocks[1], panel = c.blocks[2]
+            let inner = abs(panel.center.x) - panel.size.x / 2, outer = abs(panel.center.x) + panel.size.x / 2
+            #expect(inner >= 2.41 && outer <= 2.67 && LaserGateConsole.jamb.contains(inner) && LaserGateConsole.jamb.contains(outer),
+                    "\(player): panel on the jamb's band \(inner)…\(outer)")
+            #expect(abs(panel.center.z - panel.size.z / 2 - c.doorZ) < 1e-5 && panel.size.z == LaserGateConsole.panelDepth, "\(player): flush on the door")
+            #expect(abs(collar.center.z - collar.size.z / 2 - (c.doorZ + LaserGateConsole.panelDepth)) < 1e-5
+                    && abs(collar.center.z + collar.size.z / 2 - (b.center.z - LaserGateConsole.plateDepth)) < 1e-5, "\(player): the neck spans panel to plate")
+            #expect(abs(abs(b.center.x) - abs(collar.center.x)) + collar.size.x / 2 <= LaserGateConsole.plateHalf + 1e-5
+                    && collar.size.y / 2 <= LaserGateConsole.plateHalf, "\(player): the neck under the plate")
+            #expect(abs(collar.center.x) - collar.size.x / 2 >= inner - 1e-5 && abs(collar.center.x) + collar.size.x / 2 <= outer + 1e-5,
+                    "\(player): the neck stands on the panel")
             // The whole plate in view on the narrowest (4:3) display and on the iPad (2420×1668).
             for aspect: Float in [4 / 3, 2420.0 / 1668.0] {
                 for dx: Float in [-1, 1] {
@@ -347,6 +354,111 @@ struct LaserGateConsoleTests {
         withExtendedLifetime(scene) {}
     }
 
+    /// GLIDE HYSTERESIS (pre-merge audit, 20 November 2026): a game-state board wobbling across the
+    /// 8 cm set-off distance keeps its mascot at the station (no back-and-forth); it lets go only
+    /// beyond `gateTravelReleaseTolerance`, and sets off again only within `gateTravelDockTolerance`.
+    @Test func aBoardWobblingAtTheDockThresholdKeepsItsMascotAtTheStation() async throws {
+        let (scene, layer) = try await Self.layer([.player1])
+        let input = try LaserReplayScript.load().input
+        let calibrations = input.configuration.calibrations
+        let r = AvatarReference(calibration: calibrations[.player1]!, layout: input.configuration.playerPlaneLayout)
+        let c = try #require(layer.consoles[.player1])
+        let generation = UUID()
+        var n = 0
+        let robot = try #require(layer.robots[.player1])
+        /// The largest distance, over the frames, between where the glide puts the mascot (its board's
+        /// steered X plus the glide) and the station.
+        func send(inward d: Float, _ frames: Int) throws -> Float {
+            layer.authoritativeBoardX = [.player1: c.dockX - c.side * d]
+            var worst: Float = 0
+            for _ in 0..<frames {
+                n += 1
+                try Self.frame(layer, generation, n, [.player1: Self.pose(r, outward: 1)], calibrations, centers: [.player1: r.laneCenterX])
+                let x = (layer.steering?.boardX(.player1) ?? .nan) + (layer.gateTravel[.player1]?.x ?? 0)
+                worst = max(worst, abs(x - c.station.x))
+            }
+            return worst
+        }
+        layer.consolesActive = true
+        _ = try send(inward: 0, 60)
+        #expect(abs(robot.container.position(relativeTo: nil).x - c.station.x) < 0.03, "docked: at the station")
+        var worst: Float = 0
+        for i in 0..<16 { worst = max(worst, try send(inward: i % 2 == 0 ? 0.07 : 0.10, 6)) }
+        print(String(format: "GLIDE HYSTERESIS worst distance from the station while wobbling 7–10 cm: %.3f m", worst))
+        // Latched, only the board's own steps show (the largest is its first, 7 cm off the dock): 0.069 m.
+        // Without the hysteresis the mascot slid back toward its board: 0.188 m (measured, 20 November 2026).
+        #expect(worst < 0.09, "wobbling across 8 cm never sends the mascot back (\(worst))")
+        // Clearly leaning away: released, back on its board.
+        _ = try send(inward: Float(RobotAvatarLayer.gateTravelReleaseTolerance) + 0.04, 60)
+        #expect(simd_length(layer.gateTravel[.player1] ?? .zero) < 0.01, "released beyond the release distance")
+        // Between the two distances: stays released; within the set-off distance: glides again.
+        _ = try send(inward: 0.10, 60)
+        #expect(simd_length(layer.gateTravel[.player1] ?? .zero) < 0.01, "10 cm does not set it off again")
+        _ = try send(inward: 0.05, 60)
+        #expect(abs(robot.container.position(relativeTo: nil).x - c.station.x) < 0.03, "within 8 cm: at the station again")
+        layer.consolesActive = false
+        layer.authoritativeBoardX = [:]
+        layer.remove()
+        withExtendedLifetime(scene) {}
+    }
+
+    /// The final vault's walk-in starting while a gate's glide is still under way: the glide settles
+    /// to zero during the walk (it used to freeze, offsetting the walking mascot).
+    @Test func aGlideLeftWhenTheVaultWalkStartsSettlesToZero() async throws {
+        let (scene, layer) = try await Self.layer([.player1])
+        let input = try LaserReplayScript.load().input
+        let calibrations = input.configuration.calibrations
+        let r = AvatarReference(calibration: calibrations[.player1]!, layout: input.configuration.playerPlaneLayout)
+        let c = try #require(layer.consoles[.player1])
+        let generation = UUID()
+        var n = 0
+        func send(_ frames: Int) throws {
+            for _ in 0..<frames { n += 1; try Self.frame(layer, generation, n, [.player1: Self.pose(r, outward: 1)], calibrations,
+                                                         centers: [.player1: r.laneCenterX]) }
+        }
+        layer.authoritativeBoardX = [.player1: c.dockX]
+        layer.consolesActive = true
+        try send(60)
+        let atStation = simd_length(layer.gateTravel[.player1] ?? .zero)
+        #expect(atStation > 0.15, "glided to the station: \(atStation)")
+        layer.consolesActive = false
+        layer.setVaultWalking(true)
+        try send(45)
+        let left = simd_length(layer.gateTravel[.player1] ?? .zero)
+        print(String(format: "WALK-IN glide %.3f m at the walk's start, %.4f m after 1.5 s", atStation, left))
+        #expect(left < 0.01, "no glide offset leaks into the walk: \(left)")
+        layer.setVaultWalking(false)
+        layer.authoritativeBoardX = [:]
+        layer.remove()
+        withExtendedLifetime(scene) {}
+    }
+
+    /// A gate that times out: the buttons go dark and the mascots stop reaching for them (as when a
+    /// gate opens); a pressed button stays pressed, red (the gate never opened).
+    @Test func aTimedOutGateStopsTheReach() async throws {
+        let (scene, layer) = try await Self.layer(Set(PlayerID.allCases))
+        let configuration = try LaserRoundConfiguration(evidenceTiming: .init(windowBefore: 0.125, windowAfter: 0.125, deliveryAllowance: 0.125),
+                                                        clearanceMargin: 0.005, diamondPoints: 25)
+        let vault = VaultPresentation(scene: scene, configuration: configuration)
+        vault.reducesMotion = { true }
+        vault.liveConsoles = { layer.consoles[$0] }
+        let id = UUID(), generation = UUID()
+        func state(_ buttons: [PlayerID: Set<LaserVaultButton>], at t: Double, phase: LaserRoundPhase = .vault) -> LaserGameState {
+            LaserGameState(sessionGeneration: generation, phase: phase, gameTime: t, activityProgress: 0, teamHealth: 5, teamScore: 0,
+                           encounters: [], vault: LaserVaultState(id: id, deadline: 5, buttons: buttons))
+        }
+        vault.update(state: state([:], at: 0), travelDistance: 0)
+        #expect(layer.consolesActive, "the gate's buttons are live: the mascots reach")
+        vault.update(state: state([.player1: [.activate]], at: 1), travelDistance: 0)
+        #expect(layer.consolesActive)
+        vault.update(state: state([.player1: [.activate]], at: 5, phase: .ended(.vaultFailed)), travelDistance: 0)
+        #expect(!layer.consolesActive, "timed out: no more reaching for a dead button")
+        #expect(vault.consoleViews[.player1]?.state == .completed && vault.consoleViews[.player2]?.state == .unavailable)
+        #expect(vault.consoleViews.values.allSatisfy { !$0.capIsGreen })
+        layer.remove()
+        withExtendedLifetime(scene) {}
+    }
+
     /// A hand never goes inside the button or the door: a point behind the cap's face, the collar or the
     /// door's surface is brought onto that surface; points in front of it are untouched.
     @Test func aHandIsKeptOnTheButtonAndTheDoor() {
@@ -357,6 +469,9 @@ struct LaserGateConsoleTests {
         let capCentre = local(c.outsideConsole(world([0, 0, 0.0])))
         #expect(abs(capCentre.z - LaserGateConsole.capFront) < 1e-4 && abs(capCentre.x) < 1e-4, "onto the cap's face")
         #expect(abs(local(c.outsideConsole(world([0.18, 0, -0.1]))).z - LaserGateConsole.collarFront) < 1e-4, "onto the collar")
+        // On the access panel (beside the plate, on the jamb): onto the panel's face, never inside it.
+        let onPanel = local(c.outsideConsole(world([c.side * LaserGateConsole.collarShift, 0.36, -0.19])))
+        #expect(abs(onPanel.z - (LaserGateConsole.panelDepth - LaserGateConsole.plateDepth - LaserGateConsole.standoff)) < 1e-4, "onto the panel")
         let onDoor = c.outsideConsole(world([0.5, -0.05, -0.25]))
         #expect(abs(local(onDoor).z + LaserGateConsole.plateDepth + LaserGateConsole.standoff) < 1e-4 && abs(c.doorClearance(onDoor)) < 1e-4,
                 "onto the door's surface")

@@ -1,6 +1,6 @@
 # LaserHeist gate console stand (PR_GateConsole)
 
-> **Superseded (20 November 2026).** The game no longer loads this stand. The gate button is now mounted directly on the corridor's original side wall, with no stand, box or jamb (`LaserGateConsole`, `GateConsoleView`). This folder and `RealityKitContent/.../GateConsole.usdz` remain only as history and can be deleted.
+> **Archived, not used by the game (20 November 2026).** The gate button is now mounted on the gate's door frame on a compact collar (`LaserGateConsole`, `GateConsoleView`); no stand is built. The runtime `GateConsole.usdz` was removed from the app's content bundle, and the review previews were removed with it. The Blender master, its scripts and the concept image are kept here as editable source only. The rest of this page describes the stand as it was.
 
 The front-facing stand that holds the approved gate button
 (`Art/LaserHeist/GateButton/`). It was built in Blender after `ref/gate-console-concept.webp`.
@@ -15,16 +15,17 @@ The front-facing stand that holds the approved gate button
 | `PR_GateConsole.blend` | Editable master (Blender 5.2). Its four parts are separate children of the empty `GateConsole`. |
 | `gateconsole_build.py` | Rebuilds the master from scratch. Every dimension and colour is a named constant. `--render previews` links the button master in for review renders only. |
 | `gateconsole_export.py` | Writes the game's USDZ, keeping the parts as separate prims. |
-| `previews/` | Blender renders (front, three-quarter, side) and RealityKit Simulator captures: before/after, gameplay, P1 and P2 idle/pressing/activated, close-ups, and a wall-side profile. |
 | `ref/` | The concept image. |
 
-The runtime asset is
-`RealityKitContent/Sources/RealityKitContent/RealityKitContent.rkassets/GateConsole.usdz`.
+The runtime asset was
+`RealityKitContent/Sources/RealityKitContent/RealityKitContent.rkassets/GateConsole.usdz` (removed).
 
 - **Loading:** `GateConsoleView.sharedTemplate()` loads it together with the button, preloaded alongside the mascots.
 - **Fallback:** if it has not loaded, a simple stand-in with the same part names and proportions is shown instead.
 
 ## Rebuild
+
+The export below writes into the app's content bundle. While the stand is archived, export somewhere else, or the unused asset ships again.
 
 ```bash
 cd Art/LaserHeist/GateConsole

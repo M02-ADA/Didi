@@ -143,6 +143,46 @@ nonisolated struct SpanMajorityCalibrationTests {
         #expect(done == 6 + 1 + 3, "the 10th still sample")
     }
 
+    /// V1.2's step is "both soles elsewhere for two samples in a row" (pre-merge audit, 20 November
+    /// 2026: the code counted one foot alone). One foot shifting and coming back is not a step: the
+    /// evidence from before it is kept, and the shifted samples never enter the reference.
+    @Test func oneFootShiftingAndBackIsNotAStep() throws {
+        let oneFoot = Reading(leftSole: Self.sole - 8 * Self.row)
+        let (done, session) = try Self.run(Array(repeating: Self.S, count: 9) + [oneFoot, oneFoot] + Array(repeating: Self.S, count: 10))
+        #expect(done == 9 + 2, "the 10th still sample completes (counting one foot as a step: 9 + 2 + 9)")
+        let p1 = try #require(session.candidate?.players[.player1]?.anatomy)
+        #expect(abs(p1.leftSoleY - Self.sole) < 1e-12 && abs(p1.rightSoleY - Self.sole) < 1e-12, "the shifted foot never enters it")
+    }
+
+    /// One foot moved to stay: the player calibrates where they now stand; the two places never mix
+    /// (that sole disagrees), and half at each place still never calibrates.
+    @Test func oneFootMovedToStayCalibratesOnlyAtTheNewStance() throws {
+        let stance = Reading(leftSole: Self.sole - 8 * Self.row)
+        let (done, session) = try Self.run(Array(repeating: Self.S, count: 6) + Array(repeating: stance, count: 12))
+        #expect(done == 6 + 9, "10 samples in the new stance")
+        let p1 = try #require(session.candidate?.players[.player1]?.anatomy)
+        #expect(abs(p1.leftSoleY - stance.leftSole) < 1e-12 && abs(p1.rightSoleY - Self.sole) < 1e-12)
+        let (mixed, _) = try Self.run(Array(repeating: Self.S, count: 8) + Array(repeating: stance, count: 8))
+        #expect(mixed == nil)
+    }
+
+    /// Both feet participating (a real step, away and back) still discards the earlier evidence.
+    @Test func bothFeetMovingIsStillAStep() throws {
+        let both = Reading(leftSole: Self.sole - 8 * Self.row, rightSole: Self.sole - 8 * Self.row)
+        let (early, _) = try Self.run(Array(repeating: Self.S, count: 9) + [both, both] + Array(repeating: Self.S, count: 8))
+        #expect(early == nil, "never combined across the step")
+    }
+
+    /// Sole jitter within tolerance on either foot, alternating feet, is neither movement nor a step.
+    @Test func soleJitterWithinToleranceIsNotAStep() throws {
+        let readings = (0..<10).map { i in
+            Reading(leftSole: Self.sole + (i % 2 == 0 ? 1 : 0) * Self.row, rightSole: Self.sole + (i % 2 == 1 ? 1 : 0) * Self.row)
+        }
+        let (done, session) = try Self.run(readings)
+        #expect(done == 9)
+        #expect((session.players[.player1]?.rejected[.moving] ?? 0) == 0)
+    }
+
     // MARK: Alternating readings
 
     /// An estimate alternating evenly between two head-tops is not a reference, either way.

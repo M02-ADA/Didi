@@ -3,15 +3,16 @@
 One reusable 3D push button for both players' gate consoles, built in Blender from
 `ref/gate-button-concept.webp`. Each console clones the same asset
 (`Sedactive/Games/LaserHeist/Rendering/GateConsoleView.swift`). It sits on its side of the gate's door
-frame (x ±2.45 m), facing the camera, on a compact 0.26 m collar 0.15 m deep that stands on the frame's jamb
-(P1 left, P2 right; `LaserGateConsole.swift`). Nothing else is built at the gate.
+frame (x ±2.45 m), facing the camera, built into a compact access module on the frame's jamb: a shallow
+chamfered panel and a stepped neck 0.15 m deep in total, drawn in the door art's flat tones
+(`GateAccessModule.swift`; P1 left, P2 right; `LaserGateConsole.swift`). Nothing else is built at the gate.
 
 | File | What it is |
 | --- | --- |
-| `PR_GateButton.blend` | Editable master (Blender 5.2). The five parts are separate children of the empty `GateButton`. |
+| `PR_GateButton.blend` | Editable master (Blender 5.2). The six parts are separate children of the empty `GateButton`. |
 | `gatebutton_build.py` | Rebuilds the master from scratch (bmesh, bevels, lathed cap and collar). Every dimension and colour is a named constant. `--render previews` writes the review renders. |
 | `gatebutton_export.py` | Writes the game's USDZ, keeping the parts as separate prims. |
-| `previews/` | Blender renders (front, three-quarter, side) and RealityKit Simulator captures. The `realitykit_framemount_*` files show the gate-frame mount: Co-op idle and activated, Solo, P1 and P2 reaching with the fist on the cap, a close-up, a side view of the collar, the door passing after opening, and before/after the side-wall layout. Older files show earlier placements. |
+| `previews/` | Blender renders (front, three-quarter, side) and RealityKit Simulator captures. The `realitykit_framemount_*` files show the gate-frame mount: Co-op idle and activated, Solo, P1 and P2 reaching with the fist on the cap, a close-up, a side view of the collar, the door passing after opening, and before/after the side-wall layout. |
 | `ref/` | The concept image. |
 
 The runtime asset is
@@ -39,7 +40,8 @@ measures the loaded asset against them.
 - **Units and axes:** metres. Blender is Z up, with the face toward −Y. The USD is Y up, with the face toward +Z (the game camera); the cap presses along −Z.
 - **Origin:** the centre of the mounting plate's front face.
 - **Parts (prims):**
-  - `Housing`: a chamfered octagonal plate, 0.44 m across and 5 cm thick, with four screws. Behind it, a 0.34 m body extends to 0.25 m deep and sinks into the stand.
+  - `Housing`: a chamfered octagonal plate, 0.44 m across and 5 cm thick, with four screws.
+  - `Body` (its own part since 20 November 2026; the geometry is unchanged): a 0.34 m body behind the plate, extending to 0.25 m deep, made to sink into a stand. The game hides it on the door frame, where the access module's neck carries the plate.
   - `Collar`: a bevelled ring, 0.40 m across, standing 3.4 cm proud, with four light-bar tabs.
   - `Socket`: a dark bore with its floor 3.5 cm behind the plate.
   - `Cap`: a red cap, 0.30 m across. It has a 4.2 cm deep-red sidewall, a 1.7 cm rounded edge and a 2 cm convex face. Its front centre is 7.9 cm proud of the plate and 4.5 cm proud of the collar. Its origin is at its back.
@@ -62,7 +64,7 @@ measures the loaded asset against them.
   - Pressed: −25 mm, which puts the cap's edge level with the collar.
   - Activated and locked: −20 mm.
 - **Accent colours:** red while live (brighter as the fist approaches), white for the press and gate-open flash, green once activated, and dark while unavailable.
-- **Cap colour:** red while idle. It turns green, lit from within, at the bottom of the press. A halo on the wall round it (red, then green) and a green point light make it read from the game camera.
+- **Cap colour:** red while the gate is closed, pressed or not. It turns green, lit from within, only once the game unlocks the gate, as the door starts opening (20 November 2026). A halo on the wall round it (red, then green) and a green point light make it read from the game camera.
 - **Fist contact:** the fist touches the cap's front centre. During the gate the mascot glides 0.21 m sideways to the button's station (presentation only).
 
 ## Deviations from the concept

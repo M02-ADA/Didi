@@ -25,9 +25,10 @@ struct LaserBoardGeometryConsistencyTests {
         #expect(abs(Double(steering.bounds.lowerBound) - LaserBoardGeometry.bounds.lowerBound) < 0.002)
         #expect(abs(Double(steering.bounds.upperBound) - LaserBoardGeometry.bounds.upperBound) < 0.002)
         for player in PlayerID.allCases {
-            // The game state's dock is the console's wall stop; the gate's dock (`dockX`, `dockBack` inside
-            // it) is presentation only (the mascot is drawn held there while the gate's consoles show).
+            // The game state's dock is the console's wall stop, and the gate's dock (`dockX`) is that same
+            // stop: a game-state board is never beyond a gate's dock, so nothing is drawn held back.
             #expect(abs(Double(consoles[player]?.wallStopX ?? .nan) - LaserBoardGeometry.docks[player]!) < 0.002)
+            #expect(consoles[player]?.dockX == consoles[player]?.wallStopX)
             #expect(abs(Double(scene.mapping.laneCenterX[player]!) - LaserBoardGeometry.laneX[player]!) < 1e-6)
             #expect(abs(scene.mapping.laneCorridorX(player) - LaserBoardGeometry.laneX[player]!) < 1e-6)
         }

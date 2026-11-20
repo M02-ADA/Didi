@@ -38,8 +38,8 @@ struct LaserGateConsole: Equatable {
         /// World centre of the button's mounting plate's front face (on its axis), and the cap's radius.
         var center: SIMD3<Float>
         var radius: Float
-        /// The way the button faces (unit, world): into the corridor, off its wall. The cap presses
-        /// along −normal.
+        /// The way the button faces (unit, world): toward the camera, off the door's frame. The cap
+        /// presses along −normal.
         var normal: SIMD3<Float>
         /// The button's up (unit, world).
         var up: SIMD3<Float>
@@ -57,7 +57,7 @@ struct LaserGateConsole: Equatable {
     /// The Blender asset's dimensions (metres, along its axis from the plate's front face; see
     /// `Art/LaserHeist/GateButton/gatebutton_build.py`): cap radius, the cap's front at its centre and
     /// at its rounded edge, the collar's front, the plate's half-width and thickness, and the body's
-    /// depth behind it (inside the wall).
+    /// depth behind it.
     static let radius: Float = 0.15
     static let capFront: Float = 0.079
     static let capEdgeFront: Float = 0.059
@@ -77,18 +77,23 @@ struct LaserGateConsole: Equatable {
     static let frameX: Float = 2.45
     static let buttonHeight: Float = 0.62
     /// The door frame's jamb (the authored `VaultDoor` frame band, between the panels and the
-    /// surround), and the collar's size and its shift outward, which keep it wholly on the jamb.
+    /// surround), and the mount's shift outward of the button's axis, which keeps it wholly on the jamb.
     static let jamb: ClosedRange<Float> = 2.405...2.785
-    static let collarSize: Float = 0.26
     static let collarShift: Float = 0.09
+    /// The access module the button is built into (Kevin, 20 November 2026, integration with the
+    /// frame's art): a shallow chamfered access panel flush on the jamb's lavender band (2.41–2.67 m),
+    /// outlined like the frame art, and a stepped chamfered neck from it to the plate's back (the
+    /// collar). Width × height (metres), the panel's depth off the door and its corner chamfer.
+    static let panelSize = SIMD2<Float>(0.25, 0.80)
+    static let panelDepth: Float = 0.025
+    static let panelChamfer: Float = 0.06
+    static let neckSize = SIMD2<Float>(0.20, 0.30)
     /// The mascot's arm at the press: `armReach` of the shoulder→fist length out to the cap's front;
     /// it sets the mascot's `station`.
     static let armReach: Float = 0.97
-    /// The gate's dock is `dockBack` inside the wall stop (0: the mascot docks where it stops anyway).
-    static let dockBack: Float = 0
 
     let player: PlayerID
-    /// −1: the button is on the left wall (P1), +1: the right wall (P2).
+    /// −1: the button is on the frame's left side (P1), +1: its right side (P2).
     let side: Float
     /// The mascot root's world X at its stop while a gate's docks are active (`RobotAvatarLayer.docksActive`).
     let dockX: Float
@@ -112,7 +117,8 @@ struct LaserGateConsole: Equatable {
 
     /// A point (world) moved out of the button and the door onto their surface, so a hand never goes
     /// inside: in the button's frame, anything behind the cap's face (within the cap) or the collar
-    /// (within the plate) is brought forward onto it; anything behind the door's plane, onto the door.
+    /// (within the plate) is brought forward onto it; anything behind the access panel, onto the
+    /// panel; anything behind the door's plane, onto the door.
     func outsideConsole(_ point: SIMD3<Float>) -> SIMD3<Float> {
         var l = head.orientation.inverse.act(point - head.center)
         let r = hypot(l.x, l.y), edge = Self.radius - 0.017
@@ -121,6 +127,8 @@ struct LaserGateConsole: Equatable {
             surface = Self.capEdgeFront + (Self.capFront - Self.capEdgeFront) * max(0, 1 - (r * r) / (edge * edge))
         } else if r < Self.plateHalf {
             surface = Self.collarFront
+        } else if abs(l.x - side * Self.collarShift) <= Self.panelSize.x / 2, abs(l.y) <= Self.panelSize.y / 2 {
+            surface = -Self.plateDepth - Self.standoff + Self.panelDepth // the access panel's face
         } else {
             surface = -Self.plateDepth - Self.standoff // the door's surface
         }
@@ -129,12 +137,17 @@ struct LaserGateConsole: Equatable {
         return head.center + head.orientation.act(l)
     }
 
-    /// The button's plate and its collar as world axis-aligned boxes (clearance checks).
+    /// The button's plate, its collar (the neck) and the access panel as world axis-aligned boxes
+    /// (clearance checks).
     var blocks: [(center: SIMD3<Float>, size: SIMD3<Float>)] {
         let plate = button.center - button.normal * Self.plateDepth / 2
-        let collar = button.center - button.normal * (Self.plateDepth + Self.standoff / 2) + [side * Self.collarShift, 0, 0]
+        let neckDepth = Self.standoff - Self.panelDepth
+        let shift = SIMD3<Float>(side * Self.collarShift, 0, 0)
+        let collar = button.center - button.normal * (Self.plateDepth + neckDepth / 2) + shift
+        let panel = button.center - button.normal * (Self.plateDepth + Self.standoff - Self.panelDepth / 2) + shift
         return [(center: plate, size: [2 * Self.plateHalf, 2 * Self.plateHalf, Self.plateDepth]),
-                (center: collar, size: [Self.collarSize, Self.collarSize, Self.standoff])]
+                (center: collar, size: [Self.neckSize.x, Self.neckSize.y, neckDepth]),
+                (center: panel, size: [Self.panelSize.x, Self.panelSize.y, Self.panelDepth])]
     }
 
     static func == (a: Self, b: Self) -> Bool {
@@ -154,7 +167,7 @@ struct LaserGateConsole: Equatable {
         let faceWorld = min(visibleHalfWidth, wallHalfWidth) - Self.visibleDepth
         let plate = front + Self.pressSurface
         wallStopX = side * (faceWorld - plate)
-        dockX = side * (faceWorld - plate - Self.dockBack)
+        dockX = wallStopX // the mascot docks where the steering stops it anyway
         faceX = side * faceWorld
         doorZ = planeZ - Self.doorDepth
         // The button: on its collar off the frame's jamb, facing the camera.

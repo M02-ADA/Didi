@@ -8,7 +8,7 @@
 > - **Requested by:** Kevin (task owner), 18 November 2026.
 > - **Nothing is applied.**
 
-**Recommendation: option D, the "span majority" rule.** Its patch is [LaserHeist-Calibration-Span-Majority-Proposal.patch](LaserHeist-Calibration-Span-Majority-Proposal.patch).
+**Recommendation: option D, the "span majority" rule.** It is now in `CalibrationSession.swift` (its proposal patch was removed on 20 November 2026 as applied).
 
 The earlier 8-of-10 proposal is option B: [LaserHeist-Calibration-Robust-Window-Proposal.md](LaserHeist-Calibration-Robust-Window-Proposal.md). It is **not recommended**, for the reasons below.
 
@@ -75,15 +75,10 @@ All of this was run in a copy of the tree in the Simulator; the shared checkout 
 - **B (8 of the latest 10) is stricter than today** whenever isolated jumps exceed 2 in 10. Edo's own test (a jump on every third sample) completes under V1.1 but never under B. B also needs acceptance and the progress display to change from 10 to 8.
 - **C** is the smallest code change, but it only moves the cliff from 2 jumps in a row to 3. In the iPad log the jumps sometimes ran for several samples.
 
-## Applying option D (after approval)
+## What option D changed (applied)
 
-```bash
-git apply Docs/LaserHeist-Calibration-Span-Majority-Proposal.patch
-```
-
-- The patch goes on top of `feat/laserheist-hoverboard-vfx-polish`'s working tree, because it updates `LiveRepeatedCalibrationTests`.
-- It changes `CalibrationSession.swift`, `AnatomicalMeasurementTests.swift` and `LiveRepeatedCalibrationTests.swift`, and adds `SpanMajorityCalibrationTests.swift`.
-- It changes no UI, coordinator or acceptance code.
+- `CalibrationSession.swift`, `AnatomicalMeasurementTests.swift` and `LiveRepeatedCalibrationTests.swift`; it added `SpanMajorityCalibrationTests.swift`.
+- No UI, coordinator or acceptance code.
 
 ## Separate: the cold-start mask
 

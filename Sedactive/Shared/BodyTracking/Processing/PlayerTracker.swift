@@ -371,7 +371,7 @@ nonisolated struct PlayerTracker: Sendable {
     func inBox(_ player: PlayerID) -> [Descriptor] {
       people.filter { person in
         let x = person.center.x / aspect
-        return PlayerAcquisitionZones.player(atX: x, solo: false) == player
+        return PlayerAcquisitionZones.player(atX: x, solo: false, imageAspect: aspect) == player
           && (player == .player1 ? x > 0.5 + policy.centerGuardFraction : x < 0.5 - policy.centerGuardFraction)
       }
     }
@@ -412,7 +412,7 @@ nonisolated struct PlayerTracker: Sendable {
     relink: Bool = false) {
     let aspect = Double(source.context.imageWidth) / Double(source.context.imageHeight)
     let eligible = values.compactMap { $0 }.filter {
-      PlayerAcquisitionZones.player(atX: $0.center.x / aspect, solo: true) == .player1
+      PlayerAcquisitionZones.player(atX: $0.center.x / aspect, solo: true, imageAspect: aspect) == .player1
     }
     guard !overflow, eligible.count == 1, let person = eligible.first, person.points.count == 4 else {
       acquisitionRefused(overflow ? .overflow : .acquisitionRefused); return

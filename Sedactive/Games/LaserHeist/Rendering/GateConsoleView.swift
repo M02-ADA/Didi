@@ -11,31 +11,37 @@ import RealityKitContent
 #endif
 
 /// One player's gate button as drawn: ONE activation button, the Blender asset `GateButton.usdz`
-/// (Kevin, task owner, 19 November 2026), mounted on the gate's own door frame (20 November 2026: on a
-/// compact collar off the frame's jamb; no console, stand, box or extra wall). Geometry from
+/// (Kevin, task owner, 19 November 2026), mounted on the gate's own door frame (20 November 2026: built
+/// into a compact access module on the frame's jamb, `GateAccessModule`; no console, stand, box or
+/// extra wall). Geometry from
 /// `LaserGateConsole`; state from the game's `vault.buttons` (and, for its approach response, the
 /// fist's reach toward its zone, `RobotAvatarLayer.consoleApproach`): nothing here judges or presses.
 ///
 /// The button asset's parts (`Art/LaserHeist/GateButton/README.md`): `Housing`, `Collar`, `Socket`,
 /// `Cap` (origin at its back, pressed along its local −Z) and `Accents` (light bars and socket ring).
-/// Round it, a halo (red while live, bright green once activated) and a green light.
+/// Round it, a halo (red while the gate is closed, bright green once it is open) and a green light.
+///
+/// RED = GATE CLOSED, GREEN = GATE OPEN (Kevin, 20 November 2026): a player's press never turns the
+/// button green; only the gate being open does.
 ///
 /// States (motion and light, never colour alone):
 /// - Unavailable (gate arriving, or timed out unpressed): the cap rests a little sunk, the lights dark.
 /// - Available: the cap springs up (arming); a strong red cap, red accents and a soft red halo round
 ///   the plate, brighter as the fist approaches (`setApproach`).
-/// - Pressed (once per gate, on the game's activation): the cap drives down to the collar (50 ms),
-///   overshoots and rebounds into its locked depth; at the bottom of the press the CAP TURNS GREEN, its
-///   accents turn green, the halo pops bright green and a green light washes the wall.
-/// - Gate opened (`surge`): a short white flash of the accents and strips, settling green.
+/// - Pressed (`completed`, once per gate, on the game's activation; the gate is still closed): the cap
+///   drives down to the collar (50 ms), overshoots and rebounds into its locked depth, the accents
+///   flash white and the red halo pops; it stays RED, locked down.
+/// - Opened (`open`, once the gate is open: `VaultPresentation` calls it on the game's unlock, as the
+///   door starts opening): the CAP TURNS GREEN, the accents flash and settle green, the halo pops bright green and
+///   a green light washes the door frame.
 /// Reduce Motion: states change at once; no travel, flash or pop.
 @MainActor
 final class GateConsoleView {
-    enum ButtonState: Equatable { case unavailable, available, completed }
+    /// `completed`: this player's press registered while the gate is still closed (red, locked down).
+    /// `opened`: the gate is open (green).
+    enum ButtonState: Equatable { case unavailable, available, completed, opened }
 
     struct Palette {
-        static let strip: UInt32 = 0x8C7BFF
-        static let dim: UInt32 = 0x3B3470
         static let accentOff: UInt32 = 0x3A1018
         static let accent: UInt32 = 0xFF2A22, accentHot: UInt32 = 0xFF7A5C
         static let success: UInt32 = 0x3BE08A
@@ -43,12 +49,10 @@ final class GateConsoleView {
         /// The activated cap: a bright green face and a deeper green sidewall, both lit from within.
         static let capGreen: UInt32 = 0x1FD467, capGreenSide: UInt32 = 0x0E8A44, capGreenGlow: UInt32 = 0x12C85A
         static let haloRed: UInt32 = 0xFF3B30, haloGreen: UInt32 = 0x4BFF95
-        /// The mounting collar: dark metal, like the button's housing.
-        static let collar: UInt32 = 0x2B2468
     }
 
     /// The cap's travel along its axis from its modelled rest: pressed (its edge level with the
-    /// collar), locked once activated, and sunk while unavailable.
+    /// collar), locked once activated (pressed or opened), and sunk while unavailable.
     static let capPressed: Float = -0.025
     static let capSettled: Float = -0.02
     static let capLowered: Float = -0.012
@@ -64,7 +68,7 @@ final class GateConsoleView {
     let console: LaserGateConsole
     /// The button's mount (on its axis at the plate's front face, +Z along `normal`).
     let buttonMount = Entity()
-    /// The halo and the light on the wall round the button.
+    /// The halo and the light on the door round the button.
     let module = Entity()
     private var cap: Entity?
     private var capBase = SIMD3<Float>.zero
@@ -74,27 +78,25 @@ final class GateConsoleView {
     /// The cap's model entities and their authored (red) materials, restored on reset.
     private var capModels: [(entity: Entity, materials: [any RealityKit.Material])] = []
     private var accents: [Entity] = []
-    private var strips: [ModelEntity] = []
     private let halo = ModelEntity()
     private let light = Entity()
-    /// The compact collar from the door frame's jamb to the plate's back.
-    private let collar = ModelEntity()
+    /// The access module's indicator bar (`GateAccessModule`): it shows the button's accent colour.
+    private var indicator: ModelEntity?
     /// Whether the button drawn is the Blender asset (false: the simple stand-in while it loads or
     /// when the package is unavailable).
     private(set) var usesAsset = false
     private(set) var state: ButtonState = .unavailable
     /// The game's per-button states, for diagnostics (one button).
     var states: [LaserVaultButton: ButtonState] { [.activate: state] }
-    /// Presses and arming rises animated since the last reset, and gate-opening surges played.
+    /// Presses and arming rises animated since the last reset, and gate openings shown.
     private(set) var presses: [LaserVaultButton: Int] = [:]
     private(set) var arms = 0
-    private(set) var surges = 0
+    private(set) var opens = 0
     private(set) var sideComplete = false
     /// The approach build-up shown (0…3: none → the fist on the button).
     private(set) var approachLevel = 0
-    /// The colours shown now (diagnostics): accents, strips, the halo (and its opacity), the cap, the light.
+    /// The colours shown now (diagnostics): accents, the halo (and its opacity), the cap, the light.
     private(set) var accentColor: UInt32 = Palette.accentOff
-    private(set) var stripColor: UInt32 = Palette.dim
     private(set) var haloColor: UInt32 = Palette.haloRed
     private(set) var haloOpacity: Float = 0
     private(set) var capIsGreen = false
@@ -126,7 +128,7 @@ final class GateConsoleView {
     func reset(ready: Bool = true, reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled) {
         self.reduceMotion = reduceMotion
         presses = [:]
-        surges = 0
+        opens = 0
         setSideComplete(false)
         let wasDown = state != .available
         apply(ready ? .available : .unavailable)
@@ -160,9 +162,10 @@ final class GateConsoleView {
         complete(reduceMotion: reduceMotion)
     }
 
-    /// Shows the button activated (the game activated it). The press plays once; repeating is a no-op.
+    /// Shows the button pressed (the game activated it); the gate is still closed, so it stays RED.
+    /// The press plays once; repeating it, or a press after the gate opened, is a no-op.
     func complete(reduceMotion: Bool) {
-        guard state != .completed else { return }
+        guard state == .available || state == .unavailable else { return }
         presses[.activate, default: 0] += 1
         guard !reduceMotion, let cap else { return apply(.completed) }
         state = .completed
@@ -174,49 +177,44 @@ final class GateConsoleView {
                    (Self.capSettled + 0.003, Self.capSettled, 0.08, .easeInOut)],
              ending: Self.capSettled)
         setAccents(Palette.flash)
-        // At the bottom of the press (50 ms): the cap turns green, the halo pops, the light washes the module.
+        // At the bottom of the press (50 ms) the red halo pops; the impact flash settles back to red.
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(50))
             guard let self, self.state == .completed else { return }
-            self.setCapGreen(true)
-            self.setHalo(Palette.haloGreen, opacity: Self.haloActive)
+            self.setHalo(Palette.haloRed, opacity: Self.haloIdle)
             self.popHalo()
-            self.setLight(Self.lightIntensity * 1.6)
             try? await Task.sleep(for: .milliseconds(70))
             guard self.state == .completed else { return }
-            self.setAccents(Palette.success)
-            try? await Task.sleep(for: .milliseconds(180))
-            guard self.state == .completed else { return }
-            self.setLight(Self.lightIntensity)
+            self.setAccents(Palette.accent)
         }
     }
 
-    /// The side's button is activated: the module's strips turn green (just after the press lands).
+    /// The side's button is activated (diagnostics; the press itself shows it, `complete`).
     func setSideComplete(_ done: Bool, reduceMotion: Bool = true) {
         sideComplete = done
-        guard done, !reduceMotion else { return colorStrips(done ? Palette.success : Palette.strip) }
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(140))
-            guard let self, self.sideComplete else { return }
-            self.colorStrips(Palette.success)
-        }
     }
 
-    /// The game opened the gate: a short white flash through the accents and strips, settling green.
-    func surge(reduceMotion: Bool) {
+    /// The gate is open (`VaultPresentation`, on the game's unlock): a pressed button
+    /// turns GREEN: the cap, a white flash of the accents settling green, the halo popping bright green
+    /// and the green light. Once per gate; a button that was never pressed stays as it is.
+    func open(reduceMotion: Bool) {
         guard state == .completed else { return }
-        surges += 1
-        guard !reduceMotion else { return }
+        opens += 1
+        guard !reduceMotion else { return apply(.opened) }
+        state = .opened
+        approachLevel = 0
+        setCapGreen(true)
+        setHalo(Palette.haloGreen, opacity: Self.haloActive)
+        popHalo()
+        setLight(Self.lightIntensity * 1.6)
+        setAccents(Palette.flash)
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(260)) // let a press that opened the gate land first
-            guard let self, self.state == .completed else { return }
-            self.setAccents(Palette.flash)
-            self.colorStrips(Palette.flash)
-            self.popHalo()
-            try? await Task.sleep(for: .milliseconds(180))
-            guard self.state == .completed else { return }
+            try? await Task.sleep(for: .milliseconds(120))
+            guard let self, self.state == .opened else { return }
             self.setAccents(Palette.success)
-            self.colorStrips(Palette.success)
+            try? await Task.sleep(for: .milliseconds(180))
+            guard self.state == .opened else { return }
+            self.setLight(Self.lightIntensity)
         }
     }
 
@@ -236,12 +234,17 @@ final class GateConsoleView {
             setCapGreen(false)
             setLight(0)
         case .completed:
+            // Pressed, gate still closed: red, locked down.
+            setAccents(Palette.accent)
+            setHalo(Palette.haloRed, opacity: Self.haloIdle)
+            setCapGreen(false)
+            setLight(0)
+        case .opened:
             setAccents(Palette.success)
             setHalo(Palette.haloGreen, opacity: Self.haloActive)
             setCapGreen(true)
             setLight(Self.lightIntensity)
         }
-        if !sideComplete { colorStrips(state == .unavailable ? Palette.dim : Palette.strip) }
         if let cap {
             cap.stopAllAnimations()
             cap.position = capBase + capAxis * Self.depth(state)
@@ -252,23 +255,19 @@ final class GateConsoleView {
         switch state {
         case .unavailable: capLowered
         case .available: capRest
-        case .completed: capSettled
+        case .completed, .opened: capSettled
         }
     }
 
     private func setAccents(_ hex: UInt32) {
         accentColor = hex
+        if let indicator { GateAccessModule.setIndicator(indicator, hex) }
         let material = Self.glow(hex)
         for entity in accents {
             guard var model = entity.components[ModelComponent.self] else { continue }
             model.materials = Array(repeating: material, count: max(1, model.materials.count))
             entity.components.set(model)
         }
-    }
-
-    private func colorStrips(_ hex: UInt32) {
-        stripColor = hex
-        for strip in strips { strip.model?.materials = [Self.glow(hex)] }
     }
 
     /// The cap's own colour: its authored red, or green lit from within (face and sidewall).
@@ -350,8 +349,9 @@ final class GateConsoleView {
 
     // MARK: - Building
 
-    /// The button's collar to the door frame, its glow (the halo, over the plate and the frame round it)
-    /// and the light in front of it. Nothing else is built.
+    /// The access module the button is built into on the door frame (`GateAccessModule`: panel, neck,
+    /// indicator), its glow (the halo, on the frame round it) and the light in front of it. Nothing
+    /// else is built.
     private func buildModule() {
         module.name = "vault.console.glow"
         module.position = console.button.center
@@ -366,13 +366,11 @@ final class GateConsoleView {
         halo.position = [0, 0, -LaserGateConsole.plateDepth - LaserGateConsole.standoff + 0.003]
         halo.isEnabled = false
         module.addChild(halo)
-        collar.name = "vault.console.collar"
-        let size = LaserGateConsole.collarSize
-        collar.model = ModelComponent(mesh: .generateBox(size: [size, size, LaserGateConsole.standoff], cornerRadius: 0.02),
-                                      materials: [Self.lit(Palette.collar, roughness: 0.45, metallic: 0.6)])
         // Shifted outward so it sits wholly on the jamb (the door's panels slide open behind it).
-        collar.position = [console.side * LaserGateConsole.collarShift, 0, -LaserGateConsole.plateDepth - LaserGateConsole.standoff / 2]
-        module.addChild(collar)
+        let mount = GateAccessModule.make(side: console.side)
+        module.addChild(mount.root)
+        indicator = mount.indicator
+        if let indicator { GateAccessModule.setIndicator(indicator, accentColor) }
         light.name = "vault.console.light"
         light.position = [0, 0, 0.3]
         var point = PointLightComponent(color: Self.color(Palette.capGreenGlow), intensity: 0, attenuationRadius: Self.lightRange)
@@ -385,6 +383,9 @@ final class GateConsoleView {
     private func install(_ model: Entity, asset: Bool) {
         buttonMount.findEntity(named: "vault.console.buttonModel")?.removeFromParent()
         model.name = "vault.console.buttonModel"
+        // The asset's body behind the plate only ever sank into a stand; on the door frame the access
+        // module's neck carries the plate, so the body is not shown (it would hang in front of the door).
+        model.findEntity(named: "Body")?.isEnabled = false
         buttonMount.addChild(model)
         usesAsset = asset
         cap = model.findEntity(named: "Cap")

@@ -34,9 +34,10 @@ import UIKit
 ///   and turns warm. Game time freezes on pause, so do both.
 /// - `vault.buttons[player]`: one activation button per player (19 November
 ///   2026; it replaced three: top, middle, bottom). Live rounds with mascots
-///   draw it on the player's wall console (`GateConsoleView`: unavailable while
-///   the gate comes in, available and pulsing during the gate, pressed and
-///   completed on the game's activation, a surge when the gate opens). Otherwise
+///   draw it on the player's side of the gate's door frame (`GateConsoleView`: unavailable while
+///   the gate comes in, available during the gate, pressed on the game's activation and still RED
+///   while the gate is closed, GREEN from the game's unlock, `vault.opened` or `coopGateSucceeded`,
+///   as the door starts opening, `showOpenButtons`). Otherwise
 ///   Theo's wall button art (Sketch Hi-Fi 30 OCT "Opening the Door"): red when
 ///   idle, green with a check when active, popping once; an outline then frames it.
 /// - `vault.opened` or `coopGateSucceeded`: the door opens, once. It then
@@ -129,9 +130,9 @@ final class VaultPresentation {
     /// through the mascot mapping (`GameWorldMapping.mascotPoint`), the same as the wrists' reach
     /// cursors: a cursor on a button is a wrist in its zone. Nil (replay, or no zone): Theo's walls.
     var liveButtons: ((PlayerID, LaserVaultButton) -> (center: SIMD2<Float>, radius: Float)?)?
-    /// Live rounds with mascots: each player's wall-mounted button console (`LaserGateConsole`).
-    /// When every shown player has one, the buttons are mounted on it, facing into the corridor,
-    /// where the mascot's hand lands from its dock; `liveButtons` is then not used.
+    /// Live rounds with mascots: each player's button on the gate's door frame (`LaserGateConsole`).
+    /// When every shown player has one, the buttons are mounted there, facing the camera, where the
+    /// mascot's hand lands from its station; `liveButtons` is then not used.
     var liveConsoles: ((PlayerID) -> LaserGateConsole?)?
     /// The drawn consoles (housing and physical buttons), built once per console geometry.
     private(set) var consoleViews: [PlayerID: GateConsoleView] = [:]
@@ -151,6 +152,8 @@ final class VaultPresentation {
     private var succeeded: Set<UUID> = []
     private var failed: Set<UUID> = []
     private var openedID: UUID?
+    /// The vault whose frame buttons show it open (green, `showOpenButtons`).
+    private var greenID: UUID?
     private var failedID: UUID?
     /// The countdown look last applied: (urgent, failed).
     private var style: (urgent: Bool, failed: Bool)?
@@ -285,6 +288,7 @@ final class VaultPresentation {
         if !isOpen, opens {
             open(vault, at: state.gameTime)
         }
+        showOpenButtons(vault)
         updateCountdown(vault, at: state.gameTime, failed: ended == .vaultFailed || failed.contains(vault.id))
         place(travelDistance: travelDistance)
     }
@@ -301,6 +305,7 @@ final class VaultPresentation {
         vaultID = nil
         anchor = nil
         openedID = nil
+        greenID = nil
         passedID = nil
         failedID = nil
         succeeded = []
@@ -356,16 +361,15 @@ final class VaultPresentation {
     /// How far ahead of its stop the door stands at the horizon.
     var approachDistance: Float { max(0, doorStopZ - approachHorizonZ) }
 
-    /// The door's stop. GATE AS ONE STRUCTURE (iPad, 12 November 2026): with the wall buttons the
-    /// door stops `LaserGateConsole.doorDepth` beyond the players' plane, just behind the buttons on
-    /// the side walls (Kevin, 20 November 2026: the buttons belong to the gate, not 5 m in front of
-    /// it), and the buttons ride in with it (`consoleRide`). Without wall buttons the door keeps its
-    /// authored stop.
+    /// The door's stop. GATE AS ONE STRUCTURE (iPad, 12 November 2026): with the frame buttons the
+    /// door stops `LaserGateConsole.doorDepth` behind the players' plane, clear of the mascots' heads,
+    /// with the buttons on its frame (Kevin, 20 November 2026), and the buttons ride in with it
+    /// (`consoleRide`). Without frame buttons the door keeps its authored stop.
     var doorStopZ: Float {
         consolesInUse ? max(scene.layout.vaultDoorStopZ, scene.mapping.interactionPlaneZ - LaserGateConsole.doorDepth)
             : scene.layout.vaultDoorStopZ
     }
-    /// Whether every shown player has a wall button (live rounds with mascots).
+    /// Whether every shown player has a frame button (live rounds with mascots).
     private var consolesInUse: Bool {
         let shown = PlayerID.allCases.filter { visiblePlayers.contains($0) }
         return !shown.isEmpty && shown.allSatisfy { liveConsoles?($0) != nil }
@@ -412,7 +416,7 @@ final class VaultPresentation {
         }
         let distance = target + glide(lead: lead, target: target, at: state.gameTime)
         scene.setVaultDoorDepth(doorStopZ - distance)
-        // The wall consoles (all red) come in with the door, a fixed distance in front of it; nothing
+        // The frame buttons (all red) come in with the door, on its frame; nothing
         // is judged until the gate opens.
         revealConsolesEarly()
         consoleRide(-distance)
@@ -495,6 +499,7 @@ final class VaultPresentation {
         if !arrived, !hidden, scene.vaultDoorDepth != nil { handOffPreviousDoor() }
         vaultID = vault.id
         openedID = nil
+        greenID = nil
         failedID = nil
         hidden = false
         shownButtons = [:]
@@ -605,19 +610,29 @@ final class VaultPresentation {
         digitsRoot.isEnabled = false
         countdownFraction = nil
         countdownDigit = nil
-        // Let the last activation read, then fade the indicators out (cosmetic). The wall consoles
-        // are corridor structure, not indicators: they stay, green, and the team passes them
+        // Let the last activation read, then fade the indicators out (cosmetic). The frame buttons
+        // are gate structure, not indicators: they stay, green, and the team passes them
         // (`place`); the mascots stop reaching for them but stay docked until the door is clear.
         Self.fadeOut(root, after: 0.3, duration: 0.5)
         if consoleMode {
+            // The gate is unlocked: the pressed buttons turn green now, as the door starts opening (`showOpenButtons`).
             scene.robotAvatars?.consolesActive = false
-            // The gate's success: a power surge through each pressed console.
-            for view in consoleViews.values { view.surge(reduceMotion: reducesMotion()) }
         } else {
             Self.fadeOut(buttons, after: 0.3, duration: 0.5)
         }
         indicatorsShown = false
         diagnostics.opens += 1
+    }
+
+    /// RED = GATE CLOSED, GREEN = GATE OPEN (20 November 2026): the pressed frame buttons turn green
+    /// on the frame the game unlocks this vault (`vault.opened` or `coopGateSucceeded`, shown by
+    /// `open`), as the door starts opening, and stay green through its opening. No timer and no
+    /// wait for the door: a press alone never turns a button green, and a gate that times out never
+    /// opens.
+    private func showOpenButtons(_ vault: LaserVaultState) {
+        guard consoleMode, openedID == vault.id, greenID != vault.id else { return }
+        greenID = vault.id
+        for view in consoleViews.values { view.open(reduceMotion: reducesMotion()) }
     }
 
     private func updateCountdown(_ vault: LaserVaultState, at time: Double, failed: Bool) {
@@ -627,6 +642,8 @@ final class VaultPresentation {
                 failedID = vault.id
                 applyStyle(urgent: true, failed: true)
                 for view in consoleViews.values { view.setUnavailable() }
+                // The buttons are dead: the mascots stop reaching for them and glide back to their boards.
+                if consoleMode { scene.robotAvatars?.consolesActive = false }
                 countdownFill.isEnabled = false
                 diagnostics.timeouts += 1
             }
@@ -668,7 +685,7 @@ final class VaultPresentation {
     private func place(travelDistance: Float) {
         guard let anchor else { return }
         let depth = scene.mapping.interactionPlaneZ - (anchor - travelDistance)
-        // Wall columns and wall consoles ride with the door: one structure fixed in the corridor, so
+        // Wall columns and frame buttons ride with the door: one structure fixed in the corridor, so
         // once it opens and travel resumes the team passes it (iPad, 12 November 2026: the consoles
         // had stayed beside the mascots and dissolved). The live zone buttons stay put (they fade).
         let nearCamera = scene.layout.cameraPosition.z - GameplayScenePresenter.cameraClearance
@@ -735,7 +752,7 @@ final class VaultPresentation {
         }
     }
 
-    /// The unified wall consoles (`GateConsoleView`): the 2D indicator art and outlines step aside;
+    /// The frame buttons (`GateConsoleView`): the 2D indicator art and outlines step aside;
     /// the buttons' parent stands at depth 0 so the consoles keep their world positions.
     private func layoutConsoles(_ consoles: [PlayerID: LaserGateConsole], ready: Bool) {
         liveLayout = true
@@ -759,10 +776,12 @@ final class VaultPresentation {
                 consoleViews[player] = view
             }
             view.root.isEnabled = true
-            // The game's current activations, at once (a console shown mid-gate is never replayed).
+            // The game's current activations, at once (a console shown mid-gate is never replayed),
+            // and green if this gate already shows open.
             for button in LaserVaultButton.allCases {
                 if shownButtons[player, default: []].contains(button) { view.complete(button, reduceMotion: true) }
             }
+            if greenID != nil, greenID == vaultID { view.open(reduceMotion: true) }
         }
     }
 
@@ -775,6 +794,7 @@ final class VaultPresentation {
     private func hideAll() {
         hidden = true
         approaching = false
+        greenID = nil
         removeExiting()
         scene.setVaultDoorDepth(nil)
         scene.resetVaultDoor()

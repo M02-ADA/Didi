@@ -617,16 +617,22 @@ nonisolated struct CalibrationSession: Sendable {
     }
     return best
   }
-  /// Where the player's feet last moved: the first of two consecutive samples whose soles agree
-  /// with each other but not with either of the two samples before them. One stray sole reading
-  /// is noise (as in V1.1); two agreeing readings elsewhere are a step.
+  /// Where the player's feet last moved (V1.2: "both soles elsewhere for two samples in a row"):
+  /// the first of two consecutive samples whose soles agree with each other while BOTH soles are
+  /// elsewhere than in each of the two samples before them. One stray sole reading is noise (as
+  /// in V1.1), and so is one foot alone shifting: its samples never agree with the old ones on
+  /// that sole, so they cannot mix into one reference either way; it simply does not discard the
+  /// evidence gathered before it.
   private static func movementBoundary(_ window: [PlayerSample], limit: Double) -> Int {
     func feetAgree(_ i: Int, _ j: Int) -> Bool {
       abs(window[i].anatomy[1] - window[j].anatomy[1]) <= limit && abs(window[i].anatomy[2] - window[j].anatomy[2]) <= limit
     }
+    func feetElsewhere(_ i: Int, _ j: Int) -> Bool {
+      abs(window[i].anatomy[1] - window[j].anatomy[1]) > limit && abs(window[i].anatomy[2] - window[j].anatomy[2]) > limit
+    }
     var boundary = 0
     for i in window.indices.dropFirst() where i + 1 < window.count {
-      if feetAgree(i, i + 1), !feetAgree(i, i - 1), i < 2 || !feetAgree(i, i - 2) { boundary = i }
+      if feetAgree(i, i + 1), feetElsewhere(i, i - 1), i < 2 || feetElsewhere(i, i - 2) { boundary = i }
     }
     return boundary
   }

@@ -152,18 +152,34 @@ The **producer** defines each contract type once. Consumers import it and do not
     - **Mount:** one button per player on its side of the door's frame (`LaserGateConsole.frameX` ±2.45 m, 0.62 m high), facing the camera, on a compact 0.26 m collar 0.15 m deep (`standoff`). The collar sits wholly on the frame's jamb (2.405–2.785 m), under the plate, so the panels slide open behind it.
     - **Door:** with the buttons, the door stops 0.35 m behind the players (`doorDepth`; `VaultPresentation.doorStopZ`). The mascot's head reaches 0.31 m forward of its root and stays 3.7 cm clear of the door. Without the buttons the door keeps its authored stop.
     - **Why the collar:** a cap flat on the door would sit 0.27 m in front of the shoulder, so the 0.37 m arm could reach only 0.22 m sideways and the body would hide 84–90 % of the cap. With the collar the arm reaches 0.34 m sideways and the body hides 0–2 % of the cap (measured on the iPad).
-    - **Mascot:** it stays at the players' depth and normal size. The lean still steers the board to its dock (±1.746, unchanged). While the gate's button is live and the board is at its dock, the drawn mascot glides 0.21 m sideways to its `station` (±1.952 m), where the arm opened sideways (97 % straight) ends on the cap's front (`RobotAvatarLayer.gateTravel`, presentation only). It glides back when the gate opens, and is at its dock before travel resumes (0.85 s).
+    - **Mascot:** it stays at the players' depth and normal size. The lean still steers the board to its dock (±1.746, unchanged). While the gate's button is live and the board is at its dock, the drawn mascot glides 0.21 m sideways to its `station` (±1.952 m), where the arm opened sideways (97 % straight) ends on the cap's front (`RobotAvatarLayer.gateTravel`, presentation only). It glides back when the gate opens or times out, and is at its dock before travel resumes (0.85 s).
+      - The glide sets off within 8 cm of the dock and lets go only beyond 12 cm (hysteresis), so a lean wobbling at the threshold never sends the mascot back and forth. A glide still under way when the final vault's walk-in starts settles to zero instead of staying in the walk.
+      - The dock is the wall stop (the earlier `dockBack` and `gateHold` are removed: with equal values they had no effect).
     - **Unchanged:** the steering, `LaserBoards`, the judge (the tracked wrist, the approved zone and `vaultReachShift`), the snap and all gate rules. The hand is kept on the cap, collar or door surface (`outsideConsole`).
     - **Clearances:** the body at the station clears the button by at least 2.8 cm and the door by 3.7 cm. When the opened door rides past, the button misses the docked mascot by at least 12.6 cm, and the board passes under the plate. The board at the station stays on both 4:3 and iPad screens.
     - **Look:**
       - the button, its materials and its press are unchanged;
       - idle: a red cap with a red halo on the door's surface;
-      - activated: a green cap, green halo and a green point light;
+      - pressed while the gate is closed: the cap stays red (it locks down, the accents flash white and settle red);
+      - gate open: a green cap, green halo and a green point light, for both players at once, from the game's unlock (`vault.opened` / `coopGateSucceeded`) as the door starts opening and throughout its opening (`VaultPresentation.showOpenButtons`; red = gate closed, green = gate open, 20 November 2026). A gate that times out never shows green;
       - the halo does not write depth, so it never cuts into the translucent mascot.
+    - **Access module (Kevin, 20 November 2026, visual integration only):** the button is built into a compact access module on the jamb (`GateAccessModule`), so it reads as part of the gate rather than an object fixed to it. Positions, the cap, its press, the materials, the glow and the interaction are unchanged.
+      - A shallow chamfered access panel (0.25 × 0.80 m, 2.5 cm deep) flush on the jamb's lavender band, with the frame art's dark outline, its header plate's lighter top bevel and inset line, and two vent grooves.
+      - A stepped chamfered neck (with a seam groove) from the panel to the plate's back replaces the plain collar box.
+      - An indicator bar above the button, like the header's bar, follows the button: dark, red while live, green once activated.
+      - Flat unlit tones read from the door art (`vault_frame.png`), with no tone mapping, like the door itself.
+      - The button asset's stand body (`Body`, now its own part with unchanged geometry) is hidden: on the frame it hung in front of the door.
+      - The hand is kept on the panel's face too (`outsideConsole`); the clearances are unchanged.
     - **Check:** Simulator checked only; it still needs an iPad check.
   - **Instruction:** in co-op the gate says each player presses their own button; in Solo Practice it says "PRESS YOUR BUTTON".
   - **Replay fixtures:** P1 presses at 18.6 s and P2 at 21 s, so the gate opens when it did before.
   - **Integration for Jevon:** review the domain change (`LaserGameState.swift`, `LaserGame.swift`, `LaserLiveRoundDirector.swift`, `LaserReplayScript.swift`) and the updated domain and session tests.
+
+- **Proposed — Kevin, 19–20 November 2026; needs Edo's review (body-input code and data meaning):** bystanders outside the calibration boxes.
+  - **Linking:** only a person whose torso centre is inside a calibration box can be linked as P1/P2 (`PlayerAcquisitionZones`; `PlayerTracker`, `LaserSessionSetup.peopleInView`). After linking, identity stays the tracker's. Two people in one box still refuse.
+  - **Zones from the drawn boxes:** each zone is the drawn box's X range in the unmirrored source, through the calibration stage's own display transform (`CalibrationStageLayout`), for the delivered frame's shape. The built-in 1280 × 720 camera keeps its earlier zones; staging's external cameras (e.g. 960 × 720) get the boxes their players see (`CalibrationZoneGeometryTests`).
+  - **Person mask:** other people may be in view (staging refused every frame with an extra person). A player's instance is admitted only when shown to be theirs alone: every person Vision saw is a pose candidate, and no observed joint of anyone else, at any confidence, lies on it; another person who cannot be located refuses everyone (`PersonMaskSeparationTests`). Limit: a person the pose request misses entirely cannot be checked, as before.
+  - **Status:** Simulator and unit tests only; not checked on an iPad with a bystander or an external camera.
 
 - **Confirmed — task owner (Kevin, calibration implementation ownership), 18 November 2026:** standing calibration `StandingCollectionPolicyV1.2` and setup reliability.
   - **Stability rule:** a player is stable once 10 valid samples within the existing 10 s span agree within the unchanged tolerance (max of 3 px and 2 mask rows) on head-top and both soles.

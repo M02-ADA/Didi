@@ -1458,7 +1458,7 @@ final class RobotAvatarLayer {
         var bounds = LateralSteering.bounds(corridorWidth: layout.corridorWidth, visibleHalfWidth: visible, halfWidth: halfWidth)
         // A wall's button console stops its mascot at the dock, where the hand lands on the buttons
         // and the body, head and board stay clear of the console (`LaserGateConsole`).
-        // (The rest of the round at the reach plane's stop; a live gate narrows it to the docks, `stepSteering`.)
+        // (The whole round at the reach plane's stop, which is also a live gate's dock.)
         if let left = consoles.values.first(where: { $0.side < 0 }) { bounds = max(bounds.lowerBound, left.wallStopX)...bounds.upperBound }
         if let right = consoles.values.first(where: { $0.side > 0 }) { bounds = bounds.lowerBound...min(bounds.upperBound, right.wallStopX) }
         return LateralSteering(lanes: lanes, bounds: bounds, halfWidth: halfWidth)
@@ -1479,11 +1479,13 @@ final class RobotAvatarLayer {
     private var gateTravelSpeed: [PlayerID: SIMD3<Float>] = [:]
     /// The glide's smooth time: a 3.3 m glide settles in about a second.
     nonisolated static let gateTravelTime: Float = 0.3
+    /// A board within `gateTravelDockTolerance` of its dock sets the glide off; it lets go only once
+    /// the board is beyond `gateTravelReleaseTolerance` (hysteresis), so a lean wobbling at the
+    /// threshold never sends the mascot back and forth.
     nonisolated static let gateTravelDockTolerance: Float = 0.08
-    /// The gate's presented stop for authoritative boards: how far each mascot is drawn back from its
-    /// game-state position onto its gate dock, eased over this time constant (s).
-    private var gateHold: [PlayerID: Float] = [:]
-    nonisolated static let gateHoldTime: Float = 0.2
+    nonisolated static let gateTravelReleaseTolerance: Float = 0.12
+    /// The players whose glide is set off (`gateTravelDockTolerance`), until released.
+    private var gateTravelDocked: Set<PlayerID> = []
     /// How near its dock a rider is taken onto it while consoles are shown, and how fast (m/s).
     nonisolated static let dockCapture: Float = 0.5
     nonisolated static let dockAssistSpeed: Float = 1.0
@@ -1684,6 +1686,23 @@ final class RobotAvatarLayer {
         return Double((sample.x - console.dockX) / k)
     }
 
+    /// Moves each mascot's gate glide toward `target` (lane-local offset): a critically damped glide
+    /// (smooth-damp), so it starts and lands without a jump in speed.
+    private func stepGateTravel(dt: Float, target: (PlayerID) -> SIMD3<Float>) {
+        let omega = 2 / Self.gateTravelTime, w = omega * dt
+        let decay = 1 / (1 + w + 0.48 * w * w + 0.235 * w * w * w)
+        for player in consoles.keys where robots[player] != nil {
+            let target = target(player)
+            let was = gateTravel[player] ?? .zero, speed = gateTravelSpeed[player] ?? .zero
+            let change = was - target, step = (speed + omega * change) * dt
+            var next = target + (change + step) * decay
+            var nextSpeed = (speed - omega * step) * decay
+            if simd_length(next - target) < 1e-3, simd_length(nextSpeed) < 1e-2 { next = target; nextSpeed = .zero }
+            gateTravel[player] = next
+            gateTravelSpeed[player] = nextSpeed
+        }
+    }
+
     /// Advances the steering to `now` (frame time) from each rider's lean speed and the hip shift
     /// it will show this frame (`k`: this frame's render smoothing). A scripted move (the final
     /// vault entry) holds its rider still.
@@ -1691,7 +1710,9 @@ final class RobotAvatarLayer {
         guard var steering else { return }
         let dt = Float(lastSteer.map { max(0, now - $0) } ?? 0)
         lastSteer = now
-        guard !walksInVault else { return }
+        // The final vault's walk-in holds the steering; any glide left from the gate settles to zero
+        // (never frozen into the walk).
+        guard !walksInVault else { gateTravelDocked = []; stepGateTravel(dt: dt) { _ in .zero }; return }
         lastSteerDT = dt
         var inputs: [PlayerID: LateralSteering.Input] = [:]
         #if DEBUG
@@ -1725,32 +1746,13 @@ final class RobotAvatarLayer {
             inputs[player] = .init(targetSpeed: scriptedMoves[player] == nil ? speed : 0, sway: sway)
             steerTargets[player] = inputs[player]?.targetSpeed ?? 0
         }
-        let before = Dictionary(uniqueKeysWithValues: robots.keys.compactMap { p in steering.boardX(p).map { (p, $0) } })
+        // A live gate's stop is the steering's own bound: the dock is the wall stop (`LaserGateConsole`).
         steering.step(dt: dt, inputs: inputs)
-        // A live gate's stop: a board already inside its dock does not ride past it (one beyond it at
-        // the gate's start glides in with the assist above).
-        if docksActive {
-            for (player, console) in consoles {
-                guard let was = before[player], let x = steering.boardX(player) else { continue }
-                if (console.dockX - was) * console.side >= -1e-4, (x - console.dockX) * console.side > 0 {
-                    steering.place(player, boardX: console.dockX)
-                }
-            }
-        }
         // Authoritative board positions (game state) replace the presentation steering for their
-        // riders; the others steer as before. While a gate's consoles are shown (no laser is judged
-        // then) a mascot beyond its gate dock is drawn eased back onto it (`gateHoldTime`), and eased
-        // out again when the gate opens: the game state keeps its own docks and the full corridor.
-        let ease = 1 - exp(-dt / Self.gateHoldTime)
+        // riders; the others steer as before. The game state's docks are the same wall stops
+        // (`LaserBoardGeometryConsistencyTests`), so its boards never stand beyond a gate's dock.
         for (player, x) in authoritativeBoardX where robots[player] != nil {
-            var shown = x
-            if let console = consoles[player] {
-                let beyond = consolesActive ? max(0, (x - console.dockX) * console.side) : 0
-                let held = (gateHold[player] ?? 0) + (beyond - (gateHold[player] ?? 0)) * ease
-                gateHold[player] = held < 1e-4 && beyond == 0 ? 0 : held
-                shown = x - console.side * held
-            }
-            steering.place(player, boardX: shown)
+            steering.place(player, boardX: x)
         }
         #if DEBUG
         if let a = authoritativeBoardX[.player1], let b = authoritativeBoardX[.player2],
@@ -1760,25 +1762,22 @@ final class RobotAvatarLayer {
         }
         #endif
         self.steering = steering
-        // GATE TRAVEL (Kevin, 20 November 2026: the buttons are on the original side walls, beyond any
-        // arm's reach): while a gate's buttons are live and the board is at its dock (the player leaned
-        // to their wall), the drawn mascot and its board glide to the button's station, where the arm
-        // opened toward the wall ends on the cap; back when the gate opens or the player leans away.
-        // Presentation only: the steering (and the judge's zone shift, `vaultReachShift`) never moves.
-        // A critically damped glide (smooth-damp): it starts and lands without a jump in speed.
-        let omega = 2 / Self.gateTravelTime, w = omega * dt
-        let decay = 1 / (1 + w + 0.48 * w * w + 0.235 * w * w * w)
-        for (player, console) in consoles where robots[player] != nil {
-            guard let x = steering.boardX(player), let lane = scene?.players[player]?.position else { continue }
-            let docked = abs(x - console.dockX) < Self.gateTravelDockTolerance
-            let target: SIMD3<Float> = consolesActive && docked ? [console.station.x - x, 0, console.station.z - lane.z] : .zero
-            let was = gateTravel[player] ?? .zero, speed = gateTravelSpeed[player] ?? .zero
-            let change = was - target, step = (speed + omega * change) * dt
-            var next = target + (change + step) * decay
-            var nextSpeed = (speed - omega * step) * decay
-            if simd_length(next - target) < 1e-3, simd_length(nextSpeed) < 1e-2 { next = target; nextSpeed = .zero }
-            gateTravel[player] = next
-            gateTravelSpeed[player] = nextSpeed
+        // GATE TRAVEL (Kevin, 20 November 2026: the buttons are on the gate's door frame, beyond the
+        // docked arm's reach): while a gate's buttons are live and the board is at its dock (the player
+        // leaned to their side), the drawn mascot and its board glide to the button's station, where the
+        // arm opened sideways ends on the cap; back when the gate opens or times out, or the player
+        // leans away. Presentation only: the steering (and the judge's zone shift, `vaultReachShift`)
+        // never moves.
+        for (player, console) in consoles {
+            let gap = steering.boardX(player).map { abs($0 - console.dockX) } ?? .infinity
+            let docked = consolesActive && gap < (gateTravelDocked.contains(player)
+                ? Self.gateTravelReleaseTolerance : Self.gateTravelDockTolerance)
+            if docked { gateTravelDocked.insert(player) } else { gateTravelDocked.remove(player) }
+        }
+        stepGateTravel(dt: dt) { [steering, consoles, gateTravelDocked, scene] player in
+            guard gateTravelDocked.contains(player), let console = consoles[player], let x = steering.boardX(player),
+                  let lane = scene?.players[player]?.position else { return .zero }
+            return [console.station.x - x, 0, console.station.z - lane.z]
         }
         for player in robots.keys {
             guard let x = steering.boardX(player) else { continue }

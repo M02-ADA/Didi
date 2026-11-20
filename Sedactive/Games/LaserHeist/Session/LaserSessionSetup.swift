@@ -64,8 +64,10 @@ final class LaserLiveSetupControls: LaserSetupControlling {
         let age = CameraHostClock.now() - latest.source.capturedAt
         guard age >= 0, age < LiveAvatarPresenter.maximumPoseAge * 2 else { return 0 }
         // People standing in a box only: a bystander outside the boxes is not a player in view.
+        let aspect = Double(latest.frame.imageWidth) / Double(max(1, latest.frame.imageHeight))
         let placed = latest.frame.candidates.filter { candidate in
-            PlayerAcquisitionZones.torsoCenterX(candidate).flatMap { PlayerAcquisitionZones.player(atX: $0, solo: solo) } != nil
+            PlayerAcquisitionZones.torsoCenterX(candidate)
+                .flatMap { PlayerAcquisitionZones.player(atX: $0, solo: solo, imageAspect: aspect) } != nil
         }
         return min(2, placed.count)
     }
@@ -87,9 +89,10 @@ final class LaserLiveSetupControls: LaserSetupControlling {
     var debugZones: String {
         guard let latest = service.camera.frames.poses.snapshot.latest else { return "no pose result" }
         let slots = service.camera.frames.tracking.snapshot.latest
+        let aspect = Double(latest.frame.imageWidth) / Double(max(1, latest.frame.imageHeight))
         return latest.frame.candidates.map { c in
             let x = PlayerAcquisitionZones.torsoCenterX(c)
-            let zone = x.flatMap { PlayerAcquisitionZones.player(atX: $0, solo: solo) }
+            let zone = x.flatMap { PlayerAcquisitionZones.player(atX: $0, solo: solo, imageAspect: aspect) }
             let slot = PlayerID.allCases.first { slots?[$0].candidateID == c.candidateID }
             return "#\(c.candidateID) x \(x.map { String(format: "%.2f", $0) } ?? "-") "
                 + (zone.map { "in \($0 == .player1 ? "P1" : "P2") box" } ?? "outside (ignored)")

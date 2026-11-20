@@ -1,10 +1,9 @@
 # Proposal: robust standing-calibration window (StandingCollectionPolicyV1.2)
 
-> **Status: PROPOSED — needs Edo's approval.**
+> **Status: NOT ADOPTED.** Superseded by option D, the span-majority rule, which is implemented ([the comparison](LaserHeist-Calibration-Algorithm-Comparison.md)). This option's patch was never applied and was removed on 20 November 2026; this page remains as the record of why it was not chosen.
 >
 > - **Owner of the changed code:** Edo, `Shared/BodyTracking/Processing/CalibrationSession.swift`.
 > - **Requested by:** Kevin (task owner), 18 November 2026.
-> - **The patch is not applied.** It is [LaserHeist-Calibration-Robust-Window-Proposal.patch](LaserHeist-Calibration-Robust-Window-Proposal.patch).
 
 ## The problem
 
@@ -86,14 +85,9 @@ All were run in a copy of the tree in the Simulator; nothing ran in the shared c
   - Full unit target: everything passes except the known baselines (`withoutJointsTheCrownDropShowsADuck`, `LaserGateLifecycleTests.feedbackReplacesAndClears`) and the parallel-load tests that already fail today (`priorBindingCalibration…`, `LiveCutoutTests.resourcesStayBounded…`).
   - Real-provider repeated games: 3.6–3.7 s per calibration, down from 4.1–4.4 s.
 
-## Applying it (after approval)
+## What it would have changed (not applied)
 
-```bash
-git apply Docs/LaserHeist-Calibration-Robust-Window-Proposal.patch
-```
-
-- The patch sits on top of `feat/laserheist-hoverboard-vfx-polish`'s working tree. It needs the automatic-setup fix and `LiveRepeatedCalibrationTests` from that branch.
-- Files: `CalibrationSession.swift` (Edo), `GameSessionCoordinator.swift` and `CalibrationView.swift` (progress towards 8), plus the tests above.
+- `CalibrationSession.swift` (Edo), `GameSessionCoordinator.swift` and `CalibrationView.swift` (progress towards 8), plus the tests above.
 
 ## Separate: the cold-start mask (not in this patch)
 

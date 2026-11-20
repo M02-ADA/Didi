@@ -8,7 +8,8 @@ the RealityKit game camera). The origin is the centre of the mounting plate's fr
 axis is +Y (into the console).
 
 Parts (children of the empty `GateButton`, kept separate so the game can drive them):
-- Housing: chamfered octagonal mounting plate with four slotted screws, and the body behind it that
+- Housing: chamfered octagonal mounting plate with four slotted screws.
+- Body (separate, 20 November 2026): the body behind the plate that
   sinks into the stand.
 - Collar: the raised bevelled ring round the socket, with four light-bar tabs.
 - Socket: the dark bore and floor the cap travels in.
@@ -169,7 +170,9 @@ for sx, sz in [(1, 1), (-1, 1), (-1, -1), (1, -1)]:
     slot.location = s.location
     slot.rotation_euler = (0, math.radians(45 if sx * sz > 0 else -45), 0)
     screws += [s, slot]
-for ob in [plate, body, *screws]:
+# The body stays its own part: on the gate's door frame the game hides it (the access module's neck
+# carries the plate); it only ever sank into a stand.
+for ob in [plate, *screws]:
     ob.select_set(True)
 bpy.context.view_layer.objects.active = plate
 bpy.ops.object.transform_apply(location=True, rotation=True, scale=False)
@@ -178,6 +181,11 @@ housing = bpy.context.view_layer.objects.active
 housing.name = housing.data.name = "Housing"
 bpy.ops.object.select_all(action="DESELECT")
 smooth(housing, 35)
+body.select_set(True)
+bpy.context.view_layer.objects.active = body
+bpy.ops.object.transform_apply(location=True, rotation=True, scale=False)
+bpy.ops.object.select_all(action="DESELECT")
+smooth(body, 35)
 
 # --- Collar: bevelled ring with four light-bar tabs ---------------------------------------------------
 edge = 0.008
@@ -244,9 +252,9 @@ accents = bpy.context.view_layer.objects.active
 accents.name = accents.data.name = "Accents"
 bpy.ops.object.select_all(action="DESELECT")
 
-for ob in [housing, collar, socket, cap, accents]:
+for ob in [housing, body, collar, socket, cap, accents]:
     ob.parent = root
-tris = sum(sum(len(f.vertices) - 2 for f in ob.data.polygons) for ob in [housing, collar, socket, cap, accents])
+tris = sum(sum(len(f.vertices) - 2 for f in ob.data.polygons) for ob in [housing, body, collar, socket, cap, accents])
 print("[build] parts", [ob.name for ob in root.children], "triangles", tris)
 bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(args.out))
 print("[build] saved", os.path.abspath(args.out))

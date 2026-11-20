@@ -131,14 +131,24 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
   /// UNVERIFIED; these diagnostic regions cannot become authoritative anatomy/calibration.
   ///
   /// Each linked player's instance is the one under all four of THEIR torso joints. Other people
-  /// (bystanders, outside the boxes or not) are allowed in view, but if another person's torso
-  /// lands on a player's instance, Vision has merged them: that player gets no region this frame
-  /// (refused as not separated), never a measurement that may include someone else.
+  /// (bystanders, outside the boxes or not) are allowed in view, but a player's instance must be
+  /// shown to be theirs alone, or that player gets no region this frame (refused as not
+  /// separated), never a measurement that may include someone else:
+  /// - every person Vision saw must be a pose candidate (none omitted by the candidate cap), so
+  ///   nobody in view is unchecked;
+  /// - each other person is located by EVERY joint Vision observed for them, at any confidence
+  ///   (a bystander half out of frame often has no confident torso); if any lands on a player's
+  ///   instance, Vision may have merged them;
+  /// - another person with no joint inside the image cannot be located, so nobody is admitted.
+  ///
+  /// Limit: a person Vision's pose request misses entirely is invisible here; if the mask merges
+  /// such a person into a player, this check cannot tell (as before bystanders were allowed).
   static func associate(pose: CameraPoseResult, association: PlayerTrackingSnapshot,
     labels: [UInt8], bounds: [[Int]], width: Int, height: Int,
     labelAt: (Int, Int) -> UInt8) -> [PlayerID: PersonMaskRegion] {
     let roster = linkedRoster(association)
     guard !roster.isEmpty, pose.matchesSource, pose.frame.candidates.count >= roster.count,
+      pose.observationCount == pose.frame.candidates.count,
       let original = association.source, original.frameID == pose.source.frameID,
       original.capturedAt == pose.source.capturedAt, original.controlRevision == association.controlRevision,
       original.context.generation == pose.source.context.generation,
@@ -149,17 +159,15 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
       original.context.rotationAngle == pose.source.rotationAngle, !original.context.mirrored,
       width > 0, height > 0, labels.count >= roster.count, Set(labels).count == labels.count,
       !labels.contains(0), bounds.count == labels.count, bounds.allSatisfy({ $0.count == 4 }) else { return [:] }
-    func label(_ p: PoseJoint) -> UInt8? {
-      guard (try? p.validate()) != nil, p.confidence >= 0.5, p.x > 0, p.x < 1, p.y > 0, p.y < 1 else { return nil }
-      let x = Int(p.x * Double(width)), y = Int((1 - p.y) * Double(height))
-      guard (0..<width).contains(x), (0..<height).contains(y) else { return nil }
-      return labelAt(x, y)
-    }
     let players = Set(roster.compactMap { association[$0].candidateID })
-    // Instances under any confident torso joint of someone who is not a linked player.
-    let foreign = Set(pose.frame.candidates.filter { !players.contains($0.candidateID) }.flatMap { c in
-      [BodyJoint.leftShoulder, .rightShoulder, .leftHip, .rightHip].compactMap { c.joints[$0].flatMap(label) }
-    }).subtracting([0])
+    // Instances under any observed joint of someone who is not a linked player.
+    var foreign: Set<UInt8> = []
+    for other in pose.frame.candidates where !players.contains(other.candidateID) {
+      let located = other.joints.values.compactMap { observedLabel($0, width: width, height: height, labelAt: labelAt) }
+      guard !located.isEmpty else { return [:] } // cannot be located: separation unproven
+      foreign.formUnion(located)
+    }
+    foreign.remove(0)
     var output: [PlayerID: PersonMaskRegion] = [:]
     for id in roster {
       let slot = association[id]
@@ -187,6 +195,14 @@ nonisolated final class PersonSegmenter: PersonMaskDetecting {
     }
     guard roster.count == 1 || output[.player1]?.label != output[.player2]?.label else { return [:] }
     return output
+  }
+
+  /// The mask label under an observed joint (any positive confidence) inside the image, or nil.
+  static func observedLabel(_ p: PoseJoint, width: Int, height: Int, labelAt: (Int, Int) -> UInt8) -> UInt8? {
+    guard (try? p.validate()) != nil, p.confidence > 0, p.x > 0, p.x < 1, p.y > 0, p.y < 1 else { return nil }
+    let x = Int(p.x * Double(width)), y = Int((1 - p.y) * Double(height))
+    guard (0..<width).contains(x), (0..<height).contains(y) else { return nil }
+    return labelAt(x, y)
   }
 
   /// The players the tracker has linked (co-op: both after binding; DEBUG Solo Test: P1 only,
@@ -231,6 +247,7 @@ extension PersonSegmenter {
     let original = association.source
     d.otherPeople = max(0, pose.frame.candidates.count - roster.count)
     guard !roster.isEmpty, pose.matchesSource, pose.frame.candidates.count >= roster.count,
+      pose.observationCount == pose.frame.candidates.count,
       original?.frameID == pose.source.frameID, original?.capturedAt == pose.source.capturedAt,
       original?.controlRevision == association.controlRevision,
       original?.context.generation == pose.source.context.generation,
