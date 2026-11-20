@@ -195,8 +195,9 @@ nonisolated struct AnatomicalMeasurementTests {
     #expect(session.candidate == nil, "no candidate until BOTH players are stable")
   }
   /// iPad, 11 November 2026: one jittery head-top reading among still samples is skipped, not
-  /// allowed to collapse the window; a real step (two agreeing samples elsewhere) restarts it.
-  @Test func anIsolatedOutlierIsSkippedAndARealStepRestartsTheWindow() throws {
+  /// allowed to collapse the window. V1.2: a real step no longer restarts the window either; the
+  /// new place calibrates once 10 samples agree there (see `SpanMajorityCalibrationTests`).
+  @Test func anIsolatedOutlierIsSkippedAndARealStepNeedsTenSamplesAtTheNewPlace() throws {
     func run(_ crownOffsetPixels: (Int) -> Double, samples: Int) throws -> CalibrationSession {
       let (f,initial,stamp) = try LiveVisionFixtures.sessionFixture();var session = initial
       for i in 0..<samples {
@@ -219,9 +220,9 @@ nonisolated struct AnatomicalMeasurementTests {
     #expect(jitter.players[.player1]?.rejected[.moving] == 4)
     #expect(candidate.players.values.allSatisfy { abs(($0.anatomy?.crownY ?? 0) - 0.9) < 1e-9 },
             "skipped outliers never enter the averaged reference")
-    // A real step of 10 px after 5 samples: the window restarts from the first two new samples.
+    // A real step of 10 px after 5 samples: the old place keeps its 5 until the new one outnumbers it.
     let step = try run({ $0 < 5 ? 0 : 10 }, samples: 9)
-    #expect(step.players[.player1]?.samples == 4 && step.players[.player1]?.rejected[.moving] == 2)
+    #expect(step.players[.player1]?.samples == 5 && step.players[.player1]?.rejected[.moving] == 4)
     #expect(step.candidate == nil)
   }
   /// The 3 px candidate is never finer than two rows of the mask the estimate was read from

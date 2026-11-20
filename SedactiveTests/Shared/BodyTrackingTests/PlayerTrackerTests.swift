@@ -198,7 +198,7 @@ nonisolated struct PlayerTrackerTests {
   func ambiguousExtraDuplicatePartialOrWeakAcquisitionRefuses(_ variant: Int) throws {
     let cases: [[PoseCandidate]] = [
       [F.candidate(1, x: 0.5), F.candidate(2, x: 0.51)],
-      F.pair + [F.candidate(30, x: 0.5)],
+      F.pair + [F.candidate(30, x: 0.65)], // a third person inside P1's box (outside people are ignored)
       [F.candidate(1, x: 0.75), F.candidate(2, x: 0.751)],
       [F.candidate(1, x: 0.75, missing: [.leftHip]), F.candidate(2, x: 0.25)],
       [F.candidate(1, x: 0.75, confidence: 0.49), F.candidate(2, x: 0.25)],
@@ -610,7 +610,8 @@ nonisolated struct PlayerTrackerTests {
     #expect(try tracker.process(F.input(18, 2.25)).player1.state == .lost)
   }
   @Test func positiveZeroCoordinateIsEvidenceWhileMissingRemainsAbsent() throws {
-    let raw = F.candidate(20, x: 0.05, y: 0.1)
+    // Inside P2's box (people outside the boxes are never linked); the left hip is still at (0, 0).
+    let raw = F.candidate(20, x: 0.2, y: 0.1)
     var points = raw.joints
     points[.leftHip] = PoseJoint(x: 0, y: 0, confidence: 0.9)
     let corner = PoseCandidate(candidateID: 20, joints: points,

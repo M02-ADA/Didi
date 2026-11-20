@@ -283,7 +283,8 @@ protocol CameraDriving: Actor {
     frames = store
     store.tracking.observeApplicationLifecycle(notificationCenter,
       initiallyForeground: UIApplication.shared.applicationState != .background)
-    self.sink = sink ?? CameraCopySink(metrics: store.metrics, poses: store.poses, tracking: store.tracking)
+    self.sink = sink ?? CameraCopySink(metrics: store.metrics, poses: store.poses, tracking: store.tracking,
+      warmsSegmentation: true)
     #if DEBUG
     // DEBUG mask feasibility spike (Kevin, needs Edo's review): drop counters for its summary.
     MaskBenchmark.recorder.attach { [store] in store.diagnostics }

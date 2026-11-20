@@ -287,9 +287,9 @@ import Testing
             // The gate is shown, its door at its stop.
             #expect(presenter.vault.diagnostics.reveals + presenter.vault.diagnostics.approaches >= gate + 1)
             #expect(scene.vaultDoorDepth != nil, "round \(round): gate \(gate + 1) door in the corridor")
-            // Real button contact: outside first, then each button's zone, for both players.
+            // Real button contact: outside first, then each player's one activation zone.
             let zones = try #require(session.liveVaultZones)
-            #expect(zones.count == 6 && Set(zones.map(\.playerID)) == Set(PlayerID.allCases))
+            #expect(zones.count == 2 && Set(zones.map(\.playerID)) == Set(PlayerID.allCases))
             for button in LaserVaultButton.allCases {
                 try await send(outside)
                 let wrists = Dictionary(uniqueKeysWithValues: zones.filter { $0.button == button }.map {

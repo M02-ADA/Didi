@@ -11,8 +11,8 @@ import SwiftUI
 /// DEBUG review of a live gate's wall consoles without a camera: launch with
 /// `-replay -gateConsolePreview [solo] [seconds]`. SYNTHETIC player poses (from the bundled
 /// replay calibrations) go through the real retargeter, steering and solver: each player leans
-/// toward their own wall, straightens up at the dock, then reaches HIGH, MIDDLE and LOW with a
-/// straight arm. A button lights when the pose's wrist is inside its zone as the live judge places
+/// toward their own wall, straightens up at the dock, then reaches for the activation button with a
+/// straight arm. The button lights when the pose's wrist is inside its zone as the live judge places
 /// it (`LaserLiveRoundGeometryV1` zone + the body centre + `RobotAvatarLayer.vaultReachShift`);
 /// the preview has no entry/freshness rules and no game: presentation review only, never gameplay.
 /// `seconds` holds the scripted moment (screenshots); otherwise it loops. `skip` starts the gate at
@@ -29,6 +29,14 @@ final class GateConsolePreview {
         return (rest.contains("solo"), rest.compactMap(Double.init).first)
     }
 
+    /// `closeup`: the camera looks at P1's button from close in front and to the side (prop review:
+    /// the cap's depth and travel), instead of the gameplay view.
+    static var closeup: Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-gateConsolePreview") else { return false }
+        return arguments[(index + 1)...].prefix { !$0.hasPrefix("-") }.contains("closeup")
+    }
+
     static var skips: Bool {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "-gateConsolePreview") else { return false }
@@ -36,10 +44,9 @@ final class GateConsolePreview {
     }
     static let skipAt = 0.4, skippedLead = 56.0
 
-    /// The script: lean to the wall, upright at the dock, then each button with a pause between.
+    /// The script: lean to the wall, upright at the dock (the button pulses), then the reach.
     static let leanUntil = 2.4, dockedUntil = 3.0
-    static let reaches: [(button: LaserVaultButton, from: Double, to: Double)] = [
-        (.top, 3.0, 4.0), (.middle, 4.4, 5.4), (.bottom, 5.8, 6.8)]
+    static let reaches: [(button: LaserVaultButton, from: Double, to: Double)] = [(.activate, 3.4, 4.6)]
     static let loop = 10.0
 
     private var subscription: EventSubscription?
@@ -66,6 +73,20 @@ final class GateConsolePreview {
                                                 clearanceMargin: 0.005, diamondPoints: 25)
         let vault = VaultPresentation(scene: scene, configuration: round)
         self.vault = vault
+        let closeupPlayer: PlayerID = ProcessInfo.processInfo.arguments.contains("p2") ? .player2 : .player1
+        if Self.closeup, let camera = scene.root.findEntity(named: "camera"), let button = robots.consoles[closeupPlayer]?.button {
+            // P1's (`p2`: P2's) button on the door frame (facing the camera): the close-up looks at it from
+            // just in front, `side` from outside it along the door (the mount's depth, the mascot beyond),
+            // `profile` from behind and above the mascot. P2's views are P1's mirrored.
+            let arguments = ProcessInfo.processInfo.arguments
+            var offset: SIMD3<Float> = arguments.contains("profile") ? [1.0, 0.8, 2.2]
+                : arguments.contains("side") ? [-0.9, 0.2, 0.5] : [-0.1, 0.12, 0.9]
+            if closeupPlayer == .player2 { offset.x = -offset.x }
+            let target = button.center
+            camera.look(at: target, from: button.center + offset, relativeTo: nil)
+        }
+        // `reduce`: the presentation as with Reduce Motion on (DEBUG review; the setting itself is untouched).
+        if ProcessInfo.processInfo.arguments.contains("reduce") { vault.reducesMotion = { true } }
         vault.visiblePlayers = roster
         vault.liveConsoles = { [weak robots] player in robots?.consoles[player] }
         let references = configuration.calibrations.filter { roster.contains($0.key) }

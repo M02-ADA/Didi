@@ -362,16 +362,24 @@ nonisolated struct PlayerTracker: Sendable {
   private mutating func acquire(_ values: [Descriptor?], overflow: Bool, source: PlayerTrackingSource) {
     guard armed else { return }
     if solo { return acquireSolo(values, overflow: overflow, source: source) }
-    let eligible = values.compactMap { $0 }
-    guard !overflow, eligible.count == 2, eligible.allSatisfy({ $0.points.count == 4 }),
-      let separation = proximity(eligible[0], eligible[1]), separation > policy.minimumPairSeparation
-    else { acquisitionRefused(overflow ? .overflow : .acquisitionRefused); return }
     let aspect = Double(source.context.imageWidth) / Double(source.context.imageHeight)
-    // This is acquisition-only. After binding, X ordering never chooses identity.
-    let ordered = eligible.sorted { $0.center.x > $1.center.x }
-    guard ordered[0].center.x / aspect > 0.5 + policy.centerGuardFraction,
-      ordered[1].center.x / aspect < 0.5 - policy.centerGuardFraction
-    else { acquisitionRefused(.acquisitionRefused); return }
+    // Only people standing in a player's box count (`PlayerAcquisitionZones`): a bystander
+    // outside both boxes is ignored, never linked, and never blocks linking. Two people in one box
+    // still refuse (no guessing). This is acquisition-only; after binding, identity is the
+    // association's, and neither X ordering nor the boxes choose it.
+    let people = values.compactMap { $0 }
+    func inBox(_ player: PlayerID) -> [Descriptor] {
+      people.filter { person in
+        let x = person.center.x / aspect
+        return PlayerAcquisitionZones.player(atX: x, solo: false, imageAspect: aspect) == player
+          && (player == .player1 ? x > 0.5 + policy.centerGuardFraction : x < 0.5 - policy.centerGuardFraction)
+      }
+    }
+    let p1 = inBox(.player1), p2 = inBox(.player2)
+    guard !overflow, p1.count == 1, p2.count == 1, p1[0].points.count == 4, p2[0].points.count == 4,
+      let separation = proximity(p1[0], p2[0]), separation > policy.minimumPairSeparation
+    else { acquisitionRefused(overflow ? .overflow : .acquisitionRefused); return }
+    let ordered = [p1[0], p2[0]]
     var continuous = true
     for i in slots.indices {
       guard let prior = slots[i].provisional,
@@ -397,12 +405,15 @@ nonisolated struct PlayerTracker: Sendable {
       }
     }
   }
-  /// DEBUG Solo Test: exactly one fully visible person (both shoulders and hips), anywhere in
-  /// the frame, held for the same acquisition dwell, becomes P1. Two people refuse (no guessing),
-  /// and P2's slot is left unbound: it never receives a descriptor.
+  /// DEBUG Solo Test: exactly one fully visible person (both shoulders and hips) in the Solo box,
+  /// held for the same acquisition dwell, becomes P1. People outside the box are ignored; two
+  /// people in the box refuse (no guessing), and P2's slot is left unbound.
   private mutating func acquireSolo(_ values: [Descriptor?], overflow: Bool, source: PlayerTrackingSource,
     relink: Bool = false) {
-    let eligible = values.compactMap { $0 }
+    let aspect = Double(source.context.imageWidth) / Double(source.context.imageHeight)
+    let eligible = values.compactMap { $0 }.filter {
+      PlayerAcquisitionZones.player(atX: $0.center.x / aspect, solo: true, imageAspect: aspect) == .player1
+    }
     guard !overflow, eligible.count == 1, let person = eligible.first, person.points.count == 4 else {
       acquisitionRefused(overflow ? .overflow : .acquisitionRefused); return
     }

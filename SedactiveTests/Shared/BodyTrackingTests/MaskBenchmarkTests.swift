@@ -167,10 +167,14 @@ struct MaskBenchmarkTests {
                                                 extents: whole.extents, labelAt: whole.at) == "matched")
         #expect(MaskBenchAssociation.productionLabel(pose: pose, receipt: solo, labels: whole.labels,
                                                      extents: whole.extents, labelAt: whole.at) == 1)
-        // Two people detected in a solo round: refused, by count.
+        // Two people detected in a solo round (19 November 2026): matched by P1's own torso; the
+        // other person's instance is ignored. Too few people is still refused, by count.
         let two = mask { x, _ in x < size / 2 ? 1 : 2 }
         #expect(MaskBenchAssociation.production(pose: pose, receipt: solo, labels: two.labels,
-                                                extents: two.extents, labelAt: two.at) == "people 2 ≠ players 1")
+                                                extents: two.extents, labelAt: two.at) == "matched")
+        let nobody = mask { _, _ in 0 }
+        #expect(MaskBenchAssociation.production(pose: pose, receipt: solo, labels: nobody.labels,
+                                                extents: nobody.extents, labelAt: nobody.at) == "people 0 < players 1")
         // Hips below the mask (a person cut off at the waist): detected, refused at the hip,
         // and still found by the relaxed vote (nose and shoulders).
         let hipRow = Int((1 - standing.joints[.leftHip]!.y) * Double(size))

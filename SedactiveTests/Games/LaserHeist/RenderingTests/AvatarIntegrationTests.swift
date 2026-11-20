@@ -233,7 +233,7 @@ struct AvatarIntegrationTests {
         let (posed, scene, presenter) = try await playRound(withAvatars: true)
         #expect(plain.judgements == posed.judgements && !posed.judgements.isEmpty)
         #expect(plain.vault == posed.vault)
-        #expect(posed.vault.reveals == 1 && posed.vault.opens == 1 && posed.vault.activations == 6)
+        #expect(posed.vault.reveals == 1 && posed.vault.opens == 1 && posed.vault.activations == 2)
         #expect(posed.attachedEveryFrame)
         // Duck lasers lower the avatars. At the jump laser the replay's P2 soles
         // are 0.025 game units up (CLEAR) and P1's stay on the floor (HIT): only P2 lifts.
