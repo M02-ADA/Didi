@@ -45,13 +45,13 @@ nonisolated enum PoseFirstCandidate {
     /// - ankle jitter stayed above the take-off threshold for 1–2 frames (0.03–0.07 s); the
     ///   smallest real jumps for 6–8 frames (0.20–0.23 s): 0.1 s keeps every real jump seen and
     ///   rejects the jitter seen;
-    /// - the tolerance is one 30 fps frame plus capture jitter: a jump must be in the air AT the
-    ///   crossing, not merely somewhere in the 0.6 s evidence window.
+    /// The gameplay tolerance is 150 ms on either side of crossing. A real airborne run must
+    /// overlap that band. The full 0.6 s evidence window is only for observing the run.
     /// Quick tiptoes (8–11 frames above the threshold, 0.08–0.12 lift) overlap real small jumps
     /// in height and duration; this rule cannot separate them. Held tiptoes (> 0.7 s), jitter and
     /// squat recovery are rejected by the estimator.
     static let jumpMinimumFlight = 0.1
-    static let jumpTimingTolerance = 0.05
+    static let jumpTimingTolerance = 0.15
 
     /// UNAVAILABLE without a pause, per player: at most this many in a row, and this many per round.
     nonisolated struct UnavailableBudget: Equatable, Sendable {

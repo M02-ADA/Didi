@@ -193,8 +193,14 @@ final class LaserInputFlow {
         switch error {
         case CameraFailure.permissionDenied, CameraFailure.permissionRestricted:
             "Camera access is unavailable. Review camera access in Settings, then try camera setup again."
-        case CameraFailure.unsupported, CameraFailure.cameraUnavailable:
-            "Camera setup needs a supported front camera and an iPad held in landscape. Check the device and position before trying again. Replay is still available."
+        case CameraFailure.unsupported(let requirement, _) where requirement.contains("Center Stage") && requirement.hasPrefix("disable"):
+            "Turn off Center Stage in Control Center, then retry camera setup."
+        case CameraFailure.unsupported(let requirement, _):
+            "This camera cannot start with the required setting: \(requirement). Check your camera and retry."
+        case CameraFailure.cameraUnavailable:
+            "Camera unavailable. Reconnect your display or webcam, then retry camera setup."
+        case CameraFailure.runtimeError(let code):
+            "The camera stopped responding (code \(code)). Close other apps using the camera, then retry setup."
         case is CancellationError:
             "Camera setup was stopped. You can start a fresh setup when ready."
         default:

@@ -131,7 +131,7 @@ struct AudioServiceTests {
         #expect(menu.volume == 0 && mission.volume == 0)
     }
 
-    @Test(arguments: [SoundCue.diamondTime, .cueDuck, .cueJump, .laserClear, .vaultWarning])
+    @Test(arguments: [SoundCue.cueDuck, .cueJump, .laserClear, .vaultWarning])
     func priorityCuesDuckTheMusic(cue: SoundCue) throws {
         let harness = Harness()
         let audio = service(harness)
@@ -139,7 +139,7 @@ struct AudioServiceTests {
         audio.play(cue)
         let mission = try #require(harness.made.first { $0.name == "lh-music-silky-spy" })
         #expect(abs(mission.volume - audio.musicVolume * 0.5 * AudioService.duckedShare) < 1e-6)
-        if cue == .laserClear {
+        if cue == .laserClear || cue == .vaultWarning {
             #expect(mission.fades.last?.1 == 0.04)
         }
     }
@@ -161,8 +161,74 @@ struct AudioServiceTests {
         }
     }
 
+    @Test func diamondTimeMusicWaitsForRoomAndBonusSting() throws {
+        let harness = Harness()
+        let audio = service(harness)
+        audio.setMusic(.mission)
+        let mission = try #require(harness.made.first { $0.name == "lh-music-silky-spy" })
+        audio.play(.diamondTime)
+        #expect(!mission.isPlaying && !audio.isMusicPlaying)
+        let sting = try #require(harness.made.first { $0.name == "lh-diamond-time" })
+        audio.startDiamondTimeMusicIfReady(isInside: true)
+        #expect(audio.mood == .diamondTimeEntry && !audio.isMusicPlaying)
+        sting.stop()
+        audio.startDiamondTimeMusicIfReady(isInside: false)
+        #expect(audio.mood == .diamondTimeEntry && !audio.isMusicPlaying)
+        audio.startDiamondTimeMusicIfReady(isInside: true)
+        audio.startDiamondTimeMusicIfReady(isInside: true)
+        let track = try #require(harness.made.first { $0.name == "lh-music-slick-spy" })
+        #expect(audio.mood == .diamondTime && track.plays == 1)
+        audio.setMusic(nil)
+        audio.startDiamondTimeMusicIfReady(isInside: true)
+        #expect(audio.mood == nil && track.plays == 1)
+    }
+
+    @Test func diamondTimeTicksOnlyOnceForEachNewDigitFromFiveToOne() throws {
+        let harness = Harness()
+        let audio = service(harness)
+        audio.setMusic(.diamondTime)
+        let music = try #require(harness.made.first { $0.name == "lh-music-slick-spy" })
+        let normalVolume = music.volume
+        audio.playDiamondTimeTick(from: 7, to: 6)
+        for second in (1...5).reversed() {
+            harness.clock += 1
+            audio.playDiamondTimeTick(from: second + 1, to: second)
+            audio.playDiamondTimeTick(from: second, to: second)
+            #expect(audio.playCount[.diamondTimeTick, default: 0] == min(4, 6 - second))
+            #expect(audio.playCount[.diamondTimeUrgentTick, default: 0] == max(0, 2 - second))
+        }
+        audio.playDiamondTimeTick(from: 1, to: 0)
+        audio.playDiamondTimeTick(from: 0, to: nil)
+        #expect(audio.playCount[.diamondTimeTick] == 4)
+        #expect(audio.playCount[.diamondTimeUrgentTick] == 1)
+        #expect(audio.playCount[.vaultWarning] == nil)
+        #expect(music.volume == normalVolume * 0.40)
+        #expect(music.fades.last?.1 == 0.04)
+    }
+
+    @Test func diamondTimeMusicIsLouderAndUrgentTicksTakePriority() throws {
+        let harness = Harness()
+        let audio = service(harness)
+        audio.setMusic(.mission)
+        let mission = try #require(harness.made.first { $0.name == "lh-music-silky-spy" })
+        audio.setMusic(.diamondTime)
+        let bonus = try #require(harness.made.first { $0.name == "lh-music-slick-spy" })
+        #expect(bonus.volume > audio.musicVolume * 0.5)
+        #expect(bonus.volume == audio.musicVolume * 0.79)
+        #expect(mission.volume == 0)
+
+        audio.play(.diamondCollect)
+        let pickup = try #require(harness.made.first { $0.name == "lh-diamond-collect-1" })
+        audio.playDiamondTimeTick(from: 3, to: 2)
+        #expect(pickup.volume == audio.effectsVolume * 0.60)
+        #expect(bonus.volume == audio.musicVolume * 0.79 * 0.40)
+        audio.play(.diamondChainRise)
+        let chain = try #require(harness.made.first { $0.name == "lh-diamond-chain-rise" })
+        #expect(chain.volume == audio.effectsVolume * 0.60)
+    }
+
     @Test func selectedMusicTracksAreBundled() {
-        for name in ["lh-music-60s-special-agent", "lh-music-silky-spy"] {
+        for name in ["lh-music-60s-special-agent", "lh-music-silky-spy", "lh-music-slick-spy"] {
             #expect(Bundle.main.url(forResource: name, withExtension: "mp3") != nil)
         }
     }
