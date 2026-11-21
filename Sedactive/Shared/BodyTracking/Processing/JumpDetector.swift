@@ -20,8 +20,11 @@ nonisolated enum JumpDetector {
 ///   this player's own frame-to-frame foot noise) AND rose by `riseFraction` of that within
 ///   `riseWindow` (a hop, not a slow rise). One raised foot never counts (the lower sole stays down).
 /// - It ends below `exitShare` (hysteresis); the first frame after is LANDING.
-/// - Missing soles are UNKNOWN for that frame, never airborne or grounded. A jump in progress
-///   survives `dropoutFrames` such frames; more, a capture gap, or a new calibration ends it.
+/// - Missing soles are UNKNOWN for that frame, never airborne or grounded. Before a jump, more than
+///   `dropoutFrames` such frames forget the rise seen so far; a jump in progress survives them for
+///   up to `maximumGap` since its soles were last seen (21 November 2026: a tuck jump's folded lower
+///   legs hide the ankles for a few frames), and resumes only if the soles are still up when seen
+///   again. A longer dropout, a capture gap, or a new calibration ends it.
 /// Reference values come from synthetic tracks (spike `LiveJumpTuningTests`), not device data.
 nonisolated struct LiveJumpEstimator: Sendable {
   static let enterShare = 0.03, exitShare = 0.015, noiseMultiple = 4.0
@@ -32,7 +35,11 @@ nonisolated struct LiveJumpEstimator: Sendable {
   /// a flight longer than this is a held rise (tiptoe), not a jump; a 30 cm jump flies ~0.5 s.
   static let maximumFlight = 0.7
   /// At take-off the hips must rise at least this share of the soles' rise (whole body leaves the
-  /// floor; an ankle-only jump in the pose is noise). Unknown hips do not block.
+  /// floor; an ankle-only jump in the pose is noise). Unknown hips do not block. Never more than the
+  /// take-off line itself (21 November 2026): in a tuck jump the heels fold back as the feet leave the
+  /// floor, so the soles rise by the flight PLUS the tuck while the hips rise by the flight alone, and
+  /// a share of that sum refused every frame of a real jump. Still hips (ankle noise, one raised
+  /// foot, a squat) still never take off.
   static let hipFollowShare = 0.5
   /// FLOOR RE-ANCHORING (Kevin, 14 Nov 2026 — Edo-owned, needs his review). iPad logs: while the
   /// player squats, the ankle-based sole reads 0.1–0.2 below the real floor; the floor baseline
@@ -59,6 +66,8 @@ nonisolated struct LiveJumpEstimator: Sendable {
   private var calibrationRevision: UInt64?
   private var lastFrame: UInt64 = 0
   private var lastTime: Double?
+  /// When both soles were last seen (a flight survives a dropout up to `maximumGap` from here).
+  private var lastSolesTime: Double?
   private var airborne = false
   private var missing = 0
   private var recent: [(time: Double, lift: Double)] = []
@@ -87,10 +96,12 @@ nonisolated struct LiveJumpEstimator: Sendable {
     lastFrame = frameID; lastTime = time
     guard let leftSole, let rightSole, standingHeight > 0, standingHeight.isFinite else {
       missing += 1; lift = nil; previousLift = nil; still = []
-      if missing > Self.dropoutFrames { airborne = false; recent = [] }
+      let lost = airborne ? time - (lastSolesTime ?? time) > Self.maximumGap : missing > Self.dropoutFrames
+      if lost { airborne = false; recent = [] }
       return JumpDetector.unavailable(.missingLandmarks)
     }
     missing = 0
+    lastSolesTime = time
     let raw = min(leftSole - standingLeftSole, rightSole - standingRightSole)
     let wasAirborne = airborne
     // Candidate: upright (hips high over the soles) and still (soles within the band for long enough).
@@ -136,7 +147,7 @@ nonisolated struct LiveJumpEstimator: Sendable {
       if candidateRules {
         if heldRise { takeoff = false } // must come back down before another take-off
         else if takeoff, let hipY, let lowest = recentHips.map(\.hip).min() {
-          takeoff = hipY - lowest >= Self.hipFollowShare * rise
+          takeoff = hipY - lowest >= min(Self.hipFollowShare * rise, enter)
         }
       }
       airborne = takeoff

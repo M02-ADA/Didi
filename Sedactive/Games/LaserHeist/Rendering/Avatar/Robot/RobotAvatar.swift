@@ -957,11 +957,25 @@ final class RobotAvatarLayer {
         var rootX: Float
     }
     private var walkingPositions: [PlayerID: WalkingPosition] = [:]
+    /// Where each mascot's walk in the vault starts (lane-local root X): its fixed place in the vault
+    /// (`FinalVaultPresentation.landingRootX`), never the lean steering's travel before the vault
+    /// (20 November 2026: a mascot that had leaned far out landed, and stayed, far out). Tracked
+    /// steps then move it from there.
+    private var vaultEntryRootX: [PlayerID: Float] = [:]
 
-    func setVaultWalking(_ active: Bool) {
+    /// Starts or ends floor walking in the vault. `entryRootX`: each mascot's fixed place to walk
+    /// from (lane-local root X); its tracked root is put there at once, so a scripted landing on that
+    /// place hands over to live tracking without a jump.
+    func setVaultWalking(_ active: Bool, entryRootX: [PlayerID: Float] = [:]) {
         guard active != walksInVault else { return }
         walksInVault = active
         walkingPositions.removeAll()
+        vaultEntryRootX = active ? entryRootX : [:]
+        for (player, x) in vaultEntryRootX where robots[player] != nil {
+            var root = trackedRoot[player] ?? .zero
+            root.x = x
+            trackedRoot[player] = root
+        }
         resetFeet()
     }
     private var reachCursors: [PlayerID: [RobotPoseTargets.Side: ModelEntity]] = [:]
@@ -1904,7 +1918,7 @@ final class RobotAvatarLayer {
         let travel = steering?.riders[player]?.travel ?? 0
         var rootX = s.sway + travel
         if walksInVault {
-            rootX = walkingPositions[player]?.rootX ?? trackedRoot[player]?.x ?? rootX
+            rootX = walkingPositions[player]?.rootX ?? vaultEntryRootX[player] ?? trackedRoot[player]?.x ?? rootX
             if r.isAvailable, let hip = r.walkingHipX {
                 var position = walkingPositions[player] ?? WalkingPosition(entryHipX: hip, entryRootX: rootX, rootX: rootX)
                 let target = position.entryRootX + hip - position.entryHipX

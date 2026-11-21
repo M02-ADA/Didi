@@ -27,8 +27,11 @@ final class GameSessionCoordinator {
     var isCompleteReplay: Bool { replayDriver?.script.fullRound != nil }
     /// Read-only domain state for the separately reviewed K06 rendering handoff.
     var diamondStates: [UUID: LaserDiamondState] { game?.diamonds ?? [:] }
+    /// Diamond Time's own view (the paw board; the mascots no longer shown): from the middle of the
+    /// entry's blink, while the eyelids are shut (`LaserFinalVaultTimeline.blinkSwitch`). Its input
+    /// and seconds still start only when the entry is complete (the eyes open).
     var showsDiamondTimePaws: Bool {
-        !isReplay && state?.phase == .diamondTime && finalVaultEntry?.isComplete == true
+        !isReplay && state?.phase == .diamondTime && finalVaultEntry?.presentsDiamondTime == true
     }
 
     // Published on the live frame host so an expired hand disappears even without a new packet.
@@ -1439,7 +1442,7 @@ final class GameSessionCoordinator {
         if finalVaultEntry == nil {
             finalVaultEntry = LaserFinalVaultEntry(roster: inputConfiguration.roster)
             print(String(format: "[LaserFinalVault] entry starts at game %.2f s · %d mascot(s), %.2f s held",
-                         game.gameTime, finalVaultEntry!.timeline.jumpers.count, finalVaultEntry!.timeline.total))
+                         game.gameTime, finalVaultEntry!.timeline.jumpers.count, finalVaultEntry!.timeline.end))
         }
         guard var entry = finalVaultEntry, !entry.isComplete else { return }
         guard liveReadiness?.isClockHeld == true else {

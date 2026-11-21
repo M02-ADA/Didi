@@ -228,6 +228,144 @@ nonisolated struct PoseFirstCandidateTests {
         #expect(airborne(jitter, candidate: true).isEmpty)
     }
 
+    // MARK: Bent-back legs in the air (21 November 2026; SYNTHETIC tracks, not device data)
+    //
+    // A tuck jump: the heels fold back toward the buttocks once the feet leave the floor, so the
+    // ankle-based soles rise by the flight PLUS the tuck, while the hips rise by the flight alone.
+
+    /// A jump of `height` over `flight` s; the lower legs fold back by up to `tuck` (each side's
+    /// share in `sides`) from 0.06 s after take-off until 0.08 s before landing.
+    static func tuckJump(_ u: Double, height: Double = 0.12, flight: Double = 0.45, tuck: Double = 0.35,
+                         kickAt: Double = 0.06, sides: (left: Double, right: Double) = (1, 1)) -> (left: Double, right: Double, hip: Double) {
+        guard u >= 0, u < flight else { return (0, 0, 0.8) }
+        let h = height * sin(.pi * u / flight)
+        let fold = max(0, sin(.pi * min(1, max(0, (u - kickAt) / (flight - kickAt - 0.08)))))
+        return (h + tuck * sides.left * fold, h + tuck * sides.right * fold, 0.8 + h)
+    }
+    private func twoSoles(_ seconds: Double, _ f: (Double) -> (left: Double?, right: Double?, hip: Double)) -> [Double] {
+        var estimator = LiveJumpEstimator()
+        var out: [Double] = []
+        for i in 0..<Int(seconds * 30) {
+            let t = Double(i) / 30, v = f(t)
+            let state = estimator.step(frameID: UInt64(i + 1), capturedAt: t, leftSole: v.left, rightSole: v.right,
+                standingLeftSole: 0, standingRightSole: 0, standingHeight: 1.6, calibrationRevision: 1,
+                hipY: v.hip, standingHip: 0.8, candidateRules: true)
+            if state.phase == .airborne { out.append(t) }
+        }
+        return out
+    }
+    /// The airborne runs (start, end) in a list of airborne frame times.
+    static func runs(_ times: [Double]) -> [(Double, Double)] {
+        var out: [(Double, Double)] = []
+        for t in times {
+            if let last = out.last, t - last.1 < 1.5 / 30 { out[out.count - 1].1 = t } else { out.append((t, t)) }
+        }
+        return out
+    }
+
+    /// (A) The heels kick back as the feet leave the floor (no delay): at the first frame over the
+    /// take-off line the soles have already risen far more than the hips.
+    @Test func aTuckJumpKickingBackAtTakeOffIsAirborne() {
+        let jump = twoSoles(3) { t in let v = Self.tuckJump(t - 1, kickAt: 0); return (v.left, v.right, v.hip) }
+        let runs = Self.runs(jump)
+        #expect(runs.count == 1 && runs.first.map { $0.1 - $0.0 >= 0.2 } == true, "one flight: \(runs)")
+    }
+
+    /// (B) The folded lower legs hide the ankles for 4 frames (0.13 s) mid-flight: those frames are
+    /// UNKNOWN, but the flight resumes when the soles are seen again, still up, so the airborne
+    /// captures either side stay within the judge's gap (`LiveJumpEstimator.maximumGap`).
+    @Test func aTuckJumpWhoseAnklesAreHiddenMidFlightResumes() {
+        let hidden = (1.0 + 4.0 / 30)...(1.0 + 7.5 / 30)
+        let jump = twoSoles(3) { t in
+            let v = Self.tuckJump(t - 1)
+            return hidden.contains(t) ? (nil, nil, v.hip) : (v.left, v.right, v.hip)
+        }
+        let runs = Self.runs(jump)
+        #expect(runs.count == 2, "airborne before and after the hidden frames: \(runs)")
+        if runs.count == 2 {
+            #expect(runs[1].0 - runs[0].1 <= LiveJumpEstimator.maximumGap + 1e-9, "one flight to the judge: \(runs)")
+            #expect(runs[1].1 - runs[0].0 >= 0.25, "airborne through the flight: \(runs)")
+        }
+    }
+
+    @Test func aTuckJumpWithBothLowerLegsBentBackIsAirborne() {
+        let jump = twoSoles(3) { t in let v = Self.tuckJump(t - 1); return (v.left, v.right, v.hip) }
+        let runs = Self.runs(jump)
+        #expect(runs.count == 1, "one jump: \(runs)")
+        #expect(runs.first.map { $0.0 < 1.15 && $0.1 > 1.25 } == true, "airborne through the flight: \(runs)")
+    }
+
+    @Test func anAsymmetricTuckJumpIsAirborne() {
+        // One heel folds right back, the other only a little: the lower sole still leaves the floor.
+        let jump = twoSoles(3) { t in let v = Self.tuckJump(t - 1, kickAt: 0, sides: (1, 0.3)); return (v.left, v.right, v.hip) }
+        #expect(Self.runs(jump).count == 1)
+    }
+
+    @Test func liftingOneFootBackWhileStandingIsNeverAJump() {
+        // The heel kicks back fast and is held; the other foot (the lower sole) stays down.
+        let kick = twoSoles(4) { t in (t < 1 ? 0 : min(0.35, 3 * (t - 1)), 0, 0.8) }
+        #expect(kick.isEmpty)
+    }
+
+    @Test func bothSolesRisingWithoutTheHipsIsNeverAJump() {
+        // Both ankle-based soles rise quickly (heels drawn back, or ankles mis-placed) while the hips
+        // stay put, or rise less than the take-off line: no whole-body flight, no take-off.
+        for hipRise in [0.0, -0.05, 0.03] {
+            let heels = twoSoles(3) { t in
+                let u = min(1, max(0, (t - 1) / 0.15)), back = max(0, 1 - max(0, t - 1.6) / 0.15)
+                let s = 0.3 * min(u, back)
+                return (s, s, 0.8 + hipRise * min(u, back))
+            }
+            #expect(heels.isEmpty, "hips rising \(hipRise)")
+        }
+    }
+
+    @Test func aSquatWithoutAJumpIsNeverAJump() {
+        // Down and up over 0.4 s each, the soles reading low while squatting (as the iPad logs show).
+        let squat = twoSoles(4) { t in
+            let d = min(1, max(0, (t - 1) / 0.4)) - min(1, max(0, (t - 2.2) / 0.4))
+            return (-0.15 * d, -0.15 * d, 0.8 - 0.3 * d)
+        }
+        #expect(squat.isEmpty)
+    }
+
+    @Test func ankleDropoutsLongerThanOneFlightGapEndTheJump() {
+        // Hidden for 9 frames (0.3 s, beyond `maximumGap`): the flight ends and is not resumed, so
+        // nothing is claimed airborne without seen soles for longer than the judge would bridge.
+        let hidden = (1.0 + 2.0 / 30)...(1.0 + 10.5 / 30)
+        let jump = twoSoles(3) { t in
+            let v = Self.tuckJump(t - 1, height: 0.2, flight: 0.6)
+            return hidden.contains(t) ? (nil, nil, v.hip) : (v.left, v.right, v.hip)
+        }
+        #expect(jump.allSatisfy { !hidden.contains($0) })
+        #expect(jump.allSatisfy { $0 < hidden.lowerBound }, "not resumed after a too-long dropout: \(jump)")
+    }
+
+    @Test func repeatedTuckJumpsAreSeparateJumpsWithLandings() {
+        let jumps = twoSoles(4) { t in
+            let v = t < 2 ? Self.tuckJump(t - 1, kickAt: 0) : Self.tuckJump(t - 2.2, kickAt: 0)
+            return (v.left, v.right, v.hip)
+        }
+        #expect(Self.runs(jumps).count == 2, "\(Self.runs(jumps))")
+    }
+
+    @Test func eachPlayersEstimatorIsIndependent() {
+        // P1 tuck-jumps while P2 kicks one heel back, frame by frame together.
+        var p1 = LiveJumpEstimator(), p2 = LiveJumpEstimator()
+        var air1 = 0, air2 = 0
+        for i in 0..<90 {
+            let t = Double(i) / 30, a = Self.tuckJump(t - 1, kickAt: 0)
+            let s1 = p1.step(frameID: UInt64(i + 1), capturedAt: t, leftSole: a.left, rightSole: a.right, standingLeftSole: 0,
+                             standingRightSole: 0, standingHeight: 1.6, calibrationRevision: 1, hipY: a.hip, standingHip: 0.8, candidateRules: true)
+            let s2 = p2.step(frameID: UInt64(i + 1), capturedAt: t, leftSole: t < 1 ? 0 : min(0.35, 3 * (t - 1)), rightSole: 0,
+                             standingLeftSole: 0, standingRightSole: 0, standingHeight: 1.6, calibrationRevision: 1, hipY: 0.8,
+                             standingHip: 0.8, candidateRules: true)
+            if s1.phase == .airborne { air1 += 1 }
+            if s2.phase == .airborne { air2 += 1 }
+        }
+        #expect(air1 >= 8 && air2 == 0)
+    }
+
     @Test func aSquatRecoveryIsNeverAJump() {
         let recovery = track(3) { t in self.after(t) { u in (0, 0.5 + min(0.3, u)) } }
         #expect(airborne(recovery, candidate: false).isEmpty && airborne(recovery, candidate: true).isEmpty)
