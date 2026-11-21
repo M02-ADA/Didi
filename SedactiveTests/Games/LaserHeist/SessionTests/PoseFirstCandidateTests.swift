@@ -271,21 +271,48 @@ nonisolated struct PoseFirstCandidateTests {
         #expect(runs.count == 1 && runs.first.map { $0.1 - $0.0 >= 0.2 } == true, "one flight: \(runs)")
     }
 
-    /// (B) The folded lower legs hide the ankles for 4 frames (0.13 s) mid-flight: those frames are
-    /// UNKNOWN, but the flight resumes when the soles are seen again, still up, so the airborne
-    /// captures either side stay within the judge's gap (`LiveJumpEstimator.maximumGap`).
-    @Test func aTuckJumpWhoseAnklesAreHiddenMidFlightResumes() {
-        let hidden = (1.0 + 4.0 / 30)...(1.0 + 7.5 / 30)
+    /// Missing ankles mid-flight keep the existing rule unchanged: a tuck jump survives a 2-frame
+    /// dropout (`dropoutFrames`), those frames UNKNOWN.
+    @Test func aTuckJumpKeepsItsFlightThroughABriefAnkleDropout() {
+        let hidden = (1.0 + 4.0 / 30)...(1.0 + 5.5 / 30)
         let jump = twoSoles(3) { t in
-            let v = Self.tuckJump(t - 1)
+            let v = Self.tuckJump(t - 1, kickAt: 0)
             return hidden.contains(t) ? (nil, nil, v.hip) : (v.left, v.right, v.hip)
         }
         let runs = Self.runs(jump)
-        #expect(runs.count == 2, "airborne before and after the hidden frames: \(runs)")
-        if runs.count == 2 {
-            #expect(runs[1].0 - runs[0].1 <= LiveJumpEstimator.maximumGap + 1e-9, "one flight to the judge: \(runs)")
-            #expect(runs[1].1 - runs[0].0 >= 0.25, "airborne through the flight: \(runs)")
+        #expect(runs.count == 2 && runs[1].0 - runs[0].1 <= 3.5 / 30, "one flight around the UNKNOWN frames: \(runs)")
+    }
+
+    /// A flight survives 4 frames (0.13 s) with no soles at all and resumes when they are seen again,
+    /// still up (iPad: the tracker lost butt-kick jumpers for 5 frames at the top). Those frames stay
+    /// UNKNOWN; past `maximumGap` the flight ends (`aLongAnkleDropoutEndsTheJumpAndNeverResumesIt`).
+    @Test func aFlightSurvivesAShortGapWithNoSoles() {
+        let hidden = (1.0 + 4.0 / 30)...(1.0 + 7.5 / 30)
+        let jump = twoSoles(3) { t in
+            let v = Self.tuckJump(t - 1, kickAt: 0)
+            return hidden.contains(t) ? (nil, nil, v.hip) : (v.left, v.right, v.hip)
         }
+        #expect(jump.contains { $0 < hidden.lowerBound } && jump.contains { $0 > hidden.upperBound }, "\(jump)")
+        #expect(jump.allSatisfy { !hidden.contains($0) }, "never airborne without soles")
+    }
+
+    @Test func alternatingBackwardLegLiftsAreNeverAJump() {
+        // Left heel back, down, right heel back, down… quickly, one foot always on the floor.
+        let kicks = twoSoles(5) { t in
+            guard t >= 1 else { return (0, 0, 0.8) }
+            let phase = (t - 1).truncatingRemainder(dividingBy: 0.8), up = 0.35 * max(0, sin(.pi * min(1, phase / 0.4)))
+            return phase < 0.4 ? ((t - 1).truncatingRemainder(dividingBy: 1.6) < 0.8 ? (up, 0, 0.8) : (0, up, 0.8)) : (0, 0, 0.8)
+        }
+        #expect(kicks.isEmpty)
+    }
+
+    @Test func aSlowCalfRaiseIsNeverAJump() {
+        // Up 6 cm over 0.6 s, held, down: absorbed by the floor (the existing calf-raise behaviour).
+        let raise = twoSoles(5) { t in
+            let h = 0.06 * (min(1, max(0, (t - 1) / 0.6)) - min(1, max(0, (t - 3) / 0.6)))
+            return (h, h, 0.8 + h)
+        }
+        #expect(raise.isEmpty)
     }
 
     @Test func aTuckJumpWithBothLowerLegsBentBackIsAirborne() {
@@ -329,9 +356,9 @@ nonisolated struct PoseFirstCandidateTests {
         #expect(squat.isEmpty)
     }
 
-    @Test func ankleDropoutsLongerThanOneFlightGapEndTheJump() {
-        // Hidden for 9 frames (0.3 s, beyond `maximumGap`): the flight ends and is not resumed, so
-        // nothing is claimed airborne without seen soles for longer than the judge would bridge.
+    @Test func aLongAnkleDropoutEndsTheJumpAndNeverResumesIt() {
+        // Hidden for 9 frames (0.3 s): the flight ends (the existing `dropoutFrames` rule) and is
+        // not resumed; nothing is claimed airborne without seen soles.
         let hidden = (1.0 + 2.0 / 30)...(1.0 + 10.5 / 30)
         let jump = twoSoles(3) { t in
             let v = Self.tuckJump(t - 1, height: 0.2, flight: 0.6)
@@ -558,6 +585,185 @@ nonisolated struct PoseFirstCandidateTests {
         guard case .unavailable = verdict else { Issue.record("\(String(describing: verdict))"); return }
     }
 
+
+    // MARK: Butt-kick jumps on the iPad (21 November 2026, `[LaserJumpTrace]`)
+
+    /// The three butt-kick jumps the iPad scored HIT, as the jump estimator received them: time from
+    /// the laser's crossing (s), left and right sole (game units; nil = ankle below 0.5 confidence)
+    /// and the hips (game units). Derived measurements only (no image data, no raw joints). Standing
+    /// values from their grounded frames: hips 0.732, floor 0, height 1.433 (enter line 0.043).
+    static let iPadButtKickJumps: [[(t: Double, left: Double?, right: Double?, hip: Double?)]] = [
+        // iPad jump 1 (21 Nov 2026)
+        [
+            (-1.173, -0.005, 0.022, 0.730), (-1.139, -0.005, 0.023, 0.730), (-1.106, -0.002, 0.023, 0.728), (-1.073, -0.004, 0.023, 0.728), (-1.039, -0.006, 0.022, 0.728),
+            (-1.006, -0.006, 0.022, 0.729), (-0.973, -0.006, 0.022, 0.728), (-0.940, -0.005, 0.022, 0.730), (-0.906, -0.006, 0.022, 0.731), (-0.873, -0.006, 0.021, 0.730),
+            (-0.840, -0.005, 0.021, 0.733), (-0.806, -0.005, 0.020, 0.735), (-0.773, -0.005, 0.021, 0.737), (-0.740, -0.004, 0.020, 0.730), (-0.706, -0.002, 0.020, 0.718),
+            (-0.673, -0.003, 0.019, 0.701), (-0.640, -0.003, 0.017, 0.682), (-0.606, -0.006, 0.014, 0.660), (-0.573, -0.008, 0.015, 0.642), (-0.540, -0.019, 0.011, 0.628),
+            (-0.506, -0.013, 0.010, 0.622), (-0.473, -0.017, 0.010, 0.640), (-0.440, -0.010, 0.015, 0.664), (-0.406, -0.003, 0.023, 0.704), (-0.373, 0.014, 0.029, 0.775),
+            (-0.340, 0.041, 0.028, 0.822), (-0.306, 0.135, 0.201, 0.887), (-0.273, nil, nil, 0.923), (-0.240, nil, nil, 0.964), (-0.206, nil, nil, 0.969),
+            (-0.173, nil, nil, 0.985), (-0.140, nil, nil, 0.982), (-0.106, nil, nil, 0.981), (-0.073, nil, nil, 0.976), (-0.040, nil, nil, 0.976),
+            (-0.006, 0.229, nil, 0.963), (0.027, 0.124, 0.168, 0.931), (0.060, 0.074, 0.109, 0.878), (0.094, 0.008, 0.035, 0.806), (0.127, -0.023, 0.011, 0.747),
+            (0.160, -0.037, 0.000, 0.680),
+        ],
+        // iPad jump 2 (21 Nov 2026)
+        [
+            (-1.176, 0.031, 0.063, 0.734), (-1.142, 0.031, 0.063, 0.737), (-1.109, 0.030, 0.063, 0.737), (-1.076, 0.033, 0.063, 0.737), (-1.042, 0.032, 0.062, 0.736),
+            (-1.009, 0.031, 0.061, 0.735), (-0.976, 0.031, 0.061, 0.737), (-0.942, 0.031, 0.062, 0.738), (-0.909, 0.032, 0.063, 0.735), (-0.876, 0.032, 0.062, 0.736),
+            (-0.842, 0.033, 0.061, 0.735), (-0.809, 0.033, 0.059, 0.735), (-0.776, 0.033, 0.059, 0.736), (-0.742, 0.033, 0.059, 0.737), (-0.709, 0.033, 0.060, 0.737),
+            (-0.676, 0.034, 0.059, 0.736), (-0.642, 0.033, 0.059, 0.736), (-0.609, 0.033, 0.062, 0.732), (-0.576, 0.033, 0.064, 0.722), (-0.542, 0.031, 0.060, 0.705),
+            (-0.509, 0.029, 0.056, 0.687), (-0.476, 0.029, 0.054, 0.669), (-0.443, 0.026, 0.050, 0.656), (-0.409, 0.026, 0.051, 0.644), (-0.376, 0.022, 0.051, 0.642),
+            (-0.343, 0.024, 0.054, 0.649), (-0.309, 0.028, 0.055, 0.681), (-0.276, 0.033, 0.067, 0.727), (-0.243, 0.060, 0.111, 0.780), (-0.209, 0.126, 0.132, 0.844),
+            (-0.176, 0.199, 0.210, 0.893), (-0.143, nil, nil, 0.928), (-0.109, nil, nil, 0.952), (-0.076, nil, nil, 0.973), (-0.043, nil, nil, 0.985),
+            (-0.009, nil, nil, 0.983), (0.024, nil, nil, 0.982), (0.057, nil, nil, 0.979), (0.091, nil, 0.289, 0.973), (0.124, 0.233, 0.256, 0.954),
+            (0.157, 0.213, 0.224, 0.935),
+        ],
+        // iPad jump 3 (21 Nov 2026)
+        [
+            (-1.177, -0.019, 0.006, 0.734), (-1.144, -0.016, 0.006, 0.733), (-1.111, -0.020, 0.006, 0.733), (-1.077, -0.019, 0.006, 0.732), (-1.044, -0.017, 0.006, 0.730),
+            (-1.011, -0.017, 0.006, 0.729), (-0.977, -0.017, 0.006, 0.730), (-0.944, -0.017, 0.007, 0.729), (-0.911, -0.017, 0.006, 0.730), (-0.877, -0.015, 0.006, 0.732),
+            (-0.844, -0.013, 0.007, 0.730), (-0.811, -0.014, 0.005, 0.731), (-0.777, -0.011, 0.008, 0.721), (-0.744, -0.013, 0.009, 0.718), (-0.711, -0.019, 0.009, 0.705),
+            (-0.677, -0.016, 0.009, 0.686), (-0.644, -0.018, 0.004, 0.662), (-0.611, -0.021, 0.004, 0.644), (-0.577, -0.030, -0.000, 0.627), (-0.544, -0.039, -0.002, 0.609),
+            (-0.511, -0.040, -0.004, 0.606), (-0.477, -0.041, -0.003, 0.619), (-0.444, -0.035, 0.002, 0.639), (-0.411, -0.022, 0.008, 0.688), (-0.377, -0.001, 0.021, 0.753),
+            (-0.344, 0.046, 0.036, 0.801), (-0.311, 0.103, 0.091, 0.854), (-0.277, 0.189, 0.207, 0.922), (-0.244, nil, nil, 0.936), (-0.211, nil, nil, 0.959),
+            (-0.177, nil, nil, 0.970), (-0.144, nil, nil, 0.967), (-0.111, nil, nil, 0.967), (-0.077, nil, nil, 0.965), (-0.044, nil, nil, 0.953),
+            (-0.011, nil, nil, 0.933), (0.023, 0.190, 0.238, 0.930), (0.056, 0.154, 0.146, 0.883), (0.089, 0.077, 0.073, 0.827), (0.123, 0.042, 0.031, 0.763),
+            (0.156, 0.032, 0.019, 0.703),
+        ],
+    ]
+
+    /// The two butt-kick jumps the iPad still scored HIT with the hip bound (second session): at the top
+    /// of the kick the tracker lost the player for 5 frames (`uncertain`, no candidate: here nil soles
+    /// and hips) and the service discarded the jump estimator. Standing values from the trace:
+    /// hips 0.676, floor 0 / 0.006, height 1.333 (enter line 0.040).
+    static let iPadTrackingGapJumps: [[(t: Double, left: Double?, right: Double?, hip: Double?)]] = [
+        // iPad jump 4 (21 Nov 2026, second session)
+        [
+            (-1.177, -0.048, -0.044, 0.666), (-1.144, -0.047, -0.043, 0.663), (-1.111, -0.048, -0.042, 0.664), (-1.077, -0.050, -0.043, 0.663), (-1.044, -0.048, -0.042, 0.663),
+            (-1.011, -0.049, -0.043, 0.662), (-0.977, -0.051, -0.043, 0.662), (-0.944, -0.053, -0.043, 0.661), (-0.911, -0.050, -0.043, 0.661), (-0.877, -0.052, -0.044, 0.664),
+            (-0.844, -0.047, -0.043, 0.663), (-0.811, -0.052, -0.040, 0.659), (-0.777, -0.051, -0.037, 0.653), (-0.744, -0.048, -0.037, 0.639), (-0.711, -0.051, -0.036, 0.621),
+            (-0.677, -0.047, -0.041, 0.602), (-0.644, -0.052, -0.041, 0.585), (-0.611, -0.056, -0.044, 0.567), (-0.577, -0.056, -0.047, 0.550), (-0.544, -0.060, -0.047, 0.547),
+            (-0.511, -0.057, -0.047, 0.550), (-0.477, -0.054, -0.046, 0.580), (-0.444, -0.046, -0.041, 0.633), (-0.411, -0.034, -0.033, 0.686), (-0.377, 0.010, 0.018, 0.753),
+            (-0.344, 0.061, 0.047, 0.813), (-0.311, nil, nil, nil), (-0.278, nil, nil, nil), (-0.244, nil, nil, nil), (-0.211, nil, nil, nil),
+            (-0.177, nil, nil, nil), (-0.144, nil, nil, 0.935), (-0.111, nil, nil, 0.932), (-0.078, nil, nil, 0.926), (-0.044, nil, nil, 0.909),
+            (-0.011, 0.195, nil, 0.893), (0.022, 0.102, 0.112, 0.847), (0.056, 0.048, 0.033, 0.782), (0.089, -0.010, -0.011, 0.723), (0.122, -0.035, -0.040, 0.657),
+            (0.156, -0.044, -0.045, 0.612),
+        ],
+        // iPad jump 5 (21 Nov 2026, second session)
+        [
+            (-1.199, -0.021, -0.016, 0.673), (-1.166, -0.021, -0.016, 0.673), (-1.132, -0.021, -0.017, 0.673), (-1.099, -0.021, -0.018, 0.674), (-1.066, -0.021, -0.017, 0.673),
+            (-1.032, -0.021, -0.017, 0.673), (-0.999, -0.021, -0.015, 0.675), (-0.966, -0.021, -0.017, 0.674), (-0.932, -0.021, -0.016, 0.675), (-0.899, -0.021, -0.018, 0.674),
+            (-0.866, -0.021, -0.018, 0.673), (-0.832, -0.022, -0.018, 0.673), (-0.799, -0.021, -0.018, 0.673), (-0.766, -0.021, -0.015, 0.674), (-0.732, -0.021, -0.017, 0.671),
+            (-0.699, -0.021, -0.020, 0.670), (-0.666, -0.021, -0.020, 0.662), (-0.632, -0.020, -0.019, 0.646), (-0.599, -0.019, -0.019, 0.629), (-0.566, -0.023, -0.024, 0.606),
+            (-0.532, -0.026, -0.026, 0.585), (-0.499, -0.031, -0.027, 0.566), (-0.466, -0.030, -0.029, 0.559), (-0.432, -0.030, -0.029, 0.560), (-0.399, -0.027, -0.027, 0.579),
+            (-0.366, -0.023, -0.020, 0.622), (-0.332, -0.014, -0.011, 0.674), (-0.299, 0.009, 0.019, 0.737), (-0.266, 0.056, 0.055, 0.803), (-0.233, nil, nil, nil),
+            (-0.199, nil, nil, nil), (-0.166, nil, nil, nil), (-0.133, nil, nil, nil), (-0.099, nil, nil, nil), (-0.066, nil, nil, 0.973),
+            (-0.032, nil, nil, 0.968), (0.001, nil, nil, 0.969), (0.034, nil, nil, 0.960), (0.068, 0.282, 0.244, 0.950), (0.101, 0.229, 0.215, 0.923),
+            (0.134, 0.134, 0.153, 0.880), (0.168, 0.106, 0.089, 0.827),
+        ],
+    ]
+
+    /// Replays one recorded jump through the live estimator and the timed jump judge, its crossing
+    /// placed at game time 10. `bound`: the hip-bounded flight soles. `keepFlight`: frames with no
+    /// player at all (nil hips and soles) keep the estimator, as the service now does in a flight;
+    /// otherwise they discard it, as before.
+    private func recordedVerdict(_ frames: [(t: Double, left: Double?, right: Double?, hip: Double?)], bound: Bool,
+                                 keepFlight: Bool = true, standingHip: Double = 0.732, floor: (Double, Double) = (0, 0),
+                                 height: Double = 1.433) throws -> Judgement? {
+        var estimator = LiveJumpEstimator()
+        var phases: [(t: Double, airborne: Bool, soles: Bool)] = []
+        for (i, f) in frames.enumerated() {
+            if f.hip == nil, f.left == nil, f.right == nil, !(keepFlight && estimator.isInFlight) {
+                estimator = LiveJumpEstimator() // tracking lost: discarded
+                phases.append((10 + f.t, false, false))
+                continue
+            }
+            var soles = (left: f.left, right: f.right, bounded: false)
+            if bound {
+                soles = LiveJumpEstimator.flightSoles(left: f.left, right: f.right, inFlight: estimator.isInFlight, hipY: f.hip,
+                    standingHip: standingHip, standingLeftSole: floor.0, standingRightSole: floor.1, standingHeight: height)
+            }
+            let state = estimator.step(frameID: UInt64(i + 1), capturedAt: 10 + f.t, leftSole: soles.left, rightSole: soles.right,
+                standingLeftSole: floor.0, standingRightSole: floor.1, standingHeight: height, calibrationRevision: 1,
+                hipY: f.hip, standingHip: standingHip, candidateRules: true)
+            phases.append((10 + f.t, state.phase == .airborne, soles.left != nil && soles.right != nil))
+        }
+        func nearest(_ t: Double) -> (t: Double, airborne: Bool, soles: Bool) { phases.min { abs($0.t - t) < abs($1.t - t) }! }
+        return try jumpVerdict(airborne: { nearest($0).airborne }, soles: { nearest($0).soles })
+    }
+
+    /// THE IPAD FAILURE: each jump took off, the folded legs hid the ankles for 8–9 frames around the
+    /// crossing, and the jump scored HIT. With the hips bounding the hidden feet during the flight,
+    /// each is airborne through the crossing and CLEAR.
+    @Test(arguments: 0..<3) func theIPadButtKickJumpsClear(jump: Int) throws {
+        let frames = Self.iPadButtKickJumps[jump]
+        #expect(try recordedVerdict(frames, bound: false) == .hit(.notAirborne), "as on the iPad")
+        #expect(try recordedVerdict(frames, bound: true) == .clear, "jump \(jump + 1)")
+    }
+
+    /// THE SECOND IPAD FAILURE: with the hip bound, two butt-kick jumps still scored HIT because the
+    /// tracker lost the player for 5 frames mid-flight and the estimator was discarded. Kept through
+    /// the gap, the flight resumes (hip-bounded) and each is CLEAR.
+    @Test(arguments: 0..<2) func theIPadButtKickJumpsWithATrackingGapClear(jump: Int) throws {
+        let frames = Self.iPadTrackingGapJumps[jump]
+        func verdict(keep: Bool) throws -> Judgement? {
+            try recordedVerdict(frames, bound: true, keepFlight: keep, standingHip: 0.676, floor: (0, 0.006), height: 1.333)
+        }
+        #expect(try verdict(keep: false) == .hit(.notAirborne), "as on the iPad (second session)")
+        #expect(try verdict(keep: true) == .clear, "jump \(jump + 4)")
+    }
+
+    /// The bound applies only inside a flight already seen, only to a hidden ankle, and only while
+    /// the hips are at least the take-off line above standing; real soles are never replaced.
+    @Test func theHipBoundOnlyStandsInForAHiddenAnkleDuringAFlight() {
+        func b(_ l: Double?, _ r: Double?, flight: Bool, hip: Double) -> (left: Double?, right: Double?, bounded: Bool) {
+            LiveJumpEstimator.flightSoles(left: l, right: r, inFlight: flight, hipY: hip, standingHip: 0.73,
+                                          standingLeftSole: 0, standingRightSole: 0.02, standingHeight: 1.43)
+        }
+        let none = b(nil, nil, flight: false, hip: 0.95)
+        #expect(none.left == nil && none.right == nil && !none.bounded, "no take-off seen: nothing")
+        let low = b(nil, nil, flight: true, hip: 0.76)
+        #expect(low.left == nil && low.right == nil && !low.bounded, "hips below the take-off line: nothing")
+        let hidden = b(nil, 0.2, flight: true, hip: 0.95)
+        #expect(hidden.bounded && abs((hidden.left ?? 0) - 0.22) < 1e-9 && hidden.right == 0.2, "only the hidden side, from its own standing leg")
+        let seen = b(0.1, 0.2, flight: true, hip: 0.95)
+        #expect(seen.left == 0.1 && seen.right == 0.2 && !seen.bounded, "both seen: untouched")
+        let both = b(nil, nil, flight: true, hip: 0.95)
+        #expect(both.bounded && abs((both.right ?? 0) - 0.24) < 1e-9)
+    }
+
+    /// Hidden ankles never start a jump: hips rising with the ankles hidden throughout is no take-off.
+    @Test func theHipBoundNeverStartsAJump() {
+        var estimator = LiveJumpEstimator()
+        var airborne: [Double] = []
+        for i in 0..<60 {
+            let t = Double(i) / 30, hip = t < 1 ? 0.73 : 0.98
+            let soles = LiveJumpEstimator.flightSoles(left: t < 1 ? 0 : nil, right: t < 1 ? 0 : nil, inFlight: estimator.isInFlight,
+                hipY: hip, standingHip: 0.73, standingLeftSole: 0, standingRightSole: 0, standingHeight: 1.43)
+            let s = estimator.step(frameID: UInt64(i + 1), capturedAt: t, leftSole: soles.left, rightSole: soles.right,
+                standingLeftSole: 0, standingRightSole: 0, standingHeight: 1.43, calibrationRevision: 1,
+                hipY: hip, standingHip: 0.73, candidateRules: true)
+            if s.phase == .airborne { airborne.append(t) }
+        }
+        #expect(airborne.isEmpty, "\(airborne)")
+    }
+
+    /// A straight jump whose ankles drop out after it has come down (hips back at standing) is not
+    /// prolonged: the bound needs the hips up.
+    @Test func theHipBoundNeverProlongsALandedJump() {
+        var estimator = LiveJumpEstimator()
+        var airborne: [Double] = []
+        for i in 0..<75 {
+            let t = Double(i) / 30, u = t - 1, h = u > 0 && u < 0.4 ? 0.15 * sin(.pi * u / 0.4) : 0
+            let hidden = t > 1.37 && t < 1.8 // ankles lost just as it lands, for 0.4 s
+            let soles = LiveJumpEstimator.flightSoles(left: hidden ? nil : h, right: hidden ? nil : h, inFlight: estimator.isInFlight,
+                hipY: 0.73 + h, standingHip: 0.73, standingLeftSole: 0, standingRightSole: 0, standingHeight: 1.43)
+            let s = estimator.step(frameID: UInt64(i + 1), capturedAt: t, leftSole: soles.left, rightSole: soles.right,
+                standingLeftSole: 0, standingRightSole: 0, standingHeight: 1.43, calibrationRevision: 1,
+                hipY: 0.73 + h, standingHip: 0.73, candidateRules: true)
+            if s.phase == .airborne { airborne.append(t) }
+        }
+        #expect(!airborne.isEmpty && airborne.allSatisfy { $0 < 1.4 }, "\(airborne)")
+    }
 
     // MARK: UNAVAILABLE retry budget
 

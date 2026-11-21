@@ -1496,6 +1496,16 @@ final class GameSessionCoordinator {
                     sample?.geometry.leftSoleY.value.map { String(format: "%.2f", $0) } ?? "-",
                     sample?.geometry.rightSoleY.value.map { String(format: "%.2f", $0) } ?? "-",
                     sample.map { "\($0.jumpState.phase)" } ?? "-"))
+                // Jump lasers: the player's rolling jump trace (`JumpTraceLog`), to find where a real jump
+                // was lost. Times are capture host times; `host − game` maps them to game time.
+                if target.requiredMove == .jump {
+                    let gameNow = game?.gameTime ?? 0, hostNow = hostNow()
+                    print(String(format: "[LaserJumpTrace] ==== %@ jump laser → %@ · crossing game %.3f · game now %.3f host now %.3f (host − game %.3f) · minimum flight %.2f s, tolerance %.2f s",
+                        player.rawValue, "\(verdict)", target.crossingTime, gameNow, hostNow, hostNow - gameNow,
+                        PoseFirstCandidate.jumpMinimumFlight, PoseFirstCandidate.jumpTimingTolerance))
+                    for line in JumpTraceLog.lines(for: player) { print("[LaserJumpTrace] \(player.rawValue) \(line.text)") }
+                    print("[LaserJumpTrace] ==== end")
+                }
             } }
             #endif
         }
