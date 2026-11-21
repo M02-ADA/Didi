@@ -24,7 +24,9 @@ nonisolated struct LaserLiveWristRoundPlan: Sendable {
             && !encounters.isEmpty && Set(encounters.map(\.id)).count == encounters.count
             && Set(encounters.map(\.attemptID)).count == encounters.count
             && encounters.allSatisfy { encounter in
-                Set(encounter.targets.map(\.playerID)) == Set(director?.roster ?? PlayerID.allCases)
+                let players = Set(encounter.targets.map(\.playerID)), roster = Set(director?.roster ?? PlayerID.allCases)
+                // Every rostered player, or (a vertical LEAN layer near one player) one of them.
+                return (players == roster || (players.isSubset(of: roster) && encounter.targets.allSatisfy { $0.requiredMove == .lean }))
                     && encounter.targets.allSatisfy { expectedContext.calibrationRevisions[$0.playerID] == $0.calibrationRevision }
             }, "accepted live wrist context/round plan")
         self.expectedContext = expectedContext; self.configuration = configuration
@@ -61,7 +63,9 @@ nonisolated struct LaserLiveWristRoundPlan: Sendable {
     /// brief flickers still have the normal evidence-age allowance during the countdown.
     static var liveTiming: LaserLiveTimingPolicy {
         try! LaserLiveTimingPolicy(settlingDuration: 1, maximumEvidenceAge: 0.5, countdownDuration: 3,
-                                   preservesCountdownOnTrackingFlicker: true)
+                                   preservesCountdownOnTrackingFlicker: true,
+                                   // POSE-FIRST TRACKING (production default; DEBUG `-trackingBaseline` turns it off).
+                                   absenceGrace: PoseFirstCandidate.isEnabled ? PoseFirstCandidate.absenceGrace : nil)
     }
 }
 

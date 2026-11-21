@@ -95,9 +95,11 @@ struct AuthoredSceneConsistencyTests {
         #expect(scene.layout.laserSpawnZ == layout.laserSpawnZ)
         #expect(scene.layout.vaultDoorStopZ == stop)
         #expect(scene.layout.vaultDoorStopZ == layout.vaultDoorStopZ)
-        // Lane hazards reach the authored wall mounts; the mapping puts the floor at game Y = 0.
-        #expect(abs(scene.laneSpan(for: .player1).lowerBound + 3.08) < 0.001)
-        #expect(abs(scene.laneSpan(for: .player2).upperBound - 3.08) < 0.001)
+        // Lane hazards reach the wall mounts (authored 0.07 m off the walls, moved out with the widened
+        // walls); the mapping puts the floor at game Y = 0.
+        let mount = scene.layout.environmentWidth / 2 - 0.07
+        #expect(abs(scene.laneSpan(for: .player1).lowerBound + mount) < 0.001)
+        #expect(abs(scene.laneSpan(for: .player2).upperBound - mount) < 0.001)
         #expect(scene.mapping.playerPosition(.player1).y == 0)
     }
 }

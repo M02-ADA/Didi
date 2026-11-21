@@ -103,6 +103,45 @@ struct VaultPresentationTests {
         #expect(scene.root.children.filter { $0.name == "vaultDoor.exiting" }.isEmpty)
     }
 
+    /// Gate pop-in (iPad, 14 November 2026): DEBUG "Skip to Next Gate" drops the time left from 56 s
+    /// to 5 s in one frame. The door no longer jumps ~36 m: it glides in from the far end while the
+    /// corridor travels the same distance, so it stays fixed in the corridor, and it still arrives at
+    /// its stop exactly when the vault begins.
+    @Test func aSkippedTimeLeftIsClosedByAGlideWithTheCorridorNotAJump() throws {
+        let (scene, _) = scene()
+        let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
+        let stop = scene.layout.vaultDoorStopZ, dt = 1.0 / 60, skipAt = 0.5, arrival = skipAt + 5
+        var t = 0.0, travel: Float = 0, lastOffset = scene.travelOffset
+        var frames: [(t: Double, door: Float, travel: Float)] = []
+        while t < arrival - dt / 2 {
+            let lead = t < skipAt ? 56 - t : arrival - t
+            presenter.apply(state: state(t, .activity), events: [], snapshot: nil, upcomingVaultIn: lead)
+            // The corridor's travel, unwrapped from its 12 m loop.
+            var step = scene.travelOffset - lastOffset
+            if step < -6 { step += 12 }
+            lastOffset = scene.travelOffset
+            travel += step
+            frames.append((t, try #require(scene.vaultDoorDepth), travel))
+            t += dt
+        }
+        let steps = zip(frames, frames.dropFirst()).map { $1.door - $0.door }
+        let jump = GateTravelEase.distance(lead: 56 - skipAt, speed: scene.layout.travelSpeed) // what a placement from the time left alone jumps (capped at the far end)
+        print(String(format: "SKIP glide: largest door step %.3f m per 1/60 s (a jump would be ≥ %.1f m)", steps.max() ?? 0, min(jump, stop - presenter.vault.approachHorizonZ) - GateTravelEase.distance(lead: 5, speed: scene.layout.travelSpeed)))
+        #expect(steps.allSatisfy { $0 >= -1e-4 && $0 < 1.5 }, "never moves away, never jumps")
+        // Fixed in the corridor from the frame after the skip: door and corridor move together (until the
+        // eased stop, where the corridor's per-frame easing and the door's exact one differ by centimetres, as before).
+        let after = frames.filter { $0.t > skipAt + dt && arrival - $0.t > GateTravelEase.duration }
+        let relative = after.map { $0.door - $0.travel }
+        #expect((relative.max()! - relative.min()!) < 1e-3, "door fixed in the corridor: drift \(relative.max()! - relative.min()!) m")
+        // The glide is over well before the gate: the door is back on its time-left place.
+        let late = try #require(frames.last)
+        #expect(abs(late.door - (stop - GateTravelEase.distance(lead: arrival - late.t, speed: scene.layout.travelSpeed))) < 1e-4)
+        #expect(presenter.vault.diagnostics.catchUps == 1)
+        presenter.apply(state: state(arrival, .vault, vault: vault()), events: [], snapshot: nil)
+        #expect(abs((scene.vaultDoorDepth ?? .nan) - stop) < 1e-4, "arrives at its stop when the vault begins")
+        #expect(presenter.vault.diagnostics.handoffs == 0)
+    }
+
     /// Without a schedule (production until Jevon exposes one) nothing approaches.
     @Test func withoutTheScheduleTheDoorStillFadesInAtItsStop() throws {
         let (scene, _) = scene()
@@ -146,7 +185,7 @@ struct VaultPresentationTests {
         let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
         presenter.apply(state: state(16, .activity), events: [], snapshot: nil)
         #expect(scene.vaultDoorDepth == nil)
-        #expect(presenter.vault.indicator(.player1, .top) == nil)
+        #expect(presenter.vault.indicator(.player1, .activate) == nil)
 
         presenter.apply(state: state(17, .vault, vault: vault()), events: [], snapshot: nil)
         #expect(abs((scene.vaultDoorDepth ?? .nan) - scene.layout.vaultDoorStopZ) < 1e-4)
@@ -174,23 +213,22 @@ struct VaultPresentationTests {
         let (scene, _) = scene()
         let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
         presenter.apply(state: state(17, .vault, vault: vault()), events: [], snapshot: nil)
-        let bottom = try #require(presenter.vault.buttons.findEntity(named: "vault.indicator.player1.bottom"))
-        let placed = bottom.position
-        let first = vault([.player1: [.bottom]])
+        let indicator = try #require(presenter.vault.buttons.findEntity(named: "vault.indicator.player1.activate"))
+        let placed = indicator.position
+        let first = vault([.player1: [.activate]])
         presenter.apply(state: state(17.4, .vault, vault: first), events: [], snapshot: nil)
         presenter.apply(state: state(17.5, .vault, vault: first), events: [], snapshot: nil)
-        #expect(presenter.vault.indicator(.player1, .bottom) == .active)
-        #expect(presenter.vault.indicator(.player1, .top) == .idle)
+        #expect(presenter.vault.indicator(.player1, .activate) == .active)
+        #expect(presenter.vault.indicator(.player2, .activate) == .idle, "each player's own button")
         #expect(presenter.vault.diagnostics.activations == 1)
         // The activation pop keeps the indicator in its place.
-        #expect(bottom.position == placed && bottom.transform.translation == placed)
+        #expect(indicator.position == placed && indicator.transform.translation == placed)
 
-        let more = vault([.player1: [.bottom, .top], .player2: [.top]])
+        let more = vault([.player1: [.activate], .player2: [.activate]])
         presenter.apply(state: state(18, .vault, vault: more), events: [], snapshot: nil)
-        #expect(presenter.vault.indicator(.player1, .top) == .active)
-        #expect(presenter.vault.indicator(.player2, .top) == .active)
-        #expect(presenter.vault.indicator(.player2, .middle) == .idle)
-        #expect(presenter.vault.diagnostics.activations == 3)
+        #expect(presenter.vault.indicator(.player1, .activate) == .active)
+        #expect(presenter.vault.indicator(.player2, .activate) == .active)
+        #expect(presenter.vault.diagnostics.activations == 2, "one per player, never replayed")
         // On the corridor walls (Sketch): P1's column on the left wall, P2's mirroring it on the right.
         for button in LaserVaultButton.allCases {
             let p1 = try #require(presenter.vault.buttons.findEntity(named: "vault.indicator.player1.\(button.rawValue)"))
@@ -309,7 +347,7 @@ struct VaultPresentationTests {
         #expect(presenter.vault.diagnostics.opens == 1)
         #expect(scene.vaultDoorState == .open)
         #expect(presenter.vault.countdownFraction == nil)
-        #expect(presenter.vault.indicator(.player1, .top) == nil)
+        #expect(presenter.vault.indicator(.player1, .activate) == nil)
 
         // Travel resumes: the door and the corridor move toward the players together.
         let corridor = travel.position.z
@@ -340,20 +378,20 @@ struct VaultPresentationTests {
     @Test func timeoutEmptiesTheCountdownAndStopCleansUp() throws {
         let (scene, _) = scene()
         let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
-        presenter.apply(state: state(17, .vault, vault: vault([.player1: [.top]])), events: [], snapshot: nil)
-        let failed = state(22, .ended(.vaultFailed), vault: vault([.player1: [.top]]))
+        presenter.apply(state: state(17, .vault, vault: vault([.player1: [.activate]])), events: [], snapshot: nil)
+        let failed = state(22, .ended(.vaultFailed), vault: vault([.player1: [.activate]]))
         presenter.apply(state: failed, events: [], snapshot: nil)
         presenter.apply(state: failed, events: [], snapshot: nil)
         #expect(presenter.vault.diagnostics.timeouts == 1)
         #expect(presenter.vault.countdownFraction == 0)
         #expect(scene.vaultDoorState == .locked)
         #expect(scene.vaultDoorDepth != nil)
-        #expect(presenter.vault.indicator(.player1, .top) == .active)
+        #expect(presenter.vault.indicator(.player1, .activate) == .active)
 
         // Results then stops the presentation.
         presenter.stop()
         #expect(scene.vaultDoorDepth == nil)
-        #expect(presenter.vault.indicator(.player1, .top) == nil)
+        #expect(presenter.vault.indicator(.player1, .activate) == nil)
         #expect(presenter.vault.countdownFraction == nil)
     }
 
@@ -363,7 +401,7 @@ struct VaultPresentationTests {
         presenter.apply(state: state(17, .vault, vault: vault()), events: [], snapshot: nil)
         presenter.apply(state: state(18, .ended(.aborted), vault: vault()), events: [], snapshot: nil)
         #expect(scene.vaultDoorDepth == nil)
-        #expect(presenter.vault.indicator(.player2, .bottom) == nil)
+        #expect(presenter.vault.indicator(.player2, .activate) == nil)
         #expect(presenter.vault.countdownFraction == nil)
         #expect(presenter.vault.diagnostics.timeouts == 0)
     }
@@ -371,7 +409,7 @@ struct VaultPresentationTests {
     @Test func aNewGenerationStartsWithNoVaultShowing() throws {
         let (scene, _) = scene()
         let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
-        presenter.apply(state: state(17, .vault, vault: vault([.player1: [.top]])), events: [], snapshot: nil)
+        presenter.apply(state: state(17, .vault, vault: vault([.player1: [.activate]])), events: [], snapshot: nil)
         // Retry: a new generation, back in activity.
         let next = UUID()
         presenter.apply(state: state(0.5, .activity, generation: next), events: [], snapshot: nil)
@@ -380,12 +418,12 @@ struct VaultPresentationTests {
         // Its own vault is revealed fresh, with nothing activated.
         presenter.apply(state: state(17, .vault, vault: vault(), generation: next), events: [], snapshot: nil)
         #expect(presenter.vault.diagnostics.reveals == 2)
-        #expect(presenter.vault.indicator(.player1, .top) == .idle)
+        #expect(presenter.vault.indicator(.player1, .activate) == .idle)
     }
 
     // MARK: - Real replay round
 
-    @Test func replayVaultShowsSixActivationsOpensOnceAndClearsTheScreen() async throws {
+    @Test func replayVaultShowsBothActivationsOpensOnceAndClearsTheScreen() async throws {
         let script = try LaserReplayScript.load().freshRound(generation: UUID())
         let session = try LaserReplayDriver.makeSession(script: script)
         try await session.start()
@@ -409,7 +447,7 @@ struct VaultPresentationTests {
         }
         #expect(session.phase == .finished)
         #expect(presenter.vault.diagnostics.reveals == 1)
-        #expect(presenter.vault.diagnostics.activations == 6)
+        #expect(presenter.vault.diagnostics.activations == 2, "one button per player")
         #expect(presenter.vault.diagnostics.opens == 1)
         #expect(presenter.vault.diagnostics.timeouts == 0)
         #expect(!countdownRose)
@@ -418,7 +456,7 @@ struct VaultPresentationTests {
         // The opened door has passed the players during Diamond Time.
         #expect(scene.vaultDoorDepth == nil)
         presenter.stop()
-        #expect(presenter.vault.indicator(.player1, .top) == nil)
+        #expect(presenter.vault.indicator(.player1, .activate) == nil)
     }
 }
 
@@ -481,7 +519,7 @@ private struct DomainRound {
     mutating func completeBothSides(_ id: UUID, from time: Double) throws {
         var t = time
         for player in PlayerID.allCases {
-            for button in [LaserVaultButton.bottom, .top, .middle] {
+            for button in LaserVaultButton.allCases {
                 try touch(id, player, button, at: t)
                 t += 0.1
             }
@@ -561,7 +599,7 @@ extension VaultPresentationTests {
         try render(until: 26.5 + 0.6 + LaserRoundConfiguration.defaultDiamondTimeDuration + 1)
         #expect(phases == [.activity, .vault, .activity, .vault, .activity, .vault, .diamondTime, .ended(.completed)])
         let d = presenter.vault.diagnostics
-        #expect(d.reveals == 3 && d.opens == 3 && d.activations == 18 && d.sideCompletions == 6 && d.timeouts == 0)
+        #expect(d.reveals == 3 && d.opens == 3 && d.activations == 6 && d.sideCompletions == 6 && d.timeouts == 0)
         // Vaults are 12 s apart, so each opened door has passed the camera before the next: no handoff.
         #expect(d.handoffs == 0)
         #expect(scene.vaultDoorDepth == nil)
@@ -618,13 +656,13 @@ extension VaultPresentationTests {
         var round = try DomainRound(vaults: 2)
         let (presenter, scene) = try makePresenter(for: round)
         try round.open(id(1), at: 1)
-        try round.touch(id(1), .player1, .top, at: 1.2)
+        try round.touch(id(1), .player1, .activate, at: 1.2)
         for _ in 0..<5 { apply(presenter, round) }
         #expect(presenter.vault.diagnostics.activations == 1)
         try round.completeBothSides(id(1), from: 1.4)
         for _ in 0..<5 { apply(presenter, round) }
         let opened = presenter.vault.diagnostics
-        #expect(opened.opens == 1 && opened.activations == 6 && opened.sideCompletions == 2 && opened.reveals == 1)
+        #expect(opened.opens == 1 && opened.activations == 2 && opened.sideCompletions == 2 && opened.reveals == 1)
         #expect(scene.vaultDoorState == .open)
 
         var failing = try DomainRound(vaults: 1)
@@ -740,7 +778,7 @@ extension VaultPresentationTests {
         try round.advance(to: 2)
         apply(presenter, round)
         try round.open(id(2), at: 2)
-        try round.touch(id(2), .player2, .middle, at: 2.3)
+        try round.touch(id(2), .player2, .activate, at: 2.3)
         apply(presenter, round)
         #expect(presenter.vault.exitingDoor != nil)
         // Abort mid-vault (End round): everything hides, the copy included.
@@ -771,11 +809,11 @@ extension VaultPresentationTests {
         var round = try DomainRound(vaults: 2)
         let (presenter, scene) = try makePresenter(for: round, reduceMotion: true)
         try round.open(id(1), at: 1)
-        try round.touch(id(1), .player1, .top, at: 1.2)
+        try round.touch(id(1), .player1, .activate, at: 1.2)
         apply(presenter, round)
-        let top = try #require(presenter.vault.buttons.findEntity(named: "vault.indicator.player1.top"))
-        #expect(presenter.vault.indicator(.player1, .top) == .active)
-        #expect(top.scale == .one && presenter.vault.diagnostics.pops == 0)
+        let indicator = try #require(presenter.vault.buttons.findEntity(named: "vault.indicator.player1.activate"))
+        #expect(presenter.vault.indicator(.player1, .activate) == .active)
+        #expect(indicator.scale == .one && presenter.vault.diagnostics.pops == 0)
         try round.completeBothSides(id(1), from: 1.4)
         apply(presenter, round)
         let outline = try #require(presenter.vault.buttons.findEntity(named: "vault.outline.player1"))
@@ -814,7 +852,7 @@ extension VaultPresentationTests {
         let right = try #require(door.findEntity(named: "RightDoorPanel"))
         #expect(left.position.x < -1 && right.position.x > 1)  // slid out by their width
         #expect(left.components[OpacityComponent.self] == nil)
-        #expect(presenter.vault.diagnostics.pops == 6 + 2)
+        #expect(presenter.vault.diagnostics.pops == 2 + 2)
     }
 
     // MARK: Bounded entities
@@ -839,7 +877,7 @@ extension VaultPresentationTests {
             apply(presenter, round)
         }
         #expect(presenter.vault.diagnostics.reveals == 5 && presenter.vault.diagnostics.opens == 5)
-        #expect(count("vault.indicator.") == 6 && count("vault.outline.") == 2 && count("vault.countdown.digit.") == 6)
+        #expect(count("vault.indicator.") == 2 && count("vault.outline.") == 2 && count("vault.countdown.digit.") == 6)
         #expect(count("vault.countdown") == 1 + 1 + 6)  // bar, digits holder, digits
         #expect(count("vaultDoor") <= 2 && count("vaultDoor.exiting") <= 1)
         presenter.stop()

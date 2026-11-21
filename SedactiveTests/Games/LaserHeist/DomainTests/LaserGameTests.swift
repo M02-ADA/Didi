@@ -41,6 +41,34 @@ nonisolated struct LaserGameTests {
                             capturedAt: 100 + time, cameraGeometryRevision: 1, players: players)
     }
 
+    @Test(arguments: [true, false])
+    func heartRestoresOneLifeOnlyWhenHealthIsMissing(_ tookDamage: Bool) throws {
+        let (scenario, initial) = try setup()
+        var game = initial
+        if tookDamage {
+            try game.register(scenario.encounter)
+            try game.receive(packet(scenario, verdicts: [outcomes[1], outcomes[1]]), capturedGameTime: 10, arrivedAt: 10.05)
+            try game.advance(to: 11)
+            #expect(game.teamHealth == 3)
+        }
+        let heart = try LaserDiamondTests.spawn(1, at: game.gameTime, players: [.player1])
+        try game.spawnHeart(heart, beforeVaultAt: 30)
+        game.collectHeart(id: heart.id, players: [.player1])
+        #expect(game.heart == heart)
+        try game.advance(to: heart.entry)
+        game.collectHeart(id: heart.id, players: [.player2])
+        #expect(game.heart == heart)
+        game.pause()
+        game.collectHeart(id: heart.id, players: [.player1])
+        #expect(game.heart == heart)
+        game.resume()
+        game.collectHeart(id: heart.id, players: [.player1])
+        game.collectHeart(id: heart.id, players: [.player1])
+        #expect(game.heart == nil && game.lastHeartPickup?.restored == tookDamage)
+        #expect(game.teamHealth == (tookDamage ? 4 : 5))
+        #expect(game.teamScore == 0)
+    }
+
     @Test(arguments: [0,1,2], [0,1,2])
     func nineVerdictCombinationsHaveExactlyTheRulesOutcome(_ p1: Int, _ p2: Int) throws {
         let (scenario, initial) = try setup()
@@ -70,15 +98,14 @@ nonisolated struct LaserGameTests {
 
     private func completeVault(_ game: inout LaserGame, id: UUID, generation: UUID, at time: Double) throws {
         try game.openVault(id: id, at: time)
+        // One activation button each (P1 at +0.3 s, P2 at +0.6 s: the gate opens when it did with three).
         for (index, player) in PlayerID.allCases.enumerated() {
-            for (offset, button) in [LaserVaultButton.bottom, .top, .middle].enumerated() {
-                try game.touchVault(id: id, playerID: player, button: button, validity: .valid,
-                    generation: generation, calibrationRevision: 1, at: time + 0.1 * Double(index * 3 + offset + 1))
-            }
+            try game.touchVault(id: id, playerID: player, button: .activate, validity: .valid,
+                generation: generation, calibrationRevision: 1, at: time + 0.3 * Double(index + 1))
         }
     }
 
-    @Test func vaultRequiresBothPlayersAllButtonsAndOnlyOpensOnce() throws {
+    @Test func vaultRequiresBothPlayersButtonsAndOnlyOpensOnce() throws {
         let (scenario, initial) = try setup()
         var game = initial
         let id = scenario.encounter.id, generation = scenario.input.configuration.sessionGeneration
@@ -88,11 +115,11 @@ nonisolated struct LaserGameTests {
                 generation: generation, calibrationRevision: 1, at: Double(i+1) / 10))
         }
         #expect(game.missionProgress == 0)
-        #expect(try !game.touchVault(id: id, playerID: .player1, button: .top, validity: .valid,
+        #expect(try !game.touchVault(id: id, playerID: .player1, button: .activate, validity: .valid,
             generation: generation, calibrationRevision: 1, at: 0.4))
-        #expect(try !game.touchVault(id: id, playerID: .player2, button: .top, validity: .stale,
+        #expect(try !game.touchVault(id: id, playerID: .player2, button: .activate, validity: .stale,
             generation: generation, calibrationRevision: 1, at: 0.5))
-        #expect(try !game.touchVault(id: id, playerID: .player2, button: .top, validity: .valid,
+        #expect(try !game.touchVault(id: id, playerID: .player2, button: .activate, validity: .valid,
             generation: generation, calibrationRevision: 2, at: 0.5))
         for (i, button) in LaserVaultButton.allCases.reversed().enumerated() {
             try game.touchVault(id: id, playerID: .player2, button: button, validity: .valid,
@@ -101,7 +128,7 @@ nonisolated struct LaserGameTests {
         #expect(game.missionProgress == 1)
         #expect(game.teamHealth == 5)
         #expect(game.teamScore == 0) // No unapproved vault bonus.
-        #expect(try !game.touchVault(id: id, playerID: .player2, button: .top, validity: .valid,
+        #expect(try !game.touchVault(id: id, playerID: .player2, button: .activate, validity: .valid,
             generation: generation, calibrationRevision: 1, at: 1))
         #expect(game.drainEvents().filter { if case .coopGateSucceeded = $0.kind { true } else { false } }.count == 1)
     }
@@ -129,7 +156,7 @@ nonisolated struct LaserGameTests {
         #expect(game.teamScore == (prune ? 200 : 0))
     }
 
-    @Test func fiveVaultsLeadToTenSecondBonusThenExactlyOneRoundEnd() throws {
+    @Test func fiveVaultsLeadToTwentySecondBonusThenExactlyOneRoundEnd() throws {
         let (scenario, initial) = try setup()
         var game = initial
         for index in 0..<5 {
@@ -140,9 +167,9 @@ nonisolated struct LaserGameTests {
         #expect(game.roundPhase == .diamondTime)
         #expect(game.roundOutcome == nil)
         let bonusStart = game.gameTime
-        try game.advance(to: bonusStart + 9.999999)
+        try game.advance(to: bonusStart + 19.999999)
         #expect(game.roundOutcome == nil)
-        try game.advance(to: bonusStart + 10)
+        try game.advance(to: bonusStart + 20)
         #expect(game.roundOutcome == .completed)
         try game.advance(to: 30)
         game.exit()
@@ -156,7 +183,7 @@ nonisolated struct LaserGameTests {
         let (scenario, initial) = try setup()
         var game = initial
         try game.openVault(id: scenario.encounter.id, at: 0)
-        #expect(try !game.touchVault(id: scenario.encounter.id, playerID: .player1, button: .top, validity: .missingLandmarks,
+        #expect(try !game.touchVault(id: scenario.encounter.id, playerID: .player1, button: .activate, validity: .missingLandmarks,
             generation: scenario.input.configuration.sessionGeneration, calibrationRevision: 1, at: 1))
         try game.advance(to: 5)
         #expect(game.roundOutcome == .vaultFailed)
@@ -226,13 +253,13 @@ nonisolated struct LaserGameTests {
         let (scenario, initial) = try setup()
         var game = initial
         try game.openVault(id: scenario.encounter.id, at: 10)
-        try game.touchVault(id: scenario.encounter.id, playerID: .player1, button: .top, validity: .valid,
+        try game.touchVault(id: scenario.encounter.id, playerID: .player1, button: .activate, validity: .valid,
             generation: scenario.input.configuration.sessionGeneration, calibrationRevision: 1, at: 11)
         #expect(game.activityProgress == 10)
         game.pause()
         try game.advance(to: 100)
         #expect(game.gameTime == 11)
-        #expect(game.vault?.buttons[.player1] == [.top])
+        #expect(game.vault?.buttons[.player1] == [.activate])
         game.resume()
         try game.advance(to: 12) // GameClock, not wall time: paused source time is excluded.
         #expect(game.activityProgress == 10)

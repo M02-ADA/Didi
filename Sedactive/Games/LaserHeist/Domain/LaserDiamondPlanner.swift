@@ -11,10 +11,12 @@ nonisolated struct LaserDiamondPlanner: Sendable {
     private var randomState: UInt64
     private var sequence: UInt64 = 0
     let placements: [LaserDiamondPlacement]
+    private let passagePlacements: [LaserDiamondPlacement]
     let approachLead: Double
     let passageDuration: Double
 
-    init(seed: UInt64, placements: [LaserDiamondPlacement], approachLead: Double, passageDuration: Double) throws {
+    init(seed: UInt64, placements: [LaserDiamondPlacement], approachLead: Double, passageDuration: Double,
+         passagePlacements: [LaserDiamondPlacement]? = nil) throws {
         try requireLaserValue(placements.count >= 5 && placements.allSatisfy { !$0.eligiblePlayers.isEmpty }
             && approachLead.isFinite && approachLead > 0 && passageDuration.isFinite && passageDuration > 0,
                               "diamond planner configuration")
@@ -24,6 +26,10 @@ nonisolated struct LaserDiamondPlanner: Sendable {
         }
         self.randomState = seed
         self.placements = placements
+        let passage = passagePlacements ?? placements
+        try requireLaserValue(passage.count >= 5 && passage.allSatisfy { !$0.eligiblePlayers.isEmpty }
+            && Set(passage.map { [$0.position.x, $0.position.y] }).count == passage.count, "passage placements")
+        self.passagePlacements = passage
         self.approachLead = approachLead
         self.passageDuration = passageDuration
     }
@@ -39,8 +45,9 @@ nonisolated struct LaserDiamondPlanner: Sendable {
     /// IDs are monotonic within this round. The domain can reject retired IDs without retaining all of them.
     private mutating func makeSpawn(at time: Double, entry: Double, exit: Double,
                                    excluding positions: [LaserDiamondPosition],
-                                   avoiding wrists: (points: [LaserDiamondPosition], radius: Double)? = nil) throws -> LaserDiamondSpawn {
-        let available = placements.filter { !positions.contains($0.position) }
+                                   avoiding wrists: (points: [LaserDiamondPosition], radius: Double)? = nil,
+                                   passage: Bool = false) throws -> LaserDiamondSpawn {
+        let available = (passage ? passagePlacements : placements).filter { !positions.contains($0.position) }
         try requireLaserValue(!available.isEmpty && sequence < 0xffffffffffff, "placement/identity exhausted")
         let preferred = wrists.map { wrists in
             available.filter { placement in
@@ -52,13 +59,19 @@ nonisolated struct LaserDiamondPlanner: Sendable {
         // A replacement is still due when every legal zone overlaps a collecting wrist.
         let candidates = preferred.isEmpty ? available : preferred
         let placement = candidates[Int(random() % UInt64(candidates.count))]
+        return try spawn(placement, at: time, entry: entry, exit: exit)
+    }
+
+    private mutating func spawn(_ placement: LaserDiamondPlacement, at time: Double, entry: Double, exit: Double) throws -> LaserDiamondSpawn {
+        try requireLaserValue(sequence < 0xffffffffffff, "diamond identity exhausted")
         sequence += 1
         let id = UUID(uuidString: String(format: "D1A00000-0000-4000-8000-%012llX", sequence))!
         return try LaserDiamondSpawn(id: id, position: placement.position, eligiblePlayers: placement.eligiblePlayers,
                                      spawnedAt: time, entry: entry, exit: exit)
     }
 
-    mutating func normalMinute(_ minute: Int, from start: Double, until boundary: Double) throws -> [LaserDiamondSpawn] {
+    mutating func normalMinute(_ minute: Int, from start: Double, until boundary: Double,
+                               visualLead: Double? = nil) throws -> [LaserDiamondSpawn] {
         try requireLaserValue((0..<5).contains(minute) && start.isFinite && boundary.isFinite && start >= 0
             && boundary - start > approachLead + passageDuration, "normal diamond segment")
         var next = self
@@ -66,15 +79,73 @@ nonisolated struct LaserDiamondPlanner: Sendable {
         let minimum = 8 + minute * 3
         let count = minimum + Int(next.random() % 3)
         let available = boundary - start - approachLead - passageDuration
+        let spacing = available / Double(count + 1)
+        // Keep each live diamond on its own slot, including during approach. The
+        // shortened debug rounds may have less room between passages than production.
+        let requestedLead = visualLead ?? approachLead
+        try requireLaserValue(requestedLead.isFinite && requestedLead >= approachLead, "diamond visual lead")
+        let lead = max(approachLead, min(requestedLead, spacing * Double(passagePlacements.count) - passageDuration - 1e-6))
         var result: [LaserDiamondSpawn] = []
         for index in 0..<count {
             let time = start + available * Double(index + 1) / Double(count + 1)
-            result.append(try next.makeSpawn(at: time, entry: time + approachLead,
-                exit: time + approachLead + passageDuration,
-                excluding: result.filter { $0.exit > time }.map(\.position)))
+            let entry = time + approachLead
+            let spawn = lead == approachLead ? time : max(start, entry - lead)
+            result.append(try next.makeSpawn(at: spawn, entry: entry,
+                exit: entry + passageDuration,
+                excluding: result.filter { $0.exit > spawn }.map(\.position), passage: true))
         }
         self = next
         return result
+    }
+
+    /// Keep empty slots when the board has no safe placement for this input frame.
+    mutating func refillPawBoard(at time: Double, deadline: Double, roster: Set<PlayerID>,
+                                active: [LaserDiamondSpawn], recent: [LaserDiamondPosition],
+                                paws: [LaserDiamondPosition]) throws -> [LaserDiamondSpawn] {
+        let limit = LaserDiamondTimeBoard.activeDiamondLimit(secondsRemaining: deadline - time)
+        guard active.count < limit else { return [] }
+        var occupied = active.map(\.position)
+        var spawns: [LaserDiamondSpawn] = []
+        let positions = LaserDiamondTimeBoard.positions(solo: roster.count == 1)
+        while occupied.count < limit {
+            let safe = positions.filter { candidate in
+                !recent.contains(candidate)
+                    && occupied.allSatisfy { LaserDiamondTimeBoard.distance($0, candidate) >= LaserDiamondTimeBoard.interDiamondSpacing }
+                    && paws.allSatisfy { LaserDiamondTimeBoard.distance($0, candidate) >= LaserDiamondTimeBoard.spawnClearance }
+            }
+            guard !safe.isEmpty else { break }
+            let position = safe[Int(random() % UInt64(safe.count))]
+            let placement = LaserDiamondPlacement(position: position, eligiblePlayers: roster)
+            spawns.append(try spawn(placement, at: time, entry: time, exit: deadline))
+            occupied.append(position)
+        }
+        return spawns
+    }
+
+    /// Separate seeded stream in the live director so heart draws do not shift diamond draws.
+    mutating func normalHearts(minute: Int, from start: Double, until boundary: Double,
+                               avoiding diamonds: [LaserDiamondSpawn]) throws -> [LaserDiamondSpawn] {
+        let counts = [1, 2, 2, 3, 3]
+        try requireLaserValue(counts.indices.contains(minute), "heart minute")
+        let count = counts[minute]
+        let slot = (boundary - start) / Double(count)
+        // Each heart finishes before the next slot. Short debug stages use a shorter approach.
+        let lead = min(3.7, (slot - passageDuration) / 2)
+        try requireLaserValue(lead.isFinite && lead > 0, "heart schedule")
+        let slack = slot - lead - passageDuration
+        return try (0..<count).map { index in
+            let fraction = Double(random() % 1000 + 1) / 1001
+            let time = start + slot * Double(index) + slack * fraction
+            let entry = time + lead
+            let exit = entry + passageDuration
+            let occupied = diamonds.filter { $0.exit > time && $0.spawnedAt < exit }.map(\.position)
+            let pickupOverlap = diamonds.filter { $0.exit > entry && $0.entry < exit }.map(\.position)
+            let excluded: [LaserDiamondPosition]
+            if passagePlacements.contains(where: { !occupied.contains($0.position) }) { excluded = occupied }
+            else if passagePlacements.contains(where: { !pickupOverlap.contains($0.position) }) { excluded = pickupOverlap }
+            else { excluded = [] }
+            return try makeSpawn(at: time, entry: entry, exit: exit, excluding: excluded, passage: true)
+        }
     }
 
     mutating func bonusInitial(at time: Double, deadline: Double) throws -> [LaserDiamondSpawn] {

@@ -118,6 +118,7 @@ final class LaserHazard {
             // resolves instead: it fades out between 0.8 m and 2.6 m past the players,
             // where the presenter hides it anyway (half a meter before the camera).
             let haze = CorridorDepth.haze(atDistance: hazeCameraZ - worldZ)
+            gate?.setViewDistance(hazeCameraZ - worldZ)
             let past = worldZ - mapping.interactionPlaneZ
             let t = min(max((past - Self.resolveStart) / (Self.resolveEnd - Self.resolveStart), 0), 1)
             let opacity = (1 - haze) * (1 - t * t * (3 - 2 * t))

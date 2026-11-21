@@ -46,6 +46,7 @@ private struct ReplayRoundView: View {
     @State private var scene = LaserScene()
     @State private var presentation = LaserReplayPresentation()
     @State private var diamondFlights = DiamondHUDFlightModel()
+    @State private var teamCallouts = LaserTeamCalloutModel()
     @State private var session: GameSessionCoordinator?
     /// A live session mounted before its round plan exists (scene loaded during setup): starts the
     /// presentation on the first rendered frame after the plan is installed.
@@ -57,24 +58,37 @@ private struct ReplayRoundView: View {
     /// The per-frame host-clock tick: live cutout expiry and live avatars.
     @State private var frameRefresh: EventSubscription?
     #if DEBUG
+    @State private var heartPreview = HeartAnimationPreview()
     @State private var diamondReadout = DebugDiamondVisualReadout()
     @State private var preview = LaserApproachPreview()
     @State private var environmentPreview = EnvironmentPreview()
     @State private var hoverboardPreview = HoverboardPreview()
     @State private var finalVaultPreview = FinalVaultPreview()
+    @State private var hitReactionPreview = LaserHitReactionPreview()
     @State private var gateConsolePreview = GateConsolePreview()
     @State private var cutoutFeed: SyntheticCutoutFeed?
     @State private var directorPreview = DirectorLaserPreview()
+    @State private var verticalLaserPreview: VerticalLaserPreview?
+    @State private var verticalLaserReplay: VerticalLaserReplay?
     @State private var robotDemo = RobotDemoDriver()
     @State private var robotDemoActive = false
     /// The demo's K03 attachment (`-avatarPackets`); revoked on teardown.
     @State private var demoAvatars: LiveAvatarPresenter?
     #endif
 
+    #if DEBUG
+    private static let landscapePreview = ProcessInfo.processInfo.arguments.contains("-landscape")
+    #endif
+
     var body: some View {
         RealityView { content in
             content.camera = .virtual
+            #if DEBUG
+            if let selected = TimingIndicatorControls.launchVariant { scene.selectTimingVariant(selected) }
+            presentation.holdsTimingComparison = TimingIndicatorControls.isComparison
+            #endif
             presentation.diamondFlights = diamondFlights
+            presentation.teamCallouts = teamCallouts
             let authored = await LaserScene.loadAuthoredEnvironment()
             #if DEBUG
             // Launch with `-showEditorPreviews` to overlay the Reality Composer Pro
@@ -94,6 +108,10 @@ private struct ReplayRoundView: View {
                 let now = CACurrentMediaTime()
                 scene?.refreshLiveCutouts(now: now)
                 scene?.refreshLiveAvatars(now: now)
+                #if DEBUG
+                heartPreview.update(now: now)
+                MaskBenchmark.recorder.renderTick(now) // no-op without `-maskBench`
+                #endif
             }
             if let avatarSource {
                 do {
@@ -172,6 +190,15 @@ private struct ReplayRoundView: View {
             // Optional world-construction guides. Replay body markers live in the presentation adapter.
             #if DEBUG
             let arguments = ProcessInfo.processInfo.arguments
+            if HeartAnimationPreview.isRequested {
+                do {
+                    let input = try LaserReplayScript.load().input.configuration
+                    _ = try await installAvatars(calibrations: input.calibrations, layout: input.playerPlaneLayout)
+                    guard !Task.isCancelled else { return }
+                    try await heartPreview.start(scene: scene, generation: generation)
+                } catch { startupError = String(describing: error) }
+                return // No replay coordinator, gameplay clock, body input or reward events.
+            }
             if arguments.contains("-showWorldGuides") {
                 content.add(PoseDebugOverlay.make(for: scene))
             }
@@ -211,6 +238,17 @@ private struct ReplayRoundView: View {
                 } catch { startupError = String(describing: error) }
                 return
             }
+            // Launch with `-replay -hitReactionPreview [p1|p2|both] [high|low] …` to review the HIT zap.
+            if LaserHitReactionPreview.isRequested {
+                do {
+                    let input = try LaserReplayScript.load().input
+                    let request = LaserHitReactionPreview.requested
+                    guard let robots = try await installAvatars(calibrations: input.configuration.calibrations,
+                                                                layout: input.configuration.playerPlaneLayout) else { return }
+                    hitReactionPreview.start(on: content, scene: scene, robots: robots, request: request)
+                } catch { startupError = String(describing: error) }
+                return
+            }
             // Launch with `-replay -finalVaultPreview [solo] [seconds]` to review the final vault entry.
             if FinalVaultPreview.isRequested {
                 do {
@@ -222,6 +260,40 @@ private struct ReplayRoundView: View {
                     // Solo: Tangerine's lane is hidden, as in a live Solo Test.
                     if solo { scene.players[.player2]?.isEnabled = false }
                     finalVaultPreview.start(on: content, scene: scene, solo: solo, heldAt: heldAt)
+                } catch { startupError = String(describing: error) }
+                return
+            }
+            // Launch with `-replay -verticalLaserReplay [clear|hit|unavailable] [solo] [reduced] [seconds]` for
+            // one vertical laser driven by mock authoritative board positions and a scripted verdict.
+            if VerticalLaserReplay.isRequested {
+                do {
+                    let input = try LaserReplayScript.load().input
+                    let request = VerticalLaserReplay.requested
+                    let calibrations = input.configuration.calibrations.filter { !request.solo || $0.key == .player1 }
+                    guard let robots = try await installAvatars(calibrations: calibrations,
+                                                                layout: input.configuration.playerPlaneLayout) else { return }
+                    if request.solo { scene.players[.player2]?.isEnabled = false }
+                    scene.isLaserVisible = false
+                    let replay = VerticalLaserReplay(scene: scene, robots: robots, request: request)
+                    verticalLaserReplay = replay
+                    replay.start(on: content)
+                } catch { startupError = String(describing: error) }
+                return
+            }
+            // Launch with `-replay -verticalLaserPreview [solo] [center|left|right|outer|sweep] [parked] [reduced] [seconds]`
+            // to review the vertical laser prototype (no gameplay).
+            if VerticalLaserPreview.isRequested {
+                do {
+                    let input = try LaserReplayScript.load().input
+                    let request = VerticalLaserPreview.requested
+                    let calibrations = input.configuration.calibrations.filter { !request.solo || $0.key == .player1 }
+                    guard try await installAvatars(calibrations: calibrations,
+                                                   layout: input.configuration.playerPlaneLayout) != nil else { return }
+                    if request.solo { scene.players[.player2]?.isEnabled = false }
+                    scene.isLaserVisible = false
+                    let preview = VerticalLaserPreview(scene: scene, request: request)
+                    verticalLaserPreview = preview
+                    preview.start(on: content, scene: scene)
                 } catch { startupError = String(describing: error) }
                 return
             }
@@ -311,7 +383,7 @@ private struct ReplayRoundView: View {
                 #endif
                 var useSlice = ProcessInfo.processInfo.arguments.contains("-replaySlice")
                 #if DEBUG
-                useSlice = useSlice || DiamondTimeFixture.isRequested
+                useSlice = useSlice || DiamondTimeFixture.isRequested || TimingIndicatorControls.isComparison
                 #endif
                 let base = try useSlice ? LaserReplayScript.load() : LaserReplayScript.complete()
                 let script = try base.freshRound(generation: generation)
@@ -331,20 +403,46 @@ private struct ReplayRoundView: View {
                 presentation.start(on: content, scene: scene, session: replay)
             } catch { startupError = String(describing: error) }
         }
+        #if DEBUG
+        // Launch with `-landscape` to frame the 3D view at the narrowest landscape iPad's aspect
+        // (4:3) on a Simulator that cannot be rotated: the camera then composes exactly as in
+        // landscape (composition reviews only).
+        .frame(width: Self.landscapePreview ? UIScreen.main.bounds.width : nil,
+               height: Self.landscapePreview ? UIScreen.main.bounds.width * 3 / 4 : nil)
+        .clipped()
+        #endif
+        // After the DEBUG framing, so the paw board maps onto the 3D view as framed.
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: { presentation.pawBoardDiamonds.viewportFrame = $0 }
         .ignoresSafeArea()
         .background(.black)
         .overlay {
-            // One HUD at a time: the Sketch gameplay HUD, or (Debug, `-replayDebugHUD`)
-            // Jevon's text HUD for replay diagnostics. Results replaces either.
-            if let session, session.summary == nil, !Self.showsReplayDebugHUD, let model = hudModel(session) {
-                GameplayHUD(model: model, actions: hudActions(session))
+            if let session {
+                let model = session.summary == nil ? hudModel(session) : nil
+                ZStack {
+                    if let seconds = model?.diamondTimeRemaining, seconds > 0 {
+                        DiamondTimeRushFrame(secondsRemaining: seconds)
+                    }
+                    if session.showsDiamondTimePaws {
+                        DiamondTimePawOverlay(session: session, presentation: presentation.pawBoardDiamonds)
+                    }
+                    // The debug HUD takes the place of the normal HUD.
+                    if let model, !Self.showsReplayDebugHUD {
+                        GameplayHUD(model: model, actions: hudActions(session))
+                    }
+                    // PERFECT! / ZAPPED! on the HUD's title line, never over the results.
+                    if session.summary == nil {
+                        LaserTeamCalloutView(model: teamCallouts)
+                    }
+                }
             }
         }
         .overlay {
             if let final = session?.summary { ResultsView(summary: final, onRetry: retry, onHome: homeAction) }
         }
-        .overlayPreferenceValue(DiamondScoreAnchorKey.self) { anchor in
-            DiamondHUDFlightOverlay(model: diamondFlights, scoreAnchor: anchor)
+        .overlayPreferenceValue(PickupHUDAnchorKey.self) { anchors in
+            DiamondHUDFlightOverlay(model: diamondFlights, scoreAnchor: anchors[.score], healthAnchor: anchors[.health])
         }
         .coordinateSpace(name: DiamondHUDFlightModel.space)
         .safeAreaInset(edge: .bottom) {
@@ -406,6 +504,9 @@ private struct ReplayRoundView: View {
         }
         .overlay(alignment: .bottom) {
             #if DEBUG
+            if HeartAnimationPreview.isRequested {
+                HeartAnimationPreviewControls(preview: heartPreview, retry: retry)
+            }
             if let session, session.isDebugWristPreview, session.summary == nil {
                 DebugWristDiamondControls(session:session,readout:diamondReadout).padding(.bottom,100)
             }
@@ -422,9 +523,39 @@ private struct ReplayRoundView: View {
                     .accessibilityIdentifier("endRound")
             }
         }
-        .onChange(of: session?.phase) { _, phase in
-            if phase != .running { diamondFlights.clear() }
+        #if DEBUG
+        .overlay(alignment: .bottomTrailing) {
+            GeometryReader { geometry in
+                VStack { Spacer(); HStack { Spacer()
+                    if !HeartAnimationPreview.isRequested {
+                        TimingIndicatorControls(session: session, scene: scene, retry: retry, viewport: geometry.size)
+                    }
+                } }
+            }.ignoresSafeArea()
         }
+        #endif
+        .onChange(of: session?.phase) { _, phase in
+            scene.setTimingPaused(phase == .paused)
+            if phase != .running { diamondFlights.clear() }
+            #if DEBUG
+            // `-maskBench` spike: the measured run is the live round, countdown to finish.
+            if let phase, session?.isReplay == false {
+                let inRound = [.countdown, .running, .paused].contains(phase)
+                let ended = phase == .finished || { if case .failed = phase { true } else { false } }()
+                MaskBenchmark.recorder.sessionPhase("\(phase)", inRound: inRound, finished: ended)
+            }
+            #endif
+        }
+        #if DEBUG
+        .overlay(alignment: .topLeading) {
+            if MaskBenchmark.configuration.map({ $0.overlay || $0.script }) == true { MaskBenchmarkOverlay() }
+        }
+        .overlay {
+            // `-replay -debugRoundControlsPreview`: the live round's DEBUG card over the replay, to
+            // review its placement in the Simulator (no camera). A replay offers no skips: both stay off.
+            if let session, session.summary == nil, DebugRoundControls.previewRequested { DebugRoundControls(session: session) }
+        }
+        #endif
         .onChange(of: session?.summary?.sessionGeneration) { _, final in
             if final != nil { presentation.stop() }
         }
@@ -442,6 +573,8 @@ private struct ReplayRoundView: View {
             // before this scene is replaced (Retry).
             scene.detachLiveAvatars()
             #if DEBUG
+            heartPreview.stop()
+            MaskBenchmark.recorder.suspend(reason: "view closed")
             cutoutFeed?.stop()
             cutoutFeed = nil
             directorPreview.stop()
@@ -507,9 +640,10 @@ private struct ReplayRoundView: View {
         }
         #endif
         return GameplayHUDModel(state: session.state, events: session.events, configuration: configuration,
-                                activityDuration: session.activityDuration,
+                                activityDuration: session.activityDuration, stageProgress: session.stageProgress,
                                 diamondsCollected: collected, diamondsAreFixture: fixture,
-                                enteringFinalVault: session.finalVaultEntry.map { !$0.isComplete } ?? false)
+                                enteringFinalVault: session.finalVaultEntry.map { !$0.isComplete } ?? false,
+                                soloPractice: session.isSoloPractice)
     }
 
     #if DEBUG

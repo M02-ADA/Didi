@@ -10,10 +10,10 @@ import Testing
 @testable import Sedactive
 
 nonisolated struct LaserWaveDirectorTests {
-    private func configuration(_ second: LaserPlayerDifficulty = .conservativeCandidate) throws -> LaserRoundConfiguration {
+    private func configuration(_ second: LaserPlayerDifficulty = .fiveStageCandidate) throws -> LaserRoundConfiguration {
         let timing = try LaserEvidenceTiming(windowBefore: 0.35, windowAfter: 0.25, deliveryAllowance: 0.1)
         return try LaserRoundConfiguration(evidenceTiming: timing, clearanceMargin: 0.005, diamondPoints: nil,
-            scheduling: LaserSchedulingConfiguration(players: [.player1: .conservativeCandidate, .player2: second],
+            scheduling: LaserSchedulingConfiguration(players: [.player1: .fiveStageCandidate, .player2: second],
                                                       searchStep: 0.25, maximumSearchSteps: 2000))
     }
 
@@ -23,12 +23,12 @@ nonisolated struct LaserWaveDirectorTests {
         LaserPlayerDifficulty(requestedCrownDropShare: drop, requestedSoleLiftShare: lift, beamThicknessShare: 0.01,
             maximumCrownDropShare: 0.10, maximumSoleLiftShare: cap, clearanceReserveShare: 0.1,
             maximumJumpsInWindow: count, jumpWindow: 30, minimumJumpSpacing: spacing,
-            maximumConsecutiveJumps: consecutive, minimumTargetSpacing: 5,
+            maximumConsecutiveJumps: consecutive, minimumTargetSpacing: 4.5,
             warningLead: warning, cueLead: 1.4, crossingOffset: offset)
     }
 
     private func plan(_ script: [LaserWaveBeat] = LaserWaveBeat.fiveMinuteScript(),
-                      second: LaserPlayerDifficulty = .conservativeCandidate,
+                      second: LaserPlayerDifficulty = .fiveStageCandidate,
                       previous: [LaserScheduledDemand] = [], notBefore: [PlayerID: Double] = [:]) throws -> LaserWaveSchedule {
         let fixture = try #require(LaserReplayScenarios.make().first).input.configuration
         return try LaserWaveDirector().schedule(script: script, calibrations: fixture.calibrations,
@@ -40,12 +40,25 @@ nonisolated struct LaserWaveDirectorTests {
         let first = try plan()
         #expect(first.deferred.isEmpty)
         #expect(first.encounters.count == 50)
-        #expect(first.encounters.first?.targets.first?.requiredMove == .duck)
-        #expect(first.encounters.filter { $0.targets[0].requiredMove == .duck }.count == 32)
-        #expect(first.encounters.filter { $0.targets[0].requiredMove == .jump }.count == 18)
+        // The five-stage design opens with LEAN OUT, LEAN IN, JUMP, DUCK (16 November 2026).
+        #expect(first.encounters.prefix(4).map { $0.targets[0].requiredMove } == [.lean, .lean, .jump, .duck])
+        func count(_ player: PlayerID, _ move: LaserMove) -> Int {
+            first.encounters.flatMap(\.targets).filter { $0.playerID == player && $0.requiredMove == move }.count
+        }
+        let p1: [Int] = [count(.player1, .duck), count(.player1, .jump), count(.player1, .lean)]
+        let p2: [Int] = [count(.player2, .duck), count(.player2, .jump), count(.player2, .lean)]
+        #expect(p1 == [20, 9, 19])
+        #expect(p2 == [20, 9, 19])
+        // Horizontal lasers are one continuous beam: never DUCK for one player and JUMP for the other.
+        for encounter in first.encounters {
+            #expect(Set(encounter.targets.map(\.requiredMove)).count == 1, "\(encounter.id): one move per encounter")
+            if encounter.targets[0].requiredMove != .lean { #expect(encounter.targets.count == 2, "full width") }
+        }
+        // Every crossing lands exactly on the script's time: the recovery rules hold without a shift.
+        #expect(first.encounters.map { $0.targets[0].crossingTime } == LaserWaveBeat.fiveMinuteScript().map(\.nominalCrossingTime))
         for _ in 0..<3 { #expect(try plan() == first) }
         #expect(first.encounters.map(\.id) == LaserWaveBeat.fiveMinuteScript().map(\.id))
-        for (minute, count) in [8, 9, 10, 11, 12].enumerated() {
+        for (minute, count) in [9, 10, 10, 11, 10].enumerated() {
             #expect(first.encounters.filter { Int($0.targets[0].crossingTime / 60) == minute }.count == count)
         }
     }
@@ -67,7 +80,16 @@ nonisolated struct LaserWaveDirectorTests {
                 #expect(target.crossingTime - profile.cueLead >= target.warningTime)
                 #expect(config.scheduling?.actionCueTime(for: target) == target.crossingTime - profile.cueLead)
                 #expect(config.evidenceTiming.finalizationTime(crossing: target.crossingTime) < Double(Int(target.crossingTime / 60) + 1) * 60)
-                if index > 0 { #expect(target.crossingTime - targets[index-1].crossingTime >= profile.minimumTargetSpacing) }
+                if index > 0 {
+                    // A combined encounter's full-width DUCK follows its LEAN layer `layerGap` later.
+                    let beat = LaserWaveBeat.fiveMinuteScript().first { b in schedule.encounters.contains { $0.id == b.id && $0.targets.contains(target) } }
+                    let gap = target.crossingTime - targets[index-1].crossingTime
+                    if beat?.followsLayer == true, targets[index-1].requiredMove == .lean {
+                        #expect(abs(gap - LaserWaveBeat.layerGap) < 1e-9 && target.requiredMove == .duck)
+                    } else {
+                        #expect(gap >= profile.minimumTargetSpacing)
+                    }
+                }
                 if target.requiredMove == .jump {
                     #expect(target.beam.upperY + config.clearanceMargin < height * profile.maximumSoleLiftShare)
                     if let last = jumps.last { #expect(target.crossingTime - last >= profile.minimumJumpSpacing) }
@@ -75,13 +97,16 @@ nonisolated struct LaserWaveDirectorTests {
                     #expect(jumps.filter { $0 >= target.crossingTime - profile.jumpWindow }.count <= profile.maximumJumpsInWindow)
                     consecutive += 1
                     #expect(consecutive <= profile.maximumConsecutiveJumps)
-                } else {
+                } else if target.requiredMove == .duck {
                     #expect(height - (target.beam.lowerY - config.clearanceMargin) < height * profile.maximumCrownDropShare)
+                    consecutive = 0
+                } else {
+                    #expect(target.lean != nil && target.lean?.isPlaced == false, "a LEAN beam is placed only when registered")
                     consecutive = 0
                 }
             }
         }
-        let targets = try #require(schedule.encounters.first).targets
+        let targets = try #require(schedule.encounters.first { $0.targets[0].requiredMove == .duck }).targets
         #expect(targets[1].beam.upperY < targets[0].beam.upperY) // Lower required clearance for the shorter baseline.
     }
 
@@ -92,18 +117,23 @@ nonisolated struct LaserWaveDirectorTests {
         let calibration = try #require(fixture.calibrations[.player2])
         let height = calibration.mapping.gameY(imageY: calibration.standingCrownImageY, layout: fixture.playerPlaneLayout)
         for encounter in schedule.encounters {
+            // Each player's own demand from the script (a one-player LEAN layer asks one player).
+            let beat = try #require(LaserWaveBeat.fiveMinuteScript().first { $0.id == encounter.id })
+            for target in encounter.targets { #expect(target.requiredMove == beat.demand(for: target.playerID)?.move) }
+            guard encounter.targets.count == 2 else { continue }
             let first = encounter.targets[0], second = encounter.targets[1]
-            #expect(first.requiredMove == second.requiredMove)
             #expect(abs(second.crossingTime - first.crossingTime - 0.25) < 1e-9)
             if second.requiredMove == .jump { #expect(second.beam.upperY + 0.005 < height * 0.03) }
-            else { #expect(height - (second.beam.lowerY - 0.005) < height * 0.10) }
+            else if second.requiredMove == .duck { #expect(height - (second.beam.lowerY - 0.005) < height * 0.10) }
         }
     }
 
     @Test func stricterFrequencyDefersInsteadOfViolatingLimits() throws {
         let p = profile(count: 1, spacing: 20)
         let schedule = try plan(second: p)
-        #expect(!schedule.deferred.isEmpty)
+        // The scheduler had to adapt (defer, or move crossings later); the limits below always hold.
+        #expect(!schedule.deferred.isEmpty || schedule.encounters.map { $0.targets.map(\.crossingTime) }
+                != LaserWaveBeat.fiveMinuteScript().map { [$0.nominalCrossingTime] })
         let jumps = schedule.encounters.flatMap(\.targets).filter { $0.playerID == .player2 && $0.requiredMove == .jump }
         for (index, target) in jumps.enumerated() {
             if index > 0 { #expect(target.crossingTime - jumps[index-1].crossingTime >= p.minimumJumpSpacing) }

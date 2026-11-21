@@ -50,10 +50,13 @@ import Testing
         // Two people: still lost, no guessing.
         for _ in 0..<5 { _ = try step(F.pair) }
         #expect(tracker.snapshot.player1.state == .lost)
-        // Back alone, somewhere else: one dwell later P1 is tracked again, rebind cleared.
-        var r = try step([F.candidate(30, x: 0.3)])
+        // Alone, but outside the Solo box: never re-linked.
+        for _ in 0..<5 { _ = try step([F.candidate(40, x: 0.2)]) }
+        #expect(tracker.snapshot.player1.state == .lost, "a person outside the box is not P1")
+        // Back alone, somewhere else in the box: one dwell later P1 is tracked again, rebind cleared.
+        var r = try step([F.candidate(30, x: 0.4)])
         #expect(r.player1.state == .lost)
-        for _ in 0..<3 { r = try step([F.candidate(30, x: 0.3)]) }
+        for _ in 0..<3 { r = try step([F.candidate(30, x: 0.4)]) }
         #expect(r.player1.state == .tracking && r.player1.candidateID == 30 && !r.player1.requiresRebind)
         #expect(r.player2.state == .unbound, "no teammate is fabricated")
     }
@@ -190,11 +193,12 @@ import Testing
             calibrationRevisions: [.player1: calibration.revision], cutovers: [:], isActive: true, wristContact: nil)
         var game = try LaserGame(configuration: configuration, context: context, historyCapacityPerPlayer: 120)
         game.soloPracticePlayer = .player1
+        game.configureBoards(try director.boards())
         return (director, game, context, calibration.revision)
     }
 
     /// The whole DEBUG Solo Test round on the same schedule and game: P1's lasers, a P1-only
-    /// gate after every minute (three P1 presses open it), Diamond Time after the fifth, then
+    /// gate after every minute (P1's one press opens it), Diamond Time after the fifth, then
     /// the round completes with a summary for Results. No body evidence is given, so no laser
     /// is CLEAR and nothing is scored from movement.
     @Test(arguments: [15.0, 60.0])
@@ -208,19 +212,16 @@ import Testing
             while let due = try director.nextDue(through: time, game: game) {
                 try game.advance(to: max(game.gameTime, due.time))
                 switch due.action {
+                    case .heart: break
                 case .register(let encounter): try game.register(encounter); registered += 1
                 case .normalDiamond(let spawn, let boundary):
                     try game.spawnNormalDiamonds([spawn], beforeVaultAt: boundary); diamonds.append(spawn)
                 case .openVault(let id, let zones):
-                    #expect(zones.count == 3 && zones.allSatisfy { $0.playerID == .player1 }, "P1's three buttons only")
+                    #expect(zones.count == 1 && zones.allSatisfy { $0.playerID == .player1 }, "P1's one button only")
                     try game.openVault(id: id, at: game.gameTime)
                     gates.append(game.gameTime)
-                    // Two presses do not open it; the third (P1's last) does.
-                    try game.touchVaultBatch(id: id, contacts: [.init(playerID: .player1, button: .top, calibrationRevision: revision),
-                        .init(playerID: .player1, button: .middle, calibrationRevision: revision)],
-                        generation: context.sessionGeneration, at: game.gameTime + 0.5)
-                    #expect(game.roundPhase == .vault && game.vault?.opened == false)
-                    try game.touchVaultBatch(id: id, contacts: [.init(playerID: .player1, button: .bottom, calibrationRevision: revision)],
+                    #expect(game.roundPhase == .vault && game.vault?.opened == false, "never open before the press")
+                    try game.touchVaultBatch(id: id, contacts: [.init(playerID: .player1, button: .activate, calibrationRevision: revision)],
                         generation: context.sessionGeneration, at: game.gameTime + 0.5)
                     #expect(game.vault?.opened == true && game.missionProgress == gates.count)
                 }
@@ -246,7 +247,7 @@ import Testing
         #expect(game.playerStats[.player2] == nil)
     }
 
-    /// Co-op is unchanged: P1's three presses never open a co-op vault on their own.
+    /// Co-op is unchanged: P1's press never opens a co-op vault on its own.
     @Test func coopVaultStillNeedsBothPlayers() throws {
         let script = try LaserReplayScript.load()
         let input = script.input.configuration
@@ -275,6 +276,7 @@ import Testing
             while let due = try director.nextDue(through: time, game: game) {
                 try game.advance(to: max(game.gameTime, due.time))
                 switch due.action {
+                    case .heart: break
                 case .register(let e): try game.register(e)
                 case .normalDiamond(let s, let b): try game.spawnNormalDiamonds([s], beforeVaultAt: b)
                 case .openVault(let id, _): try game.openVault(id: id, at: game.gameTime); if stopAtVault { return time }
@@ -355,6 +357,7 @@ import Testing
                 while let due = try director.nextDue(through: time, game: game) {
                     try game.advance(to: max(game.gameTime, due.time))
                     switch due.action {
+                    case .heart: break
                     case .register(let e): try game.register(e); registered += 1
                     case .normalDiamond(let s, let b): try game.spawnNormalDiamonds([s], beforeVaultAt: b)
                     case .openVault(let id, _): try game.openVault(id: id, at: game.gameTime); return (id, game.gameTime)
@@ -453,7 +456,8 @@ import Testing
     }
 
     /// Found on the iPad (11 November 2026): the person mask demanded exactly two people, so every
-    /// solo sample was refused as "not separated". It now expects one person per LINKED player.
+    /// solo sample was refused as "not separated". It now expects one person per LINKED player,
+    /// found under that player's own torso; other people in view (19 November 2026) are allowed.
     @Test func theSoloMaskExpectsOnePersonForTheOneLinkedPlayer() throws {
         let f = try TrackingIntegrationFixture()
         let pose = try f.result(3, 0.25, [LiveVisionFixtures.standingPair[0]])
@@ -466,9 +470,11 @@ import Testing
         let regions = PersonSegmenter.associate(pose: pose, association: solo, labels: [1],
             bounds: [[0, 7, 0, 7]], width: 8, height: 8) { _, _ in 1 }
         #expect(regions.keys.sorted { $0.rawValue < $1.rawValue } == [.player1] && regions[.player1]?.candidateID == 10)
-        // A second person in the solo mask is refused (no guessing who is P1).
-        #expect(PersonSegmenter.associate(pose: pose, association: solo, labels: [1, 2],
-            bounds: [[0, 3, 0, 7], [4, 7, 0, 7]], width: 8, height: 8) { x, _ in x < 4 ? 1 : 2 }.isEmpty)
+        // A second person in the solo mask: P1 is the instance under P1's own torso, with its own
+        // bounds (the other person's pixels are a different instance and never counted).
+        let withBystander = PersonSegmenter.associate(pose: pose, association: solo, labels: [1, 2],
+            bounds: [[0, 3, 0, 7], [4, 7, 0, 7]], width: 8, height: 8) { x, _ in x < 4 ? 1 : 2 }
+        #expect(withBystander[.player1]?.label == 2 && withBystander[.player1]?.minX == 0.5)
         // Co-op with one person in the mask is still refused.
         #expect(PersonSegmenter.associate(pose: pose, association: both, labels: [1],
             bounds: [[0, 7, 0, 7]], width: 8, height: 8) { _, _ in 1 }.isEmpty)

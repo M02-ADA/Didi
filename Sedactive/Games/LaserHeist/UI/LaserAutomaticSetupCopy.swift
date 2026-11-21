@@ -7,6 +7,17 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
     let title: String
     let instruction: String
     let action: Action?
+    /// The calibration stage's Sketch title ("Hi-Fi Revisi 6 NOV" › Game Set Up: Home Copy 19
+    /// "stand inside the box to start", Home Copy 42 "stand still, don’t move"), shown instead of
+    /// `title` while the players are placed and measured; `nil` in every other state. From the setup
+    /// PHASE only, never from per-frame landmark confidence, so it cannot flicker with pose noise.
+    let headline: String?
+    /// At most one short line under the headline, only when it says something the boxes do not
+    /// (a player's current problem, a player still missing).
+    let headlineDetail: String?
+
+    static let placementHeadline = "stand inside the box to start"
+    static let holdStillHeadline = "stand still, don’t move"
     var actionTitle: String? {
         switch action {
         case .tryAgain: "Try again"
@@ -39,6 +50,7 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
 
     init(_ input: Input) {
         let p = input.presence
+        (headline, headlineDetail) = Self.sketchHeadline(input)
         if let message = input.message {
             (title, instruction, action) = ("Camera setup unavailable", message, .restartSetup); return
         }
@@ -85,6 +97,11 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
         switch input.setupPhase {
         case .confirmPlayers:
             (title, instruction, action) = ("Players found!", "Stay in your places.", nil)
+        case .awaitingCalibration where Self.attemptsUsed(p):
+            // Every automatic attempt ended without a candidate: the players choose to go again.
+            (title, instruction, action) = ("Calibration didn't finish", Self.retryHint(p, solo: input.solo, final: true), .tryAgain)
+        case .awaitingCalibration where p.retryPending:
+            (title, instruction, action) = ("Let's try that again", Self.retryHint(p, solo: input.solo, final: false), nil)
         case .awaitingCalibration:
             (title, instruction, action) = ("Stand still and upright!", "Arms relaxed, head and feet in view.", nil)
         case .calibrating:
@@ -93,11 +110,10 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
         case .reviewCandidate:
             (title, instruction, action) = ("Got it!", "Hold on…", nil)
         case .blocked:
-            let hint = p.lastIssue.map { Self.hint($0, solo: input.solo) } ?? "Stand upright and still, head and feet in view."
             if p.willRetry {
-                (title, instruction, action) = ("Let's try that again", hint, nil)
+                (title, instruction, action) = ("Let's try that again", Self.retryHint(p, solo: input.solo, final: false), nil)
             } else {
-                (title, instruction, action) = ("Calibration didn't finish", hint, .tryAgain)
+                (title, instruction, action) = ("Calibration didn't finish", Self.retryHint(p, solo: input.solo, final: true), .tryAgain)
             }
         case .awaitingGameplayReadiness:
             guard input.hasRoundPlan else { (title, instruction, action) = ("Calibrated!", "Preparing the round…", nil); return }
@@ -111,19 +127,74 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
             }
             (title, instruction, action) = ("Get ready!", waiting, nil)
         case .inactive, .awaitingBinding, .binding, .waitingForReliablePair, .restartRequired, nil:
-            let solo: String = switch p.peopleInView {
-            case 0: "Stand in the middle, head to toe in view."
-            case 1: "Hold still while we find you…"
-            default: "Solo test needs just one person in view. Ask others to step out."
-            }
-            let coop: String = switch p.peopleInView {
-            case 0: "P1 on the left, P2 on the right. Make sure the camera sees you both from head to toe."
-            case 1: "We can see one player. Waiting for the second."
-            default: "Hold your places while we find you both…"
-            }
-            let instruction = input.solo ? solo : coop
+            let instruction = Self.finding(peopleInView: p.peopleInView, solo: input.solo)
             (title, self.instruction, action) = (input.solo ? "Step into the middle" : "Step into your places", instruction, nil)
         }
+    }
+
+    /// While the players are being found: what the camera sees.
+    static func finding(peopleInView: Int, solo: Bool) -> String {
+        if solo {
+            return switch peopleInView {
+            case 0: "Stand in the middle, head to toe in view."
+            case 1: "Hold still while we find you…"
+            default: "Solo needs just one person in the box. Ask others to step out of it."
+            }
+        }
+        return switch peopleInView {
+        case 0: "P1 on the left, P2 on the right. Make sure the camera sees you both from head to toe."
+        case 1: "We can see one player. Waiting for the second."
+        default: "Hold your places while we find you both…"
+        }
+    }
+
+    /// The Sketch headline for this state and its optional line, or `nil` outside placement and
+    /// measuring (errors, retries, the round's own states keep their copy above).
+    static func sketchHeadline(_ input: Input) -> (String?, String?) {
+        guard input.message == nil, !input.isStarting, !input.roundStarted,
+              input.sessionPhase != .paused, input.sessionPhase != .restartRequired else { return (nil, nil) }
+        switch input.setupPhase {
+        case .inactive, .awaitingBinding, .binding, .waitingForReliablePair:
+            // Only when someone is still missing; with everyone in view the boxes say it all.
+            let wanted = input.solo ? 1 : 2
+            let detail = input.presence.peopleInView < wanted || input.presence.peopleInView > wanted
+                ? finding(peopleInView: input.presence.peopleInView, solo: input.solo) : nil
+            return (placementHeadline, detail)
+        case .confirmPlayers:
+            return (placementHeadline, nil)
+        case .awaitingCalibration where attemptsUsed(input.presence) || input.presence.retryPending:
+            return (nil, nil) // a failed attempt: its reason and any Try again show in the card
+        case .awaitingCalibration, .reviewCandidate:
+            return (holdStillHeadline, nil)
+        case .calibrating:
+            // Progress that just fell back says why first (a real step or lost tracking).
+            if let player = PlayerID.allCases.first(where: { input.presence.progressDropReason[$0] != nil }),
+               let reason = input.presence.progressDropReason[player] {
+                return (holdStillHeadline, input.solo ? hint(reason, solo: true) : "\(player == .player1 ? "P1" : "P2"): \(hint(reason))")
+            }
+            // A player's current problem, named, so the right person fixes it.
+            let issue = PlayerID.allCases.lazy.compactMap { player -> String? in
+                guard case .calibrating(_, let issue?) = input.presence.players[player], issue != .moving else { return nil }
+                return input.solo ? hint(issue, solo: true) : "\(player == .player1 ? "P1" : "P2"): \(hint(issue))"
+            }.first
+            return (holdStillHeadline, issue)
+        default:
+            return (nil, nil)
+        }
+    }
+
+    /// All automatic attempts were made and none is running or about to start.
+    static func attemptsUsed(_ presence: LaserSetupPresence) -> Bool {
+        presence.attempts >= LaserAutomaticSetupPolicy.maximumAttempts && !presence.promptingUpright
+    }
+
+    /// Why the last attempt did not finish: the players' own problem, or a technical delay that
+    /// is not theirs to fix (never blamed on them).
+    static func retryHint(_ presence: LaserSetupPresence, solo: Bool, final: Bool) -> String {
+        if presence.technicalRetry {
+            return final ? "The camera needed a moment. Tap Try again." : "The camera needed a moment. Trying again…"
+        }
+        return presence.lastIssue.map { hint($0, solo: solo) } ?? "Stand upright and still, head and feet in view."
     }
 
     /// The most useful hint while calibrating: the first player's current problem.
@@ -136,8 +207,8 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
 
     static func hint(_ issue: StandingSampleIssue, solo: Bool = false) -> String {
         switch issue {
-        case .notSeparated where solo: "Make sure you're the only person in view."
-        case .notSeparated: "Move a little further apart."
+        case .notSeparated where solo: "Make sure nobody else is in your box."
+        case .notSeparated: "Move a little further apart, and keep others out of your box."
         case .trackingLost: "Stay in your own place."
         case .bodyNotFullyVisible: "Make sure your whole body is in view."
         case .faceNotVisible: "Face the iPad so your face is visible."
@@ -169,7 +240,7 @@ nonisolated struct LaserAutomaticSetupCopy: Equatable, Sendable {
 
     static func shortHint(_ issue: StandingSampleIssue, solo: Bool = false) -> String {
         switch issue {
-        case .notSeparated where solo: "Only you in view"
+        case .notSeparated where solo: "Only you in the box"
         case .notSeparated: "Move apart"
         case .trackingLost: "Stay in place"
         case .bodyNotFullyVisible: "Whole body in view"

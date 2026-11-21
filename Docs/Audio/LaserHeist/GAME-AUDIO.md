@@ -51,6 +51,8 @@ Effects are edits of the Pixabay sources listed in [LICENSES.md](LICENSES.md) (P
 | `lh-vault-warning` | Warning Notification (199277) | 0.04–0.56 s |
 | `lh-diamond-time` | Game Bonus (144751) | 0.14–1.45 s |
 | `lh-diamond-collect-1…3` | Diamond found (190255) | 0–0.55 s at pitch ×1, ×1.06, ×0.95 |
+| `lh-diamond-chain-rise`, `lh-diamond-chain-crest` | Diamond found (190255), from the bundled first pickup variation | Raised by 3 and 6 semitones, then faded out within 0.42 s |
+| `lh-diamond-chain-bass` | Synthesized for Didi | 0.20 s descending sine with a second harmonic and a short decay |
 | `lh-round-success` | Victory Fanfare (152480) | 0.06–3.10 s |
 | `lh-round-failure` | Playful Failure (310480) | 0.10–1.10 s |
 
@@ -66,3 +68,6 @@ Cut points were chosen from measured loudness envelopes and pitch, not by ear. A
 - Missing files are logged once and skipped.
 - Music and effects switches persist in `UserDefaults` (`audio.musicEnabled`, `audio.effectsEnabled`). No Sketch screen has a place for them yet; Debug launch arguments `-muteMusic` / `-muteEffects`.
 - Trace: `log stream --level debug --predicate 'subsystem == "Sedactive" AND category == "audio"'`.
+
+### Heart pickup
+`lh-health-pickup.caf` uses “Health Pickup” by KeshaFilm, from the [creator's CC0 Freesound listing](https://freesound.org/people/KeshaFilm/sounds/471834/), also listed on [Pixabay](https://pixabay.com/sound-effects/film-special-effects-health-pickup-6860/). The high-quality preview was converted to 44.1 kHz mono PCM CAF. The game plays it once when a heart pickup is committed, including when team health is already full.

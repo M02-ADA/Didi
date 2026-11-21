@@ -36,6 +36,59 @@ final class LaserFeedback {
     private let badges: [PlayerID: Entity]
     private let badgeFaces: [PlayerID: [Outcome: Entity]]
     private var impacts: [PlayerID: Entity] = [:]
+    private lazy var timingRenderer: TimingIndicatorRenderer = {
+        let renderer = TimingIndicatorRenderer()
+        renderer.root.position = [0, 0, 0.004]
+        cue.addChild(renderer.root)
+        return renderer
+    }()
+    private(set) var timingVariant: TimingIndicatorVariant = .converging
+    private(set) var timingModel: LaserTimingPresentation?
+    private var timingPaused = false
+    private var approvedCue: (Move?, Float?) = (nil, nil)
+
+    func selectTimingVariant(_ variant: TimingIndicatorVariant) {
+        if timingVariant != variant { shownCue = nil }
+        timingVariant = variant
+        if variant == .approved {
+            timingRenderer.apply(nil, variant: .approved, reduceMotion: Self.reduceMotion)
+            let previous = approvedCue
+            setMoveCue(previous.0, actionRemaining: previous.1)
+            countdown.isEnabled = previous.0 != nil && previous.1 != nil
+        } else { setTimingPresentation(timingModel) }
+    }
+    func setTimingPaused(_ paused: Bool) {
+        timingPaused = paused
+        if timingVariant != .approved { setTimingPresentation(timingModel) }
+    }
+    func setTimingPresentation(_ model: LaserTimingPresentation?) {
+        timingModel = model
+        guard timingVariant != .approved else { return }
+        // A CLEAR or HIT result is the team callout's to show (PERFECT!/ZAPPED!, `LaserTeamCalloutView`),
+        // in the cue's place: the cue steps aside instead of showing a second word.
+        guard let model, !timingPaused, !Self.teamCalloutShowsResult(model) else {
+            timingRenderer.apply(nil, variant: timingVariant, reduceMotion: Self.reduceMotion)
+            if shownCue != nil { hideCue() }
+            return
+        }
+        let move: Move = model.move == .duck ? .duck : .jump
+        if shownCue?.move != move || shownCue?.acting != true { showCue(move, acting: true) }
+        countdown.isEnabled = false
+        let replacesPanel = timingVariant == .circular || timingVariant == .converging
+        for panel in cuePanels.values { panel.isEnabled = !replacesPanel && panel == cuePanels[move] }
+        timingRenderer.root.position.y = replacesPanel ? 0.045 : -0.215
+        if replacesPanel {
+            cue.stopAllAnimations(); cue.scale = .one
+            cue.components.set(OpacityComponent(opacity: 1))
+        }
+        timingRenderer.apply(model, variant: timingVariant, reduceMotion: Self.reduceMotion)
+    }
+
+    /// The circular cue's CLEAR or HIT result, which the team callout presents instead. An
+    /// UNAVAILABLE result (no team callout) keeps the cue's own neutral face.
+    static func teamCalloutShowsResult(_ model: LaserTimingPresentation) -> Bool {
+        model.phase == .result && (model.anyHit || model.allClear)
+    }
 
     /// Builds every cue, badge and texture once; showing them later only toggles and animates.
     init() {
@@ -116,6 +169,8 @@ final class LaserFeedback {
     var shownMoveCue: (move: Move, acting: Bool)? { shownCue }
 
     func setMoveCue(_ move: Move?, actionRemaining: Float? = nil) {
+        approvedCue = (move, actionRemaining)
+        if timingVariant != .approved { return } // one chosen renderer owns cue visibility
         guard let move else {
             if shownCue != nil { hideCue() }
             return
@@ -135,20 +190,18 @@ final class LaserFeedback {
     func showOutcome(_ outcome: Outcome, for player: PlayerID, badgeAt badgePosition: SIMD3<Float>, impactAt impactPosition: SIMD3<Float>) {
         guard let badge = badges[player], let faces = badgeFaces[player] else { return }
         badge.stopAllAnimations()
-        badge.transform = Transform(translation: badgePosition)
-        badge.isEnabled = true
-        for (face, entity) in faces {
-            entity.isEnabled = face == outcome
+        // CLEAR and HIT are the team callout's (PERFECT! / ZAPPED!, `LaserTeamCalloutView`): no badge
+        // over the heads any more. A previous badge (an UNAVAILABLE) is replaced by nothing.
+        badge.isEnabled = Self.showsBadge(outcome)
+        if badge.isEnabled {
+            badge.transform = Transform(translation: badgePosition)
+            for (face, entity) in faces { entity.isEnabled = face == outcome }
         }
         switch outcome {
         case .clear:
-            // Positive: a springy pop, then fade.
-            fade(badge, in: 0.12, hold: 0.85, out: 0.3)
-            pop(badge, from: 0.4, rise: 0.05, duration: 0.3, timing: Self.overshoot)
+            break
         case .hit:
-            // Firm: a quick pop and a small shake, no overshoot.
-            fade(badge, in: 0.08, hold: 0.9, out: 0.3)
-            pop(badge, from: 0.5, rise: 0, duration: 0.14, timing: .easeOut, then: Self.shake(badge.transform))
+            // The laser's own spark where it meets the player (the mascot's zap runs alongside).
             if let impact = impacts[player] {
                 impact.stopAllAnimations()
                 impact.transform = Transform(scale: .init(repeating: 0.6), translation: impactPosition)
@@ -162,8 +215,17 @@ final class LaserFeedback {
         }
     }
 
+    /// Only UNAVAILABLE keeps a per-player badge: it is tracking's, not a team result, so the team
+    /// callout says nothing about it and the badge stays neutral (17 November 2026).
+    static func showsBadge(_ outcome: Outcome) -> Bool { outcome == .unavailable }
+
     /// Clears the cue, badges and impacts, e.g. when a new encounter starts.
     func clear() {
+        timingModel = nil
+        if timingVariant != .approved {
+            timingRenderer.apply(nil, variant: timingVariant, reduceMotion: Self.reduceMotion)
+            if shownCue != nil { hideCue() }
+        }
         setMoveCue(nil)
         for entity in Array(badges.values) + Array(impacts.values) {
             entity.stopAllAnimations()
@@ -241,16 +303,6 @@ final class LaserFeedback {
         if let resource = try? AnimationResource.generate(with: animation) {
             entity.playAnimation(resource, handoffType: .compose)
         }
-    }
-
-    /// Two quick sideways oscillations (0.3 s) that end at rest.
-    private static func shake(_ rest: Transform) -> AnimationResource? {
-        let frames = [0.03, -0.03, 0.02, -0.012, 0.005, 0].map { (offset: Float) in
-            var frame = rest
-            frame.translation.x += offset
-            return frame
-        }
-        return try? AnimationResource.generate(with: SampledAnimation(frames: frames, frameInterval: 0.05, bindTarget: .transform))
     }
 
     // MARK: - Temporary art

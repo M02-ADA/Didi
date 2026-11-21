@@ -120,6 +120,8 @@ struct EnvironmentPresentationTests {
         let artwork = Entity()
         let shape = child("Diamond", of: artwork)
         _ = child("Gem", of: shape, ModelEntity(mesh: .generatePlane(width: 0.3, height: 0.25)))
+        // The authored diamond's passage gem (staging, 16 November 2026), which `DiamondArt` requires.
+        _ = child("PassageGem", of: shape, ModelEntity(mesh: .generatePlane(width: 0.3, height: 0.25)))
         _ = child("Sparkle", of: shape, ModelEntity(mesh: .generatePlane(width: 0.12, height: 0.12)))
         let diamond = try #require(DiamondArt(artwork: artwork)).makeDiamond()
         let sparkles = diamond.root.children.filter { $0.name == "Sparkle" }

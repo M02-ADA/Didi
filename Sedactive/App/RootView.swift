@@ -119,11 +119,10 @@ struct ContentView: View {
           }
           #if DEBUG
           // DEBUG test round controls (Kevin): from the round's start to its Results, above the
-          // setup stage too, so a tracking pause never hides them. Top right, under the HUD.
+          // setup stage too, so a tracking pause never hides them. They place themselves under the
+          // HUD's pause button, clear of both players' gate consoles.
           if let session = flow.session, session.hasLiveRoundPlan, session.state != nil, session.summary == nil {
             DebugRoundControls(session: session)
-              .padding(.trailing, 16).padding(.top, 130)
-              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
           }
           #endif
         }
@@ -176,6 +175,18 @@ private func liveSetupStage(_ flow: LaserInputFlow, preview: AnyView?) -> some V
     solo: flow.session?.isSoloPractice == true,
     onBack: { Task { await flow.closeLiveSetup() } }) {
     PlayerSetupView(flow: flow, isOverlay: true)
+  }
+  .overlay(alignment: .bottom) {
+    if let camera = AppDependencies.shared.camera.negotiated {
+      Text("Camera: \(camera.deviceName)")
+        .font(.caption.weight(.semibold))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(.black.opacity(0.7), in: Capsule())
+        .foregroundStyle(.white)
+        .padding(.bottom, 16)
+        .allowsHitTesting(false)
+    }
   }
   #if DEBUG
   .overlay(alignment: .bottomTrailing) { SetupDiagnosticsToggle(flow: flow) }

@@ -11,11 +11,13 @@ import SwiftUI
 /// DEBUG review of a live gate's wall consoles without a camera: launch with
 /// `-replay -gateConsolePreview [solo] [seconds]`. SYNTHETIC player poses (from the bundled
 /// replay calibrations) go through the real retargeter, steering and solver: each player leans
-/// toward their own wall, straightens up at the dock, then reaches HIGH, MIDDLE and LOW with a
-/// straight arm. A button lights when the pose's wrist is inside its zone as the live judge places
+/// toward their own wall, straightens up at the dock, then reaches for the activation button with a
+/// straight arm. The button lights when the pose's wrist is inside its zone as the live judge places
 /// it (`LaserLiveRoundGeometryV1` zone + the body centre + `RobotAvatarLayer.vaultReachShift`);
 /// the preview has no entry/freshness rules and no game: presentation review only, never gameplay.
-/// `seconds` holds the scripted moment (screenshots); otherwise it loops.
+/// `seconds` holds the scripted moment (screenshots); otherwise it loops. `skip` starts the gate at
+/// the corridor's far end (56 s away) and jumps its time left at `skipAt`, as DEBUG "Skip to Next
+/// Gate" does in a round, to review the approach glide (`VaultPresentation.glide`).
 @MainActor
 final class GateConsolePreview {
     static var isRequested: Bool { ProcessInfo.processInfo.arguments.contains("-gateConsolePreview") }
@@ -27,10 +29,24 @@ final class GateConsolePreview {
         return (rest.contains("solo"), rest.compactMap(Double.init).first)
     }
 
-    /// The script: lean to the wall, upright at the dock, then each button with a pause between.
+    /// `closeup`: the camera looks at P1's button from close in front and to the side (prop review:
+    /// the cap's depth and travel), instead of the gameplay view.
+    static var closeup: Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-gateConsolePreview") else { return false }
+        return arguments[(index + 1)...].prefix { !$0.hasPrefix("-") }.contains("closeup")
+    }
+
+    static var skips: Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-gateConsolePreview") else { return false }
+        return arguments[(index + 1)...].prefix { !$0.hasPrefix("-") }.contains("skip")
+    }
+    static let skipAt = 0.4, skippedLead = 56.0
+
+    /// The script: lean to the wall, upright at the dock (the button pulses), then the reach.
     static let leanUntil = 2.4, dockedUntil = 3.0
-    static let reaches: [(button: LaserVaultButton, from: Double, to: Double)] = [
-        (.top, 3.0, 4.0), (.middle, 4.4, 5.4), (.bottom, 5.8, 6.8)]
+    static let reaches: [(button: LaserVaultButton, from: Double, to: Double)] = [(.activate, 3.4, 4.6)]
     static let loop = 10.0
 
     private var subscription: EventSubscription?
@@ -46,6 +62,9 @@ final class GateConsolePreview {
     /// When the opened door was clear and travel resumed.
     private var travelFrom: Double?
     private let vaultID = UUID()
+    /// The corridor's travel while the gate approaches (cruise, eased into the stop) and the last step's time.
+    private var approachTravel: Float = 0
+    private var lastStep = 0.0
 
     func start(on content: RealityViewCameraContent, scene: LaserScene, robots: RobotAvatarLayer,
                configuration: BodyInputConfiguration, heldAt: Double?) throws {
@@ -54,6 +73,20 @@ final class GateConsolePreview {
                                                 clearanceMargin: 0.005, diamondPoints: 25)
         let vault = VaultPresentation(scene: scene, configuration: round)
         self.vault = vault
+        let closeupPlayer: PlayerID = ProcessInfo.processInfo.arguments.contains("p2") ? .player2 : .player1
+        if Self.closeup, let camera = scene.root.findEntity(named: "camera"), let button = robots.consoles[closeupPlayer]?.button {
+            // P1's (`p2`: P2's) button on the door frame (facing the camera): the close-up looks at it from
+            // just in front, `side` from outside it along the door (the mount's depth, the mascot beyond),
+            // `profile` from behind and above the mascot. P2's views are P1's mirrored.
+            let arguments = ProcessInfo.processInfo.arguments
+            var offset: SIMD3<Float> = arguments.contains("profile") ? [1.0, 0.8, 2.2]
+                : arguments.contains("side") ? [-0.9, 0.2, 0.5] : [-0.1, 0.12, 0.9]
+            if closeupPlayer == .player2 { offset.x = -offset.x }
+            let target = button.center
+            camera.look(at: target, from: button.center + offset, relativeTo: nil)
+        }
+        // `reduce`: the presentation as with Reduce Motion on (DEBUG review; the setting itself is untouched).
+        if ProcessInfo.processInfo.arguments.contains("reduce") { vault.reducesMotion = { true } }
         vault.visiblePlayers = roster
         vault.liveConsoles = { [weak robots] player in robots?.consoles[player] }
         let references = configuration.calibrations.filter { roster.contains($0.key) }
@@ -91,10 +124,16 @@ final class GateConsolePreview {
             let opens = allPressedAt.map { t >= $0 + 1 } ?? false
             // The gate comes down the corridor (door and consoles together) while the players lean to
             // their walls, then the gate opens for presses at `leanUntil`.
+            let dt = max(0, t - lastStep)
+            lastStep = t
             if t < Self.leanUntil {
                 let activity = LaserGameState(sessionGeneration: generation, phase: .activity, gameTime: t, activityProgress: 0.2,
                                               teamHealth: 5, teamScore: 0, encounters: [], missionProgress: 0)
-                vault.update(state: activity, travelDistance: 0, upcomingVaultIn: Self.leanUntil - t)
+                let lead = Self.skips && t < Self.skipAt ? Self.skippedLead - t : Self.leanUntil - t
+                vault.update(state: activity, travelDistance: 0, upcomingVaultIn: lead)
+                // The corridor travels as in a round, plus any glide (`GameplayScenePresenter.apply`).
+                approachTravel += LaserWorldLayout().travelSpeed * Float(dt) * GateTravelEase.speedFactor(lead: lead)
+                scene.setTravelDistance(approachTravel + vault.corridorCatchUp)
                 return
             }
             let state = LaserGameState(sessionGeneration: generation, phase: .vault, gameTime: t, activityProgress: 0, teamHealth: 5,
@@ -106,7 +145,7 @@ final class GateConsolePreview {
             if opens, travelFrom == nil, !vault.holdsTravel(for: state) { travelFrom = t }
             let travel = travelFrom.map { LaserWorldLayout().travelSpeed * Float(t - $0) } ?? 0
             vault.update(state: state, travelDistance: travel)
-            scene.setTravelDistance(travel)
+            scene.setTravelDistance(travel + approachTravel + vault.corridorCatchUp)
         }
         if let heldAt {
             var t = 0.0
@@ -116,7 +155,7 @@ final class GateConsolePreview {
         subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self] event in
             guard let self else { return }
             elapsed += event.deltaTime
-            if elapsed > Self.loop { elapsed = 0; pressed = [:]; previousInside = [:]; allPressedAt = nil; travelFrom = nil; vault.reset() }
+            if elapsed > Self.loop { elapsed = 0; pressed = [:]; previousInside = [:]; allPressedAt = nil; travelFrom = nil; approachTravel = 0; lastStep = 0; vault.reset() }
             step(to: elapsed + Double(frame) * 1e-6)
         }
     }

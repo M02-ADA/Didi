@@ -17,11 +17,12 @@ import Testing
         #expect(trace.summary.remainingTeamHealth == 5)
         #expect(trace.summary.vaultsOpened == 5)
         #expect(trace.summary.missionProgress == 5)
-        #expect(abs(trace.summary.gameDuration - 316) < 1e-8) // 300 activity + 6 vault + 10 bonus.
-        #expect(abs(trace.summary.activityDuration - 310) < 1e-8)
+        #expect(abs(trace.summary.gameDuration - 326) < 1e-8) // 300 activity + 6 vault + 20 bonus.
+        #expect(abs(trace.summary.activityDuration - 320) < 1e-8)
         for player in trace.summary.playerResults {
-            #expect(player.successfulHighAvoidances == 32)
-            #expect(player.successfulLowAvoidances == 18)
+            // The lifecycle harness plays LEAN beats as DUCKs (`FullRoundReplayScenario.horizontalScript`).
+            #expect(player.successfulHighAvoidances == 41)
+            #expect(player.successfulLowAvoidances == 9)
             #expect(player.validatedJumpCycles == nil)
             #expect(abs(try #require(player.movementChallengeSeconds) - 70) < 1e-8)
         }
@@ -67,7 +68,7 @@ import Testing
         #expect(trace.results.allSatisfy { $0.judgement == .clear })
         #expect(trace.summary.teamScore == 10_000)
         #expect(trace.summary.remainingTeamHealth == 5)
-        #expect(abs(trace.summary.gameDuration - 325) < 1e-8) // Excludes the injected 5.4 source seconds paused.
+        #expect(abs(trace.summary.gameDuration - 335) < 1e-8) // Excludes the injected 5.4 source seconds paused.
     }
 
     @Test(arguments: [FullRoundReplayCase.healthFailure, .vaultTimeout, .earlyExit, .providerFailure])

@@ -88,12 +88,62 @@ nonisolated struct LaserGame: Sendable {
     /// Targets each registered attempt carries; its effects commit when all are judged.
     private var targetCounts: [UUID: Int] = [:]
     #if DEBUG
-    /// DEBUG Solo Test only: this one player's three presses open a vault (there is no second
+    /// DEBUG Solo Test only: this one player's press opens a vault (there is no second
     /// player to press theirs). Nil in every co-op round, where both sides are always required.
     var soloPracticePlayer: PlayerID?
     #endif
+    /// POSE-FIRST TRACKING: see `LaserCollisionJudge`. Set from `PoseFirstCandidate.isEnabled`
+    /// (on by default in every build).
+    var poseFirstCandidate = false
+    /// The hoverboards as game state (vertical lasers): steered by LEAN evidence on game time, read
+    /// by the LEAN judge and drawn by the renderer. Nil until the round configures them.
+    private(set) var boards: LaserBoardField?
+    /// Each LEAN target's board centre at exactly its crossing time (what was drawn then).
+    private var boardAtCrossing: [LaserTargetKey: Double] = [:]
+    /// The next gate's game time when the caller knows it: the vault's dock assist starts
+    /// `LaserBoardGeometry.dockLead` before it, as the scene's consoles do.
+    var vaultApproachBoundary: Double?
+    /// Plain-language notes on LEAN placements that had to adapt (DEBUG log, tests).
+    private(set) var leanPlacementNotes: [String] = []
+    /// LEAN targets placed, and those voided for want of any reachable way out.
+    private(set) var leanPlacements = (placed: 0, voided: 0)
+    /// The latest capture time received per player, and players whose captures ever arrived out
+    /// of order (early verdicts then wait for the deadline for the rest of the round).
+    private var latestCapture: [PlayerID: Double] = [:]
+    private var outOfOrder: Set<PlayerID> = []
+    /// Early verdicts (zap timing): on in every build; tests may turn it off to compare.
+    var decidesEarly = true
+    /// Encounters whose LEAN beams were placed at registration, by attempt.
+    private var placedEncounters: [UUID: LaserEncounter] = [:]
+
+    /// An encounter as registered (its LEAN beams placed), if this attempt placed any.
+    func registeredEncounter(attemptID: UUID) -> LaserEncounter? { placedEncounters[attemptID] }
 
     var diamonds: [UUID: LaserDiamondState] { diamondField.states }
+    private(set) var heart: LaserDiamondSpawn?
+    private(set) var lastHeartPickup: (id: UUID, restored: Bool)?
+    private var highestHeartID: String?
+    private var maximumTeamHealth = 5
+
+    mutating func spawnHeart(_ spawn: LaserDiamondSpawn, beforeVaultAt boundary: Double) throws {
+        try requireLaserValue(roundPhase == .activity && !blocked && !exited && roundOutcome == nil
+            && spawn.spawnedAt == gameTime && spawn.exit <= boundary
+            && (highestHeartID.map { spawn.id.uuidString > $0 } ?? true), "heart spawn")
+        heart = spawn
+        highestHeartID = spawn.id.uuidString
+    }
+
+    mutating func collectHeart(id: UUID, players: Set<PlayerID>) {
+        guard roundPhase == .activity, !blocked, !exited, roundOutcome == nil, context.isActive,
+              let heart, heart.id == id, gameTime >= heart.entry, gameTime < heart.exit,
+              heart.eligiblePlayers.contains(where: { players.contains($0) && (context.calibrationRevisions[$0] ?? 0) > 0 })
+        else { return }
+        let restored = teamHealth < maximumTeamHealth
+        if restored { teamHealth += 1 }
+        lastHeartPickup = (id, restored)
+        self.heart = nil
+    }
+
     var activeDiamonds: [LaserDiamondSpawn] { diamondField.active }
     var diamondsCollected: Int { diamondField.collectedCount }
 
@@ -112,6 +162,7 @@ nonisolated struct LaserGame: Sendable {
         try self.init(timing: configuration.evidenceTiming, context: context,
                       historyCapacityPerPlayer: historyCapacityPerPlayer, clearanceMargin: configuration.clearanceMargin)
         teamHealth = configuration.initialTeamHealth
+        maximumTeamHealth = configuration.initialTeamHealth
         clearPoints = configuration.clearTargetPoints
         missionTarget = configuration.missionGateTarget
         vaultDuration = configuration.vaultDuration
@@ -123,9 +174,20 @@ nonisolated struct LaserGame: Sendable {
         }
     }
 
+    /// Installs the round's boards (once, before any LEAN encounter), at the current game time.
+    mutating func configureBoards(_ field: LaserBoardField) {
+        var field = field
+        field.advance(to: gameTime)
+        boards = field
+    }
+
+    /// Where each board is now (game state; the renderer draws exactly this).
+    var boardReadings: [PlayerID: LaserBoardReading] { boards?.readings ?? [:] }
+
     var historyCount: Int { history.values.reduce(0) { $0 + $1.count } }
     /// Registered laser targets still waiting for their verdict.
     var pendingCrossingCount: Int { crossings.values.filter { $0.result == .pending }.count }
+    var diamondTimeDeadline: Double? { roundPhase == .diamondTime ? bonusDeadline : nil }
     var hasStartedDiamondTimeDiamonds: Bool { bonusDiamondsStarted }
     var crossingCount: Int { crossings.count }
     var isPaused: Bool { blocked && !exited && roundOutcome == nil }
@@ -134,7 +196,11 @@ nonisolated struct LaserGame: Sendable {
             || processedTargets.contains { $0.attemptID == id }
     }
 
-    mutating func register(_ encounter: LaserEncounter) throws {
+    /// Registers an encounter and returns it as registered: a LEAN beam not yet placed is placed
+    /// now, from where the boards are (`LaserLeanPlacement`), and never moves afterwards.
+    @discardableResult
+    mutating func register(_ encounter: LaserEncounter) throws -> LaserEncounter {
+        let encounter = try placingLeanBeams(encounter)
         try requireLaserValue(!blocked && !exited && roundOutcome == nil && roundPhase == .activity
             && !effectEncounters.contains(encounter.id) && !withdrawnAttemptIDs.contains(encounter.attemptID),
                               "inactive/consumed encounter")
@@ -156,6 +222,26 @@ nonisolated struct LaserGame: Sendable {
             playerStats[target.playerID] = LaserPlayerTargetCounts(playerID: target.playerID, scheduled: old.scheduled + 1,
                 cleared: old.cleared, hit: old.hit, unavailable: old.unavailable)
         }
+        return encounter
+    }
+
+    private mutating func placingLeanBeams(_ encounter: LaserEncounter) throws -> LaserEncounter {
+        guard encounter.targets.contains(where: { $0.lean.map { !$0.isPlaced } ?? false }) else { return encounter }
+        guard let boards else { throw LaserDataError.invalidValue("LEAN targets need the round's boards") }
+        try requireLaserValue(!blocked && !exited && roundOutcome == nil && roundPhase == .activity, "inactive/consumed encounter")
+        var positions: [PlayerID: Double] = [:]
+        for player in boards.players { positions[player] = boards.x(player) }
+        let outcome = try LaserLeanPlacement.place(encounter.targets, boards: positions, margin: clearanceMargin ?? 0)
+        leanPlacementNotes += outcome.notes.map { "\(encounter.id.uuidString.prefix(8)) at \(String(format: "%.2f", gameTime)): \($0)" }
+        for beam in outcome.beams.values {
+            if beam.voided { leanPlacements.voided += 1 } else { leanPlacements.placed += 1 }
+        }
+        let placed = try LaserEncounter(id: encounter.id, attemptID: encounter.attemptID, targets: encounter.targets.map { target in
+            guard let beam = outcome.beams[target.playerID], target.lean?.isPlaced == false else { return target }
+            return try target.placing(beam)
+        }, roster: Set(encounter.targets.map(\.playerID)))
+        placedEncounters[encounter.attemptID] = placed
+        return placed
     }
 
     mutating func receive(_ snapshot: BodySnapshot, capturedGameTime: Double, arrivedAt: Double) throws {
@@ -175,6 +261,13 @@ nonisolated struct LaserGame: Sendable {
         guard snapshot.sessionGeneration == context.sessionGeneration,
               snapshot.cameraGeometryRevision == context.cameraGeometryRevision else { prune(); return }
         let evidence = LaserBodyEvidence(snapshot: snapshot, capturedGameTime: capturedGameTime, arrivedGameTime: arrivedAt)
+        if var field = boards {
+            for id in field.players {
+                field.receive(snapshot.players[id], player: id, calibrationRevision: context.calibrationRevisions[id],
+                              capturedAt: capturedGameTime, arrivedAt: arrivedAt)
+            }
+            boards = field
+        }
         for id in PlayerID.allCases {
             var samples = history[id, default: []]
             if let previous = samples.first(where: { $0.snapshot.frameID == snapshot.frameID }) {
@@ -182,6 +275,8 @@ nonisolated struct LaserGame: Sendable {
                                       "conflicting duplicate frame")
                 continue // Keep the original arrival time.
             }
+            if let last = latestCapture[id], capturedGameTime < last { outOfOrder.insert(id) }
+            latestCapture[id] = max(latestCapture[id] ?? capturedGameTime, capturedGameTime)
             if samples.count == capacity {
                 // Overload must never fabricate clearance or player damage from an incomplete window.
                 for key in Array(crossings.keys) where key.playerID == id {
@@ -193,6 +288,66 @@ nonisolated struct LaserGame: Sendable {
             history[id] = samples
         }
         prune()
+        try decideEarly(at: arrivedAt)
+    }
+
+    /// EARLY VERDICTS (zap timing, 16 November 2026). A verdict used to wait for its deadline
+    /// (crossing + 0.35 s), so the zap came when the laser was already ~1.8 m past the players. A
+    /// target is now decided as soon as the deadline's verdict is already certain from the evidence
+    /// received: the same selection, the same judge, nothing predicted (`LaserCollisionJudge
+    /// .finalSelection`, `.finalJumpEvent`, a LEAN's board recorded at its crossing). An encounter
+    /// commits only when every one of its targets is decided, all at once, as at the deadline; an
+    /// UNAVAILABLE, missing evidence or an overloaded history still waits for the deadline.
+    private mutating func decideEarly(at time: Double) throws {
+        guard decidesEarly, let clearanceMargin, !blocked, !exited, roundOutcome == nil else { return }
+        let attempts = Dictionary(grouping: crossings.filter { $0.value.result == .pending }.keys, by: \.attemptID)
+        for (attempt, keys) in attempts.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
+            guard keys.count == targetCounts[attempt] else { continue }
+            var decided: [(LaserTargetKey, LaserEvidenceSelection, Judgement)] = []
+            for key in keys.sorted(by: { $0.playerID.rawValue < $1.playerID.rawValue }) {
+                guard let crossing = crossings[key], !crossing.historyOverflow, !outOfOrder.contains(key.playerID),
+                      let latest = latestCapture[key.playerID], crossing.target.crossingTime <= time,
+                      let decision = earlyDecision(key, crossing.target, latest: latest, margin: clearanceMargin) else { break }
+                decided.append((key, decision.0, decision.1))
+            }
+            guard decided.count == keys.count else { continue }
+            for (key, selection, judgement) in decided {
+                crossings[key]?.result = selection
+                crossings[key]?.judgement = judgement
+            }
+            commitEncounter(for: decided[0].0, at: time)
+            guard roundOutcome == nil else { return }
+        }
+    }
+
+    private func earlyDecision(_ key: LaserTargetKey, _ target: LaserTarget, latest: Double,
+                               margin: Double) -> (LaserEvidenceSelection, Judgement)? {
+        let judge = LaserCollisionJudge(acceptsPresenceHeldEvidence: poseFirstCandidate)
+        let samples = history[key.playerID, default: []]
+        if target.requiredMove == .jump && poseFirstCandidate {
+            guard let verdict = LaserCollisionJudge(acceptsPresenceHeldEvidence: true).finalJumpEvent(target: target,
+                    history: samples, timing: timing, context: context, minimumFlight: PoseFirstCandidate.jumpMinimumFlight,
+                    tolerance: PoseFirstCandidate.jumpTimingTolerance, latestCapture: latest) else { return nil }
+            let selection = judge.select(target: target, history: samples, timing: timing, context: context)
+            return (selection, verdict)
+        }
+        if target.requiredMove == .lean, target.lean?.voided == true {
+            return (judge.select(target: target, history: samples, timing: timing, context: context), .unavailable(.noSafePlacement))
+        }
+        guard let evidence = judge.finalSelection(target: target, history: samples, timing: timing, context: context,
+                                                  latestCapture: latest) else { return nil }
+        let selection = LaserEvidenceSelection.selected(evidence)
+        let verdict: Judgement?
+        if target.requiredMove == .lean {
+            // Its board at the crossing is recorded once game time passes it (here it has).
+            guard boardAtCrossing[key] != nil || boards == nil else { return nil }
+            verdict = leanVerdict(key: key, target: target, selection: selection, margin: margin)
+        } else {
+            verdict = try? judge.judge(target: target, selection: selection, clearanceMargin: margin, context: context)
+        }
+        guard let verdict else { return nil }
+        if case .pending = verdict { return nil }
+        return (selection, verdict)
     }
 
     mutating func advance(to time: Double) throws {
@@ -223,7 +378,7 @@ nonisolated struct LaserGame: Sendable {
         return crossing.judgement
     }
 
-    mutating func pause() { withdraw(); blocked = true }
+    mutating func pause() { withdraw(); blocked = true; boards?.halt() }
     /// Freeze at the session's GameClock time without finalizing pending evidence while unavailable.
     mutating func pause(at time: Double) throws {
         try requireLaserValue(time.isFinite && time >= gameTime, "pause timeline")
@@ -237,6 +392,7 @@ nonisolated struct LaserGame: Sendable {
     mutating func updateContext(_ value: BodyInputContext) {
         guard value != context else { return }
         withdraw()
+        boards?.halt()
         context = value
         blocked = true // Fresh readiness/countdown and attempt IDs are required after cutover.
     }
@@ -285,6 +441,7 @@ nonisolated struct LaserGame: Sendable {
         try requireLaserValue(activeDiamonds.isEmpty, "normal diamonds must finish before vault")
         withdraw()
         vault = LaserVaultState(id: id, deadline: time + vaultDuration, buttons: [.player1: [], .player2: []])
+        heart = nil
         roundPhase = .vault
         emit(.phaseChanged(.vault), at: time)
     }
@@ -322,7 +479,7 @@ nonisolated struct LaserGame: Sendable {
         vault = current
         guard activated > 0 else { return 0 }
         let verdicts = Dictionary(uniqueKeysWithValues: PlayerID.allCases.map {
-            ($0, current.buttons[$0]?.count == 3 ? Judgement.clear : .pending(.awaitingFinalization))
+            ($0, current.buttons[$0]?.count == LaserVaultButton.allCases.count ? Judgement.clear : .pending(.awaitingFinalization))
         })
         var succeeded = LaserCoopDecision.evaluate(verdicts) == .succeeded
         #if DEBUG
@@ -361,6 +518,7 @@ nonisolated struct LaserGame: Sendable {
         withdraw()
         diamondField.close()
         if let open = vault, !open.opened { consumedVaults.insert(open.id); vault = nil }
+        heart = nil
         roundPhase = .diamondTime
         bonusDeadline = gameTime + bonusDuration
         emit(.phaseChanged(.diamondTime), at: gameTime)
@@ -386,13 +544,25 @@ nonisolated struct LaserGame: Sendable {
         bonusDiamondsStarted = true
     }
 
+    mutating func refillDiamondTimePaws(_ spawns: [LaserDiamondSpawn]) throws {
+        guard !spawns.isEmpty else { return }
+        guard !blocked, !exited, roundOutcome == nil, diamondPoints != nil,
+              let deadline = diamondTimeDeadline else {
+            throw LaserDataError.invalidValue("paw board refill outside Diamond Time")
+        }
+        let limit = LaserDiamondTimeBoard.activeDiamondLimit(secondsRemaining: deadline - gameTime)
+        try diamondField.spawn(spawns, at: gameTime, before: deadline, maximumActive: limit, bonusDeadline: deadline)
+        bonusDiamondsStarted = true
+    }
+
     /// Contact tracker output after producer/context admission, not raw wrist input.
     /// Replacements are paired with accepted collections in stable target-ID order.
     @discardableResult
     mutating func collectDiamonds(_ contacts: [LaserContactActivation], generation: UUID,
                                   calibrationRevisions: [PlayerID: UInt64], capturedAt: Double,
                                   arrivedAt: Double, replacements: [LaserDiamondSpawn] = [],
-                                  bodyContacts: [UUID: Set<PlayerID>] = [:]) throws
+                                  bodyContacts: [UUID: Set<PlayerID>] = [:],
+                                  deferredBonusRefill: Bool = false) throws
         -> [LaserContactActivation] {
         guard !blocked && !exited && roundOutcome == nil && context.isActive,
               generation == context.sessionGeneration, let diamondPoints else { return [] }
@@ -414,7 +584,7 @@ nonisolated struct LaserGame: Sendable {
         } }
         let accepted = try next.diamondField.collect(eligible, capturedAt: capturedAt, arrivedAt: arrivedAt,
             replacements: replacements, bonusDeadline: next.roundPhase == .diamondTime ? next.bonusDeadline : nil,
-            bodyContacts: eligibleBodies)
+            bodyContacts: eligibleBodies, deferredBonusRefill: deferredBonusRefill)
         let (points, multipliedOverflow) = diamondPoints.multipliedReportingOverflow(by: next.diamondsCollected - diamondsCollected)
         let (score, scoreOverflow) = next.teamScore.addingReportingOverflow(points)
         try requireLaserValue(!multipliedOverflow && !scoreOverflow, "diamond score overflow")
@@ -427,6 +597,7 @@ nonisolated struct LaserGame: Sendable {
         guard roundOutcome == nil else { return }
         roundOutcome = outcome
         moveTime(to: time)
+        heart = nil
         roundPhase = .ended(outcome)
         if let vault, !vault.opened {
             coopResults.append(LaserCoopRoundResult(gateID: vault.id,
@@ -457,7 +628,28 @@ nonisolated struct LaserGame: Sendable {
 
     private mutating func moveTime(to time: Double) {
         if roundPhase != .vault { activityProgress += max(0, time - gameTime) }
+        stepBoards(to: time)
         gameTime = time
+    }
+
+    /// The boards to game time `time`, noting each pending LEAN target's board exactly at its crossing.
+    private mutating func stepBoards(to time: Double) {
+        guard var field = boards, time > field.time else { return }
+        let lead = LaserBoardGeometry.dockLead
+        // The dock assist never fights a LEAN: before a gate it waits until no LEAN target is pending
+        // (a gate brought forward by a skip or a short stage can come within a LEAN's approach).
+        let leanPending = crossings.values.contains { $0.result == .pending && $0.target.requiredMove == .lean }
+        field.dockAssist = roundPhase == .vault
+            || (roundPhase == .activity && !leanPending && vaultApproachBoundary.map { time >= $0 - lead } ?? false)
+        let marks = crossings.filter { $0.value.result == .pending && $0.value.target.requiredMove == .lean
+            && $0.value.target.crossingTime > field.time && $0.value.target.crossingTime <= time
+        }.sorted { $0.value.target.crossingTime < $1.value.target.crossingTime }
+        for (key, crossing) in marks {
+            field.advance(to: crossing.target.crossingTime)
+            boardAtCrossing[key] = field.x(key.playerID)
+        }
+        field.advance(to: time)
+        boards = field
     }
 
     private mutating func withdraw() {
@@ -491,15 +683,23 @@ nonisolated struct LaserGame: Sendable {
             let deadline = timing.finalizationTime(crossing: crossing.target.crossingTime)
             guard inclusive ? deadline <= time : deadline < time else { continue }
             var result: LaserEvidenceSelection = crossing.historyOverflow ? .unavailable(.historyOverflow)
-                : LaserCollisionJudge().select(target: crossing.target,
+                : LaserCollisionJudge(acceptsPresenceHeldEvidence: poseFirstCandidate).select(target: crossing.target,
                     history: history[key.playerID, default: []], timing: timing, context: context)
             if result == .unavailable(.noSample), let pruned = lastPrunedCapture[key.playerID],
                pruned < timing.captureWindow(crossing: crossing.target.crossingTime).lowerBound {
                 result = .unavailable(.stale)
             }
             let verdict: Judgement?
-            if let clearanceMargin {
-                verdict = try LaserCollisionJudge().judge(target: crossing.target, selection: result,
+            if crossing.target.requiredMove == .lean, let clearanceMargin {
+                verdict = leanVerdict(key: key, target: crossing.target, selection: result, margin: clearanceMargin)
+            } else if poseFirstCandidate, clearanceMargin != nil, crossing.target.requiredMove == .jump, !crossing.historyOverflow {
+                // POSE-FIRST CANDIDATE: a low laser is judged as a timed jump event (needs Jevon's review).
+                verdict = LaserCollisionJudge(acceptsPresenceHeldEvidence: true).judgeJumpEvent(
+                    target: crossing.target, history: history[key.playerID, default: []], timing: timing,
+                    context: context, minimumFlight: PoseFirstCandidate.jumpMinimumFlight,
+                    tolerance: PoseFirstCandidate.jumpTimingTolerance)
+            } else if let clearanceMargin {
+                verdict = try LaserCollisionJudge(acceptsPresenceHeldEvidence: poseFirstCandidate).judge(target: crossing.target, selection: result,
                                                          clearanceMargin: clearanceMargin, context: context)
             } else { verdict = nil }
             crossings[key]?.result = result
@@ -508,12 +708,38 @@ nonisolated struct LaserGame: Sendable {
         }
     }
 
-    private mutating func commitEncounter(for key: LaserTargetKey) {
+    /// LEAN: UNAVAILABLE without a guaranteed way out, without usable evidence at the crossing, or
+    /// with any gap in the LEAN evidence from the action cue to the crossing (an unseen dodge is
+    /// neither CLEAR nor HIT); otherwise CLEAR when the board stood clear of the beam's core at the
+    /// crossing, else HIT.
+    private func leanVerdict(key: LaserTargetKey, target: LaserTarget, selection: LaserEvidenceSelection,
+                             margin: Double) -> Judgement? {
+        guard let beam = target.lean else { return .unavailable(.incompatibleContext) }
+        if beam.voided { return .unavailable(.noSafePlacement) }
+        switch selection {
+        case .pending: return .pending(.awaitingFinalization)
+        case .withdrawn: return nil
+        case .unavailable(let reason): return .unavailable(reason)
+        case .selected:
+            let cue = target.crossingTime - (cueLeads[key.playerID] ?? (target.crossingTime - target.warningTime))
+            guard let boards, boards.leanEvidenceCovers(key.playerID, max(target.warningTime, cue)...target.crossingTime) else {
+                return .unavailable(.invalidEvidence(.trunkLean, .stale))
+            }
+            guard let x = boardAtCrossing[key], let clear = LaserLeanPlacement.isClear(boardX: x, beam: beam, margin: margin) else {
+                return .unavailable(.incompatibleContext)
+            }
+            return clear ? .clear : .hit(.insufficientClearance)
+        }
+    }
+
+    /// Commits an encounter once every target is judged: at `time` when decided early, else at
+    /// its targets' latest deadline.
+    private mutating func commitEncounter(for key: LaserTargetKey, at decidedAt: Double? = nil) {
         guard !effectEncounters.contains(key.encounterID) && !processedTargets.contains(key) else { return }
         let pair = crossings.filter { $0.key.encounterID == key.encounterID && $0.key.attemptID == key.attemptID }
         // Every target the encounter registered (two in co-op; one in a DEBUG solo practice).
         guard pair.count == targetCounts[key.attemptID], pair.values.allSatisfy({ $0.judgement != nil }) else { return }
-        let time = pair.values.map { timing.finalizationTime(crossing: $0.target.crossingTime) }.max()!
+        let time = decidedAt ?? pair.values.map { timing.finalizationTime(crossing: $0.target.crossingTime) }.max()!
         let values = pair.values.compactMap(\.judgement)
         processedTargets.formUnion(pair.keys)
         for player in PlayerID.allCases where pair.contains(where: { $0.key.playerID == player }) {

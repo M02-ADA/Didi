@@ -28,8 +28,9 @@ final class VaultDoor {
     private let unlockedLight: Entity
     private let panels: [(part: Entity, closed: Transform, open: Transform)]
 
-    /// Returns `nil` when the artwork lacks a named part.
-    init?(artwork: Entity) {
+    /// Returns `nil` when the artwork lacks a named part. The surround reaches out to the walls at
+    /// `wallHalfWidth` (the door and its frame keep their authored size).
+    init?(artwork: Entity, wallHalfWidth: Float? = nil) {
         guard let door = artwork.findEntity(named: "VaultDoorRoot"),
               let light = door.findEntity(named: "UnlockedLight"),
               let left = door.findEntity(named: "LeftDoorPanel"),
@@ -37,6 +38,11 @@ final class VaultDoor {
         else { return nil }
         door.removeFromParent()
         door.transform = .identity
+        if let wallHalfWidth {
+            for name in ["SurroundLeft", "SurroundRight"] {
+                if let surround = door.findEntity(named: name) { CorridorWidening.stretch(surround, toWallAt: wallHalfWidth, in: door) }
+            }
+        }
         root = door
         unlockedLight = light
         // Each panel slides out by its own width, fully behind the frame.

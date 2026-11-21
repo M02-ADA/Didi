@@ -27,8 +27,8 @@ nonisolated struct LiveRecoveryCopyTests {
         #expect(LiveEvidenceAttention.players(nil, roster: PlayerID.allCases).isEmpty, "no packet: nothing claimed")
         #expect(LiveEvidenceAttention.line([.player2: .feet], solo: false) == "P2: keep both feet in view.")
         #expect(LiveEvidenceAttention.line([.player1: .head, .player2: .tracking], solo: false)
-                == "P1: keep your head in view. P2: step back into your place.")
-        #expect(LiveEvidenceAttention.line([.player1: .tracking], solo: true) == "Step back into the middle.")
+                == "P1: keep your head in view. P2: stand in your place, whole body in view.")
+        #expect(LiveEvidenceAttention.line([.player1: .tracking], solo: true) == "Stand in the middle, whole body in view.")
     }
 
     @Test func aRoundWaitingForOnePlayerNamesThem() {

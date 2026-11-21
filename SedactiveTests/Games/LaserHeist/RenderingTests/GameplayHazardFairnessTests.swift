@@ -49,7 +49,7 @@ struct GameplayHazardFairnessTests {
         presenter.apply(state: state(9.5, encounters), events: [], snapshot: nil)
         for encounter in encounters {
             for player in PlayerID.allCases {
-                #expect(presenter.hazard(for: key(encounter, player))?.root.isEnabled == true)
+                #expect(presenter.drawingGate(for: key(encounter, player))?.root.isEnabled == true)
             }
         }
         #expect(presenter.diagnostics.droppedHazards == 0)
@@ -76,7 +76,7 @@ struct GameplayHazardFairnessTests {
         let judged = Dictionary(uniqueKeysWithValues: judgedSet.map { ($0.id, [PlayerID.player1: Judgement.clear, .player2: .clear]) })
         presenter.apply(state: state(10.4, all, judged: judged), events: [], snapshot: nil)
         for player in PlayerID.allCases {
-            #expect(presenter.hazard(for: key(next, player))?.root.isEnabled == true)
+            #expect(presenter.drawingGate(for: key(next, player))?.root.isEnabled == true)
         }
         #expect(presenter.diagnostics.droppedHazards == 0)
         #expect(presenter.diagnostics.droppedTails > 0)
@@ -123,10 +123,11 @@ struct GameplayHazardFairnessTests {
             }
             presenter.apply(state: state(time, encounters, judged: judged), events: [], snapshot: nil)
             for encounter in encounters {
-                for target in encounter.targets where judged[encounter.id]?[target.playerID] == nil
+                // Horizontal gates only: a LEAN target is drawn by the vertical laser layer.
+                for target in encounter.targets where target.requiredMove != .lean && judged[encounter.id]?[target.playerID] == nil
                     && (time >= target.warningTime || time >= target.crossingTime - lead)
                     && time <= target.crossingTime {
-                    if presenter.hazard(for: key(encounter, target.playerID))?.root.isEnabled != true { missing += 1 }
+                    if presenter.drawingGate(for: key(encounter, target.playerID))?.root.isEnabled != true { missing += 1 }
                 }
             }
         }

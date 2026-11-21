@@ -87,6 +87,11 @@ nonisolated struct PlayerTrackingSlotResult: Equatable, Sendable {
   let cost: Double?
   let requiresRebind: Bool
   let lastConfirmedAt: Double? // Read-only history watermark; tentative/refused matches never advance it.
+  /// POSE-FIRST CANDIDATE (Kevin, 14 Nov 2026 — needs Edo's review): while `uncertain`, the one
+  /// partial body (both shoulders, no full descriptor) that squat presence holds for this player
+  /// in THIS frame. Never a confirmed match: it keeps no history and confirms nothing. Read only
+  /// by the DEBUG candidate (`PoseFirstCandidate`); nil otherwise.
+  var presentCandidateID: UInt64? = nil
 }
 nonisolated struct PlayerTrackingSnapshot: Equatable, Sendable {
   let source: PlayerTrackingSource? // Nil after reset/invalidation; expiry never fabricates a source.
@@ -185,8 +190,15 @@ nonisolated struct PlayerTracker: Sendable {
       // the same binding, so their accepted calibration still applies. Two people: no guessing.
       acquireSolo(descriptors, overflow: input.observationCount > f.candidates.count, source: s, relink: true)
     } else {
+      let aspect = Double(s.context.imageWidth) / Double(s.context.imageHeight)
+      let partials: [(point: Point, id: UInt64)] = f.candidates.indices.compactMap { i in
+        guard descriptors[i] == nil, let l = f.candidates[i].joints[.leftShoulder], let r = f.candidates[i].joints[.rightShoulder],
+          l.confidence >= policy.minimumJointConfidence, r.confidence >= policy.minimumJointConfidence,
+          hypot((l.x - r.x) * aspect, l.y - r.y) >= policy.minimumTorsoExtent else { return nil }
+        return (Point(x: (l.x + r.x) / 2 * aspect, y: (l.y + r.y) / 2), f.candidates[i].candidateID)
+      }
       associate(descriptors, overflow: input.observationCount > f.candidates.count,
-        at: s.capturedAt, sourceGap: sourceGap)
+        at: s.capturedAt, sourceGap: sourceGap, partials: partials)
     }
     return snapshot
   }
@@ -273,9 +285,19 @@ nonisolated struct PlayerTracker: Sendable {
     var candidateID: UInt64?
     var cost: Double?
     var identityAmbiguous = false // Monotonic until authorized reset; never seed a guessed trajectory.
+    /// SQUAT PRESENCE (PROPOSED by Kevin, 13 Nov 2026 — needs Edo's review): the last frame in which this player's body was still in view
+    /// as a partial person (both shoulders, hips unseen) exactly where they had just been. It
+    /// keeps the identity from expiring; it never matches, measures or confirms anything.
+    var presenceAt: Double?
+    var presencePoint: Point?
+    /// This frame's presence-held partial body (see `PlayerTrackingSlotResult.presentCandidateID`).
+    var presentCandidateID: UInt64?
+    /// When this player was last seen, fully or as a present partial body.
+    var lastSeen: Double? { [confirmed?.time, presenceAt].compactMap { $0 }.max() }
     var result: PlayerTrackingSlotResult {
       PlayerTrackingSlotResult(state: state, reason: reason, candidateID: candidateID, cost: cost,
-        requiresRebind: state == .lost || identityAmbiguous, lastConfirmedAt: confirmed?.time)
+        requiresRebind: state == .lost || identityAmbiguous, lastConfirmedAt: confirmed?.time,
+        presentCandidateID: state == .uncertain && !identityAmbiguous ? presentCandidateID : nil)
     }
   }
   private func descriptor(_ candidate: PoseCandidate, at time: Double,
@@ -340,16 +362,24 @@ nonisolated struct PlayerTracker: Sendable {
   private mutating func acquire(_ values: [Descriptor?], overflow: Bool, source: PlayerTrackingSource) {
     guard armed else { return }
     if solo { return acquireSolo(values, overflow: overflow, source: source) }
-    let eligible = values.compactMap { $0 }
-    guard !overflow, eligible.count == 2, eligible.allSatisfy({ $0.points.count == 4 }),
-      let separation = proximity(eligible[0], eligible[1]), separation > policy.minimumPairSeparation
-    else { acquisitionRefused(overflow ? .overflow : .acquisitionRefused); return }
     let aspect = Double(source.context.imageWidth) / Double(source.context.imageHeight)
-    // This is acquisition-only. After binding, X ordering never chooses identity.
-    let ordered = eligible.sorted { $0.center.x > $1.center.x }
-    guard ordered[0].center.x / aspect > 0.5 + policy.centerGuardFraction,
-      ordered[1].center.x / aspect < 0.5 - policy.centerGuardFraction
-    else { acquisitionRefused(.acquisitionRefused); return }
+    // Only people standing in a player's box count (`PlayerAcquisitionZones`): a bystander
+    // outside both boxes is ignored, never linked, and never blocks linking. Two people in one box
+    // still refuse (no guessing). This is acquisition-only; after binding, identity is the
+    // association's, and neither X ordering nor the boxes choose it.
+    let people = values.compactMap { $0 }
+    func inBox(_ player: PlayerID) -> [Descriptor] {
+      people.filter { person in
+        let x = person.center.x / aspect
+        return PlayerAcquisitionZones.player(atX: x, solo: false, imageAspect: aspect) == player
+          && (player == .player1 ? x > 0.5 + policy.centerGuardFraction : x < 0.5 - policy.centerGuardFraction)
+      }
+    }
+    let p1 = inBox(.player1), p2 = inBox(.player2)
+    guard !overflow, p1.count == 1, p2.count == 1, p1[0].points.count == 4, p2[0].points.count == 4,
+      let separation = proximity(p1[0], p2[0]), separation > policy.minimumPairSeparation
+    else { acquisitionRefused(overflow ? .overflow : .acquisitionRefused); return }
+    let ordered = [p1[0], p2[0]]
     var continuous = true
     for i in slots.indices {
       guard let prior = slots[i].provisional,
@@ -375,12 +405,15 @@ nonisolated struct PlayerTracker: Sendable {
       }
     }
   }
-  /// DEBUG Solo Test: exactly one fully visible person (both shoulders and hips), anywhere in
-  /// the frame, held for the same acquisition dwell, becomes P1. Two people refuse (no guessing),
-  /// and P2's slot is left unbound: it never receives a descriptor.
+  /// DEBUG Solo Test: exactly one fully visible person (both shoulders and hips) in the Solo box,
+  /// held for the same acquisition dwell, becomes P1. People outside the box are ignored; two
+  /// people in the box refuse (no guessing), and P2's slot is left unbound.
   private mutating func acquireSolo(_ values: [Descriptor?], overflow: Bool, source: PlayerTrackingSource,
     relink: Bool = false) {
-    let eligible = values.compactMap { $0 }
+    let aspect = Double(source.context.imageWidth) / Double(source.context.imageHeight)
+    let eligible = values.compactMap { $0 }.filter {
+      PlayerAcquisitionZones.player(atX: $0.center.x / aspect, solo: true, imageAspect: aspect) == .player1
+    }
     guard !overflow, eligible.count == 1, let person = eligible.first, person.points.count == 4 else {
       acquisitionRefused(overflow ? .overflow : .acquisitionRefused); return
     }
@@ -417,22 +450,32 @@ nonisolated struct PlayerTracker: Sendable {
   /// Positive eligibility is deliberately NOT checked here. A forbidden identity can still veto
   /// another person's match. Unknown/expired evidence is not the same as geometric exclusion.
   private func identityEvidence(_ slot: Slot, _ candidate: Descriptor) -> IdentityEvidence {
-    guard let anchor = slot.confirmed else { return .unavailable }
+    guard let anchor = slot.confirmed, let seen = slot.lastSeen else { return .unavailable }
     let dt = candidate.time - anchor.time
-    guard dt > 0, dt <= policy.maximumObservationGap else { return .unavailable }
+    // SQUAT PRESENCE (PROPOSED by Kevin, 13 Nov 2026 — needs Edo's review): the identity is
+    // comparable while the player was seen (fully, or present as a partial body) within the
+    // observation gap. Across a presence gap the anchor is not extrapolated: it is moved sideways
+    // to where the body was last actually seen, and the gate grows only from that sighting, so a
+    // different person standing where the player USED to be cannot inherit the identity.
+    guard dt > 0, candidate.time - seen <= policy.maximumObservationGap else { return .unavailable }
+    let held = seen > anchor.time
+    var shiftX = 0.0
+    if held, let point = slot.presencePoint, let l = anchor.points[.leftShoulder], let r = anchor.points[.rightShoulder] {
+      shiftX = point.x - (l.x + r.x) / 2
+    }
     let shared = common(anchor, candidate)
     guard shared.count >= policy.minimumSharedCoreJoints, hasPair(Set(shared)) else { return .unavailable }
     var dx = 0.0, dy = 0.0, residual = 0.0, weight = 0.0
     for joint in shared {
       let old = anchor.points[joint]!, new = candidate.points[joint]!
       var vx = 0.0, vy = 0.0
-      if let prev = slot.previous, let p = prev.points[joint], anchor.time > prev.time {
+      if !held, let prev = slot.previous, let p = prev.points[joint], anchor.time > prev.time {
         vx = (old.x - p.x) / (anchor.time - prev.time)
         vy = (old.y - p.y) / (anchor.time - prev.time)
         let speed = hypot(vx, vy)
         if speed > policy.maximumSpeed { vx *= policy.maximumSpeed / speed; vy *= policy.maximumSpeed / speed }
       }
-      let x = new.x - (old.x + vx * dt), y = new.y - (old.y + vy * dt)
+      let x = new.x - (old.x + shiftX + vx * dt), y = new.y - (old.y + vy * dt)
       dx += x; dy += y
       let w = min(old.confidence, new.confidence)
       residual += hypot(x, y) * w
@@ -440,7 +483,7 @@ nonisolated struct PlayerTracker: Sendable {
     }
     let distance = hypot(dx, dy) / Double(shared.count)
     let meanResidual = residual / weight
-    let gate = policy.positionGate + policy.maximumSpeed * dt
+    let gate = policy.positionGate + policy.maximumSpeed * (held ? candidate.time - seen : dt)
     guard distance.isFinite, meanResidual.isFinite else { return .unavailable }
     guard distance <= gate, meanResidual <= policy.jointResidualGate else { return .excluded }
     let shape = shapeDifference(anchor, candidate)
@@ -465,15 +508,16 @@ nonisolated struct PlayerTracker: Sendable {
   }
 
   private mutating func associate(_ values: [Descriptor?], overflow: Bool, at time: Double,
-    sourceGap: Bool) {
+    sourceGap: Bool, partials: [(point: Point, id: UInt64)] = []) {
     // A — Evaluate from a frame-local baseline. No permanent identity/history mutation.
     var baseline = slots
     for i in baseline.indices {
       baseline[i].candidateID = nil
+      baseline[i].presentCandidateID = nil
       baseline[i].cost = nil
       if sourceGap {
         baseline[i] = refused(baseline[i], at: time, reason: .observationGap, lost: true)
-      } else if let confirmed = baseline[i].confirmed, time - confirmed.time >= policy.recoveryWindow {
+      } else if baseline[i].confirmed != nil, let seen = baseline[i].lastSeen, time - seen >= policy.recoveryWindow {
         baseline[i] = refused(baseline[i], at: time, reason: .expired, lost: true)
       }
     }
@@ -589,12 +633,36 @@ nonisolated struct PlayerTracker: Sendable {
           : recovered(baseline[i], descriptor: candidates[choice], cost: cost)
       }
     }
+    // SQUAT PRESENCE (PROPOSED by Kevin, 13 Nov 2026 — needs Edo's review): a slot left unmatched this frame whose player is still in view as
+    // exactly one partial body where they just were (and nowhere near the other player) stays
+    // present: uncertain as before, but its identity does not expire while it is in view.
+    for i in committed.indices where committed[i].state == .uncertain && !committed[i].identityAmbiguous {
+      if case .candidate = resolved[i] { continue }
+      guard let reference = presenceReference(committed[i]), let seen = committed[i].lastSeen,
+        time - seen <= policy.maximumObservationGap else { continue }
+      let gate = policy.positionGate + policy.maximumSpeed * (time - seen)
+      let near = partials.filter { Point.distance($0.point, reference) <= gate }
+      // Exactly one partial body, and not one that could be the other player's.
+      guard near.count == 1,
+        presenceReference(committed[1 - i]).map({ Point.distance(near[0].point, $0) > gate }) ?? true else { continue }
+      committed[i].presenceAt = time
+      committed[i].presencePoint = near[0].point
+      committed[i].presentCandidateID = near[0].id
+    }
     slots = committed
+  }
+  /// Where a player was last seen: the shoulders of their latest presence, or of their anchor.
+  private func presenceReference(_ slot: Slot) -> Point? {
+    if let point = slot.presencePoint { return point }
+    guard let a = slot.confirmed, let l = a.points[.leftShoulder], let r = a.points[.rightShoulder] else { return nil }
+    return Point(x: (l.x + r.x) / 2, y: (l.y + r.y) / 2)
   }
   private func confirmed(_ slot: Slot, descriptor: Descriptor, cost: Double) -> Slot {
     var value = slot
     value.previous = slot.confirmed
     value.confirmed = descriptor
+    value.presenceAt = nil
+    value.presencePoint = nil
     value.provisional = nil
     value.state = .tracking
     value.reason = .matched
@@ -606,8 +674,8 @@ nonisolated struct PlayerTracker: Sendable {
     slots[index] = confirmed(slots[index], descriptor: descriptor, cost: cost)
   }
   private func recovered(_ slot: Slot, descriptor: Descriptor, cost: Double) -> Slot {
-    guard let anchor = slot.confirmed,
-      descriptor.time - anchor.time < policy.recoveryWindow else {
+    guard slot.confirmed != nil, let seen = slot.lastSeen,
+      descriptor.time - seen < policy.recoveryWindow else {
       return refused(slot, at: descriptor.time, reason: .expired, lost: true)
     }
     var value = slot
@@ -638,7 +706,7 @@ nonisolated struct PlayerTracker: Sendable {
     }
     guard slot.state != .lost else { return value }
     value.identityAmbiguous = slot.identityAmbiguous || latch
-    let expired = slot.confirmed.map { time - $0.time >= policy.recoveryWindow } ?? true
+    let expired = slot.confirmed == nil || slot.lastSeen.map { time - $0 >= policy.recoveryWindow } ?? true
     value.state = lost || expired ? .lost : .uncertain
     value.reason = reason
     return value

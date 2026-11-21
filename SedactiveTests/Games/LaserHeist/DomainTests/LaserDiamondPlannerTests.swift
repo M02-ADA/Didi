@@ -24,6 +24,28 @@ nonisolated struct LaserDiamondPlannerTests {
         }
     }
 
+    @Test(arguments: [10.0, 60.0])
+    func visualLeadKeepsPickupScheduleAndDistinctActiveSlots(_ duration: Double) throws {
+        var baseline = try Self.planner()
+        var earlier = baseline
+        let start = 20.0
+        let original = try baseline.normalMinute(4, from: start, until: start + duration)
+        let plan = try earlier.normalMinute(4, from: start, until: start + duration, visualLead: 3.7)
+        #expect(plan.map(\.entry) == original.map(\.entry))
+        #expect(plan.map(\.exit) == original.map(\.exit))
+        #expect(plan[0].spawnedAt == start)
+        #expect(plan.last!.spawnedAt < original.last!.spawnedAt)
+        if duration == 60 {
+            let last = try #require(plan.last)
+            #expect(abs(last.entry - last.spawnedAt - 3.7) < 0.000001)
+        }
+        for (index, spawn) in plan.enumerated() {
+            #expect(!plan.prefix(index).contains {
+                $0.exit > spawn.spawnedAt && $0.position == spawn.position
+            })
+        }
+    }
+
     @Test func differentSeedsChangePlacementAndFailureDoesNotConsumePlannerState() throws {
         var first = try Self.planner(seed: 1), second = try Self.planner(seed: 2)
         #expect(try first.normalMinute(0, from: 0, until: 60) != second.normalMinute(0, from: 0, until: 60))

@@ -24,11 +24,19 @@ nonisolated struct PlayerBodySample: Equatable, Sendable, Codable {
     let trackingStatus: TrackingStatus
     let geometry: BodyGeometry
     let jumpState: JumpState
+    /// POSE-FIRST CANDIDATE (Kevin, 14 Nov 2026 — needs Edo's and Jevon's review): `true` when the
+    /// tracker holds this player's identity only by squat presence (status stays `.uncertain`)
+    /// and these measurements come from the landmarks Vision saw on that partial body. Set only by
+    /// the DEBUG candidate; nil (absent) in production, which keeps today's rule below.
+    var presenceOnly: Bool? = nil
+    var isPresenceHeld: Bool { presenceOnly == true && trackingStatus == .uncertain }
+    /// The player is in view as a tracked or presence-held body (not whether any action can be judged).
+    var isPresent: Bool { trackingStatus == .reliable || isPresenceHeld }
 
     func validate() throws {
         try jumpState.validate()
         if let calibrationRevision { try requireBodyValue(calibrationRevision > 0, "sample calibration revision") }
-        if trackingStatus != .reliable || calibrationRevision == nil {
+        if (trackingStatus != .reliable && !isPresenceHeld) || calibrationRevision == nil {
             try requireBodyValue(geometry.measurements.allSatisfy { $0.validity != .valid }
                                  && jumpState.validity != .valid, "uncertain/uncalibrated evidence")
         }

@@ -122,7 +122,8 @@ nonisolated struct LaserDiamondField: Sendable {
     /// Build on a value copy so a rejected replacement plan cannot partially award.
     mutating func collect(_ contacts: [LaserContactActivation], capturedAt: Double, arrivedAt: Double,
                           replacements: [LaserDiamondSpawn], bonusDeadline: Double?,
-                          bodyContacts: [UUID: Set<PlayerID>] = [:]) throws
+                          bodyContacts: [UUID: Set<PlayerID>] = [:],
+                          deferredBonusRefill: Bool = false) throws
         -> [LaserContactActivation] {
         var next = self
         next.advance(to: arrivedAt)
@@ -146,7 +147,8 @@ nonisolated struct LaserDiamondField: Sendable {
             }
         }
         if let bonusDeadline {
-            try requireLaserValue(replacements.count == collectedIDs.count && arrivedAt < bonusDeadline,
+            let replacementCountMatches = deferredBonusRefill ? replacements.isEmpty : replacements.count == collectedIDs.count
+            try requireLaserValue(replacementCountMatches && arrivedAt < bonusDeadline,
                                   "one replacement per bonus collection")
             for (id, replacement) in zip(collectedIDs, replacements) {
                 try requireLaserValue(replacement.position != next.states[id]?.spawn.position,

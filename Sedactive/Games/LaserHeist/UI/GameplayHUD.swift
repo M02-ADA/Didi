@@ -32,9 +32,12 @@ struct GameplayHUDModel: Equatable {
     /// Whether the round has reached its diamond (Diamond Time or after it).
     var diamondReached: Bool
     var banner: Banner
+    /// A DEBUG Solo Practice round (one player, one gate button): the gate's instruction says so.
+    var soloPractice = false
     /// Whole seconds of Diamond Time left: the authoritative phase-change time
     /// plus the configured duration, against game time. `nil` outside Diamond Time.
-    var diamondSecondsLeft: Int?
+    var diamondTimeRemaining: Double?
+    var diamondSecondsLeft: Int? { diamondTimeRemaining.map { Int($0.rounded(.up)) } }
     /// Diamonds collected, or `nil` with no source (production until J05).
     var diamondsCollected: Int?
     /// The diamond count comes from the Debug fixture (labelled on screen).
@@ -63,6 +66,13 @@ struct GameplayHUDModel: Equatable {
     /// five vaults each marker is a vault; a round with another vault count
     /// (the one-vault replay slice) shows the same five as stages of its progress.
     var markerStates: [MarkerState] {
+        // Five vaults: a marker is done exactly when its gate has opened (the fill reaches a
+        // marker while its gate is still shut, and starts the next stage from it).
+        if checkpoints == Self.markerCount {
+            return (0..<Self.markerCount).map { index in
+                diamondReached || index < vaultsOpened ? .completed : index == vaultsOpened ? .current : .upcoming
+            }
+        }
         var foundCurrent = false
         return Self.checkpointPositions(count: Self.markerCount).map { x in
             if diamondReached || x < fillEnd - 0.005 { return .completed }
@@ -81,13 +91,18 @@ struct GameplayHUDModel: Equatable {
 
     /// - Parameters:
     ///   - activityDuration: the round's planned activity length (seconds of game
-    ///     time), for the continuous part of the progress fill.
+    ///     time), for the continuous part of the progress fill when no `stageProgress` is given.
+    ///   - stageProgress: how far the current stage has run toward its gate (0…1, the session's
+    ///     `stageProgress`). With five vaults the fill then runs through each stage's own track
+    ///     segment: from the last opened checkpoint (or the start) to the next one, reaching it as
+    ///     the stage's activity ends and holding there until that gate opens.
     ///   - diamondsCollected: J05's committed count when it exists; until then `nil`.
     ///   - enteringFinalVault: the team is still entering the final vault (the session's
     ///     `finalVaultEntry`, on held game time): Diamond Time's title and seconds wait for it.
     init(state: LaserGameState?, events: [GameEvent], configuration: LaserRoundConfiguration,
-         activityDuration: Double, diamondsCollected: Int? = nil, diamondsAreFixture: Bool = false,
-         enteringFinalVault: Bool = false) {
+         activityDuration: Double, stageProgress: Double? = nil, diamondsCollected: Int? = nil,
+         diamondsAreFixture: Bool = false, enteringFinalVault: Bool = false, soloPractice: Bool = false) {
+        self.soloPractice = soloPractice
         maxHealth = configuration.initialTeamHealth
         health = state?.teamHealth ?? configuration.initialTeamHealth
         score = state?.teamScore ?? 0
@@ -99,7 +114,7 @@ struct GameplayHUDModel: Equatable {
             fillEnd = Self.fillStart
             diamondReached = false
             banner = .none
-            diamondSecondsLeft = nil
+            diamondTimeRemaining = nil
             return
         }
         let dots = Self.checkpointPositions(count: checkpoints)
@@ -112,6 +127,13 @@ struct GameplayHUDModel: Equatable {
             fillEnd = Self.fillFull
         } else if state.phase == .vault, state.vault?.opened != true, vaultsOpened < dots.count {
             fillEnd = dots[vaultsOpened]
+        } else if let stageProgress, dots.count == Self.markerCount, vaultsOpened < dots.count {
+            // STAGE PROGRESS (17 November 2026): each stage fills its own segment, so the fill moves
+            // all through every stage and meets the checkpoint as that stage's activity ends. (The
+            // whole-round share below ran across the diamond's segment too, so it ran ahead of the
+            // checkpoints and stopped short of each from stage 3 on, then jumped at the gate.)
+            let floor = vaultsOpened > 0 ? dots[vaultsOpened - 1] : Self.fillStart
+            fillEnd = floor + (dots[vaultsOpened] - floor) * min(1, max(0, stageProgress))
         } else {
             let share = activityDuration > 0 ? min(1, max(0, state.activityProgress / activityDuration)) : 0
             let continuous = Self.fillStart + share * (Self.fillFull - Self.fillStart)
@@ -128,9 +150,9 @@ struct GameplayHUDModel: Equatable {
             $0.sessionGeneration == state.sessionGeneration && $0.kind == .phaseChanged(.diamondTime)
         })?.gameTime {
             let left = start + configuration.diamondTimeDuration - state.gameTime
-            diamondSecondsLeft = max(0, Int(left.rounded(.up)))
+            diamondTimeRemaining = max(0, left)
         } else {
-            diamondSecondsLeft = nil
+            diamondTimeRemaining = nil
         }
     }
 }
@@ -176,6 +198,9 @@ struct GameplayHUD: View {
         }
         .ignoresSafeArea()
         .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: model.banner)
+        .onChange(of: model.diamondSecondsLeft) { previous, current in
+            AudioService.shared.playDiamondTimeTick(from: previous, to: current)
+        }
     }
 
     // MARK: - Top bar
@@ -246,6 +271,7 @@ struct GameplayHUD: View {
             }
         }
         .frame(width: 268 * k, height: 64 * k)
+        .anchorPreference(key: PickupHUDAnchorKey.self, value: .bounds) { [.health: $0] }
         .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.3), value: model.health)
         .accessibilityElement()
         .accessibilityLabel("Team health \(model.health) of \(model.maxHealth)")
@@ -256,7 +282,7 @@ struct GameplayHUD: View {
         HStack(spacing: 8 * k) {
             Image(systemName: "star.fill")
                 .foregroundStyle(Self.sun)
-                .anchorPreference(key: DiamondScoreAnchorKey.self, value: .bounds) { $0 }
+                .anchorPreference(key: PickupHUDAnchorKey.self, value: .bounds) { [.score: $0] }
             Text(model.score, format: .number)
                 .contentTransition(.numericText(value: Double(model.score)))
                 .monospacedDigit()
@@ -324,11 +350,15 @@ struct GameplayHUD: View {
             EmptyView()
         case .pressButtons:
             VStack(spacing: 2 * k) {
-                Text("PRESS THE BUTTONS").font(.system(size: 52.7 * k, weight: .black, design: .rounded))
+                // One activation switch per player (19 November 2026): co-op needs both, Solo
+                // Practice its one. The hint says how a live press works: lean to the own side (the
+                // board docks beside the button on the gate's frame), then reach out (one wrist zone
+                // on the player's outer side, `LaserLiveRoundGeometryV1`). Not Sketch copy; pending Theo.
+                Text(model.soloPractice ? "PRESS YOUR BUTTON" : "PRESS THE BUTTONS")
+                    .font(.system(size: 52.7 * k, weight: .black, design: .rounded))
                 Text("TO OPEN THE DOOR").font(.system(size: 18.7 * k, weight: .black, design: .rounded))
-                // How a live press works (wrist zones on each player's outer side,
-                // `LaserLiveRoundGeometryV1`). Not Sketch copy; pending Theo.
-                Text("Reach toward your wall: high, middle, low")
+                Text(model.soloPractice ? "Lean to your side, then reach out and press it"
+                                        : "Each player: lean to your side, then reach out to your button")
                     .font(.system(size: 16 * k, weight: .bold, design: .rounded))
                     .padding(.top, 4 * k)
             }
@@ -366,14 +396,14 @@ struct GameplayHUD: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("\(seconds) seconds left")
             }
-            if model.diamondsAreFixture {
-                Text("FIXTURE")
+            if model.diamondSecondsLeft != nil || model.diamondsAreFixture {
+                Text(model.diamondsAreFixture ? "FIXTURE" : "DIAMOND TIME")
                     .font(.system(size: 13 * k, weight: .heavy, design: .monospaced))
                     .padding(.horizontal, 6 * k)
                     .padding(.vertical, 2 * k)
                     .background(Self.sun, in: Capsule())
                     .foregroundStyle(Self.ink)
-                    .accessibilityLabel("Synthetic diamond fixture")
+                    .accessibilityLabel(model.diamondsAreFixture ? "Synthetic diamond fixture" : "Diamond Time")
             }
         }
         .font(.system(size: 24 * k, weight: .black, design: .rounded))

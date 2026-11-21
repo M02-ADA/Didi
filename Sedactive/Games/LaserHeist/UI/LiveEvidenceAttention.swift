@@ -32,7 +32,7 @@ nonisolated enum LiveEvidenceAttention: String, Equatable, Sendable {
         let parts = PlayerID.allCases.compactMap { player -> String? in
             guard let need = attention[player] else { return nil }
             let what: String = switch need {
-            case .tracking: solo ? "step back into the middle" : "step back into your place"
+            case .tracking: solo ? "stand in the middle, whole body in view" : "stand in your place, whole body in view"
             case .head: "keep your head in view"
             case .hands: "keep your hands in view"
             case .feet: "keep both feet in view"

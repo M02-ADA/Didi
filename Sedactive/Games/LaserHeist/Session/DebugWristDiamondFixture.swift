@@ -6,7 +6,7 @@ import Foundation
 nonisolated struct DebugWristDiamondFixture {
     static let normalID = UUID(uuidString: "D0950000-0000-4000-8000-000000000001")!
     static let bonusStart = 2.125
-    static let deadline = bonusStart + 10
+    static let deadline = bonusStart + LaserRoundConfiguration.defaultDiamondTimeDuration
     let script: LaserReplayScript
     let authority: WristContactContextV1
     let plan: LaserWristDiamondConfiguration

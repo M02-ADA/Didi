@@ -2,6 +2,17 @@ import Foundation
 import Testing
 @testable import Sedactive
 
+func wristForPaw(at position: LaserDiamondPosition, player: PlayerID,
+                calibration: PlayerCalibration, layout: PlayerPlaneLayout) -> WristPlanePoint {
+    let height = LaserLiveRoundGeometryV1.standingHeight(calibration, layout: layout)
+    let raised = (LaserDiamondTimeBoard.height - LaserDiamondTimeBoard.inset - position.y)
+        / (LaserDiamondTimeBoard.height - 2 * LaserDiamondTimeBoard.inset)
+    let y = LaserDiamondTimeBoard.lowWristHeight
+        + raised * (LaserDiamondTimeBoard.highWristHeight - LaserDiamondTimeBoard.lowWristHeight)
+    let x = (LaserDiamondTimeBoard.homeX(player: player, solo: false) - position.x) / LaserDiamondTimeBoard.lateralGain
+    return WristPlanePoint(x: layout.centerX(for: player) + x * height, y: y * height)
+}
+
 @MainActor struct LiveDiamondTimeRoundTests {
     @Test func coopWristContactsOpenFiveVaultsAndFinishDiamondTimeWithRealTotals() async throws {
         let rig = try J07SessionRig(deferredPlan: true)
@@ -64,12 +75,7 @@ import Testing
         }
         try #require(rig.session.state?.phase == .diamondTime)
         let start = try #require(rig.session.state?.gameTime)
-        let before = rig.session.diamondStates.values.filter { $0.outcome == nil }
-        #expect(before.count == 4)
-        #expect(before.allSatisfy { $0.interactionDeadline == start + 10 })
-        let target = try #require(before.sorted { $0.spawn.id.uuidString < $1.spawn.id.uuidString }.first)
-        let player = try #require(target.spawn.eligiblePlayers.first)
-        let hand = LaserContactHand(playerID: player, wrist: .left)
+        #expect(rig.session.diamondStates.values.allSatisfy { $0.outcome != nil })
         let score = try #require(rig.session.state?.teamScore)
 
         // The final vault entry (Lemon, then Tangerine) plays on held game time: a reach
@@ -78,32 +84,74 @@ import Testing
         #expect(entry.timeline.jumpers == [.player1, .player2] && !entry.isComplete)
         let entryStart = hostTime
         try await send(outside)
-        try await send([hand: .init(x: target.spawn.position.x, y: target.spawn.position.y)])
         for _ in 0..<100 where rig.session.finalVaultEntry?.isComplete == false { try await send() }
         #expect(rig.session.finalVaultEntry?.isComplete == true)
         #expect(hostTime - entryStart >= entry.timeline.total)
         #expect(rig.session.state?.gameTime == start && rig.session.diamondsCollected == 0)
         #expect(rig.session.state?.phase == .diamondTime)
 
-        // The initial target is still collectible near the end of the phase.
-        for _ in 0..<200 where (rig.session.state?.gameTime ?? 0) < start + 8 { try await send() }
         try await send(outside)
-        try await send([hand: .init(x: target.spawn.position.x, y: target.spawn.position.y)])
+        #expect(Set(rig.session.diamondTimePaws.keys) == Set(LaserContactHand.ordered))
+        let before = rig.session.diamondStates.values.filter { $0.outcome == nil }
+        #expect(before.count == 6)
+        #expect(before.allSatisfy { $0.interactionDeadline == start + 20 })
+        #expect(before.allSatisfy { $0.spawn.eligiblePlayers == Set(PlayerID.allCases) })
+        let target = try #require(before.sorted { $0.spawn.id.uuidString < $1.spawn.id.uuidString }.first)
+        let hands = LaserContactHand.ordered.filter { $0.playerID == .player2 }
+        func wrists(at position: LaserDiamondPosition) throws -> [LaserContactHand: WristPlanePoint] {
+            try Dictionary(uniqueKeysWithValues: hands.map { hand in
+                let calibration = try #require(calibrations[hand.playerID])
+                return (hand, wristForPaw(at: position, player: hand.playerID,
+                                          calibration: calibration, layout: complete.diamonds.layout))
+            })
+        }
+        let overlap = try wrists(at: target.spawn.position)
+
+        for (elapsed, count) in [(10.0, 8), (15.0, 10)] {
+            for _ in 0..<200 where (rig.session.state?.gameTime ?? 0) < start + elapsed {
+                try await send(outside)
+            }
+            let active = rig.session.diamondStates.values.filter { $0.outcome == nil }
+            #expect(active.count == count)
+            #expect(before.allSatisfy { active.contains($0) })
+        }
+        let beforePickup = Set(rig.session.diamondStates.keys)
+        let board = LaserDiamondTimeBoard.self
+        let activePositions = rig.session.diamondStates.values.filter { $0.outcome == nil }.map { $0.spawn.position }
+        // Stage the two hands near the target, outside every hitbox. This
+        // isolates the shared pickup from legitimate contacts on other slots.
+        let candidates = try (0..<32).map { step in
+            let angle = Double(step) * .pi / 16
+            return try LaserDiamondPosition(x: target.spawn.position.x + cos(angle) * 0.17,
+                                            y: target.spawn.position.y + sin(angle) * 0.17)
+        }
+        let staging = try #require(candidates.first { point in
+            point.x >= board.inset && point.x <= board.width - board.inset
+                && point.y >= board.inset && point.y <= board.height - board.inset
+                && activePositions.allSatisfy { board.distance(point, $0) > board.pawRadius + board.diamondRadius + 0.012 }
+        })
+
+        // The initial target is still collectible near the end of the phase.
+        for _ in 0..<200 where (rig.session.state?.gameTime ?? 0) < start + 18 { try await send() }
+        #expect(rig.session.diamondTimePaws.isEmpty)
+        try await send(overlap)
+        #expect(rig.session.diamondsCollected == 0, "a newly reacquired hand cannot collect from inside")
+        try await send(wrists(at: staging))
+        try await send(overlap)
         #expect(rig.session.diamondsCollected == 1 && rig.session.state?.teamScore == score + 25)
         let active = rig.session.diamondStates.values.filter { $0.outcome == nil }
-        #expect(active.count == 4)
-        let replacement = try #require(active.first { candidate in !before.contains { $0.spawn.id == candidate.spawn.id } })
-        #expect(replacement.spawn.position != target.spawn.position && replacement.interactionDeadline == start + 10)
+        #expect(active.count == 10)
+        let replacement = try #require(active.first { candidate in !beforePickup.contains(candidate.spawn.id) })
+        #expect(replacement.spawn.position != target.spawn.position && replacement.interactionDeadline == start + 20)
+        #expect(LaserDiamondTimeBoard.distance(replacement.spawn.position, target.spawn.position)
+                >= LaserDiamondTimeBoard.spawnClearance)
 
-        // A held wrist over the replacement does not score. The timer closes all four remaining targets.
-        let replacementPlayer = try #require(replacement.spawn.eligiblePlayers.first)
-        let replacementHand = LaserContactHand(playerID: replacementPlayer, wrist: .left)
-        let held = [replacementHand: WristPlanePoint(x: replacement.spawn.position.x, y: replacement.spawn.position.y)]
-        for _ in 0..<20 where rig.session.summary == nil { try await send(held) }
+        // Keeping both paws at the collected target cannot score again.
+        for _ in 0..<20 where rig.session.summary == nil { try await send(overlap) }
         let summary = try #require(rig.session.summary)
         #expect(summary.outcome == .completed && summary.vaultsOpened == 5)
         #expect(summary.diamondsCollected == 1 && summary.teamScore == score + 25)
-        #expect(summary.gameDuration == start + 10 && summary.activityDuration == 60)
+        #expect(summary.gameDuration == start + 20 && summary.activityDuration == 70)
         #expect(rig.session.diamondStates.values.filter { $0.outcome == nil }.isEmpty)
         await rig.session.stop()
         #expect(rig.session.summary == summary)

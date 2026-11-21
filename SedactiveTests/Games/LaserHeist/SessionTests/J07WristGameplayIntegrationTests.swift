@@ -98,7 +98,7 @@ import Testing
                     try LaserEncounter(id:old.id,attemptID:UUID(),targets:old.targets.map {
                         try LaserTarget(playerID:$0.playerID,calibrationRevision:$0.calibrationRevision,
                             requiredMove:$0.requiredMove,beam:$0.beam,warningTime:request.gameTime+0.125,
-                            crossingTime:request.gameTime+10)
+                            crossingTime:request.gameTime+10,lean:$0.lean?.unplaced)
                     })
                 }
             },liveRoundPlanner:liveRoundPlanner,automaticSetup:automaticSetup,automaticSetupTimer:false)
@@ -139,6 +139,30 @@ import Testing
     func spawn() async throws {
         try session.spawnLiveDiamonds([LaserDiamondTests.spawn(1,at:0,entry:0.125,exit:2)],beforeVaultAt:3)
         try await send(0.75) // activation tick records the original host watermark
+    }
+    /// The five-stage round opens with LEAN lasers (6 s and 12 s): players who only stand are hit
+    /// by every one and the team's health runs out within the first stage. For tests that need the
+    /// round to keep running (as `JumpTimingTimelineTests` does), the synthetic players lean toward
+    /// the way out of their next placed vertical beam, from 0.4 s after its warning until the board
+    /// is clear of it, and stand upright otherwise. A sample without lean evidence keeps none.
+    func leaningOutOfLeanBeams(_ players:[PlayerID:PlayerBodySample]) throws -> [PlayerID:PlayerBodySample] {
+        guard let state = session.state, let configuration = session.configuration else { return players }
+        return try players.mapValues { s in
+            let g = s.geometry
+            guard g.trunkLeanX != nil, let x = state.boards[s.playerID]?.x,
+                  let target = state.encounters.flatMap(\.encounter.targets).filter({
+                      $0.playerID == s.playerID && $0.requiredMove == .lean && $0.crossingTime > state.gameTime
+                          && state.gameTime >= $0.warningTime + 0.4
+                  }).min(by: { $0.crossingTime < $1.crossingTime }),
+                  let beam = target.lean, let center = beam.centerX, let e = beam.escape,
+                  abs(x - center) < LaserLeanPlacement.clearance(halfWidth: beam.halfWidth, margin: configuration.clearanceMargin) + 0.1
+            else { return s }
+            let height = (g.crownY.value ?? 1.7) - min(g.leftSoleY.value ?? 0, g.rightSoleY.value ?? 0)
+            var geometry = g
+            geometry.trunkLeanX = try EstimatedScalar(value: -Double(e) * 0.08 * height, validity: .valid)
+            return PlayerBodySample(playerID: s.playerID, calibrationRevision: s.calibrationRevision,
+                                    trackingStatus: s.trackingStatus, geometry: geometry, jumpState: s.jumpState)
+        }
     }
     @discardableResult func send(_ time:Double,points:[LaserContactHand:WristPlanePoint] = [:],
                                  bad:String? = nil, bodySamples: [PlayerID: PlayerBodySample]? = nil,

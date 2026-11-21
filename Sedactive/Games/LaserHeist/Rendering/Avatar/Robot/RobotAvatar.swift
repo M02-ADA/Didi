@@ -661,7 +661,34 @@ final class RobotAvatarLayer {
     nonisolated static let standingHeight: Float = 1.6
     /// The uniform scale that gives the model that height.
     nonisolated static var modelScale: Float { standingHeight / RobotSkeleton.modelHeight }
-    static let unavailableOpacity: Float = 0.5
+    /// Every tracked mascot's body opacity: see-through, so a beam or vertical laser behind Lemon
+    /// or Tangerine reads through the body (motion-game style). One stable value for both players,
+    /// never varied by laser approach; the hoverboard stays opaque (grounding). 0.5 is the design
+    /// decision (18 November 2026, down from 0.65): the mascots block less of the corridor. Only a
+    /// HIT lifts the struck mascot to fully opaque for a moment (`LaserHitReaction.solidity`), so the
+    /// impact stays readable. Presentation only. DEBUG `-mascotOpacity <0…1>` overrides it for
+    /// comparison captures.
+    nonisolated static let bodyOpacity: Float = {
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if let i = arguments.firstIndex(of: "-mascotOpacity"), i + 1 < arguments.count,
+           let value = Float(arguments[i + 1]) { return max(0.05, min(1, value)) }
+        #endif
+        return 0.5
+    }()
+    /// While a player is not tracked: half the body opacity (the earlier tracked-to-dimmed ratio).
+    nonisolated static var unavailableOpacity: Float { bodyOpacity * 0.5 }
+    /// One mascot body's opacity: its baseline (tracked or dimmed), lifted toward fully opaque by
+    /// its own HIT's `solidity` only while tracked, times any scripted fade.
+    nonisolated static func shownOpacity(tracked: Bool, solidity: Float, scripted: Float = 1) -> Float {
+        let baseline = tracked ? bodyOpacity : unavailableOpacity
+        let impact = tracked ? max(0, min(1, solidity)) : 0
+        return (baseline + (1 - baseline) * impact) * max(0, min(1, scripted))
+    }
+    /// Both mascots' depth pre-pass: the renderer writes their depth before any colour, so only
+    /// each mascot's front surface blends over the scene. A translucent body then never shows its
+    /// own far side or overlapping parts (an arm across the torso, a raised knee) through itself.
+    static let mascotSortGroup = ModelSortGroup(depthPass: .prePass)
 
     private(set) var robots: [PlayerID: Robot] = [:]
     /// Each mascot's own 3D hoverboard (`PlayerHoverboard`), when the board
@@ -709,6 +736,12 @@ final class RobotAvatarLayer {
         var squash: Float = 1
         var opacity: Float = 1
         var boardOpacity: Float = 1
+        /// A held root (lane-local) the move starts from instead of the live tracked root, and how
+        /// much of it applies (1: held, 0: live). A short cinematic holds the mascot still against
+        /// live tracking (a player's lean or jump would otherwise push the scripted flight), then
+        /// blends back to the live root without a pop.
+        var anchor: SIMD3<Float>?
+        var anchorWeight: Float = 1
         static let none = ScriptedMove()
     }
     /// Scripted moves by player; a player without one is shown as tracked.
@@ -735,6 +768,188 @@ final class RobotAvatarLayer {
     #endif
     /// Each mascot's tracked root (sway, lift) before any scripted move.
     private var trackedRoot: [PlayerID: SIMD3<Float>] = [:]
+
+    // MARK: Laser HIT reaction (`LaserHitReaction`, `LaserHitZap`; presentation only)
+
+    private struct ActiveHit {
+        let reaction: LaserHitReaction
+        /// Render time of the first frame shown (set by that frame: one clock, the render loop's).
+        var start: Double?
+        /// Where the beam met the mascot, in its lane's space.
+        let contact: SIMD3<Float>
+        var frame = LaserHitReaction.Frame.rest
+    }
+    private var hits: [PlayerID: ActiveHit] = [:]
+    private var zaps: [PlayerID: LaserHitZap] = [:]
+    /// While a reaction shows, the pose WITHOUT it: diamond contact reads this, never the zap.
+    private var unreactedJoints: [PlayerID: [Transform]] = [:]
+    private var hitCount: UInt32 = 0
+    #if DEBUG
+    /// DEBUG previews: Reduce Motion without changing the device setting.
+    static var forcesReducedMotionForHits = false
+    #endif
+    private static var hitsReduceMotion: Bool {
+        #if DEBUG
+        if forcesReducedMotionForHits { return true }
+        #endif
+        return UIAccessibility.isReduceMotionEnabled
+    }
+
+    /// Plays one mascot's HIT reaction: call it for an authoritative HIT verdict only. `contact`
+    /// is where the shown beam meets the mascot (world); its height picks the upper or lower
+    /// body. A HIT within `LaserHitReaction.retriggerGuard` of the last one is the same hit; a
+    /// later one restarts the reaction cleanly (never stacks). The other mascot is untouched.
+    func startHitReaction(_ player: PlayerID, contact: SIMD3<Float>) {
+        guard let robot = robots[player], let lane = robot.container.parent else { return }
+        if let hit = hits[player], let start = hit.start, let shown = lastPresented[player],
+           shown - start < LaserHitReaction.retriggerGuard { return }
+        if let hit = hits[player], hit.start == nil { return }
+        let local = lane.convert(position: contact, from: nil)
+        let feetY = trackedRoot[player]?.y ?? 0
+        let region: LaserHitReaction.Region = local.y - feetY >= Self.standingHeight * 0.5 ? .upper : .lower
+        hitCount &+= 1
+        // Knocked outward, away from the partner: P1 rides the left lane.
+        let reaction = LaserHitReaction(region: region, side: player == .player1 ? -1 : 1,
+                                        reduceMotion: Self.hitsReduceMotion, seed: hitCount &* 7 &+ (player == .player1 ? 1 : 2))
+        hits[player] = ActiveHit(reaction: reaction, contact: local)
+        // The struck player's board takes the shock with its mascot, in the same frame.
+        hoverboards[player]?.react(.hit, reduceMotion: Self.hitsReduceMotion)
+        if zaps[player] == nil {
+            let zap = LaserHitZap()
+            zap.root.name = "player.\(player.rawValue).laserHitZap"
+            lane.addChild(zap.root)
+            zaps[player] = zap
+        }
+    }
+
+    /// One player's authoritative CLEAR: that player's board celebrates, in the verdict's frame.
+    /// The partner's board answers only its own verdict (a HIT, a CLEAR, or nothing for UNAVAILABLE).
+    func celebrateBoard(_ player: PlayerID) {
+        hoverboards[player]?.react(.clear, reduceMotion: Self.hitsReduceMotion)
+    }
+
+    /// Whether a mascot is showing a HIT reaction (tests, previews).
+    func isReactingToHit(_ player: PlayerID) -> Bool { hits[player] != nil }
+    /// The reaction a mascot shows (tests, previews).
+    func hitReaction(_ player: PlayerID) -> LaserHitReaction? { hits[player]?.reaction }
+    /// The reaction frame a mascot shows now (tests).
+    func hitFrame(_ player: PlayerID) -> LaserHitReaction.Frame? { hits[player]?.frame }
+
+    /// Ends every HIT reaction at once (a new round, a stop, the avatars' removal): the mascots
+    /// show their plain live pose again and no effect stays on screen.
+    func cancelHitReactions() {
+        let players = Array(hits.keys)
+        hits = [:]
+        unreactedJoints = [:]
+        for zap in zaps.values { zap.hide() }
+        for board in hoverboards.values { board.cancelReaction() }
+        for player in players { applyScripted(player); restoreBodyMaterials(player) }
+    }
+
+    /// Each struck mascot's own materials as authored, kept while a HIT tints them.
+    private var restMaterials: [PlayerID: [any RealityKit.Material]] = [:]
+    /// The (flash, charge) last applied, so an unchanged tint is not re-assigned.
+    private var shownCharge: [PlayerID: SIMD2<Float>] = [:]
+
+    /// The zap ON the mascot: its own surface emits the impact flash, then the coral charge
+    /// (`LaserHitZap.bodyTint`), over its authored colours. Only the emission changes, so
+    /// Lemon and Tangerine stay recognisable; the authored materials come back exactly after.
+    private func showBodyCharge(_ player: PlayerID, robot: Robot, frame: LaserHitReaction.Frame) {
+        guard frame.bodyFlash > 0.002 || frame.charge > 0.002 else { restoreBodyMaterials(player); return }
+        guard var model = robot.model.model else { return }
+        let value = SIMD2(frame.bodyFlash, frame.charge)
+        if let shown = shownCharge[player], simd_distance(shown, value) < 0.004 { return }
+        let authored = restMaterials[player] ?? model.materials
+        restMaterials[player] = authored
+        shownCharge[player] = value
+        let tint = LaserHitZap.bodyTint(flash: frame.bodyFlash, charge: frame.charge)
+        model.materials = authored.map { material in
+            guard var surface = material as? PhysicallyBasedMaterial else { return material }
+            surface.emissiveColor = .init(color: tint.color)
+            surface.emissiveIntensity = tint.intensity
+            return surface
+        }
+        robot.model.model = model
+    }
+
+    private func restoreBodyMaterials(_ player: PlayerID) {
+        shownCharge[player] = nil
+        guard let authored = restMaterials.removeValue(forKey: player) else { return }
+        robots[player]?.model.model?.materials = authored
+    }
+
+    /// Whether a mascot's own surface is tinted by a HIT now (tests).
+    func isBodyCharged(_ player: PlayerID) -> Bool { restMaterials[player] != nil }
+
+    /// The render time each mascot was last presented at (the reaction's clock).
+    private var lastPresented: [PlayerID: Double] = [:]
+
+    /// The current reaction frame for `player` at render `time`, starting its clock on the first
+    /// frame and ending it after `LaserHitReaction.duration`.
+    private func advanceHit(_ player: PlayerID, time: Double) -> (LaserHitReaction, LaserHitReaction.Frame, Double)? {
+        guard var hit = hits[player] else { return nil }
+        let start = hit.start ?? time
+        hit.start = start
+        let tau = time - start
+        guard tau < LaserHitReaction.duration else {
+            hits[player] = nil
+            unreactedJoints[player] = nil
+            zaps[player]?.hide()
+            restoreBodyMaterials(player)
+            return nil
+        }
+        hit.frame = hit.reaction.frame(at: tau)
+        hits[player] = hit
+        return (hit.reaction, hit.frame, tau)
+    }
+
+    /// The zap's effects on the mascot's posed body.
+    private func showZap(_ player: PlayerID, robot: Robot, reaction: LaserHitReaction, frame: LaserHitReaction.Frame, tau: Double) {
+        guard let zap = zaps[player], let lane = robot.container.parent, let hit = hits[player] else { return }
+        guard robot.container.isEnabled else { zap.hide(); return }
+        let skeleton = robot.solver.skeleton
+        let pose = skeleton.world(robot.model.jointTransforms)
+        func point(_ name: String, _ offset: SIMD3<Float> = .zero) -> SIMD3<Float> {
+            guard let i = skeleton(name) else { return robot.container.position }
+            return robot.model.convert(position: pose.position[i] + pose.rotation[i].act(offset), to: lane)
+        }
+        let bind = skeleton.world(skeleton.bind)
+        var headTop = point("Head"), headCenter = headTop
+        if let head = skeleton("Head") {
+            let top = SIMD3<Float>(bind.position[head].x, RobotSkeleton.modelHeight, bind.position[head].z)
+            let offset = bind.rotation[head].inverse.act(top - bind.position[head])
+            headTop = point("Head", offset)
+            headCenter = point("Head", offset * 0.5)
+        }
+        let body = LaserHitZap.Body(
+            headTop: headTop, headCenter: headCenter,
+            headHalfWidth: 0.3 * Self.standingHeight / 1.6,
+            chest: point("Chest"), pelvis: point("Pelvis"),
+            hands: (point("Hand_L"), point("Hand_R")), knees: (point("Shin_L"), point("Shin_R")),
+            feet: (point("Foot_L"), point("Foot_R")))
+        // The contact at the mascot as drawn now (it moves with the recoil).
+        var contact = hit.contact
+        contact.x = robot.container.position.x
+        zap.show(reaction, frame: frame, at: tau, body: body, contact: contact)
+    }
+
+    /// The pose diamond contact reads: the live tracked pose, never a HIT reaction's offsets
+    /// (cosmetic only; TEAM_ALIGNMENT §C: judged geometry is never moved by presentation).
+    func contactPose(_ player: PlayerID) -> (joints: [Transform], toWorld: (SIMD3<Float>) -> SIMD3<Float>)? {
+        guard let robot = robots[player] else { return nil }
+        guard let frame = hits[player]?.frame, !frame.isRest, let joints = unreactedJoints[player],
+              let lane = robot.container.parent else {
+            return (robot.model.jointTransforms, { robot.model.convert(position: $0, to: nil) })
+        }
+        let move = scriptedMoves[player] ?? .none
+        let tracked = trackedRoot[player] ?? .zero
+        let base = move.anchor.map { tracked + ($0 - tracked) * max(0, min(1, move.anchorWeight)) } ?? tracked
+        let squash = max(0.05, move.squash).squareRoot()
+        let rest = Transform(scale: SIMD3(move.scale / squash, move.scale * squash, move.scale / squash) * Self.modelScale,
+                             rotation: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1), translation: base + move.offset)
+        let matrix = lane.transformMatrix(relativeTo: nil) * rest.matrix * robot.model.transformMatrix(relativeTo: robot.container)
+        return (joints, { p in let v = matrix * SIMD4<Float>(p, 1); return SIMD3(v.x, v.y, v.z) })
+    }
     private(set) var walksInVault = false
     private struct WalkingPosition {
         let entryHipX: Float
@@ -909,14 +1124,15 @@ final class RobotAvatarLayer {
     /// The app's templates, loaded from the bundle once and reused by every
     /// scene (Retry included); templates are only ever cloned, never shown.
     /// A failed load is not cached, so a later call tries again.
-    /// The players' hoverboard is loaded with them (`PlayerHoverboard.sharedTemplate()`);
-    /// a missing board never fails the avatars.
+    /// The players' hoverboard and the gate button are loaded with them (`PlayerHoverboard.sharedTemplate()`,
+    /// `GateConsoleView.sharedTemplate()`); a missing board or button never fails the avatars.
     static func sharedTemplates() async throws -> [PlayerID: Entity] {
         let load = sharedLoad ?? Task { try await loadTemplates() }
         sharedLoad = load
         do {
             let templates = try await load.value
             _ = await PlayerHoverboard.sharedTemplate()
+            _ = await GateConsoleView.sharedTemplate()
             return templates
         } catch {
             sharedLoad = nil
@@ -970,6 +1186,7 @@ final class RobotAvatarLayer {
             // One shared size for every player; uniform scale only.
             container.scale = SIMD3(repeating: Self.modelScale)
             container.addChild(robot)
+            model.components.set(ModelSortGroupComponent(group: Self.mascotSortGroup, order: 0))
             entity.addChild(container)
             entity.hasMascot = true
             if let hoverboard {
@@ -1241,8 +1458,9 @@ final class RobotAvatarLayer {
         var bounds = LateralSteering.bounds(corridorWidth: layout.corridorWidth, visibleHalfWidth: visible, halfWidth: halfWidth)
         // A wall's button console stops its mascot at the dock, where the hand lands on the buttons
         // and the body, head and board stay clear of the console (`LaserGateConsole`).
-        if let left = consoles.values.first(where: { $0.side < 0 }) { bounds = max(bounds.lowerBound, left.dockX)...bounds.upperBound }
-        if let right = consoles.values.first(where: { $0.side > 0 }) { bounds = bounds.lowerBound...min(bounds.upperBound, right.dockX) }
+        // (The whole round at the reach plane's stop, which is also a live gate's dock.)
+        if let left = consoles.values.first(where: { $0.side < 0 }) { bounds = max(bounds.lowerBound, left.wallStopX)...bounds.upperBound }
+        if let right = consoles.values.first(where: { $0.side > 0 }) { bounds = bounds.lowerBound...min(bounds.upperBound, right.wallStopX) }
         return LateralSteering(lanes: lanes, bounds: bounds, halfWidth: halfWidth)
     }
 
@@ -1255,6 +1473,19 @@ final class RobotAvatarLayer {
     /// it, until its door is clear. Separate from `consolesActive` (the reach), which starts only once
     /// the consoles have arrived and stops when the gate opens.
     var docksActive = false
+    /// The gate travel shown now (lane-local offset of the mascot and its board, metres), its time
+    /// constant (s) and how near its dock a board must be to set off.
+    private(set) var gateTravel: [PlayerID: SIMD3<Float>] = [:]
+    private var gateTravelSpeed: [PlayerID: SIMD3<Float>] = [:]
+    /// The glide's smooth time: a 3.3 m glide settles in about a second.
+    nonisolated static let gateTravelTime: Float = 0.3
+    /// A board within `gateTravelDockTolerance` of its dock sets the glide off; it lets go only once
+    /// the board is beyond `gateTravelReleaseTolerance` (hysteresis), so a lean wobbling at the
+    /// threshold never sends the mascot back and forth.
+    nonisolated static let gateTravelDockTolerance: Float = 0.08
+    nonisolated static let gateTravelReleaseTolerance: Float = 0.12
+    /// The players whose glide is set off (`gateTravelDockTolerance`), until released.
+    private var gateTravelDocked: Set<PlayerID> = []
     /// How near its dock a rider is taken onto it while consoles are shown, and how fast (m/s).
     nonisolated static let dockCapture: Float = 0.5
     nonisolated static let dockAssistSpeed: Float = 1.0
@@ -1282,6 +1513,15 @@ final class RobotAvatarLayer {
 
     /// The fist's pull onto a button from how deep the wrist is in its judged zone: none beyond 1.35
     /// radii, all of it inside 0.9 (smoothstep), so the fist glides on as the wrist enters.
+    /// How close this player's console-side wrist is to pressing (presentation only, from the same
+    /// readings the fist follows): `reachPull` of the nearest judged zone at the latest reach input,
+    /// 0 without one. The console's button builds up its glow with it (`GateConsoleView.setApproach`).
+    func consoleApproach(_ player: PlayerID) -> Float {
+        guard let time = reachInput[player]?.time,
+              let nearest = consoleZoneReadings(player, at: time)?.readings.values.min() else { return 0 }
+        return Self.reachPull(nearest)
+    }
+
     nonisolated static func reachPull(_ ratio: Double) -> Float {
         let x = Float(max(0, min(1, (1.35 - ratio) / 0.45)))
         return x * x * (3 - 2 * x)
@@ -1291,23 +1531,42 @@ final class RobotAvatarLayer {
     private var lastHandLog: [PlayerID: Double] = [:]
     #endif
 
+    /// The fist's snap onto its button (owner, iPad review, 20 November 2026: "lebih click, seperti ada
+    /// dock"): it locks on once the wrist is within `snapIn` radii of the judged zone and lets go only
+    /// beyond `snapOut` (hysteresis), easing in over `snapInTime` and out over `snapOutTime`.
+    nonisolated static let snapIn = 1.2, snapOut = 1.4
+    nonisolated static let snapInTime = 0.05, snapOutTime = 0.12
+    private var reachSnap: [PlayerID: (on: Bool, value: Float, time: Double)] = [:]
+
+    /// This frame's snap amount (0 free … 1 locked on) from the nearest reading.
+    private func snap(_ player: PlayerID, reading: Double?, time: Double) -> Float {
+        var state = reachSnap[player] ?? (false, 0, time)
+        if let reading { state.on = reading <= Self.snapIn || (state.on && reading < Self.snapOut) } else { state.on = false }
+        let dt = max(0, time - state.time)
+        let tau = state.on ? Self.snapInTime : Self.snapOutTime
+        let k = Float(1 - exp(-dt / tau))
+        state.value += ((state.on ? 1 : 0) - state.value) * (dt > 0 ? k : 0)
+        if state.on, state.value > 0.97 { state.value = 1 }
+        if !state.on, state.value < 0.03 { state.value = 0 }
+        state.time = time
+        reachSnap[player] = state
+        return state.value
+    }
+
     /// The console-side fist (shown gates only): pulled onto the button whose judged zone holds the
     /// tracked wrist, and never past the caps' front; the arm bends at the elbow (two fixed
     /// segments, bending the way it already bends), never stretches. Presentation only: the judge
     /// keeps the tracked wrist. Returns whether an arm changed.
     private func reachConsole(_ t: inout RobotPoseTargets, solved local: [Transform], robot: Robot, player: PlayerID,
                               console: LaserGateConsole, time: Double) -> Bool {
-        guard let tip = Self.cachedHandTip, let housing = console.blocks.first else { return false }
+        guard let tip = Self.cachedHandTip else { return false }
         let sk = robot.solver.skeleton
         let world = sk.world(local).position
         let tipModel = tip / Self.modelScale
-        let inward = SIMD3<Float>(-console.side, 0, 0)
-        let front = robot.model.convert(position: SIMD3(console.faceX, housing.center.y, housing.center.z) + inward * LaserGateConsole.pressSurface, from: nil)
-        let low = robot.model.convert(position: [console.faceX, housing.center.y - housing.size.y / 2, 0], from: nil).y
-        let high = robot.model.convert(position: [console.faceX, housing.center.y + housing.size.y / 2, 0], from: nil).y
+        let front = robot.model.convert(position: console.button.contact, from: nil)
         let zone = consoleZoneReadings(player, at: time)
         let best = zone?.readings.min { $0.value < $1.value }
-        let pull = best.map { Self.reachPull($0.value) } ?? 0
+        let pull = snap(player, reading: best?.value, time: time)
         var changed = false
         for (side, names) in [(RobotPoseTargets.Side.left, ("UpperArm_L", "Forearm_L", "Hand_L")),
                               (.right, ("UpperArm_R", "Forearm_R", "Hand_R"))] {
@@ -1321,8 +1580,10 @@ final class RobotAvatarLayer {
             if consoleSide, pull > 0, let best, let button = console.buttons[best.key] {
                 target = fist + (robot.model.convert(position: button.contact, from: nil) - fist) * pull
             }
-            if (target.x - front.x) * toward > 0, target.y >= min(low, high), target.y <= max(low, high) {
-                target.x = front.x // a hand stops on the surface
+            if consoleSide {
+                // A hand stops on the console's surface, never inside it.
+                let w = robot.model.convert(position: target, to: nil)
+                target = robot.model.convert(position: console.outsideConsole(w), from: nil)
             }
             guard simd_distance(target, fist) > 1e-4 else { continue }
             let a = simd_distance(shoulder, elbow), b = simd_distance(elbow, hand) + tipModel
@@ -1400,7 +1661,10 @@ final class RobotAvatarLayer {
         var consoles: [PlayerID: LaserGateConsole] = [:]
         for player in players {
             consoles[player] = LaserGateConsole(player: player, arm: arm, visibleHalfWidth: visible,
-                                                wallHalfWidth: layout.corridorWidth / 2, planeZ: scene.mapping.interactionPlaneZ)
+                                                // The corridor wall's jamb at the gate (floor to ceiling, into the drawn
+                                                // wall); its button (and the dock) stay where the camera's view puts them.
+                                                wallHalfWidth: layout.environmentWidth / 2, planeZ: scene.mapping.interactionPlaneZ,
+                                                floorY: layout.corridorFloorY, ceilingY: layout.corridorHeight, camera: layout.cameraPosition)
         }
         return consoles
     }
@@ -1422,6 +1686,23 @@ final class RobotAvatarLayer {
         return Double((sample.x - console.dockX) / k)
     }
 
+    /// Moves each mascot's gate glide toward `target` (lane-local offset): a critically damped glide
+    /// (smooth-damp), so it starts and lands without a jump in speed.
+    private func stepGateTravel(dt: Float, target: (PlayerID) -> SIMD3<Float>) {
+        let omega = 2 / Self.gateTravelTime, w = omega * dt
+        let decay = 1 / (1 + w + 0.48 * w * w + 0.235 * w * w * w)
+        for player in consoles.keys where robots[player] != nil {
+            let target = target(player)
+            let was = gateTravel[player] ?? .zero, speed = gateTravelSpeed[player] ?? .zero
+            let change = was - target, step = (speed + omega * change) * dt
+            var next = target + (change + step) * decay
+            var nextSpeed = (speed - omega * step) * decay
+            if simd_length(next - target) < 1e-3, simd_length(nextSpeed) < 1e-2 { next = target; nextSpeed = .zero }
+            gateTravel[player] = next
+            gateTravelSpeed[player] = nextSpeed
+        }
+    }
+
     /// Advances the steering to `now` (frame time) from each rider's lean speed and the hip shift
     /// it will show this frame (`k`: this frame's render smoothing). A scripted move (the final
     /// vault entry) holds its rider still.
@@ -1429,7 +1710,9 @@ final class RobotAvatarLayer {
         guard var steering else { return }
         let dt = Float(lastSteer.map { max(0, now - $0) } ?? 0)
         lastSteer = now
-        guard !walksInVault else { return }
+        // The final vault's walk-in holds the steering; any glide left from the gate settles to zero
+        // (never frozen into the walk).
+        guard !walksInVault else { gateTravelDocked = []; stepGateTravel(dt: dt) { _ in .zero }; return }
         lastSteerDT = dt
         var inputs: [PlayerID: LateralSteering.Input] = [:]
         #if DEBUG
@@ -1463,8 +1746,39 @@ final class RobotAvatarLayer {
             inputs[player] = .init(targetSpeed: scriptedMoves[player] == nil ? speed : 0, sway: sway)
             steerTargets[player] = inputs[player]?.targetSpeed ?? 0
         }
+        // A live gate's stop is the steering's own bound: the dock is the wall stop (`LaserGateConsole`).
         steering.step(dt: dt, inputs: inputs)
+        // Authoritative board positions (game state) replace the presentation steering for their
+        // riders; the others steer as before. The game state's docks are the same wall stops
+        // (`LaserBoardGeometryConsistencyTests`), so its boards never stand beyond a gate's dock.
+        for (player, x) in authoritativeBoardX where robots[player] != nil {
+            steering.place(player, boardX: x)
+        }
+        #if DEBUG
+        if let a = authoritativeBoardX[.player1], let b = authoritativeBoardX[.player2],
+           b - a < steering.minimumSeparation - 1e-3 {
+            print(String(format: "[VerticalLaser] authoritative boards overlap: P1 %+.3f P2 %+.3f (minimum %.2f)",
+                         a, b, steering.minimumSeparation))
+        }
+        #endif
         self.steering = steering
+        // GATE TRAVEL (Kevin, 20 November 2026: the buttons are on the gate's door frame, beyond the
+        // docked arm's reach): while a gate's buttons are live and the board is at its dock (the player
+        // leaned to their side), the drawn mascot and its board glide to the button's station, where the
+        // arm opened sideways ends on the cap; back when the gate opens or times out, or the player
+        // leans away. Presentation only: the steering (and the judge's zone shift, `vaultReachShift`)
+        // never moves.
+        for (player, console) in consoles {
+            let gap = steering.boardX(player).map { abs($0 - console.dockX) } ?? .infinity
+            let docked = consolesActive && gap < (gateTravelDocked.contains(player)
+                ? Self.gateTravelReleaseTolerance : Self.gateTravelDockTolerance)
+            if docked { gateTravelDocked.insert(player) } else { gateTravelDocked.remove(player) }
+        }
+        stepGateTravel(dt: dt) { [steering, consoles, gateTravelDocked, scene] player in
+            guard gateTravelDocked.contains(player), let console = consoles[player], let x = steering.boardX(player),
+                  let lane = scene?.players[player]?.position else { return .zero }
+            return [console.station.x - x, 0, console.station.z - lane.z]
+        }
         for player in robots.keys {
             guard let x = steering.boardX(player) else { continue }
             var h = rootHistory[player] ?? []
@@ -1489,10 +1803,16 @@ final class RobotAvatarLayer {
 
     /// Lean steering: the riders' travel, velocity and limits (nil without boards).
     private(set) var steering: LateralSteering?
+    /// Board centres' world X from game state (vertical laser contract, PROPOSED 16 November 2026),
+    /// set each frame by the caller. A rider listed here is drawn exactly there and its lean does not
+    /// move it; an empty map (today's gameplay) keeps the presentation steering. Display only.
+    var authoritativeBoardX: [PlayerID: Float] = [:]
     private var lastSteer: Double?
 
     /// A mascot's tracked root X on its lane (metres from the lane centre), before any scripted move.
     func trackedRootX(_ player: PlayerID) -> Float? { trackedRoot[player]?.x }
+    /// The tracked root (lane-local: sideways steering and sway, lift), before any scripted move.
+    func trackedRootPosition(_ player: PlayerID) -> SIMD3<Float>? { trackedRoot[player] }
 
     /// A mascot's current world X as drawn (its lane plus its tracked root and any scripted move).
     func mascotWorldX(_ player: PlayerID) -> Float? {
@@ -1635,12 +1955,32 @@ final class RobotAvatarLayer {
            reachConsole(&t, solved: solved.local, robot: robot, player: player, console: console, time: time) {
             solved = robot.solver.solveDetailed(t)
         }
-        robot.model.jointTransforms = solved.local
+        lastPresented[player] = time
+        let hit = advanceHit(player, time: time)
+        if let frame = hit?.1, !frame.isRest {
+            // The zap adds to the live pose (never replaces it); diamond contact keeps the pose without it.
+            unreactedJoints[player] = solved.local
+            if !frame.holdsPose {
+                var zapped = t
+                zapped.lean += frame.lean
+                zapped.headRoll += frame.headRoll
+                zapped.shoulderShrug += frame.shoulderShrug
+                zapped.pelvisDrop += frame.pelvisDip / scale
+                robot.model.jointTransforms = robot.solver.solveDetailed(zapped).local
+            }
+            // Hit-stop: the joints keep last frame's pose for `LaserHitReaction.hitStop`.
+        } else {
+            robot.model.jointTransforms = solved.local
+        }
         if diagnosticsEnabled { recordFeet(player, robot, solved, rootX: rootX, ride: ride, lift: s.lift, plan: plan, trackedLift: t.footLift) }
         #if DEBUG
         if showsFairnessMarkers { updateFairnessMarkers(player) }
         #endif
         applyScripted(player)
+        if let hit {
+            showZap(player, robot: robot, reaction: hit.0, frame: hit.1, tau: hit.2)
+            showBodyCharge(player, robot: robot, frame: hit.1)
+        }
         #if DEBUG
         logSteering(player, time: time, trunk: t.lean, bank: hoverboards[player]?.motion.bank ?? 0, tracked: r.isAvailable)
         #endif
@@ -1670,16 +2010,31 @@ final class RobotAvatarLayer {
     private func applyScripted(_ player: PlayerID) {
         guard let robot = robots[player] else { return }
         let move = scriptedMoves[player] ?? .none
-        robot.container.position = (trackedRoot[player] ?? .zero) + move.offset
-        let squash = max(0.05, move.squash).squareRoot()
+        let tracked = trackedRoot[player] ?? .zero
+        let base = move.anchor.map { tracked + ($0 - tracked) * max(0, min(1, move.anchorWeight)) } ?? tracked
+        // A HIT reaction adds its recoil, tilt (about the feet) and squash on top of all of that.
+        let hit = hits[player]?.frame ?? .rest
+        // Riding the board's verdict lift (`PlayerHoverboard.reactionLift`, cosmetic): the feet stay
+        // planted on the deck while it surges or sags. Contacts read the tracked root, never this.
+        let ride = hoverboards[player]?.reactionLift ?? 0
+        let travel = gateTravel[player] ?? .zero
+        robot.container.position = base + move.offset + hit.rootOffset + SIMD3(0, ride, 0) + travel
+        let tilt = simd_quatf(angle: hit.roll, axis: [0, 0, 1]) * simd_quatf(angle: hit.pitch, axis: [1, 0, 0])
+        if robot.container.orientation != tilt { robot.container.orientation = tilt }
+        let squash = max(0.05, move.squash * hit.squash).squareRoot()
         robot.container.scale = SIMD3(move.scale / squash, move.scale * squash, move.scale / squash) * Self.modelScale
-        // Dimmed exactly while the player is not tracked (the pose itself fades separately).
-        let opacity = (robot.retargeter.isAvailable ? 1 : Self.unavailableOpacity) * max(0, min(1, move.opacity))
+        // Translucent while tracked, dimmed further exactly while the player is not tracked (the
+        // pose itself fades separately). The board is never dimmed by this. A HIT on THIS mascot
+        // lifts it to fully opaque on the reaction's own clock (one timeline per player: a repeat
+        // HIT restarts it, the end lands exactly on the baseline); never while untracked, so a
+        // dimmed mascot stays dimmed.
+        let opacity = Self.shownOpacity(tracked: robot.retargeter.isAvailable, solidity: hit.solidity, scripted: move.opacity)
         if robot.container.components[OpacityComponent.self]?.opacity != opacity {
             robot.container.components.set(OpacityComponent(opacity: opacity))
         }
         robot.container.isEnabled = opacity > 0.001
         if let board = hoverboards[player] {
+            if board.root.position != travel { board.root.position = travel }
             let shown = max(0, min(1, move.boardOpacity))
             board.root.isEnabled = shown > 0.001
             if shown >= 1 { board.root.components.remove(OpacityComponent.self) }
@@ -1748,6 +2103,11 @@ final class RobotAvatarLayer {
         for marker in fairnessMarkers.values.flatMap({ $0 }) { marker.removeFromParent() }
         fairnessMarkers = [:]
         #endif
+        hits = [:]
+        unreactedJoints = [:]
+        for player in Array(restMaterials.keys) { restoreBodyMaterials(player) }
+        for zap in zaps.values { zap.root.removeFromParent() }
+        zaps = [:]
         robots = [:]
         shown = [:]
         footDiagnostics = [:]

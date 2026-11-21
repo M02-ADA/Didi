@@ -1,7 +1,7 @@
 import XCTest
 
 /// The LaserHeist journey through real taps (Sketch "Hi-Fi Revisi 6 NOV" over
-/// `LaserInputFlow`): Home, the two Set Up steps with Back, camera setup on the
+/// `LaserInputFlow`): Home, the looping Set Up screen with Back, camera setup on the
 /// "stand here" stage and leaving it, then the replay demo, Results and Back to
 /// Home. Waits on UI state only, never a fixed delay.
 final class LaserHeistJourneyUITests: XCTestCase {
@@ -21,19 +21,19 @@ final class LaserHeistJourneyUITests: XCTestCase {
         let back = app.buttons["navigationBack"]
         XCTAssertTrue(start.waitForExistence(timeout: timeout), "the app did not open on Home")
 
-        // Home › Set Up and back, one step at a time.
+        // Both illustrations alternate automatically before returning Home with one Back tap.
         start.tap()
         let skipVideo = app.buttons["skipIntroVideo"]
         XCTAssertTrue(skipVideo.waitForExistence(timeout: timeout), "START MISSION did not open the intro video")
         skipVideo.tap()
         XCTAssertTrue(next.waitForExistence(timeout: timeout), "Skipping the intro video did not open Set Up")
         XCTAssertTrue(app.staticTexts["Put your iPad on the Floor"].exists)
-        next.tap()
-        XCTAssertTrue(next.waitForExistence(timeout: timeout))
+        let mascot = app.images["The mascot standing an iPad up on the floor"]
+        let hands = app.images["Two hands holding an iPad"]
+        XCTAssertTrue(mascot.waitForExistence(timeout: timeout), "The mascot did not appear automatically")
+        XCTAssertTrue(hands.waitForExistence(timeout: timeout), "The illustrations did not loop")
         back.tap()
-        XCTAssertTrue(next.waitForExistence(timeout: timeout), "Back on step 2 did not return to step 1")
-        back.tap()
-        XCTAssertTrue(start.waitForExistence(timeout: timeout), "Back on step 1 did not return Home")
+        XCTAssertTrue(start.waitForExistence(timeout: timeout), "Back from Set Up did not return Home")
 
         // Camera setup opens on the stage with the session's own controls; leaving returns Home.
         LaserHeistJourney.startCameraSetup(app, timeout: timeout)

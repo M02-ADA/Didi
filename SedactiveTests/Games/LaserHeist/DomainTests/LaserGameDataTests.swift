@@ -21,16 +21,43 @@ nonisolated struct LaserGameDataTests {
         }
     }
 
-    @Test func preventsDuplicatePlayersAndMixedLaserMoves() throws {
+    /// One target per player and ONE MOVE PER ENCOUNTER (corrected 16 November 2026): a horizontal
+    /// laser is one continuous beam, so a DUCK for one player and a JUMP for the other at the same
+    /// crossing can never be built (the split beam cannot return); LEAN is its own encounter and may
+    /// ask one player (a vertical beam near them); a shift moves both players the same way.
+    @Test func preventsDuplicatePlayersSplitBeamsAndContradictoryShifts() throws {
         let encounter = try #require(LaserReplayScenarios.make().first).encounter
         let p1 = encounter.targets[0], p2 = encounter.targets[1]
         #expect(throws: LaserDataError.self) {
             try LaserEncounter(id: encounter.id, attemptID: encounter.attemptID, targets: [p1, p1])
         }
         let jumping = try LaserTarget(playerID: p2.playerID, calibrationRevision: 1, requiredMove: .jump,
-                                      beam: p2.beam, warningTime: 7, crossingTime: 10)
-        #expect(throws: LaserDataError.self) {
+                                      beam: p2.beam, warningTime: p1.warningTime, crossingTime: p1.crossingTime)
+        #expect(throws: LaserDataError.self, "split DUCK/JUMP beam") {
             try LaserEncounter(id: encounter.id, attemptID: encounter.attemptID, targets: [p1, jumping])
+        }
+        func lean(_ player: PlayerID, _ intent: LaserLeanIntent) throws -> LaserTarget {
+            try LaserTarget(playerID: player, calibrationRevision: 1, requiredMove: .lean, beam: p1.beam,
+                            warningTime: p1.warningTime, crossingTime: p1.crossingTime, lean: LaserLeanBeam(intent: intent))
+        }
+        #expect(throws: LaserDataError.self, "LEAN beside a half-width horizontal beam") {
+            try LaserEncounter(id: encounter.id, attemptID: encounter.attemptID, targets: [lean(.player1, .outward), p2])
+        }
+        // A vertical beam near one player only: a one-player LEAN layer.
+        let layer = try LaserEncounter(id: encounter.id, attemptID: encounter.attemptID, targets: [lean(.player2, .outward)],
+                                       roster: [.player2])
+        #expect(layer.targets.map(\.playerID) == [.player2])
+        // A horizontal laser always spans both players.
+        #expect(throws: LaserDataError.self) {
+            try LaserEncounter(id: encounter.id, attemptID: encounter.attemptID, targets: [p2], roster: [.player2])
+        }
+        #expect(throws: LaserDataError.self) {
+            try LaserEncounter(id: encounter.id, attemptID: encounter.attemptID,
+                               targets: [lean(.player1, .shift(1)), lean(.player2, .shift(-1))])
+        }
+        #expect(throws: LaserDataError.self) {
+            try LaserTarget(playerID: .player1, calibrationRevision: 1, requiredMove: .lean, beam: p1.beam,
+                            warningTime: 1, crossingTime: 4)
         }
         #expect(try LaserEncounter(id: encounter.id, attemptID: encounter.attemptID, targets: [p2, p1]).targets == [p1, p2])
     }
@@ -42,9 +69,9 @@ nonisolated struct LaserGameDataTests {
         for scenario in first {
             try scenario.input.validate()
             #expect(scenario.configuration.diamondPoints == nil)
-            #expect(scenario.configuration.diamondTimeDuration == 10)
+            #expect(scenario.configuration.diamondTimeDuration == 20)
             #expect(scenario.configuration.maximumActiveBonusDiamonds == 4)
-            #expect(scenario.configuration.activityDuration + scenario.configuration.diamondTimeDuration == 310)
+            #expect(scenario.configuration.activityDuration + scenario.configuration.diamondTimeDuration == 320)
             #expect(scenario.encounter.targets.map(\.playerID) == PlayerID.allCases)
             for target in scenario.encounter.targets {
                 let calibration = try #require(scenario.input.configuration.calibrations[target.playerID])

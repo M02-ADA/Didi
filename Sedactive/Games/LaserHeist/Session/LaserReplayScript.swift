@@ -7,7 +7,7 @@ nonisolated struct LaserReplayScript: Sendable {
     let configuration: LaserRoundConfiguration
     let fullRound: LaserFullReplayPlan?
     var duration: Double { fullRound?.duration ?? (17 + configuration.vaultDuration + configuration.diamondTimeDuration + 1) }
-    var activityDuration: Double { fullRound == nil ? 17 + configuration.diamondTimeDuration : 310 }
+    var activityDuration: Double { (fullRound == nil ? 17 : configuration.activityDuration) + configuration.diamondTimeDuration }
 
     init(input: ReplayFixture, encounters: [LaserEncounter], configuration: LaserRoundConfiguration,
          fullRound: LaserFullReplayPlan? = nil) {
@@ -36,8 +36,8 @@ nonisolated struct LaserReplayScript: Sendable {
     var trackedCoverage: ClosedRange<Double> { 0.1...(fullRound?.bonusStart ?? 17) }
     /// Synthetic verified wrist-contact results; this is not a wrist-to-target detector.
     var vaultActions: [(time: Double, player: PlayerID?, button: LaserVaultButton?)] {
-        [(17, nil, nil), (17.4, .player1, .bottom), (18, .player1, .top),
-         (18.6, .player1, .middle), (19.2, .player2, .top), (20, .player2, .bottom), (21, .player2, .middle)]
+        // One activation button each; the gate still opens at 21 s (P2's press), as with three.
+        [(17, nil, nil), (18.6, .player1, .activate), (21, .player2, .activate)]
     }
 
     static func load(bundle: Bundle = .main) throws -> Self {

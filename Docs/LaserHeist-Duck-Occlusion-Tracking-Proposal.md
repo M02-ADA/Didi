@@ -1,29 +1,33 @@
-# LaserHeist — DUCK/SQUAT occlusion and forced recalibration (proposal)
+# LaserHeist — DUCK/SQUAT occlusion and forced recalibration
 
-> **Status: Proposed — Edo (tracker identity) and Jevon (readiness, DUCK rule) must decide.**
-> Author: Kevin, 13 November 2026. Nothing here is applied to Edo's or Jevon's files.
-> Patch: [`LaserHeist-Duck-Occlusion-Proposal.patch`](LaserHeist-Duck-Occlusion-Proposal.patch)
-> (proposals 1 and 2). It applies cleanly to the current checkout (`git apply --check`).
+> **Status (13 November 2026, branch `fix/laserheist-squat-tracking`): APPLIED to production,
+> pending owner review.**
 >
-> The patch contains:
+> - **Edo's tracker:** squat presence (`PlayerTracker.swift`, marked `SQUAT PRESENCE … needs Edo's
+>   review`).
+> - **Jevon's readiness:** wrists are action evidence (`LaserLiveReadiness.swift`, marked `needs
+>   Jevon's review`).
+> - **Not applied:** any DUCK verdict change (see "Open decisions").
 >
-> - the tracker change (Edo);
-> - the readiness change (Jevon);
-> - their new tests:
->   - `SquatPresenceTrackingTests`: held squats of 1, 2 and 4 s keep both identities; an absent
->     player, a partial body at the other player's place, or two partial bodies keep today's latch;
->   - `ReadinessWristIndependenceTests`: a hidden wrist no longer blocks; a hidden head or sole
->     still does;
-> - Kevin's evidence-test update for the new squat contract.
+> **Refinement over the earlier patch file** (`LaserHeist-Duck-Occlusion-Proposal.patch`, now
+> superseded): after a presence gap, a returning player is compared against their pre-squat pose
+> moved sideways to where their body was last actually seen, with the gate measured from that
+> sighting. Without it, a different person standing up where a crouched player USED to stand
+> within 1 s inherited that player's identity. The test `aNewPersonWherePlayerOneUsedToStandIsNotPlayerOne`
+> fails with the refinement removed, which proves the hole.
 >
-> **Applied in an isolated copy (13 November 2026, second review):**
+> **Coverage:** all identity-safety suites pass, plus `SquatPresenceTrackingTests`:
 >
-> - 358 tests in 29 suites pass. The only failure is Edo's flaky
->   `priorBindingCalibrationSourceAndPresentationCannotCrossRetry`, which passes alone (9 of 9).
-> - Coverage: every tracker, identity, setup, readiness, live-loop, five-gate, JUMP-timing,
->   wall-button, diamond and warning suite.
-> - With both changes, the 1.5 s in-round squat ends with the round running again by itself.
-> - A DUCK with hidden wrists stays UNAVAILABLE: the DUCK rule is unchanged.
+> - squats held 1, 2 and 4 s;
+> - both players crouching;
+> - a child-sized body;
+> - a crouching player moving beside the other;
+> - the walk-off takeover;
+> - crossing players;
+> - an absent player;
+> - ambiguous partial bodies.
+>
+> `ReadinessWristIndependenceTests` also passes.
 
 ## Problem (iPad)
 
@@ -115,7 +119,23 @@ best taken with iPad data.
 - A DUCK at the crossing with hidden wrists is still **UNAVAILABLE**, and the session still pauses
   on that verdict.
 
-## Open decision — Jevon (with Edo): a DUCK with occluded hands
+## Open decisions — Jevon (with Edo): a DUCK with occluded hands
+
+The documented rule (`LaserHeist-Gameplay-Rules.md`, CP1 clearance rule, **Confirmed**) needs a
+valid crown AND both wrists: "one missing wrist makes high UNAVAILABLE even when the crown is
+clearly overlapping". Production keeps it.
+
+Today, a hands-behind duck has three outcomes:
+
+- between crossings, the round **continues** (the readiness fix);
+- at a crossing, the verdict is **UNAVAILABLE**, never a false CLEAR;
+- the session **pauses** on that UNAVAILABLE verdict (PR #46: any UNAVAILABLE pauses).
+
+**Proposal A (pause policy only, no verdict change):** an UNAVAILABLE caused only by an
+occluded wrist, while the player is reliably tracked, does not pause the round. It scores neither
+CLEAR nor HIT. Gameplay continues and nothing is fabricated.
+
+**Proposal B (rule change):** see below.
 
 Today the DUCK judge needs both wrists below the beam. An isolated trial that ignored an invalid
 wrist when the head is under the beam did produce CLEAR for a real hands-behind duck. It changes 2

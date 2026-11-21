@@ -15,7 +15,11 @@ struct PlayerSetupView: View {
     @State private var actionError: String?
 
     var body: some View {
-        if isOverlay {
+        if isOverlay, flow.session?.automaticSetup == true, let headline = automaticCopy.headline {
+            // Sketch Game Set Up (Home Copy 19/42): the headline alone over the camera image; the
+            // back arrow leaves, the boxes show each player's progress.
+            CalibrationStageHeadline(text: headline, detail: automaticCopy.headlineDetail)
+        } else if isOverlay {
             // Compact, in the stage's title band, so the standing guides stay clear.
             controls
                 .dynamicTypeSize(.xSmall)

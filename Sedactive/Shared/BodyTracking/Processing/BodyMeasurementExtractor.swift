@@ -25,7 +25,7 @@ nonisolated enum BodyMeasurementExtractor {
     guard reliable, let candidate, let calibration else {
       return .init(playerID: id, calibrationRevision: calibration?.revision, trackingStatus: status,
         geometry: .init(crownY: empty, leftWristY: empty, rightWristY: empty,
-          leftSoleY: empty, rightSoleY: empty, centerX: empty),
+          leftSoleY: empty, rightSoleY: empty, centerX: empty, trunkLeanX: empty),
         jumpState: JumpDetector.unavailable(invalid))
     }
     func wrist(_ joint: BodyJoint) -> EstimatedScalar {
@@ -38,6 +38,7 @@ nonisolated enum BodyMeasurementExtractor {
     if let left = hips[0], let right = hips[1], left.confidence >= 0.5, right.confidence >= 0.5 {
       center = scalar(calibration.mapping.gameX(imageX: (left.x + right.x) / 2, playerID: id, layout: layout))
     } else { center = unavailable(.missingLandmarks) }
+    let lean = trunkLean(candidate: candidate, calibration: calibration, id: id, layout: layout)
     // Live head-top and soles (policy V2, 11 November 2026): this frame's nose and ankles plus the
     // offsets measured on THIS player at their accepted standing calibration (TEAM_ALIGNMENT §C:
     // "estimates built from landmarks plus each player's standing calibration"). Only from a
@@ -47,7 +48,7 @@ nonisolated enum BodyMeasurementExtractor {
       let anatomy = unavailable(.missingLandmarks)
       return .init(playerID: id, calibrationRevision: calibration.revision, trackingStatus: status,
         geometry: .init(crownY: anatomy, leftWristY: wrist(.leftWrist), rightWristY: wrist(.rightWrist),
-          leftSoleY: anatomy, rightSoleY: anatomy, centerX: center),
+          leftSoleY: anatomy, rightSoleY: anatomy, centerX: center, trunkLeanX: lean),
         jumpState: JumpDetector.unavailable(.missingLandmarks))
     }
     let height = calibration.standingBodyImageHeight
@@ -60,8 +61,78 @@ nonisolated enum BodyMeasurementExtractor {
       geometry: .init(crownY: offset(.nose, by: calibration.headOffsetFromNoseShare),
         leftWristY: wrist(.leftWrist), rightWristY: wrist(.rightWrist),
         leftSoleY: offset(.leftAnkle, by: -calibration.leftFootOffsetShare),
-        rightSoleY: offset(.rightAnkle, by: -calibration.rightFootOffsetShare), centerX: center),
+        rightSoleY: offset(.rightAnkle, by: -calibration.rightFootOffsetShare), centerX: center,
+        trunkLeanX: lean),
       jumpState: JumpDetector.unavailable(.missingLandmarks)) // the stateful estimator fills this in
+  }
+
+  /// POSE-FIRST CANDIDATE (Kevin, 14 Nov 2026 — needs Edo's review; DEBUG only, see
+  /// `PoseFirstCandidate`). Today's sample, plus:
+  /// - a player held only by squat presence is measured from the partial body Vision saw
+  ///   (`slot.presentCandidateID`): each landmark on its own, missing ones stay missing;
+  /// - the crown is the higher of the nose estimate and the shoulder estimate (`HeadHeightReference`),
+  ///   so a head bow cannot lower it; the reference learns only from reliably tracked frames.
+  static func candidateSample(id: PlayerID, candidates: [PoseCandidate], slot: PlayerTrackingSlotResult,
+    calibration: PlayerCalibration?, layout: PlayerPlaneLayout, head: inout HeadHeightReference) -> PlayerBodySample {
+    let reliable = slot.state == .tracking && !slot.requiresRebind
+    let presence = !reliable && slot.state == .uncertain && !slot.requiresRebind ? slot.presentCandidateID : nil
+    let id_ = reliable ? slot.candidateID : presence
+    let candidate = id_.flatMap { cid in candidates.first { $0.candidateID == cid } }
+    // Measure as a tracked player would be (reliable or presence-held), then mark the provenance.
+    let measuring = (reliable || presence != nil) && candidate != nil
+    let base = sample(id: id, candidate: candidate, slot: measuring ? PlayerTrackingSlotResult(state: .tracking,
+      reason: slot.reason, candidateID: candidate?.candidateID, cost: slot.cost, requiresRebind: false,
+      lastConfirmedAt: slot.lastConfirmedAt) : slot, calibration: calibration, layout: layout)
+    guard measuring, let candidate, let calibration, calibration.referenceQuality != nil else {
+      return reliable || !measuring ? base : sample(id: id, candidate: nil, slot: slot, calibration: calibration, layout: layout)
+    }
+    func y(_ joint: BodyJoint) -> Double? {
+      guard let p = candidate.joints[joint], p.confidence >= 0.5 else { return nil }
+      return calibration.mapping.gameY(imageY: p.y, layout: layout)
+    }
+    let shoulders = y(.leftShoulder).flatMap { l in y(.rightShoulder).map { (l + $0) / 2 } }
+    let noseToCrown = calibration.headOffsetFromNoseShare * calibration.standingBodyImageHeight * layout.gameUnitsPerImageHeight
+    // Learn the upright shoulder-to-nose height only from reliably tracked frames.
+    if reliable, let nose = y(.nose), let shoulders { head.observe(noseY: nose, shoulderY: shoulders) }
+    let crownValue = head.crown(noseCrown: base.geometry.crownY.validity == .valid ? base.geometry.crownY.value : nil,
+                                shoulderY: shoulders, noseToCrown: noseToCrown)
+    let crown = crownValue.map { scalar($0) } ?? base.geometry.crownY
+    let g = base.geometry
+    var value = PlayerBodySample(playerID: id, calibrationRevision: base.calibrationRevision,
+      trackingStatus: reliable ? .reliable : .uncertain,
+      geometry: .init(crownY: crown, leftWristY: g.leftWristY, rightWristY: g.rightWristY,
+        leftSoleY: g.leftSoleY, rightSoleY: g.rightSoleY, centerX: g.centerX, trunkLeanX: g.trunkLeanX),
+      jumpState: base.jumpState)
+    if !reliable { value.presenceOnly = true }
+    return value
+  }
+
+  /// LEAN evidence: the trunk's sideways lean, UNMIRRORED player-plane units (+ toward image +X).
+  /// The shoulders' centre past the hips' centre, confirmed by the head (nose): a lean tilts the
+  /// whole trunk, so the head goes the same way, further; an arm reach or a head tilt alone moves
+  /// the shoulder line a little while the head stays (or the head alone), and is no lean. The head's
+  /// offset is scaled down to shoulder height and the smaller of the two is kept; opposite
+  /// directions read as upright (0). The same rule the mascots' lean steering used
+  /// (`RobotRetargeter`, 12 November 2026), now produced once here. Shoulders, hips and nose at the
+  /// existing 0.5 landmark confidence, as every other measurement; no new rejection threshold.
+  static func trunkLean(candidate: PoseCandidate, calibration: PlayerCalibration, id: PlayerID,
+    layout: PlayerPlaneLayout) -> EstimatedScalar {
+    let joints: [BodyJoint] = [.leftShoulder, .rightShoulder, .leftHip, .rightHip, .nose]
+    var points: [BodyJoint: (x: Double, y: Double)] = [:]
+    for joint in joints {
+      guard let p = candidate.joints[joint] else { return unavailable(.missingLandmarks) }
+      guard p.confidence >= 0.5 else { return unavailable(.lowConfidence) }
+      points[joint] = (calibration.mapping.gameX(imageX: p.x, playerID: id, layout: layout),
+                       calibration.mapping.gameY(imageY: p.y, layout: layout))
+    }
+    let ls = points[.leftShoulder]!, rs = points[.rightShoulder]!, lh = points[.leftHip]!, rh = points[.rightHip]!
+    let nose = points[.nose]!
+    let shoulder = (x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2), hip = (x: (lh.x + rh.x) / 2, y: (lh.y + rh.y) / 2)
+    guard shoulder.y > hip.y, nose.y - hip.y > 1e-6 else { return unavailable(.missingLandmarks) }
+    let lean = shoulder.x - hip.x
+    let head = (nose.x - hip.x) * (shoulder.y - hip.y) / (nose.y - hip.y)
+    guard head * lean > 0 else { return scalar(0) }
+    return scalar(abs(head) < abs(lean) ? head : lean)
   }
 
   /// The player's hips in game units this frame (for the airborne estimator), or nil.

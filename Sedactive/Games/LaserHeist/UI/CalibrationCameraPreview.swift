@@ -21,12 +21,12 @@ import UIKit
 /// itself each time the session starts running.
 struct CalibrationCameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
+    @Environment(\.calibrationPreviewFill) private var fillsViewport
 
     func makeUIView(context: Context) -> PreviewView {
         let view = PreviewView()
-        // The whole capture frame, never cropped: the stage sizes this view to the camera's
-        // aspect, so aspect fit fills it exactly and players see what tracking sees.
-        view.previewLayer.videoGravity = .resizeAspect
+        // Layout selects fill only after proving full source height / guide visibility.
+        view.previewLayer.videoGravity = fillsViewport ? .resizeAspectFill : .resizeAspect
         view.previewLayer.session = session
         view.levelWithHorizon()
         #if DEBUG
@@ -36,6 +36,8 @@ struct CalibrationCameraPreview: UIViewRepresentable {
     }
 
     func updateUIView(_ view: PreviewView, context: Context) {
+        let gravity: AVLayerVideoGravity = fillsViewport ? .resizeAspectFill : .resizeAspect
+        if view.previewLayer.videoGravity != gravity { view.previewLayer.videoGravity = gravity }
         if view.previewLayer.session !== session {
             view.previewLayer.session = session
             view.levelWithHorizon()

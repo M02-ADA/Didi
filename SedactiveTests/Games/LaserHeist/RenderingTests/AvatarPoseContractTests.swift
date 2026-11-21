@@ -455,6 +455,63 @@ struct AvatarPoseContractTests {
         #expect(layer.robots[.player2]!.retargeter.isAvailable && layer.robots[.player2]!.retargeter.presence > 0.9)
     }
 
+    /// A HIT lifts only the struck, tracked mascot from its body opacity to fully opaque, then eases it back to
+    /// exactly 65 %; the partner never changes; a repeat restarts cleanly; an untracked mascot's
+    /// HIT never lights it (its dim stays); a stop mid-impact lands on the baseline.
+    @Test func aHitTurnsOnlyTheStruckTrackedMascotSolidThenBack() async throws {
+        let file = try Self.load()
+        let builder = Builder(file: file)
+        let scene = LaserScene() // held: the HIT zap lives on the mascots' lanes
+        let layer = RobotAvatarLayer(scene: scene, players: Set(PlayerID.allCases), templates: try await RobotAvatarLayer.sharedTemplates())
+        let mailbox = AvatarPoseMailbox(maxAge: 0.25)
+        mailbox.publish(builder.status(FixtureFile.Status(revision: 1)))
+        var t = 1.0, id: UInt64 = 10
+        func opacity(_ player: PlayerID) -> Float? { layer.robots[player]?.container.components[OpacityComponent.self]?.opacity }
+        func feed(_ frames: Int, p2Lost: Bool = false, each: (() -> Void)? = nil) {
+            for _ in 0..<frames {
+                t += 1.0 / 30; id += 1
+                mailbox.offer(builder.offer(id, at: t, context: 1, visual: ["player1": (1.6, 0), "player2": (1.6, 0)], p2Lost: p2Lost))
+                layer.apply(mailbox.drain(now: t + 0.005), now: t + 0.005)
+                each?()
+            }
+        }
+        feed(10)
+        let body = RobotAvatarLayer.bodyOpacity
+        #expect(opacity(.player1) == body && opacity(.player2) == body, "both at 65 % in normal play")
+        // P1 struck: solid at once and through the impact, P2 untouched, then exactly 65 % again.
+        let hitAt = t
+        layer.startHitReaction(.player1, contact: [0, 1.2, 0])
+        var solidFrames = 0, eased = false
+        feed(24) {
+            if opacity(.player1) == 1 { solidFrames += 1 }
+            if let o = opacity(.player1), o > body + 0.01, o < 0.99 { eased = true }
+            #expect(opacity(.player2) == body, "P2 never follows P1's hit")
+        }
+        #expect(solidFrames >= 4 && eased, "held solid \(solidFrames) frames, then eased")
+        #expect(t - hitAt > LaserHitReaction.duration && opacity(.player1) == body)
+        // Both struck: each on its own clock; a repeat restarts P1 cleanly.
+        layer.startHitReaction(.player1, contact: [0, 1.2, 0])
+        layer.startHitReaction(.player2, contact: [0, 1.2, 0])
+        feed(1)
+        #expect(opacity(.player1) == 1 && opacity(.player2) == 1)
+        feed(8)
+        layer.startHitReaction(.player1, contact: [0, 1.2, 0])
+        feed(1)
+        #expect(opacity(.player1) == 1, "the repeat starts from its own impact")
+        #expect(opacity(.player2)! < 1, "P2's impact keeps its own timeline")
+        // A stop mid-impact: both land on the baseline at once.
+        layer.cancelHitReactions()
+        #expect(opacity(.player1) == body && opacity(.player2) == body)
+        // P2 untracked: its dim stays through a HIT.
+        feed(30, p2Lost: true)
+        #expect(opacity(.player2) == RobotAvatarLayer.unavailableOpacity)
+        layer.startHitReaction(.player2, contact: [0, 1.2, 0])
+        #expect(layer.isReactingToHit(.player2), "the HIT is shown (its zap), only the body stays dimmed")
+        feed(6, p2Lost: true) { #expect(opacity(.player2) == RobotAvatarLayer.unavailableOpacity, "never lit while untracked") }
+        layer.remove()
+        withExtendedLifetime(scene) {}
+    }
+
     /// Stop: neutral at once (no fade, no held duck); a late frame is refused;
     /// no-frame expiry then relaxes a fresh session to neutral too.
     @Test func stopIsImmediateAndExpiryRelaxes() async throws {

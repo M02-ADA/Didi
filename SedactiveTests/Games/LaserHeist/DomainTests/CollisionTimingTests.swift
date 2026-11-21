@@ -23,9 +23,16 @@ nonisolated struct CollisionTimingTests {
 
     @Test(arguments: Array(1...9))
     func officialReplayCases(_ number: Int) throws {
+        // Early verdicts (zap timing, 16 November 2026): a target may be decided before its deadline,
+        // but only with the deadline's own verdict and frame. Without them, the original contract.
+        for early in [false, true] { try officialReplayCase(number, early: early) }
+    }
+
+    private func officialReplayCase(_ number: Int, early: Bool) throws {
         let scenario = try LaserReplayScenarios.make()[number - 1]
         for expected in scenario.expected {
             var game = try LaserGame(configuration: scenario.configuration, context: context(scenario), historyCapacityPerPlayer: 120)
+            game.decidesEarly = early
             try game.register(scenario.encounter)
             var clock = try GameClock(sourceTime: scenario.captureEpoch)
             let end = min(expected.checkpoint, scenario.pauseAtGameTime ?? .infinity)
@@ -45,8 +52,15 @@ nonisolated struct CollisionTimingTests {
                 continue
             }
             try game.advance(to: expected.checkpoint - 0.000001)
-            #expect(game.selection(for: targetKey) == .pending)
-            #expect(game.judgement(for: targetKey) == .pending(.awaitingFinalization))
+            let before = game.selection(for: targetKey)
+            if !early || before == .pending {
+                #expect(before == .pending)
+                #expect(game.judgement(for: targetKey) == .pending(.awaitingFinalization))
+            } else {
+                // Decided early: already the final verdict, from the final frame.
+                #expect(game.judgement(for: targetKey) == expected.judgement)
+                if case .selected(let evidence)? = before { #expect(evidence.snapshot.frameID == expected.selectedFrameID) }
+            }
             try game.advance(to: expected.checkpoint)
             let result = try #require(game.selection(for: targetKey))
             #expect(game.judgement(for: targetKey) == expected.judgement)

@@ -93,14 +93,32 @@ import Testing
         let gameTime = session.state?.gameTime ?? 0
         return try rig.fixture.players.mapValues { standing in
             let center = try EstimatedScalar(value: layout.centerX(for: standing.playerID), validity: .valid)
+            // LEAN (vertical lasers): lean toward the way out of this player's next placed beam, from
+            // 0.4 s after its warning until the board is well clear of it; upright otherwise.
+            // The calibrated standing height the game's boards are steered by.
+            let height = rig.fixture.input.calibrations[standing.playerID].map {
+                LaserLiveRoundGeometryV1.standingHeight($0, layout: layout)
+            } ?? 1.7
+            var leanValue = 0.0
+            if let state = session.state, let x = state.boards[standing.playerID]?.x,
+               let next = state.encounters.flatMap(\.encounter.targets).filter({
+                   $0.playerID == standing.playerID && $0.requiredMove == .lean
+                       && $0.crossingTime > gameTime && gameTime >= $0.warningTime + 0.4
+               }).min(by: { $0.crossingTime < $1.crossingTime }),
+               let beam = next.lean, let beamX = beam.centerX, let e = beam.escape,
+               abs(x - beamX) < LaserLeanPlacement.clearance(halfWidth: beam.halfWidth, margin: configuration.clearanceMargin) + 0.1 {
+                leanValue = -Double(e) * 0.08 * height
+            }
+            let lean = try EstimatedScalar(value: leanValue, validity: .valid)
             let target = session.encounters.flatMap(\.targets).first {
-                $0.playerID == standing.playerID && abs($0.crossingTime - gameTime) <= 0.25
+                $0.playerID == standing.playerID && $0.requiredMove != .lean && abs($0.crossingTime - gameTime) <= 0.25
             }
             guard let target else {
                 let g = standing.geometry
                 return PlayerBodySample(playerID: standing.playerID, calibrationRevision: standing.calibrationRevision,
                     trackingStatus: standing.trackingStatus, geometry: .init(crownY: g.crownY, leftWristY: g.leftWristY,
-                        rightWristY: g.rightWristY, leftSoleY: g.leftSoleY, rightSoleY: g.rightSoleY, centerX: center),
+                        rightWristY: g.rightWristY, leftSoleY: g.leftSoleY, rightSoleY: g.rightSoleY, centerX: center,
+                        trunkLeanX: lean),
                     jumpState: standing.jumpState)
             }
             let margin = configuration.clearanceMargin
@@ -109,11 +127,98 @@ import Testing
             return PlayerBodySample(playerID: standing.playerID, calibrationRevision: standing.calibrationRevision,
                 trackingStatus: .reliable, geometry: target.requiredMove == .duck
                     ? .init(crownY: upper, leftWristY: upper, rightWristY: upper, leftSoleY: standing.geometry.leftSoleY,
-                            rightSoleY: standing.geometry.rightSoleY, centerX: center)
+                            rightSoleY: standing.geometry.rightSoleY, centerX: center, trunkLeanX: lean)
                     : .init(crownY: standing.geometry.crownY, leftWristY: standing.geometry.leftWristY,
-                            rightWristY: standing.geometry.rightWristY, leftSoleY: sole, rightSoleY: sole, centerX: center),
+                            rightWristY: standing.geometry.rightWristY, leftSoleY: sole, rightSoleY: sole, centerX: center,
+                            trunkLeanX: lean),
                 jumpState: target.requiredMove == .jump ? .init(phase: .airborne, validity: .valid) : standing.jumpState)
         }
+    }
+
+    // MARK: - DEBUG Skip to Next Gate through every stage
+
+    /// DEBUG "Skip to Next Gate" in a co-op test round, at every stage: each skip only shortens its
+    /// stage (the gate comes 5 game seconds later; unregistered lasers are dropped, never judged or
+    /// scored; registered ones are still judged); the gate still needs both players' real buttons;
+    /// opening it starts the next stage at once, with its own encounters, through the Final Vault
+    /// and Diamond Time to Results. No encounter is registered twice.
+    @Test func skippingToEveryGateStillPlaysEachStageThroughDiamondTime() async throws {
+        let rig = try J07SessionRig(deferredPlan: true)
+        try await rig.start(installDeferredPlan: false)
+        let session = rig.session
+        let calibrations = try LaserReplayScript.load().input.configuration.calibrations
+        let complete = try LaserLiveWristRoundPlan.completeRound(context: rig.fixture.context,
+            calibrations: calibrations, layout: rig.fixture.input.playerPlaneLayout, seed: 3)
+        try session.installLiveWristRound(.init(expectedContext: complete.expectedContext,
+            configuration: complete.configuration, encounters: complete.encounters,
+            timing: .init(settlingDuration: 0.125, maximumEvidenceAge: 0.5, countdownDuration: 0.25, trackingGrace: 1),
+            diamonds: complete.diamonds, director: complete.director))
+        try await rig.finishStart()
+        let configuration = try #require(session.configuration)
+        let layout = session.inputConfiguration.playerPlaneLayout
+        let health = try #require(session.state?.teamHealth)
+        let outside = Dictionary(uniqueKeysWithValues: LaserContactHand.ordered.map { ($0, WristGameplayFixture.outside) })
+        var hostTime = 0.625
+        func send(_ points: [LaserContactHand: WristPlanePoint] = [:]) async throws {
+            hostTime += 0.125
+            let samples = try Self.clearingSamples(rig, configuration: configuration, layout: layout)
+            try await rig.send(hostTime, points: points, bodySamples: samples)
+        }
+        let script = LaserWaveBeat.fiveMinuteScript()
+        func stage(of id: UUID) -> Int? { script.first { $0.id == id }.map { Int($0.nominalCrossingTime / 60) } }
+        var stageStart = try #require(session.state?.gameTime)
+        for gate in 0..<5 {
+            for _ in 0..<200 where (session.state?.gameTime ?? 0) < stageStart + 8 { try await send() }
+            #expect(session.canDebugSkipToNextGate, "gate \(gate + 1): skip available mid-stage")
+            let skips = session.debugGateSkips.count
+            session.debugSkipToNextGate()
+            try #require(session.debugGateSkips.count == skips + 1, "gate \(gate + 1): skipped")
+            #expect(!session.canDebugSkipToNextGate, "a second tap changes nothing")
+            let skip = try #require(session.debugGateSkips.last)
+            for _ in 0..<200 where session.state?.phase == .activity { try await send() }
+            let state = try #require(session.state)
+            try #require(state.phase == .vault, "gate \(gate + 1) reached after the skip")
+            #expect(state.missionProgress == gate)
+            #expect(state.gameTime >= skip.vaultAt - 1e-6 && state.gameTime < skip.vaultAt + 5, "gate \(gate + 1) at \(state.gameTime)")
+            // Every encounter of the stage is either played (registered once) or dropped by the skip.
+            let played = session.encounters.filter { stage(of: $0.id) == gate }.count
+            #expect(played + skip.droppedLasers == script.filter { Int($0.nominalCrossingTime / 60) == gate }.count,
+                    "stage \(gate + 1): \(played) played + \(skip.droppedLasers) dropped")
+            #expect(played > 0, "stage \(gate + 1) was played before the skip")
+            // The gate still needs both players' buttons (a skip never opens it).
+            let zones = try #require(session.liveVaultZones)
+            for button in LaserVaultButton.allCases {
+                try await send(outside)
+                try await send(Dictionary(uniqueKeysWithValues: zones.filter { $0.button == button }.map {
+                    (LaserContactHand(playerID: $0.playerID, wrist: .left), WristPlanePoint(x: $0.position.x, y: $0.position.y))
+                }))
+            }
+            let after = try #require(session.state)
+            #expect(after.missionProgress == gate + 1, "gate \(gate + 1) opened by its buttons")
+            stageStart = after.gameTime
+            if gate < 4 {
+                try await send()
+                #expect(session.state?.phase == .activity, "stage \(gate + 2) begins at once")
+            }
+        }
+        #expect(session.state?.phase == .diamondTime, "the fifth gate is the Final Vault: Diamond Time")
+        let ids = session.encounters.map(\.id)
+        #expect(Set(ids).count == ids.count, "no encounter registered twice")
+        // Skipping scores and damages nothing; every played laser was cleared.
+        #expect(session.state?.teamHealth == health)
+        let verdicts = session.events.compactMap { event -> Judgement? in
+            if case .targetJudged(_, _, let j) = event.kind { j } else { nil }
+        }
+        let missed = session.events.compactMap { event -> String? in
+            guard case .targetJudged(let id, let player, let j) = event.kind, j != .clear,
+                  let target = session.encounters.first(where: { $0.id == id })?.targets.first(where: { $0.playerID == player })
+            else { return nil }
+            return "\(player.rawValue) \(target.requiredMove) crossing \(target.crossingTime) at \(event.gameTime): \(j)"
+        }
+        #expect(verdicts.count == session.encounters.map(\.targets.count).reduce(0, +) && missed.isEmpty, "\(missed)")
+        for _ in 0..<600 where session.summary == nil { try await send() }
+        let summary = try #require(session.summary, "Results after Diamond Time")
+        #expect(summary.outcome == .completed && summary.vaultsOpened == 5)
     }
 
     // MARK: - One complete co-op round
@@ -149,23 +254,10 @@ import Testing
         scene.robotAvatars = robots
         let presenter = GameplayScenePresenter(scene: scene, configuration: configuration, encounters: session.plannedEncounters)
         let layout = session.inputConfiguration.playerPlaneLayout
-        let display = LaserReplayPresentation.diamondDisplay(scene: scene, layout: layout)
-        presenter.diamondTime.source = { [weak session] _ in
-            guard let session else { return [] }
-            return session.diamondStates.values.compactMap { state in
-                guard case .diamondTime = state.lifetime,
-                      let lane = PlayerID.allCases.first(where: { state.spawn.eligiblePlayers.contains($0) }),
-                      let id = Int(state.spawn.id.uuidString.suffix(12), radix: 16) else { return nil }
-                let collected: Bool
-                switch state.outcome { case .collected: collected = true; case nil: collected = false; default: return nil }
-                let shown = display(lane, state.spawn.position)
-                return DiamondTimeDiamond(id: id, lane: lane, offsetX: shown.offsetX, heightAboveFloor: shown.height, collected: collected)
-            }.sorted { $0.id < $1.id }
-        }
         func render() {
             guard let state = session.state else { return }
             presenter.apply(state: state, events: session.events, snapshot: session.latestSnapshot,
-                            upcomingVaultIn: session.liveVaultIn, finalVault: session.finalVaultEntry)
+                            upcomingVaultIn: session.liveVaultIn, finalVault: session.finalVaultEntry, showsPawBoard: session.showsDiamondTimePaws)
         }
 
         // Synthetic evidence: clear every laser at its crossing; wrists only where told.
@@ -195,9 +287,9 @@ import Testing
             // The gate is shown, its door at its stop.
             #expect(presenter.vault.diagnostics.reveals + presenter.vault.diagnostics.approaches >= gate + 1)
             #expect(scene.vaultDoorDepth != nil, "round \(round): gate \(gate + 1) door in the corridor")
-            // Real button contact: outside first, then each button's zone, for both players.
+            // Real button contact: outside first, then each player's one activation zone.
             let zones = try #require(session.liveVaultZones)
-            #expect(zones.count == 6 && Set(zones.map(\.playerID)) == Set(PlayerID.allCases))
+            #expect(zones.count == 2 && Set(zones.map(\.playerID)) == Set(PlayerID.allCases))
             for button in LaserVaultButton.allCases {
                 try await send(outside)
                 let wrists = Dictionary(uniqueKeysWithValues: zones.filter { $0.button == button }.map {
@@ -223,7 +315,8 @@ import Testing
         let verdicts = session.events.compactMap { event -> Judgement? in
             if case .targetJudged(_, _, let j) = event.kind { j } else { nil }
         }
-        #expect(verdicts.count == ids.count * 2 && verdicts.allSatisfy { if case .clear = $0 { true } else { false } })
+        #expect(verdicts.count == session.encounters.map(\.targets.count).reduce(0, +)
+                && verdicts.allSatisfy { if case .clear = $0 { true } else { false } })
         #expect(session.state?.teamHealth == startHealth, "no laser hit: hearts unchanged")
 
         // MARK: Final Vault entry (held GameClock), Lemon then Tangerine.
@@ -252,15 +345,16 @@ import Testing
         #expect(sawWall, "round \(round): the vault wall was shown")
         #expect(sawLemonFirst, "round \(round): Lemon jumped while Tangerine waited")
         #expect(sawTangerine, "round \(round): Tangerine jumped")
-        try await send()
+        try await send(outside)
         #expect(presenter.finalVault.stage == .inside(entry.timeline) && !scene.isCorridorShown, "inside the vault room")
-        #expect(presenter.diamondTime.floatingIDs.count == 4, "Diamond Time diamonds shown")
+        #expect(session.showsDiamondTimePaws && presenter.diamondTime.floatingIDs.isEmpty)
+        #expect(scene.players.values.allSatisfy { !$0.isEnabled })
         #expect(scene.vaultDoorDepth == nil || !scene.isCorridorShown, "no gate left in view")
 
         // MARK: Diamond Time: one real collection, no false ones, a held wrist scores once.
         let start = unlocked.gameTime
         let active = session.diamondStates.values.filter { $0.outcome == nil }.sorted { $0.spawn.id.uuidString < $1.spawn.id.uuidString }
-        #expect(active.count == 4 && active.allSatisfy { $0.interactionDeadline == start + 10 })
+        #expect(active.count == 6 && active.allSatisfy { $0.interactionDeadline == start + 20 })
         let target = try #require(active.first)
         let player = try #require(target.spawn.eligiblePlayers.first)
         let hand = LaserContactHand(playerID: player, wrist: .left)
@@ -269,9 +363,11 @@ import Testing
         try await send(outside)
         try await send([hand: WristGameplayFixture.outside])
         #expect(session.diamondsCollected == 0)
-        try await send([hand: .init(x: target.spawn.position.x, y: target.spawn.position.y)])
+        let point = wristForPaw(at: target.spawn.position, player: player,
+                               calibration: try #require(calibrations[player]), layout: layout)
+        try await send([hand: point])
         #expect(session.diamondsCollected == 1 && session.state?.teamScore == scoreBefore + 25, "exactly one award")
-        for _ in 0..<3 { try await send([hand: .init(x: target.spawn.position.x, y: target.spawn.position.y)]) }
+        for _ in 0..<3 { try await send([hand: point]) }
         #expect(session.diamondsCollected == 1 && session.state?.teamScore == scoreBefore + 25, "a held wrist scores once")
         #expect(GameplayHUDModel(state: session.state!, events: session.events, configuration: configuration,
                                  activityDuration: 300).banner == .retrieveDiamonds)
@@ -280,7 +376,7 @@ import Testing
         for _ in 0..<200 where session.summary == nil { try await send() }
         let summary = try #require(session.summary, "round \(round): Results")
         record.diamondTimeEndedAt = summary.gameDuration
-        #expect(summary.gameDuration == start + 10, "Diamond Time ends at its deadline")
+        #expect(summary.gameDuration == start + 20, "Diamond Time ends at its deadline")
         #expect(summary.outcome == .completed && summary.vaultsOpened == 5 && summary.diamondsCollected == 1)
         #expect(summary.teamScore == scoreBefore + 25)
         // A late camera sample after time is up awards nothing.

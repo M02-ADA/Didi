@@ -56,6 +56,22 @@ struct NormalDiamondPresentationTests {
         #expect(view.collections == 0)
     }
 
+    @Test func gemFacetsBrightenDuringThePickupWindow() async throws {
+        let scene = try await scene()
+        let view = NormalDiamondPresentation(scene: scene)
+        view.source = { [diamond(1)] }
+        view.update(state: state(13))
+        let mesh = try #require(scene.root.findEntity(named: "FacetedGem") as? ModelEntity)
+        let approaching = try #require(mesh.model?.materials.first as? PhysicallyBasedMaterial)
+        #expect(scene.root.findEntity(named: "diamond.approachGlow") == nil)
+        view.update(state: state(14))
+        let collectible = try #require(mesh.model?.materials.first as? PhysicallyBasedMaterial)
+        #expect(collectible.emissiveIntensity > approaching.emissiveIntensity)
+        view.update(state: state(15))
+        let passed = try #require(mesh.model?.materials.first as? PhysicallyBasedMaterial)
+        #expect(passed.emissiveIntensity < approaching.emissiveIntensity)
+    }
+
     @Test func collectionShowsOnceAndTheDiamondGoes() async throws {
         let scene = try await scene()
         let view = NormalDiamondPresentation(scene: scene)

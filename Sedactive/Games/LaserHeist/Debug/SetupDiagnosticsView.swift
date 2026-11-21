@@ -49,9 +49,27 @@ struct SetupDiagnosticsView: View {
                      "setup \(setup.phase) · session \(session.phase) · people in view \(session.presence.peopleInView)",
                      "calibration \(progress.phase.rawValue) · attempts \(session.presence.attempts) · \(progress.reason)"]
         let now = CameraHostClock.now()
+        if let mask = controls.debugMask, let last = mask.last {
+            lines.append(String(format: "native mask %@ · %@ · frame %llu age %.3fs service %.1fms regions %d",
+                mask.isCurrentSourceAndFresh ? "CURRENT" : "HISTORICAL", last.quality.rawValue,
+                last.source.frameID, now - last.source.capturedAt, last.serviceSeconds * 1000, last.supportedRegions))
+        } else { lines.append("native mask: no committed result (inspect binding/source admission above)") }
         // Gameplay evidence: what the live round would judge from right now.
         lines.append("readiness \(session.liveReadiness.map { String(describing: $0.phase) } ?? "-") · plan \(session.hasLiveRoundPlan ? "installed" : "none")"
             + (session.livePlanError.map { " · plan error \($0)" } ?? ""))
+        if let current = progress.debugCurrent {
+            lines.append(String(format: "request %@ · deadline in %.2fs · candidate expires %@", current.request.uuidString,
+                current.deadline - now, current.candidateExpiresAt.map { String(format: "%.2fs", $0 - now) } ?? "none"))
+        }
+        if let previous = progress.debugLastAttempt {
+            lines.append("LAST ATTEMPT \(previous.request): \(previous.outcome)")
+            for id in session.inputConfiguration.roster {
+                let old = previous.players[id] ?? .init()
+                lines.append("  \(id.rawValue) window \(old.samples) accepted \(old.accepted) first blocker \(old.latestIssue?.rawValue ?? "none") masks \(old.maskRefusals)")
+            }
+        }
+        lines.append("binding request \(controls.tracking.requestID?.uuidString ?? "none") · ack \(controls.tracking.acknowledgment == nil ? "NONE" : "present") · revision \(controls.tracking.revision) · accepted revision \(controls.acceptedRevision)")
+        lines.append("decision \(setup.diagnosticReason) · retry \(session.presence.willRetry) · UI \(session.presence.players)")
         for player in session.inputConfiguration.roster {
             let slot = controls.tracking.latest?[player]
             let p = progress.players[player] ?? .init()
@@ -60,6 +78,21 @@ struct SetupDiagnosticsView: View {
             let refused = p.rejected.sorted { $0.value > $1.value }.map { "\($0.key.rawValue) \($0.value)" }.joined(separator: ", ")
             lines.append("")
             lines.append("\(player.rawValue): tracking \(slot.map { "\($0.state.rawValue)/\($0.reason.rawValue)" } ?? "none") · window \(p.samples)/\(StandingCollectionPolicyV1.sampleCount) · accepted \(p.accepted) · resets \(d.resets)")
+            if let source = d.source {
+                let fresh = progress.debugCurrent != nil && now >= source.capturedAt
+                    && now - source.capturedAt < StandingCollectionPolicyV1.sampleFreshness
+                    && progress.debugCurrent?.source == source.context
+                lines.append("  sample \(fresh ? "FRESH" : "HISTORICAL — not current evidence")")
+                lines.append(String(format: "  frame %llu capture %.3f age %.3fs generation %@ epoch %@ geometry %llu control %llu rebind %@",
+                    source.frameID, source.capturedAt, now - source.capturedAt, source.context.generation.uuidString,
+                    source.context.epoch.uuidString, source.context.geometryRevision, d.bindingRevision, d.requiresRebind ? "YES" : "no"))
+            }
+            let association = d.association
+            lines.append("  FIRST association blocker: \(association.reason) joint \(association.joint.map { String(describing: $0) } ?? "-") confidence \(association.confidence.map { String(format: "%.3f", $0) } ?? "-") label \(association.label.map(String.init) ?? "-")")
+            lines.append("  mask \(d.maskOutcome) instances \(d.maskInstances.map(String.init) ?? "-") service \(d.maskServiceSeconds.map { String(format: "%.1fms", $0 * 1000) } ?? "-") · refused \(p.maskRefusals)")
+            if let window = progress.debugCurrent?.windows[player], window.count == 2 {
+                lines.append(String(format: "  window capture %.3f...%.3f (span %.2fs; oldest %.2fs ago)", window[0], window[1], window[1] - window[0], now - window[0]))
+            }
             lines.append("  latest issue: \(p.latestIssue?.rawValue ?? "none") · refused: \(refused.isEmpty ? "none" : refused)")
             lines.append("  head top: \(d.crownSeen ? "seen" : d.crown?.rawValue ?? "—") · soles: \(d.solesSeen ? "seen" : d.soles?.rawValue ?? "—")")
             lines.append("  face nose \(c(.nose)) eyes \(c(.leftEye))/\(c(.rightEye)) ears \(c(.leftEar))/\(c(.rightEar)) neck \(c(.neck))")
@@ -90,37 +123,96 @@ struct SetupDiagnosticsView: View {
 #endif
 
 #if DEBUG
-/// DEBUG layout check (`-setupStagePreview`): the setup stage over a stand-in 16:9 "camera"
-/// with two figures where real players stand, and sample statuses. No camera, no session.
+/// DEBUG layout check (`-setupStagePreview [state]`): the setup stage over a stand-in 16:9 "camera"
+/// with two figures where real players stand. SYNTHETIC statuses, no camera, no session, through the
+/// REAL copy mapping (`LaserAutomaticSetupCopy`) and boxes (`CalibrationGuideBox`). States:
+/// placement, start, early, half, onefull, ready, solo, issue; `animate` steps progress at the real
+/// 0.25 s sample cadence, with a reset, to review the border's motion.
 struct SetupStagePreview: View {
+    private static var state: String {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-setupStagePreview"), index + 1 < arguments.count,
+              !arguments[index + 1].hasPrefix("-") else { return "half" }
+        return arguments[index + 1]
+    }
+
+    /// The scripted statuses at `t` seconds of the `animate` loop (a window of 10 samples, one per 0.25 s).
+    static func animated(at t: Double) -> (LaserSetupPhase, [PlayerID: LaserSetupPlayerStatus]) {
+        let loop = t.truncatingRemainder(dividingBy: 9)
+        if loop < 1.5 { return (.waitingForReliablePair, [.player1: .linked, .player2: .linked]) }
+        let samples = Int((loop - 1.5) / 0.25)
+        // P1: steady; P2: steady to 5 samples, moves (window restarts), then steady again.
+        let p1 = min(10, samples)
+        let p2 = samples < 5 ? samples : samples < 7 ? 0 : min(10, samples - 7)
+        if loop > 7.5 { return (.awaitingGameplayReadiness, [.player1: .ready, .player2: .ready]) }
+        return (.calibrating, [.player1: .calibrating(progress: Double(p1) / 10, issue: nil),
+                               .player2: .calibrating(progress: Double(p2) / 10, issue: samples >= 5 && samples < 7 ? .moving : nil)])
+    }
+
+    static func statuses(_ state: String) -> (LaserSetupPhase, [PlayerID: LaserSetupPlayerStatus], Bool) {
+        switch state {
+        case "placement": (.waitingForReliablePair, [.player1: .linked, .player2: .searching], false)
+        case "start": (.calibrating, [.player1: .calibrating(progress: 0, issue: nil), .player2: .calibrating(progress: 0, issue: nil)], false)
+        case "early": (.calibrating, [.player1: .calibrating(progress: 0.2, issue: nil), .player2: .calibrating(progress: 0.1, issue: nil)], false)
+        case "hifi": (.calibrating, [.player1: .calibrating(progress: 0.5, issue: nil), .player2: .ready], false)
+        case "onefull": (.calibrating, [.player1: .calibrating(progress: 1, issue: nil), .player2: .calibrating(progress: 0.6, issue: nil)], false)
+        case "ready": (.awaitingGameplayReadiness, [.player1: .ready, .player2: .ready], false)
+        case "solo": (.calibrating, [.player1: .calibrating(progress: 0.5, issue: nil)], true)
+        case "issue": (.calibrating, [.player1: .calibrating(progress: 0.4, issue: nil), .player2: .calibrating(progress: 0.2, issue: .feetCutOff)], false)
+        default: (.calibrating, [.player1: .calibrating(progress: 0.5, issue: nil), .player2: .calibrating(progress: 0.5, issue: nil)], false)
+        }
+    }
+
     var body: some View {
-        CalibrationStageView(cameraPreview: AnyView(StandIn()), playerStatus: [
-            .player1: .calibrating(progress: 0.6, issue: nil), .player2: .calibrating(progress: 0.2, issue: .feetCutOff)],
-            onBack: {}) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Stand still and upright!").font(.title.bold())
-                    Text("Step back so your feet are in view.").font(.title3).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Leave camera setup", role: .cancel) {}.buttonStyle(.bordered).controlSize(.large)
+        if Self.state == "animate" {
+            TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                let (phase, players) = Self.animated(at: context.date.timeIntervalSinceReferenceDate)
+                stage(phase, players, solo: false)
             }
-            .padding(.horizontal, 18).padding(.vertical, 10)
-            .background(.regularMaterial, in: .rect(cornerRadius: 20)).preferredColorScheme(.dark)
+        } else {
+            let (phase, players, solo) = Self.statuses(Self.state)
+            stage(phase, players, solo: solo)
+        }
+    }
+
+    func stage(_ phase: LaserSetupPhase, _ players: [PlayerID: LaserSetupPlayerStatus], solo: Bool) -> some View {
+        var presence = LaserSetupPresence()
+        presence.players = players
+        presence.peopleInView = players.values.filter { $0 != .searching }.count
+        let copy = LaserAutomaticSetupCopy(.init(sessionPhase: .awaitingSetup, setupPhase: phase, presence: presence,
+                                                 hasRoundPlan: true, solo: solo))
+        return CalibrationStageView(cameraPreview: AnyView(StandIn(solo: solo)), playerStatus: players, solo: solo, onBack: {}) {
+            if let headline = copy.headline {
+                CalibrationStageHeadline(text: headline, detail: copy.headlineDetail)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(copy.title).font(.title.bold())
+                    Text(copy.instruction).font(.title3).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 18).padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.regularMaterial, in: .rect(cornerRadius: 20)).preferredColorScheme(.dark)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Text("SYNTHETIC CAMERA / STATUS FIXTURE — not physical tracking")
+                .font(.caption2.monospaced()).foregroundStyle(.white)
+                .padding(6).background(.black.opacity(0.35)).allowsHitTesting(false)
         }
     }
 
     private struct StandIn: View {
+        var solo = false
         var body: some View {
             GeometryReader { g in
                 ZStack {
                     LinearGradient(colors: [.gray.opacity(0.5), .gray.opacity(0.25)], startPoint: .top, endPoint: .bottom)
-                    // Two adults about 1.7 m tall, 2.5 m from the camera: roughly 80 % of the frame height.
-                    ForEach([0.27, 0.73], id: \.self) { x in
+                    // Symbol stand-ins inside the intended full-body areas; no camera or physical evidence.
+                    ForEach(solo ? [0.5] : [0.28, 0.70], id: \.self) { x in
                         Image(systemName: "figure.stand").resizable().scaledToFit()
-                            .frame(height: g.size.height * 0.8)
+                            .frame(height: g.size.height * 0.6)
                             .foregroundStyle(.white.opacity(0.6))
-                            .position(x: g.size.width * x, y: g.size.height * 0.52)
+                            .position(x: g.size.width * x, y: g.size.height * 0.57)
                     }
                 }
             }

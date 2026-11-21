@@ -128,19 +128,19 @@ nonisolated struct LaserDiamondTests {
         let start = game.gameTime, time = start + 1.2
         _ = try collect(&game, generation: generation, ids: [1], capture: time,
                         replacements: [Self.spawn(5, at: time)])
-        try game.advance(to: start + 10)
+        try game.advance(to: start + 20)
         let summary = try #require(game.summary)
         #expect(summary.outcome == .completed && summary.diamondsCollected == 1 && summary.teamScore == 25)
         #expect(game.activeDiamonds.isEmpty)
-        #expect(try collect(&game, generation: generation, ids: [2], capture: start + 10).isEmpty)
-        try game.advance(to: start + 20)
+        #expect(try collect(&game, generation: generation, ids: [2], capture: start + 20).isEmpty)
+        try game.advance(to: start + 30)
         #expect(game.summary == summary && game.teamScore == 25)
         #expect(game.drainEvents().filter { if case .roundEnded = $0.kind { true } else { false } }.count == 1)
     }
 
     @Test func exactBonusDeadlineClosesBeforeCollectionOrReplacement() throws {
-        var (game, generation) = try Self.bonus(exitOffset: 10)
-        let deadline = game.gameTime + 10
+        var (game, generation) = try Self.bonus(exitOffset: 20)
+        let deadline = game.gameTime + 20
         // Capture is inside this target's passage, but arrival is exactly phase end.
         #expect(try collect(&game, generation: generation, ids: [1], capture: deadline - 0.1,
                             arrival: deadline).isEmpty)
@@ -150,11 +150,11 @@ nonisolated struct LaserDiamondTests {
 
     @Test func uncollectedBonusDiamondsStayAvailableUntilTheWholePhaseEnds() throws {
         var (game, generation) = try Self.bonus()
-        let start = game.gameTime, deadline = start + 10
-        try game.advance(to: start + 8)
+        let start = game.gameTime, deadline = start + 20
+        try game.advance(to: start + 18)
         #expect(game.activeDiamonds.count == 4)
         #expect(game.diamonds.values.allSatisfy { $0.outcome == nil && $0.interactionDeadline == deadline })
-        let time = start + 8.1
+        let time = start + 18.1
         // This is well past the normal passage exit of start+4.
         #expect(try collect(&game, generation: generation, ids: [1], capture: time,
                             replacements: [Self.spawn(5, at: time)]).count == 1)
@@ -173,7 +173,7 @@ nonisolated struct LaserDiamondTests {
         let start = game.gameTime, firstTime = start + 1.2
         let replacement = try Self.spawn(5, at: firstTime, entry: firstTime + 0.1, exit: firstTime + 0.2)
         _ = try collect(&game, generation: generation, ids: [1], capture: firstTime, replacements: [replacement])
-        let later = start + 8
+        let later = start + 18
         #expect(try collect(&game, generation: generation, ids: [5], capture: later,
                             replacements: [Self.spawn(6, at: later)]).count == 1)
         #expect(game.teamScore == 50 && game.activeDiamonds.count == 4)
