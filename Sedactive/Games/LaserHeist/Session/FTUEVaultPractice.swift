@@ -42,6 +42,21 @@ final class FTUEVaultPractice {
         collectEvents(self.game.drainEvents())
     }
 
+    /// Readiness controls the tutorial clock. The production wrist consumer still
+    /// checks the wrist attachment, activation watermark and outside-to-inside entry.
+    static func hasCurrentBodySnapshot(_ snapshot: BodySnapshot?, inputs: Inputs?, at now: Double) -> Bool {
+        guard let snapshot, let round = inputs?.round, let freshness = round.context.wristContact?.freshness,
+              now.isFinite, freshness.isFinite, now >= snapshot.capturedAt,
+              now - snapshot.capturedAt < freshness else { return false }
+        return round.roster.allSatisfy {
+            round.context.accepts(snapshot, playerID: $0) && snapshot.players[$0]?.trackingStatus == .reliable
+        }
+    }
+
+    #if DEBUG
+    var contactReadout: [LaserWristDiamondConsumer.VaultReadout] { consumer.lastVaultReadout }
+    #endif
+
     var didOpen: Bool { game.vault?.id == vaultID && game.vault?.opened == true && openedAt != nil }
     var state: LaserGameState { state(health: nil) }
 

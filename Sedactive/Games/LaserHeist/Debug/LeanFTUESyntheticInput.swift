@@ -24,6 +24,7 @@ import Foundation
     private var stageStart = 0.0
     private var wasSuspended = false
     private let hold: Bool
+    private let delaysVaultCapture = ProcessInfo.processInfo.arguments.contains("-leanFTUEDelayedVaultCapture")
     private let delaysDiamondTimeCapture = ProcessInfo.processInfo.arguments.contains("-leanFTUEDelayedDiamondTimeCapture")
     private let skipsLeanMotion = ProcessInfo.processInfo.arguments.contains("-leanFTUENoMotion")
 
@@ -38,7 +39,7 @@ import Foundation
             cutovers: configuration.calibrations.mapValues { .init(frameID: $0.sourceFrameID, capturedAt: $0.capturedAt) },
             isActive: true, wristContact: .init(sourceEpoch: source.context.epoch, controlRevision: source.controlRevision,
                 bindingRequestID: UUID(), bindingFrameID: 0, bindingCapturedAt: 0,
-                acceptedContextRevision: 1, freshness: LiveAvatarPresenter.maximumPoseAge))
+                acceptedContextRevision: 1, freshness: delaysVaultCapture ? B2bExperimentalPolicyV1.value.freshness : LiveAvatarPresenter.maximumPoseAge))
         mailbox = AvatarPoseMailbox(maxAge: LiveAvatarPresenter.maximumPoseAge)
         mailbox.publish(source.status)
     }
@@ -46,7 +47,11 @@ import Foundation
         guard !stopped else { return false }
         let now = CameraHostClock.now()
         // Model a synthetic capture one frame before processing. No physical frame is restamped.
-        let capture = now - (delaysDiamondTimeCapture && tutorial.stage == .diamondTimeDemo ? 0.18 : 1.0 / 30)
+        let captureDelay: Double
+        if delaysVaultCapture && tutorial.stage == .vaultPractice { captureDelay = 0.32 }
+        else if delaysDiamondTimeCapture && tutorial.stage == .diamondTimeDemo { captureDelay = 0.18 }
+        else { captureDelay = 1.0 / 30 }
+        let capture = now - captureDelay
         guard capture - lastCapture >= 1.0 / 30 else { return true }
         lastCapture = capture; frame += 1
         if stage != tutorial.stage || wasSuspended != tutorial.isSuspended {

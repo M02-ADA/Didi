@@ -959,6 +959,8 @@ private struct ReplayRoundView: View {
             if vaultDiagnosticStart != nil {
                 vaultDiagnosticStart = nil
                 vaultDiagnosticInspected = false
+                vaultTraceState = nil
+                vaultTraceCount = 0
                 vaultPreviewSceneStatus = ""
             }
             #endif
@@ -976,7 +978,7 @@ private struct ReplayRoundView: View {
            context != practice.inputs.round.context { retireTutorialVaultPractice() }
 
         let consolesReady = inputs?.round.roster.allSatisfy { scene.robotAvatars?.consoles[$0] != nil } == true
-        var evidenceReady = suppliedSession.map { hasFreshTutorialTracking($0, at: now) } ?? true
+        var evidenceReady = FTUEVaultPractice.hasCurrentBodySnapshot(snapshot, inputs: inputs, at: now)
         #if DEBUG
         if vaultDiagnosticStart == nil {
             vaultDiagnosticStart = now
@@ -985,6 +987,11 @@ private struct ReplayRoundView: View {
         if isLeanPreview, ProcessInfo.processInfo.arguments.contains("-leanFTUEVaultInitialDropout"),
            let start = vaultDiagnosticStart, now - start < 4 {
             evidenceReady = false
+        }
+        #endif
+        #if DEBUG
+        defer {
+            traceTutorialVault(inputs: inputs, snapshot: snapshot, at: now, consolesReady: consolesReady, evidenceReady: evidenceReady)
         }
         #endif
         // A ready, bound session can show its encounter while waiting for a fresh contact packet.
@@ -1048,6 +1055,11 @@ private struct ReplayRoundView: View {
             if let openedAt = practice.openedAt, state.gameTime - openedAt >= openingDuration,
                !presenter.vault.holdsTravel(for: state) {
                 tutorial.finishVaultPractice(practice, generation: generation, doorIsClear: true)
+                #if DEBUG
+                if Self.tracesTutorialVault {
+                    print("[FTUEVault] completion generation=\(generation) encounter=\(practice.presentationID) accepted=\(tutorial.stage != .vaultPractice)")
+                }
+                #endif
                 retireTutorialVaultPractice()
             } else if let failedAt = practice.failedAt,
                       state.gameTime - failedAt >= VaultPresentation.exitFadeDuration {
@@ -1059,6 +1071,30 @@ private struct ReplayRoundView: View {
             startupError = String(describing: error)
         }
     }
+
+    #if DEBUG
+    private static let tracesTutorialVault = ProcessInfo.processInfo.arguments.contains("-ftueVaultDiagnostics")
+    @State private var vaultTraceState: String?
+    @State private var vaultTraceCount = 0
+
+    private func traceTutorialVault(inputs: FTUEVaultPractice.Inputs?, snapshot: BodySnapshot?, at now: Double,
+                                    consolesReady: Bool, evidenceReady: Bool) {
+        guard Self.tracesTutorialVault, vaultTraceCount < 16 else { return }
+        let practice = tutorialVaultPractice
+        let context = inputs?.round.context
+        let wrists = (practice?.contactReadout ?? []).map {
+            "\($0.playerID)/\($0.button)/\($0.wrist):\($0.status):pressed=\($0.pressed)"
+        }.sorted()
+        let readiness = "scene=\(consolesReady) plan=\(inputs != nil) currentBody=\(evidenceReady) wristPacket=\(snapshot?.wristContact != nil) active=\(trainingSceneActive) paused=\(activeTutorial?.isSuspended == true)"
+        let key = "\(readiness) \(snapshot != nil) \(wrists) opened=\(practice?.didOpen == true)"
+        guard key != vaultTraceState else { return }
+        vaultTraceState = key
+        vaultTraceCount += 1
+        let age = snapshot.map { now - $0.capturedAt }
+        let remaining = practice.flatMap { practice in practice.vault.map { max(0, $0.deadline - practice.state.gameTime) } }
+        print("[FTUEVault] generation=\(generation) encounter=\(String(describing: practice?.presentationID)) roster=\(inputs?.round.roster ?? []) host=\(now) start=\(String(describing: vaultDiagnosticStart)) \(readiness) source=\(String(describing: context?.wristContact?.sourceEpoch)) cal=\(String(describing: context?.calibrationRevisions)) frame=\(String(describing: snapshot?.frameID)) age=\(String(describing: age)) remaining=\(String(describing: remaining)) wrists=\(wrists) opened=\(practice?.didOpen == true)")
+    }
+    #endif
 
     private func retireTutorialVaultPractice() {
         tutorialVaultPresenter?.stop()

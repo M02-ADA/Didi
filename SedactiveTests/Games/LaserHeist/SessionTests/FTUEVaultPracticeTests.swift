@@ -84,6 +84,32 @@ import Testing
         #expect(practice.didOpen)
     }
 
+    @Test(arguments: [true, false])
+    func recoversFromMissingInputAndAcceptsCurrentWristTrafficOnFreshVisits(solo: Bool) throws {
+        for visit in 0..<2 {
+            let fixture = try WristGameplayFixture(generation: UUID())
+            let practice = try Self.makePractice(fixture, solo: solo, at: Double(visit))
+            let now = Double(visit) + 1
+            #expect(!FTUEVaultPractice.hasCurrentBodySnapshot(nil, inputs: practice.inputs, at: now))
+            practice.suspend(at: now)
+            let foreign = try WristGameplayFixture(generation: UUID())
+            let wrongSource = try foreign.packet(98, now + 0.2, points: [:])
+            #expect(!FTUEVaultPractice.hasCurrentBodySnapshot(wrongSource, inputs: practice.inputs, at: now + 0.3))
+            let outside = try fixture.packet(3, now + 0.1, points: [:])
+            #expect(FTUEVaultPractice.hasCurrentBodySnapshot(outside, inputs: practice.inputs, at: now + 0.42))
+            #expect(!FTUEVaultPractice.hasCurrentBodySnapshot(outside, inputs: practice.inputs, at: now + 0.61))
+            // The first delayed packet can resume the clock, but predates its new
+            // activation watermark. A later outside/inside pair is still required.
+            try practice.update(at: now + 0.42, snapshot: outside, zoneShifts: [:])
+            let roster = Set(practice.inputs.round.roster)
+            try Self.send(practice, fixture, 4, now + 0.5, pressing: roster, arrival: now + 0.82)
+            #expect(!practice.didOpen)
+            try Self.send(practice, fixture, 5, now + 0.6, arrival: now + 0.92)
+            try Self.send(practice, fixture, 6, now + 0.7, pressing: roster, arrival: now + 1.02)
+            #expect(practice.didOpen)
+        }
+    }
+
     @Test func productionDeadlineFailsAndANewAttemptStartsEmpty() throws {
         let fixture = try WristGameplayFixture()
         let expired = try Self.makePractice(fixture)
