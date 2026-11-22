@@ -1683,6 +1683,86 @@ final class RobotAvatarLayer {
         return consoles
     }
 
+    // MARK: - Gate hand cue (`GateHandGlow`)
+
+    /// What each player's hand cue shows (`VaultPresentation` sets it from the button's drawn state)
+    /// and whether it moves (Reduce Motion).
+    private var handCues: [PlayerID: (phase: GateHandGlow.Phase, reduceMotion: Bool)] = [:]
+    private var handGlows: [PlayerID: GateHandGlow] = [:]
+    private var handGlowViews: [PlayerID: GateHandGlowView] = [:]
+    /// Where each shown glow is centred (world), for tests and diagnostics.
+    private(set) var handGlowPositions: [PlayerID: SIMD3<Float>] = [:]
+
+    /// Sets a player's hand cue; the glow follows it from the next presented frame.
+    func setHandCue(_ phase: GateHandGlow.Phase, for player: PlayerID, reduceMotion: Bool) {
+        handCues[player] = (phase, reduceMotion)
+    }
+
+    /// The cue's phase and what its glow shows now, for tests and diagnostics.
+    func handGlow(_ player: PlayerID) -> GateHandGlow? { handGlows[player] }
+    func handGlowShown(_ player: PlayerID) -> Bool { handGlowViews[player]?.isShown ?? false }
+
+    /// Advances and places one mascot's hand glow (after it is posed and placed this frame): on the
+    /// console-side fist, the hand that presses its button, as the camera sees it.
+    private func showHandGlow(_ player: PlayerID, robot: Robot, time: Double) {
+        let cue = handCues[player] ?? (.off, false)
+        let target: GateHandGlow.Phase = walksInVault || !robot.container.isEnabled ? .off : cue.phase
+        guard target != .off || handGlows[player].map({ $0.phase != .off || $0.shown.isVisible }) == true else {
+            handGlowViews[player]?.hide()
+            return
+        }
+        var glow = handGlows[player] ?? GateHandGlow()
+        let frame = glow.advance(to: target, at: time, approach: consoleApproach(player), reduceMotion: cue.reduceMotion)
+        handGlows[player] = glow
+        guard frame.isVisible, let lane = robot.container.parent, let console = consoles[player], let scene,
+              let fist = consoleFist(robot, toward: console) else {
+            handGlowViews[player]?.hide()
+            handGlowPositions[player] = nil
+            return
+        }
+        let view = handGlowViews[player] ?? {
+            let view = GateHandGlowView()
+            view.root.name = "player.\(player.rawValue).gateHandGlow"
+            lane.addChild(view.root)
+            handGlowViews[player] = view
+            return view
+        }()
+        // In front of the body along the camera's ray through the fist: drawn over the fist, the same size.
+        let camera = scene.layout.cameraPosition
+        let chestZ = robot.solver.skeleton("Chest").map { i in
+            robot.model.convert(position: robot.solver.skeleton.world(robot.model.jointTransforms).position[i], to: nil).z
+        } ?? fist.z
+        let depth = max(fist.z, chestZ) + GateHandGlowView.front
+        let share = camera.z - fist.z > 0.1 ? max(0.2, (camera.z - depth) / (camera.z - fist.z)) : 1
+        let position = camera + (fist - camera) * share
+        handGlowPositions[player] = position
+        view.show(frame, at: position, size: GateHandGlowView.auraSize * share)
+    }
+
+    /// The console-side fist's centre (world): the hand whose shoulder is nearer the console, half
+    /// a fist past the wrist joint along the forearm.
+    private func consoleFist(_ robot: Robot, toward console: LaserGateConsole) -> SIMD3<Float>? {
+        let sk = robot.solver.skeleton
+        let world = sk.world(robot.model.jointTransforms).position
+        let arms = [("UpperArm_L", "Forearm_L", "Hand_L"), ("UpperArm_R", "Forearm_R", "Hand_R")].compactMap { names -> (Float, SIMD3<Float>)? in
+            guard let u = sk(names.0), let f = sk(names.1), let h = sk(names.2) else { return nil }
+            let shoulder = robot.model.convert(position: world[u], to: nil)
+            let elbow = robot.model.convert(position: world[f], to: nil), hand = robot.model.convert(position: world[h], to: nil)
+            let tip = (Self.cachedHandTip ?? 0.076) * 0.5
+            return (shoulder.x * console.side, hand + simd_normalize(hand - elbow) * tip)
+        }
+        return arms.max { $0.0 < $1.0 }?.1
+    }
+
+    /// Ends every hand glow at once (the avatars' removal).
+    private func removeHandGlows() {
+        for view in handGlowViews.values { view.root.removeFromParent() }
+        handGlowViews = [:]
+        handGlows = [:]
+        handCues = [:]
+        handGlowPositions = [:]
+    }
+
     /// Where each mascot's board was (world X) at recent frame times: the judge asks for the one
     /// matching a wrist sample's capture time (`vaultReachShift`).
     private var rootHistory: [PlayerID: [(time: Double, x: Float)]] = [:]
@@ -1991,6 +2071,7 @@ final class RobotAvatarLayer {
         if showsFairnessMarkers { updateFairnessMarkers(player) }
         #endif
         applyScripted(player)
+        showHandGlow(player, robot: robot, time: time)
         if let hit {
             showZap(player, robot: robot, reaction: hit.0, frame: hit.1, tau: hit.2)
             showBodyCharge(player, robot: robot, frame: hit.1)
@@ -2122,6 +2203,7 @@ final class RobotAvatarLayer {
         for player in Array(restMaterials.keys) { restoreBodyMaterials(player) }
         for zap in zaps.values { zap.root.removeFromParent() }
         zaps = [:]
+        removeHandGlows()
         robots = [:]
         shown = [:]
         footDiagnostics = [:]
