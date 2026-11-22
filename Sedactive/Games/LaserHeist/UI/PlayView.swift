@@ -194,7 +194,7 @@ private struct ReplayRoundView: View {
                     updateLeanAndCollectibles(tutorial, scene: scene, context: suppliedSession.inputContext,
                         input: suppliedSession.inputConfiguration, configuration: suppliedSession.configuration,
                         eligible: ready,
-                        contactEligible: tutorial.isPractising || hasFreshTutorialTracking(suppliedSession, at: now),
+                        contactPlayers: tutorial.collection == nil ? nil : freshTutorialPlayers(suppliedSession, at: now),
                         at: now)
                 }
                 if activeTutorial?.collection == nil { collectiblePresentation.clear() }
@@ -209,7 +209,8 @@ private struct ReplayRoundView: View {
                     }
                     if leanHeldStage == nil, leanPreview.isPractising || leanPreview.collection != nil {
                         updateLeanAndCollectibles(leanPreview, scene: scene, context: input.context,
-                            input: input.configuration, configuration: leanPreviewConfiguration, eligible: true, at: now)
+                            input: input.configuration, configuration: leanPreviewConfiguration, eligible: true,
+                            contactPlayers: input.collectibleContactFixture, at: now)
                     }
                 }
                 heartPreview.update(now: now)
@@ -1222,7 +1223,15 @@ private struct ReplayRoundView: View {
             practicePresentation.update(scene: scene, practice: practice, callouts: teamCallouts, suspended: paused)
             if !paused, let attempt = practicePresentation.finishedAttempt(teamCallouts) {
                 suppliedSession.finishFTUEPracticeFeedback(attempt: attempt, generation: generation)
-                if let current = suppliedSession.laserPractice { tutorial.synchronizePractice(current, generation: generation) }
+                if let current = suppliedSession.laserPractice {
+                    tutorial.synchronizePractice(current, generation: generation)
+                    #if DEBUG
+                    if current.move == .duck, current.completed,
+                       ProcessInfo.processInfo.arguments.contains("-ftueDuckDiagnostics") {
+                        print("[FTUE Duck] generation=\(generation) attempt=\(attempt) feedback=finished transition=\(tutorial.stage)")
+                    }
+                    #endif
+                }
             }
         } else {
             #if DEBUG
@@ -1244,27 +1253,28 @@ private struct ReplayRoundView: View {
         }
     }
 
-    private func hasFreshTutorialTracking(_ session: GameSessionCoordinator, at now: Double) -> Bool {
+    private func freshTutorialPlayers(_ session: GameSessionCoordinator, at now: Double) -> Set<PlayerID> {
         guard let snapshot = session.latestSnapshot, let context = session.inputContext,
-              now >= snapshot.capturedAt, now - snapshot.capturedAt <= LiveAvatarPresenter.maximumPoseAge else { return false }
-        return session.inputConfiguration.roster.allSatisfy {
+              now >= snapshot.capturedAt, now - snapshot.capturedAt <= LiveAvatarPresenter.maximumPoseAge else { return [] }
+        return Set(session.inputConfiguration.roster.filter {
             context.accepts(snapshot, playerID: $0) && snapshot.players[$0]?.trackingStatus == .reliable
-        }
+        })
     }
 
     private func updateLeanAndCollectibles(_ tutorial: LeanTutorial, scene: LaserScene,
                                           context: BodyInputContext?, input: BodyInputConfiguration,
                                           configuration: LaserRoundConfiguration?, eligible: Bool,
-                                          contactEligible: Bool = true, at now: Double) {
+                                          contactPlayers: Set<PlayerID>? = nil, at now: Double) {
         let allowed = eligible && trainingSceneActive && !tutorial.isSuspended && !leaving
             && tutorial.generation == generation
         let value = scene.liveAvatars?.lastAppliedFrame.flatMap { frame in
             LeanMovementObservation.make(frame: frame, context: context, generation: generation,
-                roster: tutorial.roster, eligible: allowed && contactEligible, now: now, bounds: scene.robotAvatars?.steering?.bounds) {
+                roster: tutorial.roster, eligible: allowed, now: now, bounds: scene.robotAvatars?.steering?.bounds) {
                     scene.robotAvatars?.steeringReading($0)
                 }
         }
-        let players = Set(value?.players.keys.map { $0 } ?? [])
+        let trackedPlayers = Set(value?.players.keys.map { $0 } ?? [])
+        let players = contactPlayers.map { trackedPlayers.intersection($0) } ?? trackedPlayers
         if tutorial.isPractising {
             #if DEBUG
             if RobotAvatarLayer.debugTestSteer != nil {

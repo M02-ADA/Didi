@@ -107,6 +107,14 @@ import Foundation
         onBodySnapshot?(snapshot, now)
         return true
     }
+    var collectibleContactFixture: Set<PlayerID>? {
+        guard tutorial.collection == .diamond, roster.count == 2 else { return nil }
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-ftueDiamondP1Only") { return [.player1] }
+        if args.contains("-ftueDiamondP2Only") { return [.player2] }
+        return nil
+    }
+
     func diamondTimeInputs() -> FTUEDiamondTimeSession.Inputs? {
         guard let plan = try? LaserLiveWristRoundPlan.completeRound(context: context,
             calibrations: configuration.calibrations, layout: configuration.playerPlaneLayout,

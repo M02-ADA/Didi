@@ -204,6 +204,56 @@ final class HomeTutorialHelpUITests: XCTestCase {
         }
     }
 
+    func testCoopDiamondWithP1Contact() {
+        verifyCoopCollectibleReplays(contact: "-ftueDiamondP1Only", player: "P1", runs: 1, verifyDuck: true)
+    }
+
+    func testRepeatedCoopDiamondWithP2Contact() {
+        verifyCoopCollectibleReplays(contact: "-ftueDiamondP2Only", player: "P2", runs: 2)
+    }
+
+    private func verifyCoopCollectibleReplays(contact: String, player: String, runs: Int, verifyDuck: Bool = false) {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments = ["-homeHelpFTUEPreview", "-ftueCollectibleDiagnostics", "-ftueDuckDiagnostics", contact]
+        app.launch()
+        let help = app.buttons["replayTutorial"]
+        let elements = app.descendants(matching: .any)
+        for run in 1...runs {
+            XCTAssertTrue(help.waitForExistence(timeout: 30))
+            help.tap()
+            app.buttons["setupNext"].tap()
+            for id in ["ftueCollection-diamond", "ftueCollection-heart", "heartTutorialTitle"] {
+                XCTAssertTrue(elements[id].waitForExistence(timeout: 30), "Run \(run): \(id)")
+                let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                shot.name = "synthetic-coop-\(player)-run-\(run)-\(id)"
+                shot.lifetime = .keepAlways
+                add(shot)
+            }
+            if verifyDuck {
+                let status = app.staticTexts["ftuePracticeStatus"]
+                func capturePractice(_ text: String) {
+                    let match = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+                    XCTAssertTrue(match.waitForExistence(timeout: 25), text)
+                    let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                    shot.name = "synthetic-coop-\(text)"
+                    shot.lifetime = .keepAlways
+                    add(shot)
+                }
+                capturePractice("jump attempt 2 · clear")
+                capturePractice("duck attempt 3 · hit")
+                capturePractice("duck attempt 4 · clear")
+                XCTAssertTrue(elements["progressTutorialTitle"].waitForExistence(timeout: 15))
+                XCTAssertFalse(status.exists)
+            }
+            app.buttons["pauseMenu"].tap()
+            XCTAssertTrue(app.buttons["leaveGame"].waitForExistence(timeout: 10))
+            app.buttons["leaveGame"].tap()
+        }
+        XCTAssertTrue(help.waitForExistence(timeout: 15))
+    }
+
     func testThreeCollectibleJourneysInOneApplicationProcess() {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft

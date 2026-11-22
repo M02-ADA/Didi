@@ -88,6 +88,34 @@ import Testing
         try p.feedbackFinished(attempt: id, generation: p.generation)
         #expect(p.move == .duck && p.attemptID != id && p.verdicts.isEmpty)
     }
+    @Test(arguments: [PlayerID.player1, .player2])
+    func coopDuckRequiresBothPlayersAndRecoversOnFreshAttempt(missing: PlayerID) throws {
+        var practice = try Self.make()
+        let roster = Set(practice.roster)
+        try Self.run(&practice, clear: roster)
+        try practice.feedbackFinished(attempt: practice.attemptID, generation: practice.generation)
+        try Self.run(&practice, clear: roster, unavailable: [missing], start: 1100)
+        let refused = practice.attemptID
+        #expect(practice.outcome == .unavailable)
+        #expect(practice.verdicts[roster.subtracting([missing]).first!] == .clear)
+        #expect(practice.verdicts[missing] == .unavailable(.invalidEvidence(.crown, .missingLandmarks)))
+        try practice.feedbackFinished(attempt: refused, generation: practice.generation)
+        #expect(!practice.completed)
+
+        try Self.run(&practice, clear: roster, start: 1200)
+        let accepted = practice.attemptID
+        #expect(accepted != refused)
+        #expect(practice.outcome == .clear)
+        try practice.feedbackFinished(attempt: refused, generation: practice.generation)
+        #expect(!practice.completed)
+        try practice.feedbackFinished(attempt: accepted, generation: UUID())
+        #expect(!practice.completed)
+        try practice.feedbackFinished(attempt: accepted, generation: practice.generation)
+        #expect(practice.completed)
+        try practice.feedbackFinished(attempt: accepted, generation: practice.generation)
+        #expect(practice.attemptID == accepted)
+    }
+
     @Test func fastCaptureCadenceDoesNotOverflowWarningHistory() throws {
         var p = try Self.make()
         try p.update(at: 1000, eligible: true, context: p.context)

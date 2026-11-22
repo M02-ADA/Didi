@@ -24,6 +24,10 @@ nonisolated struct FTUELaserPractice {
     private var lastCapture: Double?
     private var interrupted = false
     private var overflow = false
+    #if DEBUG
+    private static let tracesDuck = ProcessInfo.processInfo.arguments.contains("-ftueDuckDiagnostics")
+    private var reportedDuckAttempts = 0
+    #endif
 
     init(input: BodyInputConfiguration, configuration: LaserRoundConfiguration,
          context: BodyInputContext, poseFirst: Bool) throws {
@@ -55,6 +59,9 @@ nonisolated struct FTUELaserPractice {
     mutating func update(at now: Double, eligible: Bool, context current: BodyInputContext?) throws {
         guard !completed, now.isFinite, now >= 0 else { return }
         guard eligible, let current, current.isActive, current.sessionGeneration == generation else {
+            #if DEBUG
+            if !interrupted, outcome == .pending { traceDuck("practice suspended: readiness or session context") }
+            #endif
             if outcome == .pending { interrupted = true }
             lastHost = nil; return
         }
@@ -66,7 +73,12 @@ nonisolated struct FTUELaserPractice {
             }
             context = current
         }
-        if interrupted || outcome == .unavailable { try restart() }
+        if interrupted || outcome == .unavailable {
+            #if DEBUG
+            traceDuck(interrupted ? "retry after interruption" : "retry after unavailable evidence")
+            #endif
+            try restart()
+        }
         if lastHost == nil { lastHost = now; if epochHost == nil { epochHost = now - elapsed }; return }
         guard let previous = lastHost, now >= previous else { return }
         lastHost = now
@@ -95,6 +107,9 @@ nonisolated struct FTUELaserPractice {
     }
     private mutating func finalize() throws {
         let judge = LaserCollisionJudge(acceptsPresenceHeldEvidence: poseFirst)
+        #if DEBUG
+        var details: [String] = []
+        #endif
         for target in encounter.targets {
             if overflow { verdicts[target.playerID] = .unavailable(.historyOverflow) }
             else if move == .jump, poseFirst {
@@ -102,9 +117,17 @@ nonisolated struct FTUELaserPractice {
                     timing: configuration.evidenceTiming, context: context,
                     minimumFlight: PoseFirstCandidate.jumpMinimumFlight, tolerance: PoseFirstCandidate.jumpTimingTolerance)
             } else {
-                verdicts[target.playerID] = try judge.judge(target: target,
-                    selection: judge.select(target: target, history: history, timing: configuration.evidenceTiming, context: context),
+                let selection = judge.select(target: target, history: history,
+                    timing: configuration.evidenceTiming, context: context)
+                verdicts[target.playerID] = try judge.judge(target: target, selection: selection,
                     clearanceMargin: configuration.clearanceMargin, context: context)
+                #if DEBUG
+                if shouldTraceDuck, case .selected(let evidence) = selection,
+                   let sample = evidence.snapshot.players[target.playerID] {
+                    let g = sample.geometry
+                    details.append("\(target.playerID) frame=\(evidence.snapshot.frameID) captured=\(evidence.capturedGameTime) arrived=\(evidence.arrivedGameTime) tracking=\(sample.trackingStatus) crown=\(String(describing: g.crownY.value)) wrists=\(String(describing: g.leftWristY.value))/\(String(describing: g.rightWristY.value)) beamLower=\(target.beam.lowerY)")
+                }
+                #endif
             }
         }
         // Same team feedback semantics: a committed HIT can resolve failure; unavailable alone
@@ -112,10 +135,30 @@ nonisolated struct FTUELaserPractice {
         if verdicts.values.contains(where: { if case .hit = $0 { true } else { false } }) { outcome = .hit }
         else if verdicts.count == roster.count && verdicts.values.allSatisfy({ $0 == .clear }) { outcome = .clear }
         else { outcome = .unavailable }
+        #if DEBUG
+        traceDuck("finalized outcome=\(outcome) verdicts=\(verdicts) samples=\(history.count) lastFrame=\(String(describing: lastFrame)) \(details.joined(separator: " | "))")
+        #endif
     }
+
+    #if DEBUG
+    private var shouldTraceDuck: Bool {
+        Self.tracesDuck && move == .duck && reportedDuckAttempts < 8
+    }
+
+    private mutating func traceDuck(_ event: String) {
+        guard shouldTraceDuck else { return }
+        reportedDuckAttempts += 1
+        print("[FTUE Duck] generation=\(generation) attempt=\(attemptID) number=\(attemptNumber) roster=\(roster) source=\(String(describing: context.wristContact?.sourceEpoch)) calibration=\(context.calibrationRevisions) crossing=\(crossing) elapsed=\(elapsed) margin=\(configuration.clearanceMargin) \(event)")
+    }
+    #endif
     mutating func feedbackFinished(attempt: UUID, generation: UUID) throws {
         guard self.generation == generation, attempt == attemptID, !completed, lastHost != nil else { return }
-        if outcome == .hit { try restart() }
+        if outcome == .hit {
+            #if DEBUG
+            traceDuck("retry after ZAPPED")
+            #endif
+            try restart()
+        }
         else if outcome == .clear {
             if move == .jump { move = .duck; try restart() } else { completed = true }
         }

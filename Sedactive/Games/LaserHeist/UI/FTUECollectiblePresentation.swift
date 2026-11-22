@@ -11,6 +11,7 @@ import SwiftUI
     private var travel = EligibleTravel()
     private var feedbackUntil: Double?
     private var lane: PlayerID?
+    private var diamondLaneIndex = 0
 
     func update(scene: LaserScene, kind: FTUECollectible, configuration: LaserRoundConfiguration,
                 input: BodyInputConfiguration, context: BodyInputContext, at now: Double,
@@ -24,9 +25,10 @@ import SwiftUI
         }
         guard ready, context.isActive, context.sessionGeneration == input.sessionGeneration,
               let avatars = scene.robotAvatars else { suspend(); return nil }
-        // Passage and placement use session readiness. Only pickup needs a fresh
-        // contact sample from the full roster.
-        let contactReady = players == Set(input.roster)
+        // A Diamond receipt belongs to the player whose current body overlaps it.
+        // Keep the existing Heart readiness rule.
+        let readyPlayers = players.intersection(input.roster)
+        let contactReady = kind == .diamond ? !readyPlayers.isEmpty : readyPlayers == Set(input.roster)
         let step = travel.tick(at: now)
         if step > 0 {
             scene.setTravelDistance(scene.travelOffset + scene.layout.travelSpeed * Float(step))
@@ -38,12 +40,13 @@ import SwiftUI
         }
         #endif
         let bodies = contactReady
-            ? Dictionary(uniqueKeysWithValues: input.roster.map { ($0, avatars.diamondContactBody($0)) })
+            ? Dictionary(uniqueKeysWithValues: readyPlayers.map { ($0, avatars.diamondContactBody($0)) })
             : [:]
         let display = LaserReplayPresentation.diamondDisplay(scene: scene, layout: input.playerPlaneLayout)
 
         if encounter == nil {
-            guard kind != .heart || heartArt != nil, let player = input.roster.first else { return nil }
+            guard kind != .heart || heartArt != nil, !input.roster.isEmpty else { return nil }
+            let player = input.roster[kind == .diamond ? diamondLaneIndex % input.roster.count : 0]
             let torso = avatars.diamondContactBody(player).first
             let laneX = scene.mapping.playerPosition(player).x
             let centerX = torso.map { ($0.start.x + $0.end.x) / 2 } ?? avatars.mascotWorldX(player) ?? laneX
@@ -94,7 +97,7 @@ import SwiftUI
                 let sphere = diamonds?.bodyContactSphere(id: spawn.id) ?? heart?.bodyContactSphere
                 if time >= spawn.entry, time < spawn.exit {
                     if contactReady, let sphere, sphere.radius > 0 {
-                        let overlaps = players.filter { player in
+                        let overlaps = readyPlayers.filter { player in
                             bodies[player]?.contains { $0.overlaps(center: sphere.center, radius: sphere.radius) } == true
                         }
                         try current.collect(overlaps, context: context)
@@ -104,7 +107,13 @@ import SwiftUI
                             if overlaps.isEmpty { contactWindow.noOverlap += 1 }
                             contactWindow.target = sphere.center
                             contactWindow.radius = sphere.radius
-                            contactWindow.body = bodies[lane]?.first?.start
+                            for player in input.roster {
+                                if let torso = bodies[player]?.first {
+                                    contactWindow.eligibleByPlayer[player, default: 0] += 1
+                                    contactWindow.torsoByPlayer[player] = (torso.start + torso.end) / 2
+                                }
+                            }
+                            contactWindow.lastOverlap = overlaps
                         }
                         #endif
                     } else {
@@ -129,7 +138,8 @@ import SwiftUI
             if let receipt = current.receipt {
                 if let feedbackUntil, time >= feedbackUntil { clear(); return receipt }
             } else if time >= spawn.exit {
-                // A miss creates another real passage, never a successful pickup.
+                // Give each Co-op player a reachable passage after a miss.
+                if kind == .diamond { diamondLaneIndex = (diamondLaneIndex + 1) % input.roster.count }
                 retirePassage()
             }
         } catch { retirePassage() }
@@ -166,7 +176,9 @@ import SwiftUI
         var noFreshPose = 0
         var target: SIMD3<Float>?
         var radius: Float?
-        var body: SIMD3<Float>?
+        var eligibleByPlayer: [PlayerID: Int] = [:]
+        var torsoByPlayer: [PlayerID: SIMD3<Float>] = [:]
+        var lastOverlap: Set<PlayerID> = []
     }
     private var contactWindow = ContactWindow()
     private var reportedPassages = 0
@@ -175,7 +187,7 @@ import SwiftUI
         guard Self.diagnostics, reportedPassages < 3 else { return }
         reportedPassages += 1
         let window = contactWindow
-        print("[FTUE Collectible Contact] generation=\(context.sessionGeneration) source=\(String(describing: context.wristContact?.sourceEpoch)) calibration=\(context.calibrationRevisions) target=\(encounter.spawn.id) time=\(time) accepted=\(encounter.receipt != nil) eligible=\(window.eligible) noOverlap=\(window.noOverlap) noSphere=\(window.noSphere) noFreshPose=\(window.noFreshPose) targetWorld=\(String(describing: window.target)) targetRadius=\(String(describing: window.radius)) torsoWorld=\(String(describing: window.body))")
+        print("[FTUE Collectible Contact] generation=\(context.sessionGeneration) source=\(String(describing: context.wristContact?.sourceEpoch)) calibration=\(context.calibrationRevisions) target=\(encounter.spawn.id) time=\(time) accepted=\(encounter.receipt != nil) eligible=\(window.eligible) noOverlap=\(window.noOverlap) noSphere=\(window.noSphere) noFreshPose=\(window.noFreshPose) targetWorld=\(String(describing: window.target)) targetRadius=\(String(describing: window.radius)) lane=\(String(describing: lane)) eligibleByPlayer=\(window.eligibleByPlayer) torsoWorldByPlayer=\(window.torsoByPlayer) overlap=\(window.lastOverlap)")
     }
 
     private func trace(scene: LaserScene, kind: FTUECollectible, generation: UUID, now: Double, step: Double,
@@ -207,6 +219,7 @@ import SwiftUI
 
     func clear() {
         owner = nil
+        diamondLaneIndex = 0
         suspend()
         retirePassage()
     }
