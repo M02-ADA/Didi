@@ -104,7 +104,7 @@ struct ContentView: View {
           // capture session and stalls frames 220–500 ms (iPad, 11 November 2026), which aborted
           // every countdown and, repeated, lost the player and restarted setup.
           let recoveringExploration = (flow.leanTutorial.isPractising || flow.leanTutorial.collection != nil)
-            && flow.session.map { !flow.leanTutorial.canExploreLean(in: $0) } == true
+            && flow.session.map { Self.showsLeanSetupRecovery(tutorial: flow.leanTutorial, session: $0) } == true
           let recoveringTutorialBonus = flow.leanTutorial.stage == .diamondTimeDemo && flow.session.map {
             $0.tutorialDiamondTimeInputs(generation: $0.inputConfiguration.sessionGeneration) == nil
           } == true
@@ -141,6 +141,18 @@ struct ContentView: View {
           flow.presentLeanTutorialIfReady()
         }
         .onChange(of: flow.leanTutorial.stage) { _, _ in flow.releaseCompletedLeanTutorial() }
+  }
+  /// A practice tick may be held during a binding flicker which the existing readiness
+  /// policy still admits. Holding practice is not itself a request to return to setup.
+  /// Once readiness really blocks, retain the original recovery presentation.
+  static func showsLeanSetupRecovery(tutorial: LeanTutorial, session: GameSessionCoordinator) -> Bool {
+    guard tutorial.stage == .freeLean else { return !tutorial.canExploreLean(in: session) }
+    guard let input = session.inputContext, input.isActive,
+          input.sessionGeneration == tutorial.generation,
+          tutorial.roster == session.inputConfiguration.roster,
+          tutorial.roster.allSatisfy({ input.calibrationRevisions[$0] != nil }),
+          session.inputStatus == .running, session.preRoundTutorialPending else { return true }
+    return !tutorial.canExploreLean(in: session) && !session.canStartLiveRound
   }
   /// Whether the camera setup stage is in front: always until a live round's game scene is
   /// mounted, then except while counting down, playing or showing results.
