@@ -12,6 +12,15 @@ final class LaserInputFlow {
     private(set) var message: String?
     let leanTutorial: LeanTutorial
     private var operation: UUID?
+    private var offeredLaunchOnboarding = false
+
+    /// Offer placement once per app process. An incomplete visit can be started again
+    /// from Home, and a new process reads the same stored completion record.
+    func offerLaunchOnboarding() -> Bool {
+        guard route == .selection, !offeredLaunchOnboarding else { return false }
+        offeredLaunchOnboarding = true
+        return !leanTutorial.isCompleted
+    }
     /// Explicit Home intent, consumed by exactly one setup generation; never persisted.
     private(set) var tutorialReplayRequested = false
     @discardableResult func requestLeanTutorialReplay() -> Bool {
@@ -29,12 +38,12 @@ final class LaserInputFlow {
                                      eligible: session.canStartLiveRound)
     }
 
-    func releaseCompletedLeanTutorial() {
-        guard route == .liveSetup, let session,
-              leanTutorial.generation == session.inputConfiguration.sessionGeneration,
-              leanTutorial.stage == .completed else { return }
-        session.setPreRoundTutorialPending(false)
-        if session.canStartLiveRound { try? session.beginLiveCountdown() }
+    func closeCompletedLeanTutorial(generation: UUID) async {
+        guard route == .liveSetup, let session, session.preRoundTutorialPending,
+              session.inputConfiguration.sessionGeneration == generation,
+              leanTutorial.generation == generation, leanTutorial.stage == .completed else { return }
+        // Keep the pre-round hold in place until stop retires this session.
+        await closeLiveSetup()
     }
 
     private let makeLiveSession: @MainActor () throws -> GameSessionCoordinator
@@ -146,6 +155,7 @@ final class LaserInputFlow {
         #if DEBUG
         print("[LaserSetupRestart] flow: stopping session \(Self.tag(session)) (phase \(String(describing: session?.phase)), round \(session?.summary != nil ? "ended" : session?.state != nil ? "running" : "not started"))")
         #endif
+        let finishedTutorial = leanTutorial.stage == .completed && session?.preRoundTutorialPending == true
         await session?.stop()
         #if DEBUG
         print("[LaserSetupRestart] flow: session \(Self.tag(session)) stopped")
@@ -158,7 +168,7 @@ final class LaserInputFlow {
         isClosing = false
         route = .selection
         automaticRestarts = 0
-        message = "Camera setup has ended. You can start a fresh setup or use the replay demo."
+        message = finishedTutorial ? nil : "Camera setup has ended. You can start a fresh setup or use the replay demo."
     }
 
     /// Explicit user intent only. The same App-retained provider gets a new coordinator/generation.
@@ -168,8 +178,10 @@ final class LaserInputFlow {
         #if DEBUG
         print("[LaserSetupRestart] flow: retry requested (Play again / Restart setup) from session \(Self.tag(session))")
         #endif
+        let restartingTutorial = session?.preRoundTutorialPending == true && leanTutorial.isCompleted
         await closeLiveSetup()
         guard canStartLive else { return }
+        if restartingTutorial { requestLeanTutorialReplay() }
         await startLiveSetup(solo: solo)
     }
 

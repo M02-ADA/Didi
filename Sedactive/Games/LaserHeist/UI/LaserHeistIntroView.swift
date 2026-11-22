@@ -51,7 +51,15 @@ struct LaserHeistIntroView: View {
         .animation(.easeInOut(duration: 0.3), value: screen)
         .background(LaserHeistDesign.night)
         .preferredColorScheme(.dark)
-        .onAppear { AudioService.shared.setMusic(.menu) }
+        .onAppear {
+            AudioService.shared.setMusic(.menu)
+            #if DEBUG
+            // The legacy Help visual fixture opens directly on its Home entry point.
+            if ProcessInfo.processInfo.arguments.contains("-homeHelpFTUEPreview"),
+               !FTUEOnboardingPreview.isRequested { return }
+            #endif
+            if flow.offerLaunchOnboarding() { screen = .setup }
+        }
         .onChange(of: flow.tutorialReplayRequested) { _, pending in
             if !pending, flow.route == .selection { screen = .home }
         }
@@ -74,8 +82,9 @@ struct LaserHeistIntroView: View {
         #if DEBUG
         // Explicit Simulator visual QA only. Reuse the existing synthetic FTUE fixture;
         // production always follows the real setup path below.
-        if ProcessInfo.processInfo.arguments.contains("-homeHelpFTUEPreview"), flow.tutorialReplayRequested {
-            LeanFTUEPreviewLaunch.requestManualReplay()
+        if FTUEOnboardingPreview.isRequested ||
+            (ProcessInfo.processInfo.arguments.contains("-homeHelpFTUEPreview") && flow.tutorialReplayRequested) {
+            if flow.tutorialReplayRequested { LeanFTUEPreviewLaunch.requestManualReplay() }
             flow.showReplay()
             return
         }

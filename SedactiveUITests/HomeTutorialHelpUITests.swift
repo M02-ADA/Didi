@@ -2,6 +2,53 @@ import XCTest
 
 /// Real Home and LaserScene; only the explicit DEBUG fixture supplies SYNTHETIC practice input.
 final class HomeTutorialHelpUITests: XCTestCase {
+    func testOnboardingCompletionAndHelpReplayReturnHome() {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments = ["-homeHelpFTUEPreview"]
+        app.launchEnvironment["FTUE_ONBOARDING_TEST_SUITE"] = "LaserHeist.FTUEOnboardingTest.\(UUID())"
+        let next = app.buttons["setupNext"]
+        let start = app.buttons["startMission"]
+        let help = app.buttons["replayTutorial"]
+        let elements = app.descendants(matching: .any)
+
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+
+        app.launch()
+        XCTAssertTrue(next.waitForExistence(timeout: 15))
+        capture("first-launch-placement")
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(next.waitForExistence(timeout: 15), "Unfinished onboarding returns on relaunch")
+        for visit in 1...2 {
+            next.tap()
+            XCTAssertTrue(elements["leanTutorialTitle"].waitForExistence(timeout: 45))
+            XCTAssertTrue(app.staticTexts["RETRIEVE THE DIAMONDS"].waitForExistence(timeout: 130))
+            capture("synthetic-diamond-time-\(visit)")
+            XCTAssertFalse(elements["roundCountdown"].exists)
+            XCTAssertTrue(start.waitForExistence(timeout: 55))
+            XCTAssertTrue(help.exists)
+            XCTAssertFalse(elements["roundCountdown"].exists)
+            XCTAssertFalse(app.staticTexts["RETRIEVE THE DIAMONDS"].exists)
+            capture("home-after-completion-\(visit)")
+            app.terminate()
+            app.launch()
+            XCTAssertTrue(help.waitForExistence(timeout: 15))
+            XCTAssertFalse(next.exists)
+            if visit == 1 {
+                help.tap()
+                XCTAssertTrue(next.waitForExistence(timeout: 10))
+                capture("help-replay-placement")
+            }
+        }
+    }
+
     func testProgressExplanationSpotlightsInActualScene() {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft

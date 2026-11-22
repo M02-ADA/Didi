@@ -80,7 +80,7 @@ private struct ReplayRoundView: View {
     /// The per-frame host-clock tick: live cutout expiry and live avatars.
     @State private var frameRefresh: EventSubscription?
     #if DEBUG
-    @State private var leanPreview = LeanTutorial(defaults: UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!)
+    @State private var leanPreview = LeanTutorial(defaults: FTUEOnboardingPreview.defaults ?? UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!)
     @State private var previewLaserPractice: FTUELaserPractice?
     @State private var previewHeartTraining: HeartTrainingEncounter?
     @State private var leanPreviewConfiguration: LaserRoundConfiguration?
@@ -335,7 +335,7 @@ private struct ReplayRoundView: View {
                     leanPreview.freezesIntroductionForLayout = leanHeldStage == .introduction
                     // Isolated returning-player review; never resets production first-play storage.
                     let manualReplay = LeanFTUEPreviewLaunch.consumeManualReplay()
-                    if manualReplay {
+                    if manualReplay && !FTUEOnboardingPreview.isRequested {
                         UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.completionKey)
                         UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.heartCompletionKey)
                         UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.jumpDuckCompletionKey)
@@ -671,7 +671,12 @@ private struct ReplayRoundView: View {
         .onChange(of: leanPreview.stage) { _, stage in
             guard isLeanPreview else { return }
             if stage == .completed {
-                let start = leanPreviewStart; leanPreviewStart = nil; start?()
+                if FTUEOnboardingPreview.isRequested {
+                    leanPreviewStart = nil
+                    leave()
+                } else {
+                    let start = leanPreviewStart; leanPreviewStart = nil; start?()
+                }
             }
         }
         #endif

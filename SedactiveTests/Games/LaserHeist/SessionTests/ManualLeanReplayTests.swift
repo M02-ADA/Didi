@@ -3,6 +3,22 @@ import Testing
 @testable import Sedactive
 
 @MainActor struct ManualLeanReplayTests {
+    @Test func incompleteOnboardingIsOfferedOncePerLaunch() {
+        let suite = "LeanLaunch.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        func launch() -> LaserInputFlow {
+            LaserInputFlow(leanTutorial: LeanTutorial(defaults: defaults), makeLiveSession: {
+                throw CameraFailure.permissionDenied
+            })
+        }
+        let first = launch()
+        #expect(first.offerLaunchOnboarding())
+        #expect(!first.offerLaunchOnboarding())
+        #expect(first.session == nil && !first.leanTutorial.isCompleted)
+        #expect(launch().offerLaunchOnboarding())
+    }
+
     @Test(arguments: [false, true], [false, true])
     func firstPlayAndExplicitReplayChooseOnlyTheInitialHold(completed: Bool, manual: Bool) async throws {
         let defaults = UserDefaults(suiteName: "LeanManual.\(UUID())")!
@@ -73,7 +89,7 @@ import Testing
         #expect(!flow.tutorialReplayRequested && constructions == 0 && flow.session == nil)
     }
 
-    @Test func manualVisitIsConsumedBeforeFailureAndCannotLeakThroughRetry() async throws {
+    @Test func failedFactoryConsumesHelpIntentButActiveHelpRetryKeepsTutorial() async throws {
         let defaults = UserDefaults(suiteName: "LeanFailure.\(UUID())")!
         defaults.set(true, forKey: LeanTutorial.completionKey)
         defaults.set(true, forKey: LeanTutorial.heartCompletionKey)
@@ -98,7 +114,7 @@ import Testing
         await flow.startSelectedSetup()
         #expect(flow.session?.preRoundTutorialPending == true)
         await flow.retryLiveSetup()
-        #expect(flow.session?.preRoundTutorialPending == false)
+        #expect(flow.session?.preRoundTutorialPending == true)
         await flow.handleBackground()
         #expect(flow.route == .selection && !flow.tutorialReplayRequested)
     }

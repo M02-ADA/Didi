@@ -110,7 +110,7 @@ struct ContentView: View {
           } == true
           let stageShown = Self.showsSetupStage(flow.session)
             && (!flow.leanTutorial.isActive || recoveringExploration || recoveringTutorialBonus)
-            && !(flow.leanTutorial.stage == .completed && flow.session?.canStartLiveRound == true)
+            && !(flow.leanTutorial.stage == .completed && (flow.session?.preRoundTutorialPending == true || flow.session?.canStartLiveRound == true))
           liveSetupStage(flow, preview: cameraPreview)
             .opacity(stageShown ? 1 : 0)
             .allowsHitTesting(stageShown)
@@ -140,7 +140,10 @@ struct ContentView: View {
         .onChange(of: flow.session?.canStartLiveRound, initial: true) { _, _ in
           flow.presentLeanTutorialIfReady()
         }
-        .onChange(of: flow.leanTutorial.stage) { _, _ in flow.releaseCompletedLeanTutorial() }
+        .onChange(of: flow.leanTutorial.stage) { _, stage in
+          guard stage == .completed, let generation = flow.leanTutorial.generation else { return }
+          Task { await flow.closeCompletedLeanTutorial(generation: generation) }
+        }
   }
   /// A practice tick may be held during a binding flicker which the existing readiness
   /// policy still admits. Holding practice is not itself a request to return to setup.
