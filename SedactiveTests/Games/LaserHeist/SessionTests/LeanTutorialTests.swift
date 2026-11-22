@@ -97,6 +97,8 @@ import Testing
             let generation = generation ?? self.generation
             reachVaultIntroduction(tutorial, generation: generation)
             tutorial.finishVaultButtonIntroduction(generation: generation)
+            let vault = try! FTUEVaultPracticeTests.acceptedPractice(generation: generation, solo: roster.count == 1)
+            tutorial.finishVaultPractice(vault, generation: generation, doorIsClear: true)
             for i in 41...90 {
                 tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: Double(i) / 50, active: true)
             }

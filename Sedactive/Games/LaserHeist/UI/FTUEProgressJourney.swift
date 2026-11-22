@@ -30,7 +30,7 @@ import Observation
         case .laserPractice: 0.40
         // A destination illustration. The Diamond sits inside the HUD's outer edge.
         case .progressExplanation(.diamond), .diamondCollectionIntroduction, .diamondTimeDemo: GameplayHUDModel.diamondPosition
-        case .progressExplanation, .vaultButtonIntroduction, .completed: checkpoint
+        case .progressExplanation, .vaultButtonIntroduction, .vaultPractice, .completed: checkpoint
         }
     }
     func hasReachedExplanationEndpoint(_ phase: ProgressTutorialPhase) -> Bool {

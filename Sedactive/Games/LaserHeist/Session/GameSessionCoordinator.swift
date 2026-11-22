@@ -143,6 +143,11 @@ final class GameSessionCoordinator {
                      roster: inputConfiguration.roster)
     }
 
+    func tutorialVaultInputs(generation: UUID) -> FTUEVaultPractice.Inputs? {
+        guard let inputs = tutorialDiamondTimeInputs(generation: generation), let liveDirector else { return nil }
+        return .init(round: inputs, zones: liveDirector.vaultContactZones(gateIndex: 0))
+    }
+
     var hasWristDiamondPlan: Bool { wristDiamondConfiguration != nil }
     var liveWristBlockers: [LaserLiveWristBlocker] {
         var result: [LaserLiveWristBlocker] = []

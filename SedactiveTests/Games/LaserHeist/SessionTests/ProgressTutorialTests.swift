@@ -45,7 +45,7 @@ import Testing
         #expect(tutorial.stage == .introduction)
     }
     @Test(arguments: [true, false])
-    func vaultBypassAndDiamondTimeRequireCurrentUnpausedTutorial(solo: Bool) throws {
+    func vaultAndDiamondTimeRequireCurrentUnpausedTutorial(solo: Bool) throws {
         let f = LeanTutorialTests.Fixture()
         for key in [LeanTutorial.completionKey, LeanTutorial.heartCompletionKey, LeanTutorial.jumpDuckCompletionKey] {
             f.defaults.set(true, forKey: key)
@@ -66,6 +66,19 @@ import Testing
         tutorial.setSuspended(false, generation: generation)
         tutorial.finishVaultButtonIntroduction(generation: generation)
         tutorial.finishVaultButtonIntroduction(generation: generation)
+        #expect(tutorial.stage == .vaultPractice && tutorial.isActive && !tutorial.isCompleted)
+        let fixture = try WristGameplayFixture(generation: generation)
+        let pending = try FTUEVaultPracticeTests.makePractice(fixture, solo: solo)
+        tutorial.finishVaultPractice(pending, generation: generation, doorIsClear: true)
+        let accepted = try FTUEVaultPracticeTests.acceptedPractice(generation: generation, solo: solo)
+        tutorial.finishVaultPractice(accepted, generation: generation, doorIsClear: false)
+        #expect(tutorial.stage == .vaultPractice)
+        tutorial.setSuspended(true, generation: generation)
+        tutorial.finishVaultPractice(accepted, generation: generation, doorIsClear: true)
+        #expect(tutorial.stage == .vaultPractice)
+        tutorial.setSuspended(false, generation: generation)
+        tutorial.finishVaultPractice(accepted, generation: generation, doorIsClear: true)
+        tutorial.finishVaultPractice(accepted, generation: generation, doorIsClear: true)
         #expect(tutorial.progressPhase == .diamond && tutorial.isActive && !tutorial.isCompleted)
         #expect(tutorial.progressJourney.fillEnd == 0.5)
         #expect(!tutorial.progressJourney.hasReachedExplanationEndpoint(.diamond))
@@ -118,7 +131,8 @@ import Testing
         tutorial.finishVaultButtonIntroduction(generation: generation)
         #expect(tutorial.stage == .vaultButtonIntroduction)
         tutorial.finishVaultButtonIntroduction(generation: next)
-        #expect(tutorial.progressPhase == .diamond && !tutorial.isCompleted)
+        tutorial.finishVaultPractice(accepted, generation: next, doorIsClear: true)
+        #expect(tutorial.stage == .vaultPractice && !tutorial.isCompleted)
     }
 
     @Test func copyIsExact() {

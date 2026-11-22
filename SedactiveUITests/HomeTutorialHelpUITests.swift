@@ -53,7 +53,15 @@ final class HomeTutorialHelpUITests: XCTestCase {
         XCTAssertFalse(elements["gameplayProgressBar"].exists)
     }
 
-    func testVaultButtonBypassesToDiamondTimeInActualScene() {
+    func testVaultPracticeToDiamondTimeInActualScene() {
+        vaultPracticeToDiamondTime(solo: false)
+    }
+
+    func testSoloVaultPracticeToDiamondTimeInActualScene() {
+        vaultPracticeToDiamondTime(solo: true)
+    }
+
+    private func vaultPracticeToDiamondTime(solo: Bool) {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
@@ -62,6 +70,9 @@ final class HomeTutorialHelpUITests: XCTestCase {
             "-laserHeist.ftue.heart.v1.completed", "YES",
             "-laserHeist.ftue.jumpDuck.v1.completed", "YES",
             "-laserHeist.ftue.progress.v1.completed", "NO"]
+        if solo {
+            app.launchArguments += ["-leanFTUESolo"]
+        }
         let elements = app.descendants(matching: .any)
         let vault = elements["ftueVaultPointer"]
         let intro = elements["ftueVaultButtonTitle"]
@@ -96,6 +107,27 @@ final class HomeTutorialHelpUITests: XCTestCase {
         XCTAssertFalse(gameplay.exists)
         capture("press-button")
 
+        let practice = app.staticTexts["ftueVaultPracticeStatus"]
+        func waitForPractice(_ pressed: Int, opened: Bool) {
+            let label = "SYNTHETIC VAULT · active: \(pressed) · opened: \(opened)"
+            let expected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", label), object: practice)
+            XCTAssertEqual(XCTWaiter.wait(for: [expected], timeout: 10), .completed)
+        }
+        waitForPractice(0, opened: false)
+        let banner = solo ? "PRESS YOUR BUTTON" : "PRESS THE BUTTONS"
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", banner)).firstMatch.exists)
+        XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.500")
+        XCTAssertFalse(diamond.exists)
+        capture("synthetic-vault-practice")
+        if !solo {
+            waitForPractice(1, opened: false)
+            XCTAssertFalse(diamond.exists)
+            XCTAssertFalse(countdown.exists)
+            XCTAssertFalse(gameplay.exists)
+            capture("synthetic-one-button-pending")
+        }
+        // The production opening is shorter than XCTest's polling interval.
+        // The continuous scene recording captures it; the following overlay proves the handoff.
         XCTAssertTrue(diamond.waitForExistence(timeout: 10))
         XCTAssertFalse(intro.exists)
         XCTAssertEqual(elements["progressTutorialTitle"].label, "Reach the Diamond\nVault at the end!")
@@ -149,7 +181,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
                 let replay = app.buttons["replayTutorial"]
                 XCTAssertTrue(replay.waitForExistence(timeout: 30))
                 app.segmentedControls["playerModeSelector"].buttons["1 Player · Solo Practice"].tap()
-                replay.tap(); app.buttons["setupNext"].tap(); app.buttons["setupNext"].tap()
+                replay.tap(); app.buttons["setupNext"].tap()
             }
             XCTAssertTrue(element("leanTutorialTitle").waitForExistence(timeout: 45))
             capture("ftueFreeLean", prefix)
@@ -182,7 +214,6 @@ final class HomeTutorialHelpUITests: XCTestCase {
             XCTAssertTrue(help.waitForExistence(timeout: 30))
             if solo { app.segmentedControls["playerModeSelector"].buttons["1 Player · Solo Practice"].tap() }
             help.tap()
-            app.buttons["setupNext"].tap()
             app.buttons["setupNext"].tap()
             XCTAssertTrue(practice.waitForExistence(timeout: 45))
             let started = ProcessInfo.processInfo.systemUptime
@@ -298,6 +329,8 @@ final class HomeTutorialHelpUITests: XCTestCase {
         }
         func complete(finishingTutorial: Bool = false) {
             if finishingTutorial {
+                let diamond = app.descendants(matching: .any)["ftueDiamondPointer"]
+                XCTAssertTrue(diamond.waitForExistence(timeout: 25))
                 XCTAssertTrue(app.staticTexts["RETRIEVE THE DIAMONDS"].waitForExistence(timeout: 25))
                 XCTAssertFalse(app.descendants(matching: .any)["gameplayProgressBar"].exists)
             }
@@ -316,7 +349,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
 
         for solo in [false, true] {
             let mode = solo ? "solo" : "coop"
-            // Home starts normally; only finishing the two setup-instruction screens enters the fixture.
+            // Home starts normally; only finishing the setup instruction enters the fixture.
             app.launchArguments = ["-homeHelpFTUEPreview"] + (solo ? ["-leanFTUESolo"] : [])
             app.launch()
             let help = app.buttons["replayTutorial"]
@@ -338,7 +371,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
             // Cancel and request again: no stale request and no duplicate live session.
             app.buttons["navigationBack"].tap()
             XCTAssertTrue(help.waitForExistence(timeout: 10))
-            help.tap(); app.buttons["setupNext"].tap(); app.buttons["setupNext"].tap()
+            help.tap(); app.buttons["setupNext"].tap()
             waitTitle("Lean your head"); capture("\(mode)-manual-introduction")
             XCTAssertTrue(app.descendants(matching: .any)["ftueFreeLean"].waitForExistence(timeout: 15))
             capture("\(mode)-free-lean")

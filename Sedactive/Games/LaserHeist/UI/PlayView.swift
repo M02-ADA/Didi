@@ -53,6 +53,8 @@ private struct ReplayRoundView: View {
     @State private var heartTutorialDemo = HeartTutorialDemo()
     @State private var leanTravel = LeanTutorialTravel()
     @State private var collectiblePresentation = FTUECollectiblePresentation()
+    @State private var tutorialVaultPractice: FTUEVaultPractice?
+    @State private var tutorialVaultPresenter: GameplayScenePresenter?
     @State private var tutorialDiamondTime: FTUEDiamondTimeSession?
     @State private var tutorialDiamondPresentation = LaserReplayPresentation()
     @State private var tutorialDiamondFlights = DiamondHUDFlightModel()
@@ -162,10 +164,12 @@ private struct ReplayRoundView: View {
                         && (suppliedSession == nil || suppliedSession?.canStartLiveRound == true)
                     tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: now, active: active)
                     if let scene {
+                        updateTutorialVaultPractice(tutorial, scene: scene, at: now)
                         updateTutorialDiamondTime(tutorial, scene: scene, content: frameContent, at: now)
                     }
-                } else if tutorialDiamondTime != nil {
-                    retireTutorialDiamondTime()
+                } else {
+                    if tutorialVaultPractice != nil { retireTutorialVaultPractice() }
+                    if tutorialDiamondTime != nil { retireTutorialDiamondTime() }
                 }
                 if needsLeanProjection, wantsLeanProjection, let scene {
                     let viewport = presentation.pawBoardDiamonds.viewportFrame.size
@@ -622,7 +626,9 @@ private struct ReplayRoundView: View {
             if isLeanPreview, leanPreview.isActive {
                 ZStack {
                     if tutorialDiamondTime == nil, let configuration = leanPreviewConfiguration {
-                        GameplayHUD(model: .init(state: previewHeartTraining?.state, events: [], configuration: configuration, activityDuration: configuration.activityDuration),
+                        GameplayHUD(model: .init(state: tutorialVaultPractice?.state(health: previewHeartTraining?.state.teamHealth)
+                                        ?? previewHeartTraining?.state, events: [], configuration: configuration,
+                                        activityDuration: configuration.activityDuration, soloPractice: isLeanPreviewSolo),
                                     actions: leanTutorialActions(leanPreview), isFTUEActive: leanPreview.isActive, ftueJourney: leanPreview.progressJourney,
                                     onFTUEProgressFrame: { leanPreview.setProgressHUDFrame($0, generation: generation) },
                                     onHealthFrame: { leanPreview.setHealthHUDFrame($0, generation: generation) })
@@ -640,6 +646,11 @@ private struct ReplayRoundView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(leanPreviewStatus)
                         .accessibilityIdentifier("leanPreviewStatus")
+                    if let practice = tutorialVaultPractice {
+                        let pressed = practice.vault?.buttons.values.filter { !$0.isEmpty }.count ?? 0
+                        Text(verbatim: "SYNTHETIC VAULT · active: \(pressed) · opened: \(practice.didOpen)")
+                            .accessibilityIdentifier("ftueVaultPracticeStatus")
+                    }
                     if let practice = previewLaserPractice {
                         Text("SYNTHETIC \(practice.move.rawValue) attempt \(practice.attemptNumber) · \(String(describing: practice.outcome)) · no practice damage")
                             .accessibilityIdentifier("ftuePracticeStatus")
@@ -774,6 +785,7 @@ private struct ReplayRoundView: View {
             activeTutorial?.suspendPracticeClock()
             leanTravel.suspend()
             collectiblePresentation.suspend()
+            tutorialVaultPractice?.suspend(at: CACurrentMediaTime())
             tutorialDiamondTime?.suspend(at: CACurrentMediaTime())
             guard activeTutorial?.heartPhase == .hurt || activeTutorial?.practiceMove != nil else { return }
             teamCallouts.setTutorialSuspended(phase != .active || activeTutorial?.isSuspended == true)
@@ -807,6 +819,7 @@ private struct ReplayRoundView: View {
         }
         .onDisappear {
             pendingLiveStart?.cancel(); pendingLiveStart = nil
+            retireTutorialVaultPractice()
             retireTutorialDiamondTime()
             presentation.stop()
             // No gameplay sound outlives its scene (Retry, Home, teardown).
@@ -884,6 +897,7 @@ private struct ReplayRoundView: View {
     private func leave() {
         guard let onExit, !leaving else { return }
         leaving = true
+        retireTutorialVaultPractice()
         retireTutorialDiamondTime()
         AudioService.shared.play(.uiTap)
         Task { @MainActor in
@@ -894,7 +908,10 @@ private struct ReplayRoundView: View {
     }
 
     private func leanTutorialActions(_ tutorial: LeanTutorial) -> GameplayHUDActions {
-        GameplayHUDActions(pause: { tutorial.setSuspended(true, generation: generation) },
+        GameplayHUDActions(pause: {
+            tutorialVaultPractice?.suspend(at: CACurrentMediaTime())
+            tutorial.setSuspended(true, generation: generation)
+        },
             resume: { tutorial.setSuspended(false, generation: generation) }, leave: leave)
     }
 
@@ -924,6 +941,75 @@ private struct ReplayRoundView: View {
             GameplayHUD(model: model, actions: leanTutorialActions(tutorial),
                         isFTUEActive: true, ftueJourney: tutorial.progressJourney)
         }
+    }
+
+    private func updateTutorialVaultPractice(_ tutorial: LeanTutorial, scene: LaserScene, at now: Double) {
+        guard !leaving, tutorial.stage == .vaultPractice, tutorial.generation == generation else {
+            if tutorialVaultPractice != nil { retireTutorialVaultPractice() }
+            return
+        }
+        var inputs = suppliedSession?.tutorialVaultInputs(generation: generation)
+        var snapshot = suppliedSession?.latestSnapshot
+        #if DEBUG
+        if isLeanPreview, let input = leanPreviewInput {
+            inputs = tutorialVaultPractice?.inputs ?? input.vaultPracticeInputs()
+            snapshot = input.latestSnapshot
+        }
+        #endif
+        if let practice = tutorialVaultPractice, let context = suppliedSession?.inputContext,
+           context != practice.inputs.round.context { retireTutorialVaultPractice() }
+
+        guard trainingSceneActive, !tutorial.isSuspended, let inputs,
+              let robots = scene.robotAvatars,
+              inputs.round.roster.allSatisfy({ robots.consoles[$0] != nil }),
+              suppliedSession.map({ hasFreshTutorialTracking($0, at: now) }) ?? true else {
+            tutorialVaultPractice?.suspend(at: now)
+            return
+        }
+        do {
+            if tutorialVaultPractice == nil {
+                let presenter = GameplayScenePresenter(scene: scene, configuration: inputs.round.configuration,
+                                                       encounters: [], showsDebugMarkers: false)
+                presenter.vault.visiblePlayers = Set(inputs.round.roster)
+                presenter.vault.liveConsoles = { [weak scene] player in scene?.robotAvatars?.consoles[player] }
+                presenter.onSound = { AudioService.shared.play($0) }
+                tutorialVaultPresenter = presenter
+                tutorialVaultPractice = try FTUEVaultPractice(inputs: inputs, at: now)
+            }
+            guard let practice = tutorialVaultPractice, let presenter = tutorialVaultPresenter else { return }
+            #if DEBUG
+            if isLeanPreview, let input = leanPreviewInput, let packet = snapshot {
+                snapshot = try input.vaultPracticeSnapshot(packet, practice: practice)
+            }
+            #endif
+            let shifts = snapshot.flatMap { suppliedSession?.vaultZoneShifts(for: $0) } ?? [:]
+            try practice.update(at: now, snapshot: snapshot, zoneShifts: shifts)
+            let state = practice.state
+            presenter.apply(state: state, events: practice.events, snapshot: snapshot)
+            // Give the shared opening its authored on-screen time even if a RealityKit
+            // playback controller reports completion before its first rendered frame.
+            let openingDuration = VaultDoor.openingDuration(reduceMotion: presenter.vault.reducesMotion())
+            if let openedAt = practice.openedAt, state.gameTime - openedAt >= openingDuration,
+               !presenter.vault.holdsTravel(for: state) {
+                tutorial.finishVaultPractice(practice, generation: generation, doorIsClear: true)
+                retireTutorialVaultPractice()
+            } else if let failedAt = practice.failedAt,
+                      state.gameTime - failedAt >= VaultPresentation.exitFadeDuration {
+                // Retry the same production opportunity after its failure feedback.
+                retireTutorialVaultPractice()
+            }
+        } catch {
+            retireTutorialVaultPractice()
+            startupError = String(describing: error)
+        }
+    }
+
+    private func retireTutorialVaultPractice() {
+        tutorialVaultPresenter?.stop()
+        tutorialVaultPresenter?.vault.buttons.removeFromParent()
+        tutorialVaultPresenter?.vault.root.removeFromParent()
+        tutorialVaultPresenter = nil
+        tutorialVaultPractice = nil
     }
 
     private func updateTutorialDiamondTime(_ tutorial: LeanTutorial, scene: LaserScene,
@@ -1127,7 +1213,9 @@ private struct ReplayRoundView: View {
             fixture = true
         }
         #endif
-        return GameplayHUDModel(state: tutorial?.isActive == true ? (session.heartTraining?.state ?? session.state) : session.state,
+        return GameplayHUDModel(state: tutorial?.isActive == true
+                                    ? (tutorialVaultPractice?.state(health: session.heartTraining?.state.teamHealth)
+                                       ?? session.heartTraining?.state ?? session.state) : session.state,
                                 events: session.events, configuration: configuration,
                                 activityDuration: session.activityDuration, stageProgress: session.stageProgress,
                                 diamondsCollected: collected, diamondsAreFixture: fixture,

@@ -199,6 +199,21 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
                                                approachLead: 0.5, passageDuration: 1)
     }
 
+    /// Contact targets for the same accepted layout in gameplay and tutorial practice.
+    func vaultContactZones(gateIndex: Int) -> [LaserVaultZone] {
+        var zones: [LaserVaultZone] = []
+        for (playerIndex, player) in PlayerID.allCases.enumerated() where roster.contains(player) {
+            for (buttonIndex, button) in LaserVaultButton.allCases.enumerated() {
+                let zone = vaultZones[player]![button]!
+                let target = UUID(uuidString: String(format: "D1C00000-0000-4000-8000-%012d",
+                    1 + gateIndex * 6 + playerIndex * 3 + buttonIndex))!
+                zones.append(LaserVaultZone(targetID: target, playerID: player, button: button,
+                                            position: zone.position, radius: zone.radius))
+            }
+        }
+        return zones
+    }
+
     /// The round's hoverboards as game state, at rest on their lanes (`LaserGame.configureBoards`).
     func boards() throws -> LaserBoardField { try LaserBoardField(references: boardReferences) }
 
@@ -275,17 +290,7 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
             // A DEBUG Solo Test vault has the roster's (P1's) button only.
             vaultOpened = true
             let id = UUID(uuidString: String(format: "D1B00000-0000-4000-8000-%012d", minute + 1))!
-            var zones: [LaserVaultZone] = []
-            for (playerIndex, player) in PlayerID.allCases.enumerated() where roster.contains(player) {
-                for (buttonIndex, button) in LaserVaultButton.allCases.enumerated() {
-                    let zone = vaultZones[player]![button]!
-                    let target = UUID(uuidString: String(format: "D1C00000-0000-4000-8000-%012d",
-                        1 + minute * 6 + playerIndex * 3 + buttonIndex))!
-                    zones.append(LaserVaultZone(targetID: target, playerID: player, button: button,
-                                                position: zone.position, radius: zone.radius))
-                }
-            }
-            return (max(boundary, game.gameTime), .openVault(id, zones: zones))
+            return (max(boundary, game.gameTime), .openVault(id, zones: vaultContactZones(gateIndex: minute)))
         default:
             return nil
         }
