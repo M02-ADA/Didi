@@ -771,6 +771,7 @@ final class GameplayScenePresenter {
     private static func cueOnScreen(_ scene: LaserScene) -> Bool {
         if scene.timingVariant == .approved { return scene.shownMoveCue != nil }
         guard let timing = scene.timingPresentation else { return false }
+        if scene.timingVariant == .converging { return timing.showsArrowBar }
         return timing.phase != .result
     }
 

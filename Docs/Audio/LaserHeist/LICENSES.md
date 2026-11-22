@@ -32,6 +32,9 @@ Links identify specific assets. The manifest also records source IDs and SHA-256
 | 310480 | [Playful Failure](https://pixabay.com/sound-effects/musical-playful-failure-310480/) | Universfield | [playful-failure-310480.mp3](Sources/playful-failure-310480.mp3) | Not recorded during inspection |
 | 417444 | [VIDEO GAME PAUSE SFX](https://pixabay.com/sound-effects/film-special-effects-video-game-pause-sfx-417444/) | ROHHSADOTCOM | [video-game-pause-417444.mp3](Sources/video-game-pause-417444.mp3) | Not recorded during inspection |
 | 417465 | [Game Over](https://pixabay.com/sound-effects/musical-game-over-417465/) | Alphix | [game-over-417465.mp3](Sources/game-over-417465.mp3) | Not recorded during inspection |
+| 376897 | [Clock Ticking Down](https://pixabay.com/sound-effects/film-special-effects-clock-ticking-down-376897/) | DRAGON-STUDIO | [clock-ticking-down-376897.mp3](Sources/clock-ticking-down-376897.mp3) | Not recorded during inspection |
+| 151797 | [Countdown Sound Effect 8-bit](https://pixabay.com/sound-effects/film-special-effects-countdown-sound-effect-8-bit-151797/) | Lesiakower | [countdown-8-bit-151797.mp3](Sources/countdown-8-bit-151797.mp3) | Not recorded during inspection |
+| 100469 | [Bank Vault](https://pixabay.com/sound-effects/film-special-effects-bank-vault-100469/) | Eyewer (Freesound) | [bank-vault-100469.mp3](Sources/bank-vault-100469.mp3) | Not recorded during inspection |
 
 ## Current cue edits
 
@@ -46,4 +49,6 @@ These edits supersede the corresponding original cuts in [GAME-AUDIO.md](GAME-AU
 
 Both pickup clips come from separate passages in the original source and alternate in playback order. The Alphix source was obtained from the official Pixabay page player.
 
-The vault countdown uses the existing Warning Notification excerpt (199277) once for each positive displayed second, with no catch-up ticks when a replay jumps ahead.
+The vault uses one Clock Ticking Down tick per displayed second (0.055–0.19 s, −4 dBFS). Diamond Time uses Countdown Sound Effect 8-bit. Digits 5–4–3–2 use the first beep (0.005–0.255 s, −7 dBFS). Digit 1 uses the final beep (3.005–3.255 s, −3 dBFS). The new sources came from the official Pixabay players.
+
+The final Diamond Time vault uses Bank Vault (5.495–6.495 s, −8 dBFS) as its wheel begins to turn. The source came from the official Pixabay player.

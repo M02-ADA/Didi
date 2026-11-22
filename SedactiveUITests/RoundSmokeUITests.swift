@@ -100,16 +100,14 @@ enum LaserHeistJourney {
         if replay.exists { replay.tap() }
     }
 
-    /// Home › START MISSION › intro video (skipped) › both "Put your iPad on the Floor" steps › camera setup.
+    /// Home › START MISSION › intro video (skipped) › iPad placement instructions › camera setup.
     static func startCameraSetup(_ app: XCUIApplication, timeout: TimeInterval) {
         app.buttons["startMission"].tap()
         let skipVideo = app.buttons["skipIntroVideo"]
         XCTAssertTrue(skipVideo.waitForExistence(timeout: timeout), "The intro video did not show")
         skipVideo.tap()
         let next = app.buttons["setupNext"]
-        XCTAssertTrue(next.waitForExistence(timeout: timeout), "Set Up step 1 did not show")
-        next.tap()
-        XCTAssertTrue(next.waitForExistence(timeout: timeout), "Set Up step 2 did not show")
+        XCTAssertTrue(next.waitForExistence(timeout: timeout), "Set Up did not show")
         next.tap()
     }
 }

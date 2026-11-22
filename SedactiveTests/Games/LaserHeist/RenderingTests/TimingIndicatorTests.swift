@@ -194,7 +194,7 @@ import Testing
         #expect(m.allClear && m.label == "P1 CLEAR" && m.verdicts[.player2] == nil)
     }
     @Test(arguments: [LaserMove.duck, .jump])
-    func arrowBarClosesAndGlowsAtCrossing(move: LaserMove) throws {
+    func arrowBarClosesAndGlowsAtTheMoveCue(move: LaserMove) throws {
         let renderer = TimingIndicatorRenderer()
         let (early, config) = try fixture(move, time: 3)
         renderer.apply(LaserTimingPresentation.make(state: early, configuration: config), variant: .converging, reduceMotion: false)
@@ -203,11 +203,15 @@ import Testing
         let glow = try #require(renderer.root.findEntity(named: "timing-\(move.rawValue)-go"))
         let earlyScale = bar.scale.x
         #expect(ready.isEnabled && !glow.isEnabled)
-        let (crossing, _) = try fixture(move, time: 4)
-        renderer.apply(LaserTimingPresentation.make(state: crossing, configuration: config), variant: .converging, reduceMotion: false)
+        let goTime = move == .jump ? 3.60 : 4
+        let (beforeGo, _) = try fixture(move, time: goTime - 0.01)
+        renderer.apply(LaserTimingPresentation.make(state: beforeGo, configuration: config), variant: .converging, reduceMotion: false)
+        #expect(ready.isEnabled && !glow.isEnabled)
+        let (atGo, _) = try fixture(move, time: goTime)
+        renderer.apply(LaserTimingPresentation.make(state: atGo, configuration: config), variant: .converging, reduceMotion: false)
         #expect(bar.scale.x < earlyScale)
         #expect(!ready.isEnabled && glow.isEnabled)
-        let (passed, _) = try fixture(move, time: 4.3)
+        let (passed, _) = try fixture(move, time: move == .jump ? 4.01 : 4.3)
         renderer.apply(LaserTimingPresentation.make(state: passed, configuration: config), variant: .converging, reduceMotion: false)
         #expect(renderer.root.findEntity(named: "timing.converging")?.isEnabled == false)
     }

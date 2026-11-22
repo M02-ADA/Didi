@@ -71,7 +71,7 @@ import Testing
         #expect(session.state?.phase == .vault)
         let progress = session.state?.activityProgress
         try await session.advance(to: 18.6)
-        #expect(session.state?.vault?.buttons[.player1]?.count == 3)
+        #expect(session.state?.vault?.buttons[.player1] == [.activate], "P1's one button")
         #expect(session.state?.vault?.buttons[.player2]?.count == 0)
         #expect(session.state?.missionProgress == 0)
         #expect(session.state?.activityProgress == progress)

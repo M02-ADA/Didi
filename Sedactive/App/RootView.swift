@@ -192,6 +192,18 @@ private func liveSetupStage(_ flow: LaserInputFlow, preview: AnyView?) -> some V
     onBack: { Task { await flow.closeLiveSetup() } }) {
     PlayerSetupView(flow: flow, isOverlay: true)
   }
+  .overlay(alignment: .bottom) {
+    if let camera = AppDependencies.shared.camera.negotiated {
+      Text("Camera: \(camera.deviceName)")
+        .font(.caption.weight(.semibold))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(.black.opacity(0.7), in: Capsule())
+        .foregroundStyle(.white)
+        .padding(.bottom, 16)
+        .allowsHitTesting(false)
+    }
+  }
   #if DEBUG
   .overlay(alignment: .bottomTrailing) { SetupDiagnosticsToggle(flow: flow) }
   #endif

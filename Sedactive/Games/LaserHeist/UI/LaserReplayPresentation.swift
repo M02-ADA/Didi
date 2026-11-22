@@ -18,6 +18,7 @@ final class LaserReplayPresentation {
     var teamCallouts: LaserTeamCalloutModel?
     private var frameClock = ReplayFrameClock()
     private var busy = false
+    private var playedFinalVaultTurn = false
     private var presenter: GameplayScenePresenter?
     private var liveAttachment: LaserLiveFrameAttachment?
     private var heartArt: HeartArt?
@@ -72,6 +73,7 @@ final class LaserReplayPresentation {
             }
         }
         self.session = session
+        playedFinalVaultTurn = false
         frameClock = ReplayFrameClock()
         #if DEBUG
         // Band-edge and body evidence markers are a diagnostic, never ordinary
@@ -433,6 +435,15 @@ final class LaserReplayPresentation {
                             ? Self.upcomingVaultIn(state: state, activityDuration: session.activityDuration)
                             : session.liveVaultIn,
                          finalVault: session.finalVaultEntry, showsPawBoard: session.showsDiamondTimePaws)
+        if !playedFinalVaultTurn, session.phase == .running, state.phase == .diamondTime,
+           let entry = session.finalVaultEntry,
+           entry.elapsed >= FinalVaultDoorMotion.start, entry.elapsed < FinalVaultDoorMotion.end {
+            playedFinalVaultTurn = true
+            AudioService.shared.play(.finalVaultTurn)
+        }
+        AudioService.shared.startDiamondTimeMusicIfReady(
+            isInside: session.phase == .running && state.phase == .diamondTime
+                && (session.isReplay || session.finalVaultEntry?.isComplete == true))
         applyPawShake(showsPaws: session.showsDiamondTimePaws, running: session.phase == .running,
                       at: state.gameTime)
         // The wrists' reach cursors (the tracked wrist the gate judges) are an engineering view only

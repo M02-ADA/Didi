@@ -5,12 +5,8 @@
 
 import SwiftUI
 
-/// The Sketch Home, the story intro video and the two "Put your iPad on the Floor" steps, shown on
-/// `LaserInputFlow`'s selection route. Which of these screens shows is local
-/// presentation state only: the route, the input source and every session
-/// belong to `LaserInputFlow` (Jevon). The last step's check button asks the
-/// flow to start camera setup; the replay demo and Debug diagnostics stay one
-/// tap away on Home.
+/// Presents Home, the intro video and the iPad placement instructions.
+/// The placement check button asks LaserInputFlow to start camera setup.
 struct LaserHeistIntroView: View {
     let flow: LaserInputFlow
     /// DEBUG: opens the real-camera game scene preview (Edo's PR #31 route,
@@ -21,7 +17,7 @@ struct LaserHeistIntroView: View {
     enum Screen: Equatable {
         case home
         case introVideo
-        case setup(SetupInstructionView.Step)
+        case setup
     }
 
     var body: some View {
@@ -35,7 +31,7 @@ struct LaserHeistIntroView: View {
                     guard flow.requestLeanTutorialReplay() else { return }
                     // The actual corridor/FTUE needs accepted setup. Help skips the story detour,
                     // not mode selection, camera binding, calibration or readiness.
-                    show(.setup(.holdIPad))
+                    show(.setup)
                 })
                     .overlay(alignment: .bottom) { homeOptions }
                     .transition(.opacity)
@@ -43,13 +39,12 @@ struct LaserHeistIntroView: View {
                 // The video has its own sound: menu music pauses for it and resumes after.
                 IntroVideoView {
                     AudioService.shared.setMusic(.menu)
-                    screen = .setup(.holdIPad)
+                    screen = .setup
                 }
                 .onAppear { AudioService.shared.setMusic(nil) }
                 .transition(.opacity)
-            case .setup(let step):
-                SetupInstructionView(step: step, onBack: { back(from: step) }, onNext: { next(from: step) })
-                    .id(step)
+            case .setup:
+                SetupInstructionView(onBack: backFromSetup, onNext: startCalibration)
                     .transition(.opacity)
             }
         }
@@ -68,13 +63,12 @@ struct LaserHeistIntroView: View {
         screen = next
     }
 
-    private func back(from step: SetupInstructionView.Step) {
-        if step == .holdIPad { flow.cancelLeanTutorialReplay() }
-        show(step == .holdIPad ? .home : .setup(.holdIPad))
+    private func backFromSetup() {
+        flow.cancelLeanTutorialReplay()
+        show(.home)
     }
 
-    private func next(from step: SetupInstructionView.Step) {
-        guard step == .standIPadOnFloor else { return show(.setup(.standIPadOnFloor)) }
+    private func startCalibration() {
         guard flow.canStartLive else { return }
         AudioService.shared.play(.uiTap)
         #if DEBUG

@@ -88,15 +88,16 @@ struct LiveVaultReachTests {
                          templates: try await RobotAvatarLayer.loadTemplates(), withBoards: false)
     }
 
-    /// iPad, 12 November 2026 (presses failed): every zone's near edge is within a REAL arm
+    /// iPad, 12 November 2026 (presses failed): the zone's near edge is within a REAL arm
     /// (shoulder→wrist 0.332 h); a resting or leaning hanging hand is in no zone.
+    /// ONE BUTTON (19 November 2026): the one zone is the former MIDDLE zone, unchanged.
     @Test func zonesAreReachableByARealArmAndNeverByARestingOrLeaningHand() throws {
         let shares = LaserLiveRoundGeometryV1.vaultShares, r = LaserLiveRoundGeometryV1.vaultRadiusShare
-        let top = shares[.top]!, middle = shares[.middle]!, bottom = shares[.bottom]!
         let shoulder = LaserLiveRoundGeometryV1.humanShoulderShare, arm = LaserLiveRoundGeometryV1.humanWristReachShare
-        // HIGH above the shoulder (head/upper shoulder), MIDDLE at the chest, LOW at the upper thigh.
-        #expect(top.y > shoulder.y && top.y <= 1 && middle.y >= 0.62 && middle.y <= 0.78 && bottom.y >= 0.4 && bottom.y < 0.53)
-        #expect(abs((top.y - middle.y) - (middle.y - bottom.y)) < 1e-9 && top.y - middle.y > 2 * r, "evenly spaced, no overlap")
+        #expect(shares.count == 1, "one activation zone per player")
+        let zone = try #require(shares[.activate])
+        #expect(zone == (0.42, 0.715) && r == 0.105, "the validated MIDDLE zone, unchanged in place and size")
+        #expect(zone.y >= 0.62 && zone.y <= 0.78, "at the chest")
         for (b, share) in shares {
             let nearEdge = hypot(share.out - shoulder.out, share.y - shoulder.y) - r
             #expect(nearEdge <= 0.95 * arm, "\(b): reachable by the wrist (\(nearEdge) h of \(arm) h)")
@@ -122,9 +123,8 @@ struct LiveVaultReachTests {
             #expect(VaultPresentation.liveButtonDepthInFront > 0 && RobotAvatarLayer.reachCursorDepth > VaultPresentation.liveButtonDepthInFront,
                     "buttons in front of the mascot, cursors in front of the buttons")
         }
-        // Head level and upper-thigh level of the 1.6 m mascot world, well above its board.
-        #expect(Self.button(scene, layout: layout, h: h, .top).center.y > 1.45)
-        #expect(Self.button(scene, layout: layout, h: h, .bottom).center.y > 0.6)
+        // Chest level of the 1.6 m mascot world, well above its board.
+        #expect(Self.button(scene, layout: layout, h: h, .activate).center.y > 0.9)
     }
 
     /// A wrist in a zone puts its reach cursor on that button.
@@ -162,13 +162,13 @@ struct LiveVaultReachTests {
     }
 
     /// Leaning toward the wall moves the mascot sideways at the same scale as the cursor, so the
-    /// cursor stays where the player's wrist is and the bottom (full-reach) button gets easier.
+    /// cursor stays where the player's wrist is and the button gets easier to reach.
     @Test func leaningTowardTheWallMovesMascotAndCursorTogether() async throws {
         let (c, layout, h) = try Self.setup()
         let scene = LaserScene()
         let layer = try await Self.layer(scene, c, layout)
         let lane = layout.centerX(for: .player1), shift = 0.12 * h
-        let target = Self.button(scene, layout: layout, h: h, .bottom)
+        let target = Self.button(scene, layout: layout, h: h, .activate)
         let shown = try #require(try Self.cursor(after: Self.pose(c, lane: lane, h: h, wrist: target.plane, hipShift: shift),
                                                  sample: Self.sample(c, center: lane + shift, h: h), scene: scene, layer: layer))
         #expect(simd_distance(shown, target.center) < 0.01, "the cursor is the wrist, wherever the body is")
