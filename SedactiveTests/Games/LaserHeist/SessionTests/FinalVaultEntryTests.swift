@@ -32,7 +32,72 @@ nonisolated struct FinalVaultEntryTests {
         entry.advance(by: 2)
         #expect(entry.elapsed == 2)
         entry.advance(by: 100)
-        #expect(entry.elapsed == entry.timeline.total && entry.isComplete)
+        #expect(entry.elapsed == entry.timeline.end && entry.isComplete)
+    }
+
+    // MARK: - The blink into Diamond Time (21 November 2026)
+
+    /// The blink starts only once the approved landing has ended, lasts about 0.6 s, and is shut
+    /// for a short moment; nothing of the jump, push or landing moved.
+    @Test(arguments: [[PlayerID.player1], PlayerID.allCases]) func theBlinkFollowsTheLanding(roster: [PlayerID]) {
+        let t = LaserFinalVaultTimeline(roster: roster)
+        #expect(t.blink.lowerBound == t.land.upperBound && t.total == t.land.upperBound, "after the landing, which is unchanged")
+        #expect(stride(from: 0.0, through: t.total, by: 1.0 / 240).allSatisfy { t.blinkClosure(at: $0) == 0 },
+                "open through the whole jump and landing")
+        let duration = t.end - t.total
+        #expect(duration >= 0.5 && duration <= 0.7, "a quick blink: \(duration) s")
+        let shut = t.blinkShutRange.upperBound - t.blinkShutRange.lowerBound
+        #expect(shut > 0 && shut <= 0.12, "a very short shut moment: \(shut) s")
+        #expect(t.blinkClosure(at: t.end) == 0 && t.blinkClosure(at: t.end + 1) == 0, "open again at its end, and after it")
+    }
+
+    /// Diamond Time's view takes over only while the eyelids cover the screen, with at least two
+    /// 60 Hz frames of shut on each side; sampled at 120 Hz, the frame before and the frame of the
+    /// switch are both fully shut (no frame shows the mascots leaving or the paw board arriving).
+    @Test(arguments: [[PlayerID.player1], PlayerID.allCases]) func theViewSwitchesOnlyWhileShut(roster: [PlayerID]) {
+        let t = LaserFinalVaultTimeline(roster: roster)
+        #expect(t.blinkShutRange.contains(t.blinkSwitch) && t.blinkClosure(at: t.blinkSwitch) == 1)
+        #expect(t.blinkSwitch - t.blinkShutRange.lowerBound >= 2.0 / 60 && t.blinkShutRange.upperBound - t.blinkSwitch >= 2.0 / 60)
+        var entry = LaserFinalVaultEntry(roster: roster)
+        var previous = (presents: entry.presentsDiamondTime, closure: entry.blinkClosure)
+        var switches = 0
+        for _ in 0..<Int((t.end + 0.1) * 120) {
+            entry.advance(by: 1.0 / 120)
+            let now = (presents: entry.presentsDiamondTime, closure: entry.blinkClosure)
+            if now.presents != previous.presents {
+                switches += 1
+                #expect(previous.closure == 1 && now.closure == 1, "switched at elapsed \(entry.elapsed) while shut")
+            }
+            #expect(abs(now.closure - previous.closure) < 0.1, "smooth lids: a step of \(abs(now.closure - previous.closure))")
+            previous = now
+        }
+        #expect(switches == 1 && entry.presentsDiamondTime && entry.isComplete, "one switch, never back")
+    }
+
+    /// No playable second is spent on the blink: the entry (on held game time) completes, and
+    /// the clock is released, only once the eyes are open again; the paw board shows from the
+    /// switch, but its input waits for that release (`GameSessionCoordinator`).
+    @Test func diamondTimeStartsWhenTheEyesAreOpen() {
+        var entry = LaserFinalVaultEntry(roster: PlayerID.allCases)
+        entry.advance(by: entry.timeline.blinkSwitch)
+        #expect(entry.presentsDiamondTime && !entry.isComplete && entry.blinkClosure == 1, "switched, still held")
+        entry.advance(by: entry.timeline.end - entry.timeline.blinkSwitch - 0.01)
+        #expect(!entry.isComplete && entry.blinkClosure > 0, "still opening: still held")
+        entry.advance(by: 0.01)
+        #expect(entry.isComplete && entry.blinkClosure == 0, "open: Diamond Time starts")
+    }
+
+    /// A pause holds the blink where it is (only running time advances the entry); a restart makes
+    /// a new entry, open; the replay has no entry, so no blink.
+    @Test func aPauseHoldsTheBlinkAndARestartStartsOpen() {
+        var entry = LaserFinalVaultEntry(roster: [.player1])
+        entry.advance(by: entry.timeline.total + 0.1)
+        let held = entry.blinkClosure
+        #expect(held > 0 && held < 1)
+        entry.advance(by: 0)
+        entry.advance(by: -1)
+        #expect(entry.blinkClosure == held, "paused: the lids stay where they are")
+        #expect(LaserFinalVaultEntry(roster: [.player1]).blinkClosure == 0, "a new entry starts open")
     }
 
     // MARK: - Held GameClock

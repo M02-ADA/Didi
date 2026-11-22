@@ -262,7 +262,7 @@ final class VaultPresentation {
     ///   (production until Jevon exposes it). With it, the locked door comes
     ///   down the corridor like a laser gate; without it, it fades in at its stop.
     func update(state: LaserGameState, travelDistance: Float, upcomingVaultIn: Double? = nil) {
-        defer { hasApplied = true }
+        defer { hasApplied = true; updateHandCues() }
         if let fade = exiting?.fade, fade.isComplete { removeExiting() }
         if approach(state: state, upcomingVaultIn: upcomingVaultIn) { return }
         guard let vault = state.vault else { return hideAll() }
@@ -810,6 +810,26 @@ final class VaultPresentation {
         scene.robotAvatars?.docksActive = false
         consoleMode = false // the next gate's consoles come in with its door again
         indicatorsShown = false
+        updateHandCues()
+    }
+
+    /// THE HAND CUE (Kevin, 22 November 2026): each mascot's pressing hand glows while its player's
+    /// button is live and the mascot reaches for it, flares on the game's activation of that button,
+    /// then fades; dark otherwise: the gate arriving, timed out, opened without this player's press,
+    /// or hidden (`GateHandGlow`). From the buttons' drawn states only; presentation, never a verdict.
+    private func updateHandCues() {
+        guard let robots = scene.robotAvatars else { return }
+        for player in PlayerID.allCases {
+            var phase = GateHandGlow.Phase.off
+            if consoleMode, !hidden, visiblePlayers.contains(player), let view = consoleViews[player], view.root.isEnabled {
+                switch view.state {
+                case .available: phase = robots.consolesActive ? .live : .off
+                case .completed, .opened: phase = .pressed
+                case .unavailable: phase = .off
+                }
+            }
+            robots.setHandCue(phase, for: player, reduceMotion: reducesMotion())
+        }
     }
 
     // MARK: - Look (placeholder until Theo's art)
