@@ -54,9 +54,9 @@ nonisolated struct LaserWristDiamondConsumer: Sendable {
     private var recentPawPickups: [LaserDiamondPosition] = []
     private var pawNeedsExit: [UUID: Set<LaserContactHand>] = [:]
 
-    func visiblePaws(at hostTime: Double) -> [LaserContactHand: LaserDiamondPosition] {
+    func visiblePaws(at hostTime: Double, maximumDisplayAge: Double = 0.15) -> [LaserContactHand: LaserDiamondPosition] {
         guard let pawCapture, let freshness = context.wristContact?.freshness,
-              hostTime >= pawCapture, hostTime - pawCapture < min(freshness, 0.15) else { return [:] }
+              hostTime >= pawCapture, hostTime - pawCapture < min(freshness, maximumDisplayAge) else { return [:] }
         return paws
     }
 

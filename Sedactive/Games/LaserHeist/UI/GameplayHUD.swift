@@ -167,6 +167,13 @@ struct GameplayHUD: View {
     let model: GameplayHUDModel
     /// The session's player intents; the HUD offers only those it is given.
     let actions: GameplayHUDActions
+    /// Visual substitution only; no tutorial or gameplay progress is calculated here.
+    var isFTUEActive = false
+    var ftueJourney: FTUEProgressJourney? = nil
+    /// Report the health HUD bounds for the existing FTUE spotlight.
+    var onFTUEProgressFrame: ((CGRect) -> Void)? = nil
+    var onHealthFrame: ((CGRect) -> Void)? = nil
+    private var displayedHealth: Int { model.health }
     #if DEBUG
     /// `-hudPauseMenu` opens the menu at launch, for reviewing its layout (Debug
     /// only). Without a session pause it is a labelled preview: the round runs on.
@@ -216,7 +223,11 @@ struct GameplayHUD: View {
             }
             .frame(width: 268 * k, alignment: .leading)
             Spacer().frame(width: 33.9 * k)
-            progress(k)
+            Group {
+                if isFTUEActive { FTUEProgressBar(k: k, journey: ftueJourney)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onFTUEProgressFrame?($0) } }
+                else { progress(k) }
+            }
                 .frame(width: 667 * k)
             Spacer().frame(width: 36 * k)
             // Without the session's pause (Jevon), pausing is not offered: the button
@@ -261,7 +272,7 @@ struct GameplayHUD: View {
                     .foregroundStyle(Self.socket)
                     .frame(width: 29 * k, height: 27 * k)
                     .position(center)
-                if index < model.health {
+                if index < displayedHealth {
                     Image("LaserHeistHUD/heart")
                         .resizable()
                         .frame(width: 29 * k, height: 27 * k)
@@ -272,8 +283,10 @@ struct GameplayHUD: View {
         }
         .frame(width: 268 * k, height: 64 * k)
         .anchorPreference(key: PickupHUDAnchorKey.self, value: .bounds) { [.health: $0] }
-        .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.3), value: model.health)
+        .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.3), value: displayedHealth)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onHealthFrame?($0) }
         .accessibilityElement()
+        .accessibilityIdentifier("sharedHealthHUD")
         .accessibilityLabel("Team health \(model.health) of \(model.maxHealth)")
     }
 
@@ -337,6 +350,7 @@ struct GameplayHUD: View {
         }
         .frame(height: height)
         .accessibilityElement()
+        .accessibilityIdentifier("gameplayProgressBar")
         .accessibilityLabel("Vaults opened \(model.vaultsOpened) of \(model.checkpoints)")
         .accessibilityValue(model.diamondReached ? "Diamond reached" : "")
     }
