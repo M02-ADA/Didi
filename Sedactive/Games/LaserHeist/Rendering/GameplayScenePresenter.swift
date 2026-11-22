@@ -762,7 +762,9 @@ final class GameplayScenePresenter {
 
         let key = "\(timing.attemptID)-\(timing.move)"
         if timing.gameTime < timing.arrowGoTime {
-            if cuedAttempts.insert("ready-\(key)").inserted {
+            // Two READY pulses, spaced half a second apart, followed by GO.
+            let beat = timing.gameTime < timing.arrowGoTime - LaserTimingPresentation.arrowBeatInterval ? 0 : 1
+            if cuedAttempts.insert("ready-\(beat)-\(key)").inserted {
                 onSound?(.movementReady)
             }
         } else if (timing.move == .jump || timing.evidenceWindow.contains(timing.gameTime)),

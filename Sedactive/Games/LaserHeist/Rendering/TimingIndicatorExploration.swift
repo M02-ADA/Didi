@@ -51,9 +51,11 @@ nonisolated struct LaserTimingPresentation: Equatable, Sendable {
     var arrowGoTime: Double {
         move == .jump ? max(cueTime, crossingTime - Self.jumpReactionLead) : crossingTime
     }
+    static let arrowBeatInterval: Double = 0.5
+    var arrowReadyTime: Double { arrowGoTime - 2 * Self.arrowBeatInterval }
     var showsArrowBar: Bool {
         (move == .jump || move == .duck) && (phase == .prepare || phase == .crossing)
-            && (move != .jump || gameTime <= crossingTime)
+            && gameTime >= arrowReadyTime && (move != .jump || gameTime <= crossingTime)
     }
     var label: String {
         switch phase {
@@ -475,8 +477,8 @@ private extension Judgement {
         // Jump's GO cue can precede evidence collection while the player reacts and takes off.
         let go = timing.gameTime >= goTime
             && (timing.move == .jump || timing.evidenceWindow.contains(timing.gameTime))
-        let duration = goTime - timing.cueTime
-        let progress = duration > 0 ? min(1, max(0, (timing.gameTime - timing.cueTime) / duration)) : 1
+        let duration = goTime - timing.arrowReadyTime
+        let progress = duration > 0 ? min(1, max(0, (timing.gameTime - timing.arrowReadyTime) / duration)) : 1
         let fraction = Self.arrowWidth / Self.width
         bar.scale.x = reduceMotion && !go ? 1 : 1 - (1 - fraction) * Float(progress)
         for (move, faces) in arrows {

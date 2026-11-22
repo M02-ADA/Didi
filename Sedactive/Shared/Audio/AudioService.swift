@@ -43,7 +43,7 @@ enum SoundCue: String, CaseIterable {
     /// even when both players' events arrive together or a button is tapped twice.
     var minimumInterval: TimeInterval {
         switch self {
-        case .uiTap, .vaultWarning, .diamondTimeTick, .diamondTimeUrgentTick: 0.12
+        case .uiTap, .movementReady, .vaultWarning, .diamondTimeTick, .diamondTimeUrgentTick: 0.12
         case .vaultButton, .diamondCollect: 0.06
         case .diamondChainRise, .diamondChainCrest, .diamondChainBass: 0.10
         case .cueDuck, .cueJump, .laserClear, .laserHit: 0.25

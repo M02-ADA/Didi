@@ -55,4 +55,4 @@ The final Diamond Time vault uses Bank Vault (5.495–6.495 s, −8 dBFS) as its
 
 ### Movement timing bar
 
-- [timer_countdown](https://pixabay.com/sound-effects/film-special-effects-timer-countdown-345137/) by u_lfmkadc0ha (Pixabay Content License). The first and final pulses are excerpted for the READY and GO cues.
+- [timer_countdown](https://pixabay.com/sound-effects/film-special-effects-timer-countdown-345137/) by u_lfmkadc0ha (Pixabay Content License). READY plays the first pulse 1.0 and 0.5 seconds before GO. GO plays the final pulse on the third beat.
