@@ -199,6 +199,42 @@ final class HomeTutorialHelpUITests: XCTestCase {
         }
     }
 
+    func testThreeCollectibleJourneysInOneApplicationProcess() {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments = ["-homeHelpFTUEPreview", "-leanFTUESolo", "-ftueCollectibleDiagnostics"]
+        app.launch()
+        let help = app.buttons["replayTutorial"]
+        XCTAssertTrue(help.waitForExistence(timeout: 30))
+        app.segmentedControls["playerModeSelector"].buttons["1 Player · Solo Practice"].tap()
+
+        for run in 1...3 {
+            XCTAssertTrue(help.waitForExistence(timeout: 15))
+            help.tap()
+            app.buttons["setupNext"].tap()
+            for id in ["leanTutorialTitle", "ftueFreeLean", "ftueCollectiblesTitle",
+                       "ftueCollection-diamond", "ftueCollection-heart", "heartTutorialTitle"] {
+                let stage = app.descendants(matching: .any)[id]
+                XCTAssertTrue(stage.waitForExistence(timeout: 30), "Run \(run): \(id)")
+                if id == "heartTutorialTitle" {
+                    XCTAssertTrue(stage.label.contains("This is your shared health"))
+                    XCTAssertEqual(app.images.matching(identifier: "ftueCenterCheckpoint").count, 1)
+                    XCTAssertFalse(app.descendants(matching: .any)["gameplayProgressBar"].exists)
+                }
+                let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                shot.name = "synthetic-solo-run-\(run)-\(id)"
+                shot.lifetime = .keepAlways
+                add(shot)
+            }
+            app.buttons["pauseMenu"].tap()
+            XCTAssertTrue(app.buttons["leaveGame"].waitForExistence(timeout: 10))
+            app.buttons["leaveGame"].tap()
+        }
+        XCTAssertTrue(help.waitForExistence(timeout: 15))
+        app.terminate()
+    }
+
     func testFreeLeanMovementAndTimeoutAcrossModeChanges() {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft

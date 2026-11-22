@@ -184,16 +184,12 @@ private struct ReplayRoundView: View {
                     }
                 }
                 if let scene, let tutorial, let suppliedSession, tutorial.isPractising || tutorial.collection != nil {
-                    // The session already evaluates CP1 freshness for ready. The stricter pose-age
-                    // window belongs to movement proof and collectible contacts, not exploration time.
-                    let ready = tutorial.isPractising
-                        ? tutorial.canExploreLean(in: suppliedSession)
-                        : suppliedSession.preRoundTutorialPending && suppliedSession.canStartLiveRound
-                            && suppliedSession.setup?.hasConfirmedReliablePair == true
-                            && hasFreshTutorialTracking(suppliedSession, at: now)
+                    // Session readiness drives travel. A fresh CP1/K03 sample still gates contact.
+                    let ready = tutorial.canExploreLean(in: suppliedSession)
                     updateLeanAndCollectibles(tutorial, scene: scene, context: suppliedSession.inputContext,
                         input: suppliedSession.inputConfiguration, configuration: suppliedSession.configuration,
                         eligible: ready,
+                        contactEligible: tutorial.isPractising || hasFreshTutorialTracking(suppliedSession, at: now),
                         at: now)
                 }
                 if activeTutorial?.collection == nil { collectiblePresentation.clear() }
@@ -792,6 +788,11 @@ private struct ReplayRoundView: View {
             updateHeartTraining(scene: scene, at: CACurrentMediaTime())
             updateLaserPractice(scene: scene, at: CACurrentMediaTime())
         }
+        .onChange(of: suppliedSession.map { tutorial?.canExploreLean(in: $0) == true }) { _, _ in
+            tutorial?.suspendPracticeClock()
+            leanTravel.suspend()
+            collectiblePresentation.suspend()
+        }
         .onChange(of: session?.phase) { _, phase in
             scene.setTimingPaused(phase == .paused)
             if phase != .running { diamondFlights.clear() }
@@ -897,6 +898,7 @@ private struct ReplayRoundView: View {
     private func leave() {
         guard let onExit, !leaving else { return }
         leaving = true
+        collectiblePresentation.clear()
         retireTutorialVaultPractice()
         retireTutorialDiamondTime()
         AudioService.shared.play(.uiTap)
@@ -1162,11 +1164,13 @@ private struct ReplayRoundView: View {
 
     private func updateLeanAndCollectibles(_ tutorial: LeanTutorial, scene: LaserScene,
                                           context: BodyInputContext?, input: BodyInputConfiguration,
-                                          configuration: LaserRoundConfiguration?, eligible: Bool, at now: Double) {
-        let allowed = eligible && trainingSceneActive && !tutorial.isSuspended
+                                          configuration: LaserRoundConfiguration?, eligible: Bool,
+                                          contactEligible: Bool = true, at now: Double) {
+        let allowed = eligible && trainingSceneActive && !tutorial.isSuspended && !leaving
+            && tutorial.generation == generation
         let value = scene.liveAvatars?.lastAppliedFrame.flatMap { frame in
             LeanMovementObservation.make(frame: frame, context: context, generation: generation,
-                roster: tutorial.roster, eligible: allowed, now: now, bounds: scene.robotAvatars?.steering?.bounds) {
+                roster: tutorial.roster, eligible: allowed && contactEligible, now: now, bounds: scene.robotAvatars?.steering?.bounds) {
                     scene.robotAvatars?.steeringReading($0)
                 }
         }
@@ -1185,7 +1189,7 @@ private struct ReplayRoundView: View {
         } else if let kind = tutorial.collection, let context, let configuration {
             if let receipt = collectiblePresentation.update(scene: scene, kind: kind,
                 configuration: configuration, input: input, context: context, at: now,
-                contactsFrom: players, heartArt: tutorialHeartArt) {
+                ready: allowed, contactsFrom: players, heartArt: tutorialHeartArt) {
                 tutorial.acceptPickup(receipt)
             }
         } else { collectiblePresentation.suspend() }

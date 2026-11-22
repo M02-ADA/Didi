@@ -127,7 +127,9 @@ final class LeanTutorial {
             return
         }
         defer { if isPractising { previousPracticeTick = now } }
-        guard let previousPracticeTick, now > previousPracticeTick, now - previousPracticeTick <= 0.25 else { return }
+        guard let previousPracticeTick, now > previousPracticeTick else { return }
+        // This is eligible active time, not a render delta. The view breaks the
+        // interval on activity/readiness changes, even when scene updates are sparse.
         practiceTime += now - previousPracticeTick
         let verified = Set(roster).isSubset(of: demonstrated)
         guard (practiceTime >= 4 && verified) || practiceTime >= 10 else { return }

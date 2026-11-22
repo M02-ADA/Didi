@@ -3,6 +3,39 @@ import Testing
 @testable import Sedactive
 
 @MainActor struct FTUECollectibleEncounterTests {
+    @Test func collectibleTravelContinuesWithoutContactAndStopsWithoutReadiness() async throws {
+        let f = LeanTutorialTests.Fixture()
+        let script = try LaserReplayScript.load().freshRound(generation: f.generation)
+        var input = script.input.configuration
+        input.soloPlayer = .player1
+        let scene = LaserScene()
+        scene.installEnvironment(authored: try #require(await LaserScene.loadAuthoredEnvironment()))
+        scene.attachLiveAvatars(mailbox: AvatarPoseMailbox(maxAge: 0.25),
+                                templates: try await RobotAvatarLayer.sharedTemplates(), players: [.player1])
+        defer { scene.detachLiveAvatars() }
+        let presentation = FTUECollectiblePresentation()
+        func tick(_ now: Double, ready: Bool = true) {
+            let receipt = presentation.update(scene: scene, kind: .diamond, configuration: script.configuration,
+                input: input, context: f.context, at: now, ready: ready, contactsFrom: [], heartArt: nil)
+            #expect(receipt == nil, "scrolling without contact cannot produce a pickup")
+        }
+        let start = scene.travelOffset
+        tick(1); tick(1.125); tick(1.25)
+        let moved = scene.travelOffset
+        #expect(abs(moved - start - scene.layout.travelSpeed * 0.25) < 0.00001)
+        tick(1.375, ready: false); tick(20)
+        #expect(scene.travelOffset == moved, "resuming cannot catch up time spent without readiness")
+        tick(20.125)
+        #expect(scene.travelOffset > moved)
+        let beforeSlowUpdate = scene.travelOffset
+        tick(21.125)
+        #expect(abs(scene.travelOffset - beforeSlowUpdate - scene.layout.travelSpeed * 0.25) < 0.00001)
+        presentation.clear()
+        let retired = scene.travelOffset
+        tick(21.25)
+        #expect(scene.travelOffset == retired, "a new visit cannot reuse the previous render tick")
+    }
+
     @Test func requiresOrderedDomainReceiptsAndAcceptsHeartAtFullHealth() throws {
         let f = LeanTutorialTests.Fixture(), tutorial = f.tutorial()
         f.tick(tutorial, 0...80)

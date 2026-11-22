@@ -21,8 +21,9 @@ import Foundation
         if origin == nil { origin = scene.travelOffset }
         guard eligible, !tutorial.isSuspended, now.isFinite else { previous = nil; return }
         defer { previous = now }
-        guard let previous, now > previous, now - previous <= 0.25 else { return }
-        scene.setTravelDistance(scene.travelOffset + scene.layout.travelSpeed * Float(now - previous))
+        guard let previous, now > previous else { return }
+        // A slow scene update can still move the corridor without a large catch-up jump.
+        scene.setTravelDistance(scene.travelOffset + scene.layout.travelSpeed * Float(min(now - previous, 0.25)))
     }
     func suspend() { previous = nil }
     /// Explicit view teardown only, after later tutorial presenters have released their offsets.

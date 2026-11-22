@@ -113,6 +113,22 @@ import Testing
         func finish(_ tutorial: LeanTutorial) { finishLean(tutorial); finishHeart(tutorial); finishPractice(tutorial); finishProgress(tutorial) }
     }
 
+    @Test func sparseSceneUpdatesStillReachTimeoutWithoutCreditingSuspension() {
+        let f = Fixture(), tutorial = f.tutorial()
+        for second in 0...5 {
+            tutorial.advancePractice(generation: f.generation, at: Double(second), ready: true)
+        }
+        #expect(tutorial.isPractising)
+        tutorial.suspendPracticeClock()
+        tutorial.advancePractice(generation: f.generation, at: 100, ready: true)
+        #expect(tutorial.isPractising)
+        for second in 101...105 {
+            tutorial.advancePractice(generation: f.generation, at: Double(second), ready: true)
+        }
+        #expect(tutorial.stage == .collectiblesIntroduction)
+        #expect(tutorial.leanExit == .explorationTimeout)
+    }
+
     @Test func introRequiresVisibleCurrentGenerationAndDoesNotInferPractice() {
         let f = Fixture(), tutorial = LeanTutorial(defaults: Fixture().defaults)
         tutorial.prepare(generation: f.generation)

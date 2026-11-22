@@ -4,26 +4,41 @@ import SwiftUI
 /// Runs only in a collectible tutorial phase. The scene provides geometric contact,
 /// and the isolated encounter returns a receipt only after the existing domain accepts it.
 @MainActor final class FTUECollectiblePresentation {
+    private var owner: (context: BodyInputContext, kind: FTUECollectible)?
     private var encounter: FTUECollectibleEncounter?
     private var diamonds: NormalDiamondPresentation?
     private var heart: HeartCollectible?
-    private var previous: Double?
+    private var travel = EligibleTravel()
     private var feedbackUntil: Double?
     private var lane: PlayerID?
 
     func update(scene: LaserScene, kind: FTUECollectible, configuration: LaserRoundConfiguration,
                 input: BodyInputConfiguration, context: BodyInputContext, at now: Double,
-                contactsFrom players: Set<PlayerID>, heartArt: HeartArt?) -> FTUEPickupReceipt? {
-        if encounter?.context != context || encounter?.kind != kind { clear() }
-        guard players == Set(input.roster), let avatars = scene.robotAvatars else { suspend(); return nil }
-        let dt = previous.map { now - $0 } ?? 0
-        previous = now
-        let step = dt > 0 && dt <= 0.25 ? dt : 0
-        let bodies = Dictionary(uniqueKeysWithValues: input.roster.map { ($0, avatars.diamondContactBody($0)) })
+                ready: Bool, contactsFrom players: Set<PlayerID>, heartArt: HeartArt?) -> FTUEPickupReceipt? {
+        if owner?.context != context || owner?.kind != kind {
+            clear()
+            owner = (context, kind)
+        }
+        guard ready, context.isActive, context.sessionGeneration == input.sessionGeneration,
+              let avatars = scene.robotAvatars else { suspend(); return nil }
+        // An individual input gap must not stop the corridor or extend a diamond's
+        // passage. The full fresh roster is still required to place or collect it.
+        let contactReady = players == Set(input.roster)
+        let step = travel.tick(at: now)
+        if step > 0 {
+            scene.setTravelDistance(scene.travelOffset + scene.layout.travelSpeed * Float(step))
+        }
+        #if DEBUG
+        trace(kind: kind, generation: context.sessionGeneration, now: now, step: step,
+              contactReady: contactReady, distance: scene.travelOffset)
+        #endif
+        let bodies = contactReady
+            ? Dictionary(uniqueKeysWithValues: input.roster.map { ($0, avatars.diamondContactBody($0)) })
+            : [:]
         let display = LaserReplayPresentation.diamondDisplay(scene: scene, layout: input.playerPlaneLayout)
 
         if encounter == nil {
-            guard kind != .heart || heartArt != nil,
+            guard contactReady, kind != .heart || heartArt != nil,
                   let player = input.roster.first, let torso = bodies[player]?.first else { return nil }
             let center = (torso.start + torso.end) / 2
             let scale = avatars.laserBandScale(for: player, mapping: scene.mapping) ?? 1
@@ -47,7 +62,6 @@ import SwiftUI
         let time = current.game.gameTime + step
         do {
             try current.advance(to: time)
-            scene.setTravelDistance(scene.travelOffset + scene.layout.travelSpeed * Float(step))
             let spawn = current.spawn
             let placed = display(lane, spawn.position)
             if let diamonds {
@@ -72,7 +86,7 @@ import SwiftUI
             }
             if current.receipt == nil {
                 let sphere = diamonds?.bodyContactSphere(id: spawn.id) ?? heart?.bodyContactSphere
-                if let sphere, sphere.radius > 0, time >= spawn.entry, time < spawn.exit {
+                if contactReady, let sphere, sphere.radius > 0, time >= spawn.entry, time < spawn.exit {
                     let overlaps = players.filter { player in
                         bodies[player]?.contains { $0.overlaps(center: sphere.center, radius: sphere.radius) } == true
                     }
@@ -87,18 +101,65 @@ import SwiftUI
                 if let feedbackUntil, time >= feedbackUntil { clear(); return receipt }
             } else if time >= spawn.exit {
                 // A miss creates another real passage, never a successful pickup.
-                clear()
+                retirePassage()
             }
-        } catch { clear() }
+        } catch { retirePassage() }
         return nil
     }
 
-    func suspend() { previous = nil }
+    private struct EligibleTravel {
+        private var previous: Double?
+
+        mutating func tick(at now: Double) -> Double {
+            guard now.isFinite else { suspend(); return 0 }
+            defer { previous = now }
+            guard let previous, now > previous else { return 0 }
+            return min(now - previous, 0.25)
+        }
+
+        mutating func suspend() { previous = nil }
+    }
+
+    #if DEBUG
+    private static let diagnostics = ProcessInfo.processInfo.arguments.contains("-ftueCollectibleDiagnostics")
+    private var traceKey: String?
+    private var traceStart: Double = 0
+    private var traceDistance: Float = 0
+    private var traceTicks = 0
+    private var traceContactTicks = 0
+    private var traceZeroSteps = 0
+    private var traceReported = false
+
+    private func trace(kind: FTUECollectible, generation: UUID, now: Double, step: Double,
+                       contactReady: Bool, distance: Float) {
+        guard Self.diagnostics else { return }
+        let key = "\(generation)/\(kind.rawValue)"
+        if traceKey != key {
+            traceKey = key; traceStart = now; traceDistance = distance
+            traceTicks = 0; traceContactTicks = 0; traceZeroSteps = 0; traceReported = false
+        }
+        guard !traceReported else { return }
+        traceTicks += 1
+        if contactReady { traceContactTicks += 1 }
+        if step == 0 { traceZeroSteps += 1 }
+        guard now - traceStart >= 1 else { return }
+        traceReported = true
+        print("[FTUE Collectibles] \(key) elapsed=\(now - traceStart) sceneUpdates=\(traceTicks) freshContactUpdates=\(traceContactTicks) zeroTravelSteps=\(traceZeroSteps) distance=\(distance - traceDistance) passage=\(encounter?.game.gameTime ?? 0) active=\(encounter != nil)")
+    }
+    #endif
+
+    func suspend() { travel.suspend() }
 
     func clear() {
+        owner = nil
+        suspend()
+        retirePassage()
+    }
+
+    private func retirePassage() {
         diamonds?.clear()
         heart?.retire()
         diamonds = nil; heart = nil; encounter = nil; lane = nil
-        feedbackUntil = nil; previous = nil
+        feedbackUntil = nil
     }
 }
