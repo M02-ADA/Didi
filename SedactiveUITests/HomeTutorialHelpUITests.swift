@@ -232,9 +232,26 @@ final class HomeTutorialHelpUITests: XCTestCase {
                 shot.lifetime = .keepAlways
                 add(shot)
             }
-            app.buttons["pauseMenu"].tap()
-            XCTAssertTrue(app.buttons["leaveGame"].waitForExistence(timeout: 10))
-            app.buttons["leaveGame"].tap()
+            if run == 1 {
+                let title = app.staticTexts["RETRIEVE THE DIAMONDS"]
+                XCTAssertTrue(title.waitForExistence(timeout: 100))
+                let counter = app.descendants(matching: .any)
+                    .matching(NSPredicate(format: "label MATCHES %@", "[1-9][0-9]* diamonds")).firstMatch
+                XCTAssertTrue(counter.waitForExistence(timeout: 12))
+                let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                shot.name = "synthetic-solo-run-1-diamond-time-pickup"
+                shot.lifetime = .keepAlways
+                add(shot)
+                let finished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: title)
+                XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 25), .completed)
+                let back = app.buttons["leaveReplay"]
+                XCTAssertTrue(back.waitForExistence(timeout: 15))
+                back.tap()
+            } else {
+                app.buttons["pauseMenu"].tap()
+                XCTAssertTrue(app.buttons["leaveGame"].waitForExistence(timeout: 10))
+                app.buttons["leaveGame"].tap()
+            }
         }
         XCTAssertTrue(help.waitForExistence(timeout: 15))
         app.terminate()

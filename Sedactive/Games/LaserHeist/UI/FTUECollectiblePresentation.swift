@@ -18,6 +18,9 @@ import SwiftUI
         if owner?.context != context || owner?.kind != kind {
             clear()
             owner = (context, kind)
+            #if DEBUG
+            reportedPassages = 0
+            #endif
         }
         guard ready, context.isActive, context.sessionGeneration == input.sessionGeneration,
               let avatars = scene.robotAvatars else { suspend(); return nil }
@@ -89,12 +92,35 @@ import SwiftUI
             }
             if current.receipt == nil {
                 let sphere = diamonds?.bodyContactSphere(id: spawn.id) ?? heart?.bodyContactSphere
-                if contactReady, let sphere, sphere.radius > 0, time >= spawn.entry, time < spawn.exit {
-                    let overlaps = players.filter { player in
-                        bodies[player]?.contains { $0.overlaps(center: sphere.center, radius: sphere.radius) } == true
+                if time >= spawn.entry, time < spawn.exit {
+                    if contactReady, let sphere, sphere.radius > 0 {
+                        let overlaps = players.filter { player in
+                            bodies[player]?.contains { $0.overlaps(center: sphere.center, radius: sphere.radius) } == true
+                        }
+                        try current.collect(overlaps, context: context)
+                        #if DEBUG
+                        if Self.diagnostics {
+                            contactWindow.eligible += 1
+                            if overlaps.isEmpty { contactWindow.noOverlap += 1 }
+                            contactWindow.target = sphere.center
+                            contactWindow.radius = sphere.radius
+                            contactWindow.body = bodies[lane]?.first?.start
+                        }
+                        #endif
+                    } else {
+                        #if DEBUG
+                        if Self.diagnostics {
+                            if contactReady { contactWindow.noSphere += 1 }
+                            else { contactWindow.noFreshPose += 1 }
+                        }
+                        #endif
                     }
-                    try current.collect(overlaps, context: context)
                 }
+                #if DEBUG
+                if current.receipt != nil || time >= spawn.exit {
+                    reportPassage(current, context: context, time: time)
+                }
+                #endif
             } else if feedbackUntil == nil {
                 AudioService.shared.play(kind == .heart ? .healthPickup : .diamondCollect)
                 feedbackUntil = time + (kind == .heart ? HeartCollectible.effectLifetime : Diamond.effectLifetime)
@@ -133,6 +159,25 @@ import SwiftUI
     private var traceZeroSteps = 0
     private var traceReported = false
 
+    private struct ContactWindow {
+        var eligible = 0
+        var noOverlap = 0
+        var noSphere = 0
+        var noFreshPose = 0
+        var target: SIMD3<Float>?
+        var radius: Float?
+        var body: SIMD3<Float>?
+    }
+    private var contactWindow = ContactWindow()
+    private var reportedPassages = 0
+
+    private func reportPassage(_ encounter: FTUECollectibleEncounter, context: BodyInputContext, time: Double) {
+        guard Self.diagnostics, reportedPassages < 3 else { return }
+        reportedPassages += 1
+        let window = contactWindow
+        print("[FTUE Collectible Contact] generation=\(context.sessionGeneration) source=\(String(describing: context.wristContact?.sourceEpoch)) calibration=\(context.calibrationRevisions) target=\(encounter.spawn.id) time=\(time) accepted=\(encounter.receipt != nil) eligible=\(window.eligible) noOverlap=\(window.noOverlap) noSphere=\(window.noSphere) noFreshPose=\(window.noFreshPose) targetWorld=\(String(describing: window.target)) targetRadius=\(String(describing: window.radius)) torsoWorld=\(String(describing: window.body))")
+    }
+
     private func trace(scene: LaserScene, kind: FTUECollectible, generation: UUID, now: Double, step: Double,
                        contactReady: Bool, hasHeartArt: Bool) {
         guard Self.diagnostics else { return }
@@ -167,6 +212,9 @@ import SwiftUI
     }
 
     private func retirePassage() {
+        #if DEBUG
+        contactWindow = ContactWindow()
+        #endif
         diamonds?.clear()
         heart?.retire()
         diamonds = nil; heart = nil; encounter = nil; lane = nil
