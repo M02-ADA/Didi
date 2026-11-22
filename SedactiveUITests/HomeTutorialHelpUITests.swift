@@ -65,7 +65,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
-        app.launchArguments = ["-replay", "-leanFTUEPreview", "-hideDebugOverlay",
+        app.launchArguments = ["-replay", "-leanFTUEPreview", "-hideDebugOverlay", "-leanFTUEVaultInitialDropout",
             "-laserHeist.ftue.lean.v1.completed", "YES",
             "-laserHeist.ftue.heart.v1.completed", "YES",
             "-laserHeist.ftue.jumpDuck.v1.completed", "YES",
@@ -113,6 +113,10 @@ final class HomeTutorialHelpUITests: XCTestCase {
             let expected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", label), object: practice)
             XCTAssertEqual(XCTWaiter.wait(for: [expected], timeout: 10), .completed)
         }
+        let scene = app.staticTexts["ftueVaultSceneStatus"]
+        XCTAssertTrue(scene.waitForExistence(timeout: 10))
+        XCTAssertEqual(scene.label, "SYNTHETIC VAULT SCENE · door: true · buttons: \(solo ? 1 : 2) · waiting: true")
+        capture("synthetic-vault-before-fresh-evidence")
         waitForPractice(0, opened: false)
         let banner = solo ? "PRESS YOUR BUTTON" : "PRESS THE BUTTONS"
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", banner)).firstMatch.exists)

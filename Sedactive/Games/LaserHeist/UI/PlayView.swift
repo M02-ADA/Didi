@@ -55,6 +55,11 @@ private struct ReplayRoundView: View {
     @State private var collectiblePresentation = FTUECollectiblePresentation()
     @State private var tutorialVaultPractice: FTUEVaultPractice?
     @State private var tutorialVaultPresenter: GameplayScenePresenter?
+    #if DEBUG
+    @State private var vaultDiagnosticStart: Double?
+    @State private var vaultDiagnosticInspected = false
+    @State private var vaultPreviewSceneStatus = ""
+    #endif
     @State private var tutorialDiamondTime: FTUEDiamondTimeSession?
     @State private var tutorialDiamondPresentation = LaserReplayPresentation()
     @State private var tutorialDiamondFlights = DiamondHUDFlightModel()
@@ -643,6 +648,8 @@ private struct ReplayRoundView: View {
                     Text(leanPreviewStatus)
                         .accessibilityIdentifier("leanPreviewStatus")
                     if let practice = tutorialVaultPractice {
+                        Text(verbatim: vaultPreviewSceneStatus)
+                            .accessibilityIdentifier("ftueVaultSceneStatus")
                         let pressed = practice.vault?.buttons.values.filter { !$0.isEmpty }.count ?? 0
                         Text(verbatim: "SYNTHETIC VAULT · active: \(pressed) · opened: \(practice.didOpen)")
                             .accessibilityIdentifier("ftueVaultPracticeStatus")
@@ -948,6 +955,13 @@ private struct ReplayRoundView: View {
     private func updateTutorialVaultPractice(_ tutorial: LeanTutorial, scene: LaserScene, at now: Double) {
         guard !leaving, tutorial.stage == .vaultPractice, tutorial.generation == generation else {
             if tutorialVaultPractice != nil { retireTutorialVaultPractice() }
+            #if DEBUG
+            if vaultDiagnosticStart != nil {
+                vaultDiagnosticStart = nil
+                vaultDiagnosticInspected = false
+                vaultPreviewSceneStatus = ""
+            }
+            #endif
             return
         }
         var inputs = suppliedSession?.tutorialVaultInputs(generation: generation)
@@ -961,10 +975,21 @@ private struct ReplayRoundView: View {
         if let practice = tutorialVaultPractice, let context = suppliedSession?.inputContext,
            context != practice.inputs.round.context { retireTutorialVaultPractice() }
 
-        guard trainingSceneActive, !tutorial.isSuspended, let inputs,
-              let robots = scene.robotAvatars,
-              inputs.round.roster.allSatisfy({ robots.consoles[$0] != nil }),
-              suppliedSession.map({ hasFreshTutorialTracking($0, at: now) }) ?? true else {
+        let consolesReady = inputs?.round.roster.allSatisfy { scene.robotAvatars?.consoles[$0] != nil } == true
+        var evidenceReady = suppliedSession.map { hasFreshTutorialTracking($0, at: now) } ?? true
+        #if DEBUG
+        if vaultDiagnosticStart == nil {
+            vaultDiagnosticStart = now
+            print("[FTUEVault] practice generation=\(generation) roster=\(tutorial.roster) inputs=\(inputs != nil) consoles=\(consolesReady) fresh=\(evidenceReady) active=\(trainingSceneActive) paused=\(tutorial.isSuspended) readiness=\(String(describing: suppliedSession?.liveReadiness?.phase))")
+        }
+        if isLeanPreview, ProcessInfo.processInfo.arguments.contains("-leanFTUEVaultInitialDropout"),
+           let start = vaultDiagnosticStart, now - start < 4 {
+            evidenceReady = false
+        }
+        #endif
+        // A ready, bound session can show its encounter while waiting for a fresh contact packet.
+        // Keep the practice clock and consumer suspended until the original evidence gate is met.
+        guard trainingSceneActive, !tutorial.isSuspended, let inputs, consolesReady else {
             tutorialVaultPractice?.suspend(at: now)
             return
         }
@@ -979,15 +1004,44 @@ private struct ReplayRoundView: View {
                 tutorialVaultPractice = try FTUEVaultPractice(inputs: inputs, at: now)
             }
             guard let practice = tutorialVaultPractice, let presenter = tutorialVaultPresenter else { return }
+            if evidenceReady {
+                #if DEBUG
+                if isLeanPreview, let input = leanPreviewInput, let packet = snapshot {
+                    snapshot = try input.vaultPracticeSnapshot(packet, practice: practice)
+                }
+                #endif
+                let shifts = snapshot.flatMap { suppliedSession?.vaultZoneShifts(for: $0) } ?? [:]
+                try practice.update(at: now, snapshot: snapshot, zoneShifts: shifts)
+            } else {
+                practice.suspend(at: now)
+            }
+            let state = practice.state
+            presenter.apply(state: state, events: practice.events, snapshot: nil)
             #if DEBUG
-            if isLeanPreview, let input = leanPreviewInput, let packet = snapshot {
-                snapshot = try input.vaultPracticeSnapshot(packet, practice: practice)
+            if !vaultDiagnosticInspected {
+                vaultDiagnosticInspected = true
+                let door = scene.root.findEntity(named: "vaultDoor")
+                let camera = scene.root.findEntity(named: "camera") as? PerspectiveCamera
+                let consoles = presenter.vault.consoleViews.values.compactMap {
+                    $0.root.findEntity(named: "vault.console.button.activate")
+                }
+                let viewport = presentation.pawBoardDiamonds.viewportFrame
+                let aspect = Float(viewport.width / max(1, viewport.height))
+                func inFrame(_ entity: Entity) -> Bool {
+                    guard let camera, entity.isEnabledInHierarchy, entity.scene != nil else { return false }
+                    let point = camera.convert(position: entity.position(relativeTo: nil), from: nil)
+                    let limit = -point.z * tan(camera.camera.fieldOfViewInDegrees * .pi / 360)
+                    return point.z < 0 && abs(point.x) < limit * aspect && abs(point.y) < limit
+                }
+                let doorVisible = door.map(inFrame) == true
+                let inFrameCount = consoles.filter(inFrame).count
+                let doorPosition = door.flatMap { door in camera.map { door.position(relativeTo: $0) } }
+                let buttonPositions = camera.map { camera in consoles.map { $0.position(relativeTo: camera) } }
+                vaultPreviewSceneStatus = "SYNTHETIC VAULT SCENE · door: \(doorVisible) · buttons: \(inFrameCount) · waiting: \(!evidenceReady)"
+                print("[FTUEVault] applied generation=\(generation) doorParent=\(door?.parent?.name ?? "nil") doorInFrame=\(doorVisible) doorRelativeToCamera=\(String(describing: doorPosition)) buttonsInFrame=\(inFrameCount)/\(inputs.round.roster.count) buttonPositions=\(String(describing: buttonPositions)) aspect=\(aspect) travel=\(scene.travelOffset) camera=\(String(describing: camera?.transform)) fresh=\(evidenceReady)")
             }
             #endif
-            let shifts = snapshot.flatMap { suppliedSession?.vaultZoneShifts(for: $0) } ?? [:]
-            try practice.update(at: now, snapshot: snapshot, zoneShifts: shifts)
-            let state = practice.state
-            presenter.apply(state: state, events: practice.events, snapshot: snapshot)
+            guard evidenceReady else { return }
             // Give the shared opening its authored on-screen time even if a RealityKit
             // playback controller reports completion before its first rendered frame.
             let openingDuration = VaultDoor.openingDuration(reduceMotion: presenter.vault.reducesMotion())
