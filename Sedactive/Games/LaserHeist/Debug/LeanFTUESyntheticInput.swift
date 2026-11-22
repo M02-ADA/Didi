@@ -24,6 +24,7 @@ import Foundation
     private var stageStart = 0.0
     private var wasSuspended = false
     private let hold: Bool
+    private let delaysDiamondTimeCapture = ProcessInfo.processInfo.arguments.contains("-leanFTUEDelayedDiamondTimeCapture")
     private let skipsLeanMotion = ProcessInfo.processInfo.arguments.contains("-leanFTUENoMotion")
 
     init(configuration: BodyInputConfiguration, geometry: UInt64, tutorial: LeanTutorial,
@@ -45,7 +46,7 @@ import Foundation
         guard !stopped else { return false }
         let now = CameraHostClock.now()
         // Model a synthetic capture one frame before processing. No physical frame is restamped.
-        let capture = now - 1.0 / 30
+        let capture = now - (delaysDiamondTimeCapture && tutorial.stage == .diamondTimeDemo ? 0.18 : 1.0 / 30)
         guard capture - lastCapture >= 1.0 / 30 else { return true }
         lastCapture = capture; frame += 1
         if stage != tutorial.stage || wasSuspended != tutorial.isSuspended {

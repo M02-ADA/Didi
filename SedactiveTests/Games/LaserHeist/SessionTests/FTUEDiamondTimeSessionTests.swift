@@ -83,6 +83,30 @@ import Testing
         #expect(normalRound.teamScore == 0 && normalRound.roundPhase == .activity)
     }
 
+    @Test(arguments: [true, false])
+    func displaysAdmittedWristAfterShortRenderWindowAndClearsItOnExpiry(solo: Bool) throws {
+        let fixture = try WristGameplayFixture(generation: UUID())
+        let round = try Self.makeRound(fixture, solo: solo)
+        let player: PlayerID = solo ? .player1 : .player2
+        let hand = LaserContactHand(playerID: player, wrist: .left)
+        let opening = round.entry.timeline.total
+        try round.update(at: opening, snapshot: nil)
+
+        let freshness = try #require(round.inputs.context.wristContact?.freshness)
+        #expect(freshness > 0.15)
+        let capture = opening + 0.1
+        let age = (0.15 + freshness) / 2
+        let packet = try fixture.packet(4, capture, points: [hand: WristGameplayFixture.outside])
+        try round.update(at: capture + age, snapshot: packet)
+        #expect(Set(round.paws.keys) == [hand])
+        #expect(round.game.activeDiamonds.count == 6)
+        #expect(round.game.teamScore == 0)
+
+        try round.update(at: capture + freshness + 0.01, snapshot: packet)
+        #expect(round.paws.isEmpty)
+        #expect(round.game.teamScore == 0)
+    }
+
     @Test func suspendingEntryAndRoundHoldsCountdownAndReplayStartsFresh() throws {
         let generation = UUID()
         let round = try Self.makeRound(generation: generation)

@@ -66,6 +66,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
         app.launchArguments = ["-replay", "-leanFTUEPreview", "-hideDebugOverlay", "-leanFTUEVaultInitialDropout",
+            "-leanFTUEDelayedDiamondTimeCapture",
             "-laserHeist.ftue.lean.v1.completed", "YES",
             "-laserHeist.ftue.heart.v1.completed", "YES",
             "-laserHeist.ftue.jumpDuck.v1.completed", "YES",

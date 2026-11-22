@@ -86,7 +86,9 @@ final class FTUEDiamondTimeSession {
         try next.advance(to: clock.gameTime)
         _ = next.drainEvents()
         if next.gameTime != game.gameTime || next.diamondsCollected != game.diamondsCollected { game = next }
-        let visible = consumer.visiblePaws(at: now)
+        // Use the same source freshness limit for the tutorial cursor as for its
+        // admitted wrist sample. The consumer still controls pickup and smoothing.
+        let visible = consumer.visiblePaws(at: now, maximumDisplayAge: inputs.context.wristContact?.freshness ?? 0)
         if visible != paws { paws = visible }
     }
 }
