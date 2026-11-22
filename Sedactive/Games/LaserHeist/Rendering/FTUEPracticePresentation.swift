@@ -33,7 +33,7 @@ import RealityKit
         scene.setTimingPaused(suspended)
         scene.setTimingPresentation(LaserTimingPresentation.make(state: practice.state, configuration: practice.configuration, paused: suspended))
         callouts.setTutorialSuspended(suspended)
-        guard !suspended, !presented, practice.outcome == .hit || practice.outcome == .clear else { return }
+        guard !suspended, !presented, practice.requiresFailureFeedback || practice.outcome == .clear else { return }
         presented = true
         for (player, verdict) in practice.verdicts {
             let outcome: LaserFeedback.Outcome

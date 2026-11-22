@@ -99,8 +99,11 @@ import Testing
         #expect(practice.outcome == .unavailable)
         #expect(practice.verdicts[roster.subtracting([missing]).first!] == .clear)
         #expect(practice.verdicts[missing] == .unavailable(.invalidEvidence(.crown, .missingLandmarks)))
+        try practice.update(at: 1150, eligible: false, context: practice.context)
+        try practice.update(at: 1160, eligible: true, context: practice.context)
+        #expect(practice.attemptID == refused && practice.requiresFailureFeedback)
         try practice.feedbackFinished(attempt: refused, generation: practice.generation)
-        #expect(!practice.completed)
+        #expect(!practice.completed && practice.attemptID != refused)
 
         try Self.run(&practice, clear: roster, start: 1200)
         let accepted = practice.attemptID

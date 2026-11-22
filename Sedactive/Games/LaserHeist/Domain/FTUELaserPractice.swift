@@ -39,6 +39,10 @@ nonisolated struct FTUELaserPractice {
     var crossing: Double { encounter.targets[0].crossingTime }
     var deadline: Double { configuration.evidenceTiming.finalizationTime(crossing: crossing) }
     var attemptID: UUID { encounter.attemptID }
+    /// An unjudged Co-op DUCK still needs team retry feedback, without a player hit.
+    var requiresFailureFeedback: Bool {
+        outcome == .hit || (outcome == .unavailable && move == .duck && roster.count > 1)
+    }
     var state: LaserGameState {
         .init(sessionGeneration: generation, phase: .activity, gameTime: elapsed, activityProgress: 0,
             teamHealth: configuration.initialTeamHealth, teamScore: 0,
@@ -73,7 +77,7 @@ nonisolated struct FTUELaserPractice {
             }
             context = current
         }
-        if interrupted || outcome == .unavailable {
+        if interrupted || (outcome == .unavailable && !requiresFailureFeedback) {
             #if DEBUG
             traceDuck(interrupted ? "retry after interruption" : "retry after unavailable evidence")
             #endif
@@ -82,7 +86,14 @@ nonisolated struct FTUELaserPractice {
         if lastHost == nil { lastHost = now; if epochHost == nil { epochHost = now - elapsed }; return }
         guard let previous = lastHost, now >= previous else { return }
         lastHost = now
-        guard now - previous <= 0.25 else { interrupted = outcome == .pending; return }
+        let updateGap = now - previous
+        guard updateGap <= 0.25 else {
+            interrupted = outcome == .pending
+            #if DEBUG
+            if interrupted { traceDuck("practice interrupted: host update gap=\(updateGap)s") }
+            #endif
+            return
+        }
         elapsed += now - previous
         if outcome == .pending, elapsed >= deadline { try finalize() }
     }
@@ -148,12 +159,12 @@ nonisolated struct FTUELaserPractice {
     private mutating func traceDuck(_ event: String) {
         guard shouldTraceDuck else { return }
         reportedDuckAttempts += 1
-        print("[FTUE Duck] generation=\(generation) attempt=\(attemptID) number=\(attemptNumber) roster=\(roster) source=\(String(describing: context.wristContact?.sourceEpoch)) calibration=\(context.calibrationRevisions) crossing=\(crossing) elapsed=\(elapsed) margin=\(configuration.clearanceMargin) \(event)")
+        print("[FTUE Duck] generation=\(generation) attempt=\(attemptID) number=\(attemptNumber) roster=\(roster) source=\(String(describing: context.wristContact?.sourceEpoch)) calibration=\(context.calibrationRevisions) crossing=\(crossing) deadline=\(deadline) elapsed=\(elapsed) margin=\(configuration.clearanceMargin) \(event)")
     }
     #endif
     mutating func feedbackFinished(attempt: UUID, generation: UUID) throws {
         guard self.generation == generation, attempt == attemptID, !completed, lastHost != nil else { return }
-        if outcome == .hit {
+        if requiresFailureFeedback {
             #if DEBUG
             traceDuck("retry after ZAPPED")
             #endif

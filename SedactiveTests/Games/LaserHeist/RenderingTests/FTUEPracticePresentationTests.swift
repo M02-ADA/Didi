@@ -47,6 +47,51 @@ import Testing
         #expect(callouts.shown == nil && scene.timingPresentation == nil && scene.timingVariant == variant)
         #expect(scene.root.children.allSatisfy { !$0.name.hasPrefix("ftue.practice.") })
     }
+    @Test func coopDuckUnavailableAndHitEachShowFeedbackBeforeFreshRetry() async throws {
+        let scene = LaserScene(), renderer = FTUEPracticePresentation(), callouts = LaserTeamCalloutModel()
+        scene.installEnvironment(authored: await LaserScene.loadAuthoredEnvironment())
+        var practice = try FTUELaserPracticeTests.make()
+        let roster = Set(practice.roster)
+        try FTUELaserPracticeTests.run(&practice, clear: roster)
+        try practice.feedbackFinished(attempt: practice.attemptID, generation: practice.generation)
+        var attempts: Set<UUID> = []
+        let failures: [(Double, Set<PlayerID>, FTUELaserPractice.Outcome)] = [
+            (1100, [.player2], .unavailable), (1200, [], .hit)
+        ]
+        for (start, unavailable, expected) in failures {
+            let attempt = practice.attemptID
+            #expect(attempts.insert(attempt).inserted)
+            try FTUELaserPracticeTests.run(&practice, clear: unavailable.isEmpty ? [.player2] : roster,
+                                          unavailable: unavailable, start: start)
+            renderer.update(scene: scene, practice: practice, callouts: callouts, suspended: false)
+            #expect(practice.outcome == expected)
+            let serial = try #require(callouts.shown?.serial)
+            #expect(callouts.shown?.kind == .zapped && renderer.finishedAttempt(callouts) == nil)
+            let root = try #require(scene.root.children.first { $0.name.hasPrefix("ftue.practice.") })
+            try practice.update(at: start + 4, eligible: true, context: practice.context)
+            renderer.update(scene: scene, practice: practice, callouts: callouts, suspended: false)
+            #expect(callouts.shown?.serial == serial && practice.attemptID == attempt)
+            callouts.finish(serial)
+            let finished = try #require(renderer.finishedAttempt(callouts))
+            try practice.feedbackFinished(attempt: finished, generation: practice.generation)
+            renderer.update(scene: scene, practice: practice, callouts: callouts, suspended: false)
+            #expect(root.parent == nil && callouts.shown == nil)
+            #expect(scene.root.children.filter { $0.name.hasPrefix("ftue.practice.") }.count == 1)
+        }
+        let final = practice.attemptID
+        #expect(attempts.insert(final).inserted)
+        try FTUELaserPracticeTests.run(&practice, clear: roster, start: 1300)
+        renderer.update(scene: scene, practice: practice, callouts: callouts, suspended: false)
+        #expect(callouts.shown?.kind == .perfect)
+        callouts.finish(try #require(callouts.shown?.serial))
+        try practice.feedbackFinished(attempt: try #require(renderer.finishedAttempt(callouts)),
+                                      generation: practice.generation)
+        try practice.update(at: 1310, eligible: true, context: practice.context)
+        #expect(practice.completed && practice.attemptID == final)
+        renderer.stop(callouts: callouts)
+        #expect(scene.root.children.allSatisfy { !$0.name.hasPrefix("ftue.practice.") })
+    }
+
     @Test func missingModuleMigrationAndOldCompletionAreGenerationQualified() throws {
         let defaults = UserDefaults(suiteName: "JumpDuckMigration.\(UUID())")!
         defer { for key in [LeanTutorial.completionKey, LeanTutorial.heartCompletionKey, LeanTutorial.jumpDuckCompletionKey] { defaults.removeObject(forKey: key) } }

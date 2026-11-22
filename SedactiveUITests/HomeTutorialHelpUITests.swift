@@ -205,18 +205,30 @@ final class HomeTutorialHelpUITests: XCTestCase {
     }
 
     func testCoopDiamondWithP1Contact() {
-        verifyCoopCollectibleReplays(contact: "-ftueDiamondP1Only", player: "P1", runs: 1, verifyDuck: true)
+        verifyCoopCollectibleReplays(contact: "-ftueDiamondP1Only", player: "P1", runs: 1, duck: .hit)
     }
 
     func testRepeatedCoopDiamondWithP2Contact() {
         verifyCoopCollectibleReplays(contact: "-ftueDiamondP2Only", player: "P2", runs: 2)
     }
 
-    private func verifyCoopCollectibleReplays(contact: String, player: String, runs: Int, verifyDuck: Bool = false) {
+    func testCoopDuckUnavailableFeedbackThenClear() {
+        verifyCoopCollectibleReplays(contact: "-ftueDiamondP1Only", player: "P1", runs: 1, duck: .unavailable)
+    }
+
+    func testCoopDuckClearsFirstAttempt() {
+        verifyCoopCollectibleReplays(contact: "-ftueDiamondP1Only", player: "P1", runs: 1, duck: .clear)
+    }
+
+    private enum DuckFixture { case hit, unavailable, clear }
+
+    private func verifyCoopCollectibleReplays(contact: String, player: String, runs: Int, duck: DuckFixture? = nil) {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
         app.launchArguments = ["-homeHelpFTUEPreview", "-ftueCollectibleDiagnostics", "-ftueDuckDiagnostics", contact]
+        if duck == .unavailable { app.launchArguments.append("-ftueDuckUnavailableFirst") }
+        if duck == .clear { app.launchArguments.append("-ftueDuckClearFirst") }
         app.launch()
         let help = app.buttons["replayTutorial"]
         let elements = app.descendants(matching: .any)
@@ -231,7 +243,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
                 shot.lifetime = .keepAlways
                 add(shot)
             }
-            if verifyDuck {
+            if let duck {
                 let status = app.staticTexts["ftuePracticeStatus"]
                 func capturePractice(_ text: String) {
                     let match = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
@@ -242,8 +254,13 @@ final class HomeTutorialHelpUITests: XCTestCase {
                     add(shot)
                 }
                 capturePractice("jump attempt 2 · clear")
-                capturePractice("duck attempt 3 · hit")
-                capturePractice("duck attempt 4 · clear")
+                if duck == .clear {
+                    capturePractice("duck attempt 3 · clear")
+                } else {
+                    capturePractice("duck attempt 3 · \(duck)")
+                    XCTAssertTrue(elements.matching(NSPredicate(format: "label == 'Zapped!'")).firstMatch.exists)
+                    capturePractice("duck attempt 4 · clear")
+                }
                 XCTAssertTrue(elements["progressTutorialTitle"].waitForExistence(timeout: 15))
                 XCTAssertFalse(status.exists)
             }

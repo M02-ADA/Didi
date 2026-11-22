@@ -43,6 +43,9 @@ import Foundation
         mailbox = AvatarPoseMailbox(maxAge: LiveAvatarPresenter.maximumPoseAge)
         mailbox.publish(source.status)
     }
+    private let duckUnavailableFirst = ProcessInfo.processInfo.arguments.contains("-ftueDuckUnavailableFirst")
+    private let duckClearFirst = ProcessInfo.processInfo.arguments.contains("-ftueDuckClearFirst")
+
     func tick() throws -> Bool {
         guard !stopped else { return false }
         let now = CameraHostClock.now()
@@ -81,13 +84,21 @@ import Foundation
             }
             let attempt = activePractice.map { stageAttempts[$0.move, default: 0] } ?? 0
             // Explicit DEBUG fixture: one mixed HIT then one all-CLEAR attempt per move.
-            let succeeds = activePractice != nil && (attempt > 1 || (roster.count > 1 && player == .player1 && activePractice?.move == .jump)
-                || (roster.count > 1 && player == .player2 && activePractice?.move == .duck))
+            let succeeds: Bool
+            if activePractice?.move == .duck && roster.count > 1 {
+                succeeds = duckClearFirst || attempt > 1 || player == .player2
+                    || duckUnavailableFirst
+            } else {
+                succeeds = activePractice != nil && (attempt > 1 || (roster.count > 1 && player == .player1))
+            }
+            let missingWrist = duckUnavailableFirst && activePractice?.move == .duck
+                && roster.count > 1 && attempt == 1 && player == .player2
             let action = activePractice.map { abs($0.elapsed - $0.crossing) < 0.3 && succeeds } ?? false
             let duck = action && activePractice?.move == .duck
             let jump = action && activePractice?.move == .jump
             players[player] = .init(playerID: player, calibrationRevision: c.revision, trackingStatus: .reliable,
-                geometry: .init(crownY: try value(duck ? h * 0.6 : h), leftWristY: try value(h * 0.5), rightWristY: try value(h * 0.5),
+                geometry: .init(crownY: try value(duck ? h * 0.6 : h), leftWristY: missingWrist ? try .init(value: nil, validity: .missingLandmarks) : try value(h * 0.5),
+                    rightWristY: try value(h * 0.5),
                     leftSoleY: try value(jump ? h * 0.12 : 0), rightSoleY: try value(jump ? h * 0.12 : 0), centerX: try value(lane)),
                 jumpState: .init(phase: jump ? .airborne : .grounded, validity: .valid))
         }
