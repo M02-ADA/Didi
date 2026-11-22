@@ -119,6 +119,16 @@ struct GameplayHUDTests {
         #expect(open.banner == .none)
     }
 
+    /// One switch per player: the gate's instruction is Solo Practice's own when the round is solo.
+    @Test func theGateInstructionKnowsSoloPractice() throws {
+        let coop = GameplayHUDModel(state: state(60, .vault, activity: 60, opened: 1, vault: vault()), events: [],
+                                    configuration: try configuration(), activityDuration: 300)
+        let solo = GameplayHUDModel(state: state(60, .vault, activity: 60, opened: 1, vault: vault()), events: [],
+                                    configuration: try configuration(), activityDuration: 300, soloPractice: true)
+        #expect(!coop.soloPractice && solo.soloPractice)
+        #expect(coop.banner == .pressButtons && solo.banner == .pressButtons, "same gate, its own wording")
+    }
+
     @Test func diamondTimeFillsTheBarAndCountsDownFromThePhaseChange() throws {
         let events = [event(1, 100, .phaseChanged(.vault)), event(2, 103.2, .phaseChanged(.diamondTime))]
         let model = GameplayHUDModel(state: state(106.5, .diamondTime, activity: 100, opened: 5), events: events,

@@ -88,7 +88,7 @@ nonisolated struct LaserGame: Sendable {
     /// Targets each registered attempt carries; its effects commit when all are judged.
     private var targetCounts: [UUID: Int] = [:]
     #if DEBUG
-    /// DEBUG Solo Test only: this one player's three presses open a vault (there is no second
+    /// DEBUG Solo Test only: this one player's press opens a vault (there is no second
     /// player to press theirs). Nil in every co-op round, where both sides are always required.
     var soloPracticePlayer: PlayerID?
     #endif
@@ -479,7 +479,7 @@ nonisolated struct LaserGame: Sendable {
         vault = current
         guard activated > 0 else { return 0 }
         let verdicts = Dictionary(uniqueKeysWithValues: PlayerID.allCases.map {
-            ($0, current.buttons[$0]?.count == 3 ? Judgement.clear : .pending(.awaitingFinalization))
+            ($0, current.buttons[$0]?.count == LaserVaultButton.allCases.count ? Judgement.clear : .pending(.awaitingFinalization))
         })
         var succeeded = LaserCoopDecision.evaluate(verdicts) == .succeeded
         #if DEBUG

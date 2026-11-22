@@ -137,8 +137,9 @@ nonisolated struct FullRoundReplayScenario: Sendable {
                     vaultOffset += 5
                 } else {
                     for (playerIndex, player) in PlayerID.allCases.enumerated() {
-                        for (buttonIndex, button) in LaserVaultButton.allCases.enumerated() {
-                            add(at + pauseOffset + Double(playerIndex * 3 + buttonIndex + 1) * 0.2, .touchVault(id, player, button))
+                        // One activation button each, P1 at +0.6 s and P2 at +1.2 s: the gate opens when it did with three.
+                        for button in LaserVaultButton.allCases {
+                            add(at + pauseOffset + Double(playerIndex + 1) * 0.6, .touchVault(id, player, button))
                         }
                     }
                     vaultOffset += 1.2

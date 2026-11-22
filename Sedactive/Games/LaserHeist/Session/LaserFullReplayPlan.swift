@@ -2,6 +2,8 @@ import Foundation
 
 /// Explicitly synthetic game actions, never a producer attachment or live input fallback.
 nonisolated struct LaserFullReplayPlan: Sendable {
+    /// How long each vault's synthetic presses take, from its start to the last press (seconds).
+    static let vaultPressSpan = 1.2
     enum Action: Sendable {
         case register(UUID)
         case openVault(UUID, [VaultTarget])
@@ -98,13 +100,17 @@ nonisolated struct LaserFullReplayPlan: Sendable {
             steps.append(Step(time: boundary, action: .openVault(vaultID, buttons)))
             // Leave the first vault untouched so the real deadline ends the round.
             if scenario == .vaultTimeout { break }
+            // The presses span the same 1.2 s as the three-button sequence did (six presses 0.2 s apart),
+            // so each vault opens when it did and the replay's timeline is unchanged (one button per
+            // player, 19 November 2026; as the short replay keeps its gate at 21 s).
+            let pressSpacing = Self.vaultPressSpan / Double(buttons.count)
             for (index, button) in buttons.enumerated() {
-                let time = boundary + Double(index + 1) * 0.2
+                let time = boundary + Double(index + 1) * pressSpacing
                 let hand = LaserContactHand(playerID: button.player, wrist: .left)
                 steps.append(Step(time: time - 0.05, action: .membership([button.id: [hand: .outside]])))
                 steps.append(Step(time: time, action: .membership([button.id: [hand: .inside]])))
             }
-            vaultWindows.append(boundary...(boundary + Double(buttons.count) * 0.2))
+            vaultWindows.append(boundary...(boundary + Self.vaultPressSpan))
         }
         // The synthetic players: upright on their lanes; at each horizontal crossing the move asked
         // for; for each LEAN beam a lean toward its way out from 0.4 s after the warning until the

@@ -10,7 +10,7 @@ import SwiftUI
 ///   the round is paused (a resume may still plan replacement lasers before it).
 /// - "Diamond Time" enters the real Diamond Time through the coordinator; a paused round applies
 ///   it on resume. Off from Diamond Time on.
-/// Skips never score. In a Solo Test, P1's three gate buttons can also be tapped as a fallback for
+/// Skips never score. In a Solo Test, P1's gate button can also be tapped as a fallback for
 /// the wrist press (shown only at an open gate). Tracking, steering, gate contact and the steering
 /// test sit under Advanced (collapsed; it scrolls). Tracking is shown as the producer reports it;
 /// nothing here creates body evidence.
@@ -137,7 +137,7 @@ struct DebugRoundControls: View {
         .buttonStyle(DebugSkipButtonStyle())
     }
 
-    /// Solo Test fallback for P1's gate buttons, only while P1's gate is open.
+    /// Solo Test fallback for P1's gate button, only while P1's gate is open.
     private func soloVaultButtons(_ pressed: Set<LaserVaultButton>) -> some View {
         HStack(spacing: 6) {
             Text("P1 GATE").font(.system(size: 10, weight: .heavy, design: .monospaced)).foregroundStyle(.white.opacity(0.7))
@@ -273,7 +273,7 @@ struct DebugRoundControls: View {
     private static let hairline = Color.yellow.opacity(0.45)
 
     private func label(_ button: LaserVaultButton) -> String {
-        switch button { case .top: "▲"; case .middle: "●"; case .bottom: "▼" }
+        switch button { case .activate: "PRESS" }
     }
 
     /// The compact round and stage indicator: Solo or co-op, gates so far, and a gate, Diamond

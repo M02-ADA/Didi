@@ -96,8 +96,8 @@ import Testing
         // No body evidence was delivered: every verdict is UNAVAILABLE, nothing cleared or hit.
         #expect(rig.game.playerStats.values.allSatisfy { $0.cleared == 0 && $0.hit == 0 })
         #expect(rig.game.teamHealth == rig.configuration.initialTeamHealth && rig.game.teamScore == 0)
-        // Six zones, three per player, on each player's outer side (P1 plane +X, P2 −X).
-        #expect(vault.zones.count == 6)
+        // One activation zone per player, on each player's outer side (P1 plane +X, P2 −X).
+        #expect(vault.zones.count == 2 && Set(vault.zones.map(\.playerID)) == Set(PlayerID.allCases))
         for zone in vault.zones {
             let lane = rig.input.playerPlaneLayout.centerX(for: zone.playerID)
             #expect((zone.position.x - lane) * LaserLiveRoundGeometryV1.outward(zone.playerID) > 0)

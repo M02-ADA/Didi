@@ -266,4 +266,57 @@ nonisolated struct LiveCalibrationToReadinessTests {
         #expect(phases.contains(.airborne) && phases.contains(.landing))
         #expect(phases.last == .grounded)
     }
+
+    /// iPad, 21 November 2026 (butt-kick jumps): at the top of the jump the tracker lost the player for
+    /// 5 frames (UNCERTAIN, no candidate) and the provider discarded the jump estimator, so the flight
+    /// was forgotten. Now a flight keeps its estimator through such a gap: those frames are UNKNOWN,
+    /// then the same flight resumes AIRBORNE. A gap while standing still resets as before.
+    @Test func aFlightSurvivesABriefTrackingGap() throws {
+        let (f, initial, stamp) = try LiveVisionFixtures.sessionFixture()
+        var session = initial
+        for i in 0..<10 {
+            let pose = try f.result(UInt64(i + 3), Double(i) * 0.25 + 0.25, LiveVisionFixtures.standingPair)
+            let started = session.beginSample(stamp, source: pose.source, at: pose.source.capturedAt)
+            try #require(started)
+            session.observe(LiveVisionFixtures.withAnatomy(LiveVisionFixtures.mask(pose), pose: pose, revision: stamp.bindingRevision),
+                pose: pose, association: LiveVisionFixtures.association(pose, revision: stamp.bindingRevision),
+                stamp: stamp, at: pose.source.capturedAt + 0.01)
+        }
+        var body = LiveBodyInputState()
+        try body.configure(LiveVisionFixtures.configuration(f.context.generation), source: f.context)
+        body.calibration = session
+        _ = try body.accept(candidateID: try #require(session.candidate).id, expectedRevision: 0, at: 3)
+        func lifted(_ dy: Double) -> [PoseCandidate] {
+            LiveVisionFixtures.standingPair.map { c in
+                .init(candidateID: c.candidateID, joints: c.joints.mapValues { .init(x: $0.x, y: $0.y + dy, confidence: $0.confidence) },
+                      maskTopImageY: nil, maskBottomImageY: nil, leftFootBottomImageY: nil, rightFootBottomImageY: nil,
+                      maskAssociation: .unavailable)
+            }
+        }
+        var phases: [(t: Double, phase: JumpPhase)] = []
+        let gap = 4.25...4.39 // 5 frames at the top of a 0.6 s hop
+        for i in 0..<60 {
+            let t = 3.1 + Double(i) / 30
+            let dy = LiveBodyEstimateTests.hop(t, start: 4.0, duration: 0.6, peak: 0.08)
+            let pose = try f.result(UInt64(20 + i), t, lifted(dy))
+            var association = LiveVisionFixtures.association(pose, revision: stamp.bindingRevision)
+            if gap.contains(t) {
+                association = PlayerTrackingSnapshot(source: association.source, evaluatedAt: association.evaluatedAt,
+                    controlRevision: association.controlRevision,
+                    player1: .init(state: .uncertain, reason: .missingOrWeak, candidateID: nil, cost: nil,
+                                   requiresRebind: false, lastConfirmedAt: association.player1.lastConfirmedAt),
+                    player2: association.player2, assignmentCount: 1, confirmedDescriptorCount: association.confirmedDescriptorCount,
+                    provisionalDescriptorCount: 0)
+            }
+            body.publish(pose, association: association,
+                admission: CameraTrackingAdmission(context: f.context, revision: stamp.bindingRevision,
+                                                   requestID: stamp.bindingRequest),
+                acknowledgment: nil)
+            phases.append((t, try #require(body.latest?.players[.player1]).jumpState.phase))
+        }
+        #expect(phases.contains { $0.t < gap.lowerBound && $0.phase == .airborne }, "airborne before the gap")
+        #expect(phases.filter { gap.contains($0.t) }.allSatisfy { $0.phase != .airborne }, "no evidence: never airborne")
+        let after = phases.first { $0.t > gap.upperBound }
+        #expect(after?.phase == .airborne, "the same flight resumes: \(String(describing: after))")
+    }
 }

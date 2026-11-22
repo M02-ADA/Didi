@@ -435,8 +435,18 @@ private struct ReplayRoundView: View {
                     if session.summary == nil {
                         LaserTeamCalloutView(model: teamCallouts)
                     }
+                    // The blink into Diamond Time, over everything; only while the entry plays.
+                    if let entry = session.finalVaultEntry, !entry.isComplete, entry.blinkClosure > 0 {
+                        DiamondTimeBlinkView(closure: entry.blinkClosure)
+                    }
                 }
             }
+            #if DEBUG
+            if FinalVaultPreview.isRequested {
+                DiamondTimeBlinkView(closure: finalVaultPreview.blinkClosure,
+                                     forcesReducedMotion: ProcessInfo.processInfo.arguments.contains("reduce"))
+            }
+            #endif
         }
         .overlay {
             if let final = session?.summary { ResultsView(summary: final, onRetry: retry, onHome: homeAction) }
@@ -642,7 +652,8 @@ private struct ReplayRoundView: View {
         return GameplayHUDModel(state: session.state, events: session.events, configuration: configuration,
                                 activityDuration: session.activityDuration, stageProgress: session.stageProgress,
                                 diamondsCollected: collected, diamondsAreFixture: fixture,
-                                enteringFinalVault: session.finalVaultEntry.map { !$0.isComplete } ?? false)
+                                enteringFinalVault: session.finalVaultEntry.map { !$0.presentsDiamondTime } ?? false,
+                                soloPractice: session.isSoloPractice)
     }
 
     #if DEBUG

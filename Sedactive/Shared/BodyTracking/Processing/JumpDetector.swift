@@ -20,8 +20,13 @@ nonisolated enum JumpDetector {
 ///   this player's own frame-to-frame foot noise) AND rose by `riseFraction` of that within
 ///   `riseWindow` (a hop, not a slow rise). One raised foot never counts (the lower sole stays down).
 /// - It ends below `exitShare` (hysteresis); the first frame after is LANDING.
-/// - Missing soles are UNKNOWN for that frame, never airborne or grounded. A jump in progress
-///   survives `dropoutFrames` such frames; more, a capture gap, or a new calibration ends it.
+/// - Missing soles are UNKNOWN for that frame, never airborne or grounded. Before a jump, more than
+///   `dropoutFrames` such frames forget the rise seen so far. A jump in progress survives them for up
+///   to `maximumGap` since its soles were last seen, and resumes only if the soles (or the hip bound,
+///   `flightSoles`) still show the player up (iPad, 21 November 2026: in butt-kick jumps the tracker
+///   lost the player for 5 frames, 0.17 s, at the top of the kick). Longer, a capture gap, or a new
+///   calibration ends it.
+///   (DEBUG: each step's decision is kept in `decision` for the jump trace, `JumpTraceLog`.)
 /// Reference values come from synthetic tracks (spike `LiveJumpTuningTests`), not device data.
 nonisolated struct LiveJumpEstimator: Sendable {
   static let enterShare = 0.03, exitShare = 0.015, noiseMultiple = 4.0
@@ -32,7 +37,11 @@ nonisolated struct LiveJumpEstimator: Sendable {
   /// a flight longer than this is a held rise (tiptoe), not a jump; a 30 cm jump flies ~0.5 s.
   static let maximumFlight = 0.7
   /// At take-off the hips must rise at least this share of the soles' rise (whole body leaves the
-  /// floor; an ankle-only jump in the pose is noise). Unknown hips do not block.
+  /// floor; an ankle-only jump in the pose is noise). Unknown hips do not block. Never more than the
+  /// take-off line itself (21 November 2026): in a tuck jump the heels fold back as the feet leave the
+  /// floor, so the soles rise by the flight PLUS the tuck while the hips rise by the flight alone, and
+  /// a share of that sum refused every frame of a real jump. Still hips (ankle noise, one raised
+  /// foot, a squat) still never take off.
   static let hipFollowShare = 0.5
   /// FLOOR RE-ANCHORING (Kevin, 14 Nov 2026 — Edo-owned, needs his review). iPad logs: while the
   /// player squats, the ankle-based sole reads 0.1–0.2 below the real floor; the floor baseline
@@ -59,6 +68,8 @@ nonisolated struct LiveJumpEstimator: Sendable {
   private var calibrationRevision: UInt64?
   private var lastFrame: UInt64 = 0
   private var lastTime: Double?
+  /// When both soles were last seen (a flight survives missing soles up to `maximumGap` from here).
+  private var lastSolesTime: Double?
   private var airborne = false
   private var missing = 0
   private var recent: [(time: Double, lift: Double)] = []
@@ -69,9 +80,38 @@ nonisolated struct LiveJumpEstimator: Sendable {
   /// This frame's lower-sole lift above the baseline (nil without both soles).
   private(set) var lift: Double?
   private(set) var noise = 0.0
+  #if DEBUG
+  /// DEBUG jump trace (21 November 2026, butt-kick jump diagnosis): what this step decided and why.
+  private(set) var decision = ""
+  #endif
 
   func enterThreshold(standingHeight: Double) -> Double {
     max(Self.enterShare * standingHeight, Self.noiseMultiple * noise)
+  }
+
+  /// Whether a flight is in progress: a take-off was seen from real soles and it has not ended.
+  var isInFlight: Bool { airborne }
+
+  /// BUTT-KICK FLIGHTS (Kevin, 21 November 2026 — Edo-owned, needs his review). iPad evidence
+  /// (`[LaserJumpTrace]`, three butt-kick jumps, all HIT): take-off was seen (hips +0.20…+0.27), then
+  /// the heels folded behind the thighs and Vision's ankle confidence fell to 0.11–0.47 for 8–9 frames
+  /// (0.27–0.30 s) while the hips stayed 0.19–0.25 above standing at full confidence. With no soles
+  /// the flight ended on the third frame, the crossing fell in that gap, and no usable capture was
+  /// airborne at it.
+  ///
+  /// A foot cannot hang lower than a straight leg below the hips. So during a flight already seen
+  /// (`isInFlight`), a sole whose ankle is not confidently seen is bounded at the hips minus this
+  /// side's standing hip-to-sole height, used only while that bound is itself clearly off the floor
+  /// (hips at least the take-off line, `enterShare` of standing height, above standing). Never for a
+  /// take-off, never while grounded, never to make a landing: otherwise the sole stays missing.
+  static func flightSoles(left: Double?, right: Double?, inFlight: Bool, hipY: Double?, standingHip: Double,
+                          standingLeftSole: Double, standingRightSole: Double,
+                          standingHeight: Double) -> (left: Double?, right: Double?, bounded: Bool) {
+    guard inFlight, left == nil || right == nil, let hipY, hipY.isFinite, standingHeight > 0,
+          hipY - standingHip >= enterShare * standingHeight else { return (left, right, false) }
+    let l = left ?? hipY - (standingHip - standingLeftSole)
+    let r = right ?? hipY - (standingHip - standingRightSole)
+    return (l, r, true)
   }
 
   mutating func step(frameID: UInt64, capturedAt time: Double, leftSole: Double?, rightSole: Double?,
@@ -80,17 +120,36 @@ nonisolated struct LiveJumpEstimator: Sendable {
     hipY: Double? = nil, standingHip: Double? = nil, candidateRules: Bool = false) -> JumpState {
     if calibrationRevision != revision { self = Self(); calibrationRevision = revision }
     guard frameID > lastFrame, lastTime.map({ time > $0 }) ?? true, time.isFinite else {
+      #if DEBUG
+      decision = "stale frame"
+      #endif
       return JumpDetector.unavailable(.stale)
     }
+    #if DEBUG
+    decision = ""
+    func note(_ text: String) { decision = decision.isEmpty ? text : decision + "; " + text }
+    #endif
     let dt = lastTime.map { time - $0 } ?? 0
-    if dt > Self.maximumGap { airborne = false; missing = 0; recent = []; previousLift = nil; still = [] }
+    if dt > Self.maximumGap {
+      #if DEBUG
+      note(String(format: "capture gap %.3f s resets%@", dt, airborne ? " (ENDS FLIGHT)" : ""))
+      #endif
+      airborne = false; missing = 0; recent = []; previousLift = nil; still = []
+    }
     lastFrame = frameID; lastTime = time
     guard let leftSole, let rightSole, standingHeight > 0, standingHeight.isFinite else {
       missing += 1; lift = nil; previousLift = nil; still = []
-      if missing > Self.dropoutFrames { airborne = false; recent = [] }
+      #if DEBUG
+      let flightLost = airborne && time - (lastSolesTime ?? time) > Self.maximumGap
+      note("no soles (\(missing) in a row)" + (flightLost ? " → FLIGHT ENDED BY DROPOUT" : airborne ? " (flight kept)" : "")
+           + (missing > Self.dropoutFrames && !airborne ? " → rise history cleared" : ""))
+      #endif
+      let lost = airborne ? time - (lastSolesTime ?? time) > Self.maximumGap : missing > Self.dropoutFrames
+      if lost { airborne = false; recent = [] }
       return JumpDetector.unavailable(.missingLandmarks)
     }
     missing = 0
+    lastSolesTime = time
     let raw = min(leftSole - standingLeftSole, rightSole - standingRightSole)
     let wasAirborne = airborne
     // Candidate: upright (hips high over the soles) and still (soles within the band for long enough).
@@ -104,6 +163,9 @@ nonisolated struct LiveJumpEstimator: Sendable {
       still.append((time, raw))
       while still.count > 1, still.map(\.raw).max()! - still.map(\.raw).min()! > band { still.removeFirst() }
       if still.last!.time - still.first!.time >= Self.ballisticApexLimit - 1e-6 {
+        #if DEBUG
+        if airborne { note("FLIGHT ENDED: soles still \(Int(Self.ballisticApexLimit * 1000)) ms (apex rule)") }
+        #endif
         if airborne { airborne = false; airborneSince = nil } // still that long: not a flight
         if upright {
           let level = still.map(\.raw).reduce(0, +) / Double(still.count)
@@ -127,18 +189,35 @@ nonisolated struct LiveJumpEstimator: Sendable {
     }
     if airborne {
       airborne = lifted > Self.exitShare * standingHeight
+      #if DEBUG
+      if !airborne { note(String(format: "landed (lift %.3f ≤ exit %.3f)", lifted, Self.exitShare * standingHeight)) }
+      #endif
       // Candidate: a rise held past a credible flight is a tiptoe, not a jump.
       if candidateRules, airborne, let since = airborneSince, time - since > Self.maximumFlight {
         airborne = false; heldRise = true
+        #if DEBUG
+        note("FLIGHT ENDED: longer than max flight (held rise)")
+        #endif
       }
     } else if lifted > enter {
       var takeoff = rise >= Self.riseFraction * enter
       if candidateRules {
         if heldRise { takeoff = false } // must come back down before another take-off
         else if takeoff, let hipY, let lowest = recentHips.map(\.hip).min() {
-          takeoff = hipY - lowest >= Self.hipFollowShare * rise
+          let hipRise = hipY - lowest
+          takeoff = hipRise >= min(Self.hipFollowShare * rise, enter)
+          #if DEBUG
+          note(String(format: "hips rose %.3f (need %.3f)", hipRise, min(Self.hipFollowShare * rise, enter)))
+          #endif
         }
+        #if DEBUG
+        if heldRise { note("held rise: must come down first") }
+        #endif
       }
+      #if DEBUG
+      note(String(format: "rise %.3f (need %.3f in %.2f s) → %@", rise, Self.riseFraction * enter, Self.riseWindow,
+                   takeoff ? "TAKE-OFF" : "NO TAKE-OFF"))
+      #endif
       airborne = takeoff
     }
     if candidateRules {

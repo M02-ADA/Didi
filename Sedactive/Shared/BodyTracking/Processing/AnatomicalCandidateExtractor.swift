@@ -158,7 +158,8 @@ nonisolated enum AnatomicalCandidateExtractor {
             bottom = max(bottom, b)
           }
           let rows = min(la.1, ra.1)...bottom
-          gapFilled = Double(rows.filter { labelAt(middle, $0) != 0 }.count) / Double(rows.count)
+          // This player's own instance only: a bystander's pixels never fill their feet gap.
+          gapFilled = Double(rows.filter { labelAt(middle, $0) == region.label }.count) / Double(rows.count)
         }
         func foot(_ ankle: (Int, Int)) -> AnatomicalCandidateScalar {
           var bottom = ankle.1
