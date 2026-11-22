@@ -21,16 +21,18 @@ import SwiftUI
         }
         guard ready, context.isActive, context.sessionGeneration == input.sessionGeneration,
               let avatars = scene.robotAvatars else { suspend(); return nil }
-        // An individual input gap must not stop the corridor or extend a diamond's
-        // passage. The full fresh roster is still required to place or collect it.
+        // Passage and placement use session readiness. Only pickup needs a fresh
+        // contact sample from the full roster.
         let contactReady = players == Set(input.roster)
         let step = travel.tick(at: now)
         if step > 0 {
             scene.setTravelDistance(scene.travelOffset + scene.layout.travelSpeed * Float(step))
         }
         #if DEBUG
-        trace(kind: kind, generation: context.sessionGeneration, now: now, step: step,
-              contactReady: contactReady, distance: scene.travelOffset)
+        defer {
+            trace(scene: scene, kind: kind, generation: context.sessionGeneration, now: now,
+                  step: step, contactReady: contactReady, hasHeartArt: heartArt != nil)
+        }
         #endif
         let bodies = contactReady
             ? Dictionary(uniqueKeysWithValues: input.roster.map { ($0, avatars.diamondContactBody($0)) })
@@ -38,17 +40,18 @@ import SwiftUI
         let display = LaserReplayPresentation.diamondDisplay(scene: scene, layout: input.playerPlaneLayout)
 
         if encounter == nil {
-            guard contactReady, kind != .heart || heartArt != nil,
-                  let player = input.roster.first, let torso = bodies[player]?.first else { return nil }
-            let center = (torso.start + torso.end) / 2
+            guard kind != .heart || heartArt != nil, let player = input.roster.first else { return nil }
+            let torso = avatars.diamondContactBody(player).first
+            let laneX = scene.mapping.playerPosition(player).x
+            let centerX = torso.map { ($0.start.x + $0.end.x) / 2 } ?? avatars.mascotWorldX(player) ?? laneX
+            let centerY = torso.map { ($0.start.y + $0.end.y) / 2 } ?? RobotAvatarLayer.standingHeight * 0.5
             let scale = avatars.laserBandScale(for: player, mapping: scene.mapping) ?? 1
             let meters = scene.mapping.metersPerGameUnit * scale
             guard meters > 0, let position = try? LaserDiamondPosition(
-                x: input.playerPlaneLayout.centerX(for: player)
-                    - Double((center.x - scene.mapping.playerPosition(player).x) / meters),
-                y: Double(center.y / meters)) else { return nil }
+                x: input.playerPlaneLayout.centerX(for: player) - Double((centerX - laneX) / meters),
+                y: Double(centerY / meters)) else { return nil }
             guard let attempt = try? FTUECollectibleEncounter(kind: kind, configuration: configuration,
-                context: context, position: position, roster: players) else { return nil }
+                context: context, position: position, roster: Set(input.roster)) else { return nil }
             encounter = attempt
             lane = player
             if kind == .diamond { diamonds = NormalDiamondPresentation(scene: scene) }
@@ -130,12 +133,12 @@ import SwiftUI
     private var traceZeroSteps = 0
     private var traceReported = false
 
-    private func trace(kind: FTUECollectible, generation: UUID, now: Double, step: Double,
-                       contactReady: Bool, distance: Float) {
+    private func trace(scene: LaserScene, kind: FTUECollectible, generation: UUID, now: Double, step: Double,
+                       contactReady: Bool, hasHeartArt: Bool) {
         guard Self.diagnostics else { return }
         let key = "\(generation)/\(kind.rawValue)"
         if traceKey != key {
-            traceKey = key; traceStart = now; traceDistance = distance
+            traceKey = key; traceStart = now; traceDistance = scene.travelOffset
             traceTicks = 0; traceContactTicks = 0; traceZeroSteps = 0; traceReported = false
         }
         guard !traceReported else { return }
@@ -144,7 +147,14 @@ import SwiftUI
         if step == 0 { traceZeroSteps += 1 }
         guard now - traceStart >= 1 else { return }
         traceReported = true
-        print("[FTUE Collectibles] \(key) elapsed=\(now - traceStart) sceneUpdates=\(traceTicks) freshContactUpdates=\(traceContactTicks) zeroTravelSteps=\(traceZeroSteps) distance=\(distance - traceDistance) passage=\(encounter?.game.gameTime ?? 0) active=\(encounter != nil)")
+        let entity = kind == .diamond ? scene.root.findEntity(named: "diamond") : heart?.root
+        let point = entity?.position(relativeTo: nil)
+        let projection = point.flatMap { scene.screenFraction(of: $0, aspect: 4.0 / 3.0) }
+        let spawnStatus: String
+        if encounter != nil { spawnStatus = entity == nil ? "admitted, no scene entity" : "attached to scene tree" }
+        else if kind == .heart && !hasHeartArt { spawnStatus = "waiting for heart artwork" }
+        else { spawnStatus = "no active passage (placement or domain admission)" }
+        print("[FTUE Collectibles] \(key) firstEligible=\(traceStart) elapsed=\(now - traceStart) updates=\(traceTicks) freshContactUpdates=\(traceContactTicks) zeroTravelSteps=\(traceZeroSteps) travel=\(scene.travelOffset) travelDelta=\(scene.travelOffset - traceDistance) passage=\(encounter?.game.gameTime ?? 0) spawn=\(spawnStatus) id=\(String(describing: encounter?.spawn.id)) world=\(String(describing: point)) camera=\(scene.layout.cameraPosition) projectedX=\(String(describing: projection)) enabled=\(entity?.isEnabled == true) attached=\(entity?.parent != nil) collected=\(encounter?.receipt != nil)")
     }
     #endif
 
