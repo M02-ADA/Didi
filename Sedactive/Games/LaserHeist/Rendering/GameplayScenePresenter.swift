@@ -230,6 +230,7 @@ final class GameplayScenePresenter {
         updateCue(state: state, at: time)
         scene.setTimingPresentation(endedAt == nil && scene.timingVariant != .approved ? LaserTimingPresentation.make(state: state,
             configuration: configuration, withdrawn: Set(withdrawnAt.keys)).flatMap { Self.timingFits($0, state) ? $0 : nil } : nil)
+        soundMovementBar(scene.timingPresentation)
         // The team callout goes out in the frame its verdict is shown, knowing whether a cue is up.
         let shown = Self.cueOnScreen(scene)
         if shown != cueShown { cueShown = shown; onCueShownChanged?(shown) }
@@ -751,8 +752,24 @@ final class GameplayScenePresenter {
         scene.setMoveCue(move, actionRemaining: remaining)
         // The cue sounds when the action is called (the same moment the 3D cue
         // turns solid), once per attempt and move: both players share one sound.
-        if time >= cue, let attempt, cuedAttempts.insert("\(attempt)-\(move)").inserted {
+        if scene.timingVariant != .converging, time >= cue, let attempt, cuedAttempts.insert("\(attempt)-\(move)").inserted {
             onSound?(move == .duck ? .cueDuck : .cueJump)
+        }
+    }
+
+    private func soundMovementBar(_ timing: LaserTimingPresentation?) {
+        guard scene.timingVariant == .converging, let timing, timing.showsArrowBar else { return }
+
+        let key = "\(timing.attemptID)-\(timing.move)"
+        if timing.gameTime < timing.arrowGoTime {
+            // Two READY pulses, spaced half a second apart, followed by GO.
+            let beat = timing.gameTime < timing.arrowGoTime - LaserTimingPresentation.arrowBeatInterval ? 0 : 1
+            if cuedAttempts.insert("ready-\(beat)-\(key)").inserted {
+                onSound?(.movementReady)
+            }
+        } else if (timing.move == .jump || timing.evidenceWindow.contains(timing.gameTime)),
+                  cuedAttempts.insert("go-\(key)").inserted {
+            onSound?(.movementGo)
         }
     }
 
