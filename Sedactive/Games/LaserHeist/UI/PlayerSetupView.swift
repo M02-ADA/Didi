@@ -12,13 +12,19 @@ struct PlayerSetupView: View {
     /// Over the Sketch "stand here" stage (Kevin): the same controls in a card,
     /// without the lane boxes the stage's guides replace.
     var isOverlay = false
+    var isRecovering = false
     @State private var actionError: String?
 
     var body: some View {
-        if isOverlay, flow.session?.automaticSetup == true, let headline = automaticCopy.headline {
-            // Sketch Game Set Up (Home Copy 19/42): the headline alone over the camera image; the
-            // back arrow leaves, the boxes show each player's progress.
-            CalibrationStageHeadline(text: headline, detail: automaticCopy.headlineDetail)
+        if isOverlay, flow.session?.automaticSetup != false {
+            calibrationHeadline
+                .task(id: flow.session.map { ObjectIdentifier($0) }) {
+                    while !Task.isCancelled {
+                        do { try await Task.sleep(for: .seconds(1.5)) }
+                        catch { return }
+                        await flow.restartAutomaticallyIfNeeded()
+                    }
+                }
         } else if isOverlay {
             // Compact, in the stage's title band, so the standing guides stay clear.
             controls
@@ -29,6 +35,51 @@ struct PlayerSetupView: View {
         } else {
             controls
                 .background(Color(red: 0.035, green: 0.055, blue: 0.11)).preferredColorScheme(.dark)
+        }
+    }
+
+    @ViewBuilder private var calibrationHeadline: some View {
+        let copy = automaticCopy
+        if isRecovering, let session = flow.session {
+            let input = LaserTrackingWarning.Input(session: session)
+            if input.identityLost || input.recoveryNeedsContinue || copy.action == .restartSetup {
+                Button {
+                    if input.identityLost || copy.action == .restartSetup {
+                        Task { await flow.retryLiveSetup() }
+                    } else {
+                        session.continueLiveRound()
+                    }
+                } label: {
+                    CalibrationStageHeadline(text: "stand here to continue", detail: nil)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(input.identityLost || copy.action == .restartSetup
+                    ? "Restarts setup and ends this round." : "Retries resuming the round.")
+                .disabled(flow.isClosing || flow.isStarting)
+            } else {
+                CalibrationStageHeadline(text: "stand here to continue", detail: nil)
+            }
+        } else if copy.action == .tryAgain || copy.action == .restartSetup {
+            Button {
+                if copy.action == .tryAgain {
+                    flow.session?.retryCalibrationManually()
+                } else {
+                    Task { await flow.retryLiveSetup() }
+                }
+            } label: {
+                CalibrationStageHeadline(text: "try again", detail: nil)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier(copy.action == .tryAgain ? "setupTryAgain" : "retryLiveSetup")
+            .disabled(flow.isClosing || flow.isStarting)
+        } else {
+            let text = switch flow.session?.setup?.phase {
+            case .awaitingCalibration, .calibrating, .reviewCandidate, .awaitingGameplayReadiness:
+                flow.session?.presence.retryPending == true ? "try again" : LaserAutomaticSetupCopy.holdStillHeadline
+            case .blocked: "try again"
+            default: LaserAutomaticSetupCopy.placementHeadline
+            }
+            CalibrationStageHeadline(text: text, detail: nil)
         }
     }
 

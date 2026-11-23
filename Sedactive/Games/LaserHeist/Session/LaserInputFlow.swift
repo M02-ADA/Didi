@@ -10,6 +10,7 @@ final class LaserInputFlow {
     private(set) var isStarting = false
     private(set) var isClosing = false
     private(set) var message: String?
+    private(set) var returnsToPlacement = false
     let leanTutorial: LeanTutorial
     private var operation: UUID?
     private var offeredLaunchOnboarding = false
@@ -147,7 +148,12 @@ final class LaserInputFlow {
         if operation == token { isStarting = false }
     }
 
-    func closeLiveSetup() async {
+    func consumePlacementReturn() -> Bool {
+        defer { returnsToPlacement = false }
+        return returnsToPlacement
+    }
+
+    func closeLiveSetup(returnToPlacement: Bool = false) async {
         guard route == .liveSetup, !isClosing else { return }
         isClosing = true
         let token = UUID()
@@ -166,6 +172,7 @@ final class LaserInputFlow {
         leanTutorial.abandon()
         isStarting = false
         isClosing = false
+        returnsToPlacement = returnToPlacement
         route = .selection
         automaticRestarts = 0
         message = finishedTutorial ? nil : "Camera setup has ended. You can start a fresh setup or use the replay demo."

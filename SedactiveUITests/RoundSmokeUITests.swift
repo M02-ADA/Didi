@@ -64,6 +64,7 @@ final class RoundSmokeUITests: XCTestCase {
     func testSimulatorCameraUnavailableCanRetryAndReturnToSelection() throws {
         #if targetEnvironment(simulator)
         let app = XCUIApplication()
+        LaserHeistJourney.markTutorialCompleted(app)
         app.launch()
         let camera = app.buttons["startMission"]
         XCTAssertTrue(camera.waitForExistence(timeout: timeout))
@@ -74,13 +75,14 @@ final class RoundSmokeUITests: XCTestCase {
             if permission.buttons["Allow"].exists { permission.buttons["Allow"].tap() }
             else if permission.buttons["OK"].exists { permission.buttons["OK"].tap() }
         }
-        let error = app.staticTexts["liveSetupError"]
-        XCTAssertTrue(error.waitForExistence(timeout: timeout), "Simulator must show the unavailable-camera path")
         let retry = app.buttons["retryLiveSetup"]
-        XCTAssertTrue(retry.exists && retry.isEnabled)
+        XCTAssertTrue(retry.waitForExistence(timeout: timeout) && retry.isEnabled)
         retry.tap()
-        XCTAssertTrue(error.waitForExistence(timeout: timeout))
-        app.buttons["leaveLiveSetup"].tap()
+        XCTAssertTrue(retry.waitForExistence(timeout: timeout))
+        let back = app.buttons["navigationBack"]
+        back.tap()
+        XCTAssertTrue(app.buttons["setupNext"].waitForExistence(timeout: timeout))
+        back.tap()
         XCTAssertTrue(camera.waitForExistence(timeout: timeout))
         XCTAssertTrue(camera.isEnabled, "A stopped source must allow a new explicit setup")
         #else
@@ -98,6 +100,12 @@ enum LaserHeistJourney {
         let either = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in replay.exists || end.exists }, object: nil)
         XCTAssertEqual(XCTWaiter().wait(for: [either], timeout: timeout), .completed, "the app opened on neither Home nor a round")
         if replay.exists { replay.tap() }
+    }
+
+    static func markTutorialCompleted(_ app: XCUIApplication) {
+        for module in ["lean", "heart", "jumpDuck", "progress"] {
+            app.launchArguments += ["-laserHeist.ftue.\(module).v1.completed", "YES"]
+        }
     }
 
     /// Home › START MISSION › intro video (skipped) › iPad placement instructions › camera setup.

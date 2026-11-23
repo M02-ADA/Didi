@@ -58,7 +58,9 @@ struct LaserHeistIntroView: View {
             if ProcessInfo.processInfo.arguments.contains("-homeHelpFTUEPreview"),
                !FTUEOnboardingPreview.isRequested { return }
             #endif
-            if flow.offerLaunchOnboarding() { screen = .setup }
+            let returnsToPlacement = flow.consumePlacementReturn()
+            let offersOnboarding = flow.offerLaunchOnboarding()
+            if returnsToPlacement || offersOnboarding { screen = .setup }
         }
         .onChange(of: flow.tutorialReplayRequested) { _, pending in
             if !pending, flow.route == .selection { screen = .home }
