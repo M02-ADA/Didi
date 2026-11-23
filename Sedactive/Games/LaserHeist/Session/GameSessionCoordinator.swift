@@ -98,10 +98,68 @@ final class GameSessionCoordinator {
               boundary > time else { return nil }
         return boundary - time
     }
+    private(set) var laserPractice: FTUELaserPractice?
+    func updateFTUELaserPractice(at now: Double, generation: UUID, suspended: Bool) {
+        guard generation == inputConfiguration.sessionGeneration, lifetime != nil, preRoundTutorialPending,
+              phase == .awaitingSetup, game == nil, let configuration, let context = inputContext else { return }
+        let eligible = !suspended && canStartLiveRound && pairInPlay
+        if laserPractice == nil, eligible {
+            let accepted = provider.acceptedCalibrations.filter { inputConfiguration.roster.contains($0.key) }
+            let input = inputConfiguration.replacingCalibrations(accepted)
+            laserPractice = try? .init(input: input, configuration: configuration, context: context, poseFirst: poseFirstCandidate)
+        }
+        try? laserPractice?.update(at: now, eligible: eligible, context: context)
+    }
+    func finishFTUEPracticeFeedback(attempt: UUID, generation: UUID) {
+        guard lifetime != nil, preRoundTutorialPending else { return }
+        try? laserPractice?.feedbackFinished(attempt: attempt, generation: generation)
+    }
+    func retireFTUELaserPractice() { laserPractice = nil }
+
+    /// Session-owned instructional round; ordinary gameplay remains uninitialized.
+    private(set) var heartTraining: HeartTrainingEncounter?
+    func updateHeartTraining(at now: Double, suspended: Bool) {
+        guard lifetime != nil, preRoundTutorialPending, phase == .awaitingSetup,
+              game == nil, let configuration, let context = inputContext else { return }
+        let eligible = !suspended && canStartLiveRound && setup?.hasConfirmedReliablePair == true
+        if heartTraining == nil, eligible {
+            heartTraining = try? HeartTrainingEncounter(configuration: configuration, context: context,
+                roster: Set(inputConfiguration.roster))
+        }
+        heartTraining?.update(at: now, eligible: eligible, context: context)
+    }
+    func finishHeartTrainingFeedback(id: UUID, generation: UUID) {
+        guard lifetime != nil, preRoundTutorialPending else { return }
+        heartTraining?.finishFeedback(id: id, generation: generation)
+    }
+    func retireHeartTraining() { heartTraining = nil }
+
+    /// Hold BEFORE the initial countdown; released only after the complete FTUE.
+    private(set) var preRoundTutorialPending = false
+    func setPreRoundTutorialPending(_ pending: Bool) {
+        guard state == nil, phase == .idle || phase == .awaitingSetup else { return }
+        preRoundTutorialPending = pending
+    }
+
     private(set) var liveFrameHostReady = false
     var canStartLiveRound: Bool {
         hasLiveRoundPlan && liveFrameHostReady && phase == .awaitingSetup && liveReadiness?.phase == .ready
     }
+    /// Read-only inputs for an independently owned pre-round tutorial bonus round.
+    func tutorialDiamondTimeInputs(generation: UUID) -> FTUEDiamondTimeSession.Inputs? {
+        guard preRoundTutorialPending, state == nil, canStartLiveRound, pairInPlay, provider.status == .running,
+              let context = provider.currentContext, context == installedLiveWristContext,
+              context.sessionGeneration == generation, context.isActive, context.wristContact != nil,
+              let configuration, let diamonds = wristDiamondConfiguration else { return nil }
+        return .init(configuration: configuration, diamonds: diamonds, context: context,
+                     roster: inputConfiguration.roster)
+    }
+
+    func tutorialVaultInputs(generation: UUID) -> FTUEVaultPractice.Inputs? {
+        guard let inputs = tutorialDiamondTimeInputs(generation: generation), let liveDirector else { return nil }
+        return .init(round: inputs, zones: liveDirector.vaultContactZones(gateIndex: 0))
+    }
+
     var hasWristDiamondPlan: Bool { wristDiamondConfiguration != nil }
     var liveWristBlockers: [LaserLiveWristBlocker] {
         var result: [LaserLiveWristBlocker] = []
@@ -545,6 +603,7 @@ final class GameSessionCoordinator {
     }
 
     func stop(reason: LaserRoundOutcome = .aborted) async {
+        heartTraining = nil; laserPractice = nil
         setupTask?.cancel(); setupTask = nil
         let hadLifetime = lifetime != nil
         wristDiamonds = nil
@@ -592,6 +651,9 @@ final class GameSessionCoordinator {
                     bindingConfirmed: pairInPlay && setup?.canCancelCalibration == false,
                     at: hostNow())
             } catch { debugRestart("observe threw: \(error)"); liveReadiness?.requireRestart() }
+        }
+        if preRoundTutorialPending, let context = inputContext, context == provider.currentContext {
+            try? laserPractice?.receive(packet, at: hostNow(), maximumAge: liveReadiness?.policy?.maximumEvidenceAge ?? 0)
         }
         synchronizeLiveGame(packet: packet)
     }
@@ -857,7 +919,7 @@ final class GameSessionCoordinator {
         logSetupHeartbeat(setup, at: now)
         #endif
         // Both references accepted, the round planned and the scene drawing: count down.
-        if canStartLiveRound, !countdownRequested, (try? beginLiveCountdown()) != nil {
+        if canStartLiveRound, !preRoundTutorialPending, !countdownRequested, (try? beginLiveCountdown()) != nil {
             #if DEBUG
             setupTimeline.mark("countdown", at: now)
             #endif
@@ -1127,7 +1189,7 @@ final class GameSessionCoordinator {
     }
 
     func beginLiveCountdown() throws {
-        guard !isReplay, lifetime != nil, hasLiveRoundPlan, liveFrameHostReady else {
+        guard !isReplay, lifetime != nil, hasLiveRoundPlan, liveFrameHostReady, !preRoundTutorialPending else {
             throw LaserDataError.invalidValue("missing live plan/policy")
         }
         readInputStatus()
@@ -1523,6 +1585,7 @@ final class GameSessionCoordinator {
     }
 
     private func finishLiveInput() {
+        heartTraining = nil; laserPractice = nil
         guard liveTerminationTask == nil else { return }
         setupTask?.cancel(); setupTask = nil
         wristDiamonds = nil

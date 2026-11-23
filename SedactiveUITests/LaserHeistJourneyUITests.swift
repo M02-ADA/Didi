@@ -16,6 +16,7 @@ final class LaserHeistJourneyUITests: XCTestCase {
     func testLaunchWhileDeviceIsHeldInPortraitUsesLandscape() {
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication()
+        LaserHeistJourney.markTutorialCompleted(app)
         app.launch()
 
         XCTAssertTrue(app.buttons["startMission"].waitForExistence(timeout: timeout))
@@ -25,6 +26,7 @@ final class LaserHeistJourneyUITests: XCTestCase {
 
     func testHomeSetUpCameraSetupReplayResultsAndBackToHome() {
         let app = XCUIApplication()
+        LaserHeistJourney.markTutorialCompleted(app)
         app.launch()
         let start = app.buttons["startMission"]
         let next = app.buttons["setupNext"]
@@ -84,6 +86,7 @@ final class LaserHeistJourneyUITests: XCTestCase {
     func testDebugSkipFromCalibrationPlaysTheFullReplay() {
         let app = XCUIApplication()
         app.launchArguments.append("-enableCalibrationReplaySkip")
+        LaserHeistJourney.markTutorialCompleted(app)
         app.launch()
         let start = app.buttons["startMission"]
         XCTAssertTrue(start.waitForExistence(timeout: timeout))

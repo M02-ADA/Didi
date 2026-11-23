@@ -24,7 +24,15 @@ struct LaserHeistIntroView: View {
         ZStack {
             switch screen {
             case .home:
-                HomeView(bestScore: nil) { show(.introVideo) }
+                HomeView(bestScore: nil, onStart: {
+                    flow.cancelLeanTutorialReplay()
+                    show(.introVideo)
+                }, onReplayTutorial: {
+                    guard flow.requestLeanTutorialReplay() else { return }
+                    // The actual corridor/FTUE needs accepted setup. Help skips the story detour,
+                    // not mode selection, camera binding, calibration or readiness.
+                    show(.setup)
+                })
                     .overlay(alignment: .bottom) { homeOptions }
                     .transition(.opacity)
             case .introVideo:
@@ -36,7 +44,7 @@ struct LaserHeistIntroView: View {
                 .onAppear { AudioService.shared.setMusic(nil) }
                 .transition(.opacity)
             case .setup:
-                SetupInstructionView(onBack: { show(.home) }, onNext: startCalibration)
+                SetupInstructionView(onBack: backFromSetup, onNext: startCalibration)
                     .transition(.opacity)
             }
         }
@@ -44,9 +52,20 @@ struct LaserHeistIntroView: View {
         .background(LaserHeistDesign.night)
         .preferredColorScheme(.dark)
         .onAppear {
-            if flow.consumePlacementReturn() { screen = .setup }
             AudioService.shared.setMusic(.menu)
+            #if DEBUG
+            // The legacy Help visual fixture opens directly on its Home entry point.
+            if ProcessInfo.processInfo.arguments.contains("-homeHelpFTUEPreview"),
+               !FTUEOnboardingPreview.isRequested { return }
+            #endif
+            let returnsToPlacement = flow.consumePlacementReturn()
+            let offersOnboarding = flow.offerLaunchOnboarding()
+            if returnsToPlacement || offersOnboarding { screen = .setup }
         }
+        .onChange(of: flow.tutorialReplayRequested) { _, pending in
+            if !pending, flow.route == .selection { screen = .home }
+        }
+        .onDisappear { flow.cancelLeanTutorialReplay() }
     }
 
     private func show(_ next: Screen) {
@@ -54,9 +73,24 @@ struct LaserHeistIntroView: View {
         screen = next
     }
 
+    private func backFromSetup() {
+        flow.cancelLeanTutorialReplay()
+        show(.home)
+    }
+
     private func startCalibration() {
         guard flow.canStartLive else { return }
         AudioService.shared.play(.uiTap)
+        #if DEBUG
+        // Explicit Simulator visual QA only. Reuse the existing synthetic FTUE fixture;
+        // production always follows the real setup path below.
+        if FTUEOnboardingPreview.isRequested ||
+            (ProcessInfo.processInfo.arguments.contains("-homeHelpFTUEPreview") && flow.tutorialReplayRequested) {
+            if flow.tutorialReplayRequested { LeanFTUEPreviewLaunch.requestManualReplay() }
+            flow.showReplay()
+            return
+        }
+        #endif
         // In the mode chosen on Home (TEMPORARY selector; always co-op in Release).
         Task { await flow.startSelectedSetup() }
     }
@@ -99,6 +133,8 @@ struct LaserHeistIntroView: View {
                 .accessibilityIdentifier("chooseReplay")
                 .accessibilityHint("A sample round with no camera.")
                 #if DEBUG
+                Button("Reset Lean tutorial") { flow.leanTutorial.resetForNextPlay() }
+                    .accessibilityIdentifier("resetLeanTutorial")
                 Button("Camera diagnostics") { flow.showDiagnostics() }
                     .accessibilityIdentifier("cameraDiagnostics")
                 if let onInGameCamera {

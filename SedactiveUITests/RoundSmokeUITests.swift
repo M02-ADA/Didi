@@ -64,6 +64,7 @@ final class RoundSmokeUITests: XCTestCase {
     func testSimulatorCameraUnavailableCanRetryAndReturnToSelection() throws {
         #if targetEnvironment(simulator)
         let app = XCUIApplication()
+        LaserHeistJourney.markTutorialCompleted(app)
         app.launch()
         let camera = app.buttons["startMission"]
         XCTAssertTrue(camera.waitForExistence(timeout: timeout))
@@ -99,6 +100,12 @@ enum LaserHeistJourney {
         let either = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in replay.exists || end.exists }, object: nil)
         XCTAssertEqual(XCTWaiter().wait(for: [either], timeout: timeout), .completed, "the app opened on neither Home nor a round")
         if replay.exists { replay.tap() }
+    }
+
+    static func markTutorialCompleted(_ app: XCUIApplication) {
+        for module in ["lean", "heart", "jumpDuck", "progress"] {
+            app.launchArguments += ["-laserHeist.ftue.\(module).v1.completed", "YES"]
+        }
     }
 
     /// Home › START MISSION › intro video (skipped) › iPad placement instructions › camera setup.
