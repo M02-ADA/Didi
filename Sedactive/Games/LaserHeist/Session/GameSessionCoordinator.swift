@@ -7,6 +7,7 @@
 
 import Foundation
 import Observation
+import UIKit
 
 /// Scene/update ownership only. This token is not player identity or capture generation.
 nonisolated struct LaserLiveFrameAttachment: Equatable, Sendable {
@@ -47,6 +48,13 @@ final class GameSessionCoordinator {
     var activityDuration: Double { replayDriver?.script.activityDuration ?? configuration?.activityDuration ?? 0 }
     private(set) var phase: SessionState = .idle {
         didSet {
+            switch phase {
+            case .countdown, .running, .paused:
+                if displayWakeLock == nil { displayWakeLock = RoundDisplayWakeLock() }
+            case .idle, .starting, .awaitingSetup, .restartRequired, .finished, .failed:
+                displayWakeLock?.release()
+                displayWakeLock = nil
+            }
             #if DEBUG
             if oldValue != phase {
                 print(String(format: "[LaserState] t %.3f · session %@ → %@ · readiness %@ · setup %@", ProcessInfo.processInfo.systemUptime,
@@ -55,6 +63,7 @@ final class GameSessionCoordinator {
             #endif
         }
     }
+    @ObservationIgnored private var displayWakeLock: RoundDisplayWakeLock?
     private(set) var state: LaserGameState?
     /// How far the current stage has run toward its gate, 0…1, for the HUD's continuous progress
     /// (`GameplayHUDModel`); nil outside a stage's activity and gate. From the live director's own
@@ -1636,5 +1645,37 @@ nonisolated struct LaserStageProgress: Equatable, Sendable {
         guard let raw else { value = nil; return }
         high = max(high, min(1, max(0, raw)))
         value = high
+    }
+}
+
+
+/// Keeps the app-wide idle timer disabled while any round holds a lock.
+@MainActor
+private final class RoundDisplayWakeLock {
+    private static var activeIDs: Set<UUID> = []
+    private static var previousSetting = false
+    private let id = UUID()
+
+    init() {
+        let application = UIApplication.shared
+        if Self.activeIDs.isEmpty {
+            Self.previousSetting = application.isIdleTimerDisabled
+            application.isIdleTimerDisabled = true
+        }
+        Self.activeIDs.insert(id)
+    }
+
+    func release() {
+        Self.release(id)
+    }
+
+    deinit {
+        let id = id
+        Task { @MainActor in Self.release(id) }
+    }
+
+    private static func release(_ id: UUID) {
+        guard activeIDs.remove(id) != nil, activeIDs.isEmpty else { return }
+        UIApplication.shared.isIdleTimerDisabled = previousSetting
     }
 }
