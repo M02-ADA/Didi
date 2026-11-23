@@ -78,14 +78,13 @@ struct ContentView: View {
         // Automatic setup mounts the game scene from the start (hidden behind the camera screen),
         // so its first load does not stall tracking right after calibration (iPad, 11 November).
         ZStack {
-          let roundTrackingPaused = flow.session.map { LaserTrackingWarning.Input(session: $0).isTrackingPause } ?? false
           let recoveringExploration = (flow.leanTutorial.isPractising || flow.leanTutorial.collection != nil)
             && flow.session.map { Self.showsLeanSetupRecovery(tutorial: flow.leanTutorial, session: $0) } == true
           let recoveringTutorialBonus = flow.leanTutorial.stage == .diamondTimeDemo && flow.session.map {
             $0.tutorialDiamondTimeInputs(generation: $0.inputConfiguration.sessionGeneration) == nil
           } == true
-          let recovering = roundTrackingPaused || recoveringExploration || recoveringTutorialBonus
-          let stageShown = (roundTrackingPaused || Self.showsSetupStage(flow.session))
+          let recovering = recoveringExploration || recoveringTutorialBonus
+          let stageShown = Self.showsSetupStage(flow.session)
             && (!flow.leanTutorial.isActive || recovering)
             && !(flow.leanTutorial.stage == .completed && (flow.session?.preRoundTutorialPending == true || flow.session?.canStartLiveRound == true))
           if let session = flow.session, session.hasLiveRoundPlan || session.automaticSetup {
@@ -105,7 +104,7 @@ struct ContentView: View {
             .opacity(stageShown ? 1 : 0)
             .allowsHitTesting(stageShown)
             .accessibilityHidden(!stageShown)
-          // Non-tracking pauses still use the in-game pause presentation.
+          // A started round holds on the standing-position warning. Recalibrate opens a fresh setup.
           if !stageShown, let session = flow.session, session.hasLiveRoundPlan {
             LaserTrackingWarningOverlay(flow: flow, session: session).id(ObjectIdentifier(session))
           }
@@ -147,7 +146,7 @@ struct ContentView: View {
   /// mounted, then except while counting down, playing or showing results.
   static func showsSetupStage(_ session: GameSessionCoordinator?) -> Bool {
     guard let session, session.hasLiveRoundPlan || session.automaticSetup else { return true }
-    // Started rounds use their own recovery check before reusing the calibration stage.
+    // Keep the camera stage behind an active round, including during tracking recovery.
     if session.state != nil && session.summary == nil { return false }
     return session.phase != .countdown && session.phase != .running && session.summary == nil
   }
