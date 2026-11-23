@@ -32,6 +32,8 @@ struct GameplayHUDModel: Equatable {
     /// Whether the round has reached its diamond (Diamond Time or after it).
     var diamondReached: Bool
     var banner: Banner
+    /// A DEBUG Solo Practice round (one player, one gate button): the gate's instruction says so.
+    var soloPractice = false
     /// Whole seconds of Diamond Time left: the authoritative phase-change time
     /// plus the configured duration, against game time. `nil` outside Diamond Time.
     var diamondTimeRemaining: Double?
@@ -99,7 +101,8 @@ struct GameplayHUDModel: Equatable {
     ///     `finalVaultEntry`, on held game time): Diamond Time's title and seconds wait for it.
     init(state: LaserGameState?, events: [GameEvent], configuration: LaserRoundConfiguration,
          activityDuration: Double, stageProgress: Double? = nil, diamondsCollected: Int? = nil,
-         diamondsAreFixture: Bool = false, enteringFinalVault: Bool = false) {
+         diamondsAreFixture: Bool = false, enteringFinalVault: Bool = false, soloPractice: Bool = false) {
+        self.soloPractice = soloPractice
         maxHealth = configuration.initialTeamHealth
         health = state?.teamHealth ?? configuration.initialTeamHealth
         score = state?.teamScore ?? 0
@@ -164,6 +167,13 @@ struct GameplayHUD: View {
     let model: GameplayHUDModel
     /// The session's player intents; the HUD offers only those it is given.
     let actions: GameplayHUDActions
+    /// Visual substitution only; no tutorial or gameplay progress is calculated here.
+    var isFTUEActive = false
+    var ftueJourney: FTUEProgressJourney? = nil
+    /// Report the health HUD bounds for the existing FTUE spotlight.
+    var onFTUEProgressFrame: ((CGRect) -> Void)? = nil
+    var onHealthFrame: ((CGRect) -> Void)? = nil
+    private var displayedHealth: Int { model.health }
     #if DEBUG
     /// `-hudPauseMenu` opens the menu at launch, for reviewing its layout (Debug
     /// only). Without a session pause it is a labelled preview: the round runs on.
@@ -223,7 +233,11 @@ struct GameplayHUD: View {
             }
             .frame(width: 268 * k, alignment: .leading)
             Spacer().frame(width: 33.9 * k)
-            progress(k)
+            Group {
+                if isFTUEActive { FTUEProgressBar(k: k, journey: ftueJourney)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onFTUEProgressFrame?($0) } }
+                else { progress(k) }
+            }
                 .frame(width: 667 * k)
             Spacer().frame(width: 36 * k)
             // Without the session's pause (Jevon), pausing is not offered: the button
@@ -268,7 +282,7 @@ struct GameplayHUD: View {
                     .foregroundStyle(Self.socket)
                     .frame(width: 29 * k, height: 27 * k)
                     .position(center)
-                if index < model.health {
+                if index < displayedHealth {
                     Image("LaserHeistHUD/heart")
                         .resizable()
                         .frame(width: 29 * k, height: 27 * k)
@@ -279,8 +293,10 @@ struct GameplayHUD: View {
         }
         .frame(width: 268 * k, height: 64 * k)
         .anchorPreference(key: PickupHUDAnchorKey.self, value: .bounds) { [.health: $0] }
-        .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.3), value: model.health)
+        .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.3), value: displayedHealth)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onHealthFrame?($0) }
         .accessibilityElement()
+        .accessibilityIdentifier("sharedHealthHUD")
         .accessibilityLabel("Team health \(model.health) of \(model.maxHealth)")
     }
 
@@ -344,6 +360,7 @@ struct GameplayHUD: View {
         }
         .frame(height: height)
         .accessibilityElement()
+        .accessibilityIdentifier("gameplayProgressBar")
         .accessibilityLabel("Vaults opened \(model.vaultsOpened) of \(model.checkpoints)")
         .accessibilityValue(model.diamondReached ? "Diamond reached" : "")
     }
@@ -357,11 +374,15 @@ struct GameplayHUD: View {
             EmptyView()
         case .pressButtons:
             VStack(spacing: 2 * k) {
-                Text("PRESS THE BUTTONS").font(.system(size: 52.7 * k, weight: .black, design: .rounded))
+                // One activation switch per player (19 November 2026): co-op needs both, Solo
+                // Practice its one. The hint says how a live press works: lean to the own side (the
+                // board docks beside the button on the gate's frame), then reach out (one wrist zone
+                // on the player's outer side, `LaserLiveRoundGeometryV1`). Not Sketch copy; pending Theo.
+                Text(model.soloPractice ? "PRESS YOUR BUTTON" : "PRESS THE BUTTONS")
+                    .font(.system(size: 52.7 * k, weight: .black, design: .rounded))
                 Text("TO OPEN THE DOOR").font(.system(size: 18.7 * k, weight: .black, design: .rounded))
-                // How a live press works (wrist zones on each player's outer side,
-                // `LaserLiveRoundGeometryV1`). Not Sketch copy; pending Theo.
-                Text("Reach toward your wall: high, middle, low")
+                Text(model.soloPractice ? "Lean to your side, then reach out and press it"
+                                        : "Each player: lean to your side, then reach out to your button")
                     .font(.system(size: 16 * k, weight: .bold, design: .rounded))
                     .padding(.top, 4 * k)
             }

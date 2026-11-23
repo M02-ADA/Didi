@@ -6,6 +6,8 @@ final class SFXReplayLabUITests: XCTestCase {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
+        app.launchArguments = ["-showDebugTools"]
+        LaserHeistJourney.markTutorialCompleted(app)
         app.launch()
 
         let open = app.buttons["openSFXReplayLab"]

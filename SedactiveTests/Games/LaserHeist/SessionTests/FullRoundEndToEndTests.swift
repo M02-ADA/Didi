@@ -287,9 +287,9 @@ import Testing
             // The gate is shown, its door at its stop.
             #expect(presenter.vault.diagnostics.reveals + presenter.vault.diagnostics.approaches >= gate + 1)
             #expect(scene.vaultDoorDepth != nil, "round \(round): gate \(gate + 1) door in the corridor")
-            // Real button contact: outside first, then each button's zone, for both players.
+            // Real button contact: outside first, then each player's one activation zone.
             let zones = try #require(session.liveVaultZones)
-            #expect(zones.count == 6 && Set(zones.map(\.playerID)) == Set(PlayerID.allCases))
+            #expect(zones.count == 2 && Set(zones.map(\.playerID)) == Set(PlayerID.allCases))
             for button in LaserVaultButton.allCases {
                 try await send(outside)
                 let wrists = Dictionary(uniqueKeysWithValues: zones.filter { $0.button == button }.map {
@@ -334,6 +334,14 @@ import Testing
             if (p1?.offset.y ?? 0) > 0.05, p2 == RobotAvatarLayer.ScriptedMove.none { sawLemonFirst = true }
             if (p2?.offset.y ?? 0) > 0.05 { sawTangerine = true }
             #expect(session.state?.gameTime == unlocked.gameTime, "the clock is held during the entry")
+            // The blink (21 November 2026): mascots and paw board switch together, only once the
+            // eyelids are shut, and the HUD's Diamond Time title with them.
+            if let e = session.finalVaultEntry {
+                let lanesHidden = scene.players.values.allSatisfy { !$0.isEnabled }
+                #expect(lanesHidden == e.presentsDiamondTime && session.showsDiamondTimePaws == e.presentsDiamondTime,
+                        "round \(round): one switch at the blink (elapsed \(e.elapsed))")
+                if e.presentsDiamondTime, !e.isComplete { #expect(e.elapsed >= e.timeline.blinkSwitch) }
+            }
             if session.finalVaultEntry?.isComplete == false {
                 #expect(presenter.diamondTime.floatingIDs.isEmpty, "no diamonds before the team is inside")
             }

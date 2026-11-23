@@ -6,6 +6,7 @@ final class DeveloperModeUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
         app.launchArguments = arguments
+        LaserHeistJourney.markTutorialCompleted(app)
         app.launch()
         return app
     }
@@ -32,7 +33,8 @@ final class DeveloperModeUITests: XCTestCase {
         let app = launch()
         XCTAssertTrue(app.buttons["startMission"].waitForExistence(timeout: 20))
         LaserHeistJourney.startCameraSetup(app, timeout: 30)
-        XCTAssertTrue(app.buttons["leaveLiveSetup"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["setupNext"].waitForNonExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["navigationBack"].waitForExistence(timeout: 30))
         XCTAssertFalse(app.buttons["debugSkipToReplay"].exists)
         XCTAssertFalse(app.buttons["setupDiagnosticsToggle"].exists)
     }

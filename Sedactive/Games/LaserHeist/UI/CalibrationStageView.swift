@@ -32,6 +32,7 @@ struct CalibrationStageView<Panel: View>: View {
     var playerStatus: [PlayerID: LaserSetupPlayerStatus] = [:]
     /// DEBUG Solo Test: one centred box for P1 instead of two.
     var solo = false
+    var showsCameraUnavailableLabel = true
     let onBack: () -> Void
     @ViewBuilder var panel: () -> Panel
 
@@ -58,7 +59,7 @@ struct CalibrationStageView<Panel: View>: View {
                         .accessibilityLabel("Camera preview")
                         .accessibilityIdentifier("calibrationCameraSurface")
                         .offset(x: image.minX, y: image.minY)
-                } else {
+                } else if showsCameraUnavailableLabel {
                     cameraUnavailable(k)
                         .frame(width: image.width)
                         .offset(x: image.minX, y: image.maxY - 60 * k)
@@ -116,7 +117,9 @@ struct CalibrationStageView<Panel: View>: View {
 }
 
 /// The calibration stage's geometry (Sketch Home Copy 19/42, artboard points → screen).
-enum CalibrationStageLayout {
+/// Pure geometry, so the tracker's acquisition zones (`PlayerAcquisitionZones`, off the main actor)
+/// use the very transform that draws the boxes.
+nonisolated enum CalibrationStageLayout {
     /// Sketch Home Copy 19/42, artboard points.
     static let boxSize = CGSize(width: 422, height: 601)
     static let boxTop: CGFloat = 177

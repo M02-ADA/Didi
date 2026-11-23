@@ -14,6 +14,7 @@ struct HomeView: View {
     /// store); without it the line is left out rather than showing a made-up value.
     var bestScore: Int?
     let onStart: () -> Void
+    var onReplayTutorial: (() -> Void)? = nil
     #if DEBUG
     @State private var showsSFXReplayLab = false
     @Environment(\.developerTools) private var developerTools
@@ -26,6 +27,10 @@ struct HomeView: View {
                 .scaledToFill()
                 .sketchBackdrop()
         } content: { k in
+            if let onReplayTutorial {
+                HomeTutorialHelpButton(k: k, action: onReplayTutorial)
+                    .sketchFrame(x: 1071, y: 34, width: 78, height: 78, k: k)
+            }
             Image("LaserHeistUI/didi-logo")
                 .resizable()
                 .shadow(color: .black.opacity(0.23), radius: 4.5 * k, x: 8 * k, y: 4 * k)
@@ -63,7 +68,7 @@ struct HomeView: View {
             }
         }
         #if DEBUG
-        .overlay(alignment: .topTrailing) {
+        .overlay(alignment: .topLeading) {
             if developerTools.isEnabled {
                 VStack(alignment: .trailing, spacing: 12) {
                     Button("Developer Mode · Turn off") { developerTools.toggleEnabled() }
@@ -115,5 +120,5 @@ struct StartMissionButtonStyle: ButtonStyle {
 }
 
 #Preview(traits: .landscapeLeft) {
-    HomeView(bestScore: 930, onStart: {})
+    HomeView(bestScore: 930, onStart: {}, onReplayTutorial: {})
 }

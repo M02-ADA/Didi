@@ -7,6 +7,7 @@ final class InGameCameraPreviewUITests: XCTestCase {
     defer { XCUIDevice.shared.orientation = previousOrientation }
     let app = XCUIApplication()
     app.launchArguments = ["-showDebugTools"]
+    LaserHeistJourney.markTutorialCompleted(app)
     app.launch()
     let entry = app.buttons["chooseInGameCamera"]
     XCTAssertTrue(entry.waitForExistence(timeout: 30))

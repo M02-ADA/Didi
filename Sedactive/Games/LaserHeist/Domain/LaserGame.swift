@@ -88,7 +88,7 @@ nonisolated struct LaserGame: Sendable {
     /// Targets each registered attempt carries; its effects commit when all are judged.
     private var targetCounts: [UUID: Int] = [:]
     #if DEBUG
-    /// DEBUG Solo Test only: this one player's three presses open a vault (there is no second
+    /// DEBUG Solo Test only: this one player's press opens a vault (there is no second
     /// player to press theirs). Nil in every co-op round, where both sides are always required.
     var soloPracticePlayer: PlayerID?
     #endif
@@ -124,6 +124,29 @@ nonisolated struct LaserGame: Sendable {
     private(set) var lastHeartPickup: (id: UUID, restored: Bool)?
     private var highestHeartID: String?
     private var maximumTeamHealth = 5
+    private var heartTrainingID: UUID?
+    private var heartTrainingConsumed = false
+
+    /// Explicit instructional round: never a Vision-judged collision or a normal encounter.
+    static func heartTraining(configuration: LaserRoundConfiguration, context: BodyInputContext,
+                              id: UUID) throws -> Self {
+        var game = try Self(configuration: configuration, context: context, historyCapacityPerPlayer: 1)
+        game.heartTrainingID = id
+        return game
+    }
+
+    mutating func commitHeartTrainingDamage(id: UUID, players: Set<PlayerID>) -> HeartTrainingDamage? {
+        guard heartTrainingID == id, !heartTrainingConsumed, !players.isEmpty,
+              players.allSatisfy({ context.calibrationRevisions[$0] != nil }),
+              context.isActive, !blocked, !exited, roundOutcome == nil else { return nil }
+        heartTrainingConsumed = true
+        let amount = min(1, teamHealth)
+        teamHealth -= amount
+        emit(.teamDamaged(amount: amount, remainingHealth: teamHealth), at: gameTime)
+        return HeartTrainingDamage(id: id, generation: context.sessionGeneration,
+                                   players: players, remainingHealth: teamHealth)
+    }
+
 
     mutating func spawnHeart(_ spawn: LaserDiamondSpawn, beforeVaultAt boundary: Double) throws {
         try requireLaserValue(roundPhase == .activity && !blocked && !exited && roundOutcome == nil
@@ -174,6 +197,19 @@ nonisolated struct LaserGame: Sendable {
         }
     }
 
+    /// Starts an isolated tutorial bonus round with the production Diamond Time rules.
+    /// Its caller owns the game value and must already have authorized the tutorial transition.
+    static func tutorialDiamondTime(configuration: LaserRoundConfiguration,
+                                    context: BodyInputContext) throws -> Self {
+        try requireLaserValue(configuration.diamondPoints == LaserRoundConfiguration.approvedDiamondPoints,
+                              "tutorial Diamond Time points")
+        var game = try Self(configuration: configuration, context: context, historyCapacityPerPlayer: 1)
+        game.roundPhase = .diamondTime
+        game.bonusDeadline = game.bonusDuration
+        game.emit(.phaseChanged(.diamondTime), at: 0)
+        return game
+    }
+
     /// Installs the round's boards (once, before any LEAN encounter), at the current game time.
     mutating func configureBoards(_ field: LaserBoardField) {
         var field = field
@@ -200,6 +236,7 @@ nonisolated struct LaserGame: Sendable {
     /// now, from where the boards are (`LaserLeanPlacement`), and never moves afterwards.
     @discardableResult
     mutating func register(_ encounter: LaserEncounter) throws -> LaserEncounter {
+        try requireLaserValue(heartTrainingID == nil, "training round cannot register ordinary encounters")
         let encounter = try placingLeanBeams(encounter)
         try requireLaserValue(!blocked && !exited && roundOutcome == nil && roundPhase == .activity
             && !effectEncounters.contains(encounter.id) && !withdrawnAttemptIDs.contains(encounter.attemptID),
@@ -479,7 +516,7 @@ nonisolated struct LaserGame: Sendable {
         vault = current
         guard activated > 0 else { return 0 }
         let verdicts = Dictionary(uniqueKeysWithValues: PlayerID.allCases.map {
-            ($0, current.buttons[$0]?.count == 3 ? Judgement.clear : .pending(.awaitingFinalization))
+            ($0, current.buttons[$0]?.count == LaserVaultButton.allCases.count ? Judgement.clear : .pending(.awaitingFinalization))
         })
         var succeeded = LaserCoopDecision.evaluate(verdicts) == .succeeded
         #if DEBUG

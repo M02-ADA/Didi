@@ -10,7 +10,43 @@ final class LaserInputFlow {
     private(set) var isStarting = false
     private(set) var isClosing = false
     private(set) var message: String?
+    private(set) var returnsToPlacement = false
+    let leanTutorial: LeanTutorial
     private var operation: UUID?
+    private var offeredLaunchOnboarding = false
+
+    /// Offer placement once per app process. An incomplete visit can be started again
+    /// from Home, and a new process reads the same stored completion record.
+    func offerLaunchOnboarding() -> Bool {
+        guard route == .selection, !offeredLaunchOnboarding else { return false }
+        offeredLaunchOnboarding = true
+        return !leanTutorial.isCompleted
+    }
+    /// Explicit Home intent, consumed by exactly one setup generation; never persisted.
+    private(set) var tutorialReplayRequested = false
+    @discardableResult func requestLeanTutorialReplay() -> Bool {
+        guard canStartLive, !tutorialReplayRequested else { return false }
+        tutorialReplayRequested = true
+        return true
+    }
+    func cancelLeanTutorialReplay() { tutorialReplayRequested = false }
+
+
+    /// Observe existing readiness, never make it ready. The countdown hold is set before start.
+    func presentLeanTutorialIfReady() {
+        guard route == .liveSetup, let session, session.preRoundTutorialPending else { return }
+        leanTutorial.beginIfEligible(generation: session.inputConfiguration.sessionGeneration,
+                                     eligible: session.canStartLiveRound)
+    }
+
+    func closeCompletedLeanTutorial(generation: UUID) async {
+        guard route == .liveSetup, let session, session.preRoundTutorialPending,
+              session.inputConfiguration.sessionGeneration == generation,
+              leanTutorial.generation == generation, leanTutorial.stage == .completed else { return }
+        // Keep the pre-round hold in place until stop retires this session.
+        await closeLiveSetup()
+    }
+
     private let makeLiveSession: @MainActor () throws -> GameSessionCoordinator
     /// DEBUG Solo Test: the same flow with a P1-only session. Never set in Release.
     private let makeSoloSession: (@MainActor () throws -> GameSessionCoordinator)?
@@ -36,7 +72,7 @@ final class LaserInputFlow {
         await startLiveSetup(solo: selectsSoloPractice && makeSoloSession != nil)
     }
 
-    init(initialRoute: Route = .selection,
+    init(initialRoute: Route = .selection, leanTutorial: LeanTutorial? = nil,
          makeLiveSession: @escaping @MainActor () throws -> GameSessionCoordinator,
          makeSoloSession: (@MainActor () throws -> GameSessionCoordinator)? = nil,
          stopDiagnostics: @escaping @MainActor () async -> Void = {}) {
@@ -46,6 +82,7 @@ final class LaserInputFlow {
         self.makeSoloSession = nil
         #endif
         precondition(initialRoute == .selection || initialRoute == .replay || initialRoute == .diagnostics)
+        self.leanTutorial = leanTutorial ?? LeanTutorial()
         route = initialRoute
         self.makeLiveSession = makeLiveSession
         self.stopDiagnostics = stopDiagnostics
@@ -67,6 +104,7 @@ final class LaserInputFlow {
 
     func showReplay() {
         guard route == .selection, !isStarting, !isClosing else { return }
+        cancelLeanTutorialReplay()
         message = nil
         route = .replay
     }
@@ -81,19 +119,23 @@ final class LaserInputFlow {
         guard canStartLive, !solo || makeSoloSession != nil else { return }
         isSolo = solo
         route = .liveSetup
+        let replayTutorial = tutorialReplayRequested
+        cancelLeanTutorialReplay()
         isStarting = true
         message = nil
         let token = UUID()
         operation = token
         do {
             let session = try (isSolo ? makeSoloSession! : makeLiveSession)()
+            leanTutorial.prepare(generation: session.inputConfiguration.sessionGeneration, roster: session.inputConfiguration.roster, replayRequested: replayTutorial)
+            session.setPreRoundTutorialPending(leanTutorial.stage != .completed)
             self.session = session
             #if DEBUG
-            print("[LaserSetupRestart] flow: starting session")
+            print("[LaserSetupRestart] flow: starting session \(Self.tag(session))\(isSolo ? " (solo)" : "")")
             #endif
             try await session.start()
             #if DEBUG
-            print("[LaserSetupRestart] flow: session started")
+            print("[LaserSetupRestart] flow: session \(Self.tag(session)) started (\(session.phase))")
             #endif
             guard operation == token, route == .liveSetup else { return }
         } catch {
@@ -106,33 +148,47 @@ final class LaserInputFlow {
         if operation == token { isStarting = false }
     }
 
-    func closeLiveSetup() async {
+    func consumePlacementReturn() -> Bool {
+        defer { returnsToPlacement = false }
+        return returnsToPlacement
+    }
+
+    func closeLiveSetup(returnToPlacement: Bool = false) async {
         guard route == .liveSetup, !isClosing else { return }
         isClosing = true
         let token = UUID()
         operation = token
         #if DEBUG
-        print("[LaserSetupRestart] flow: stopping session")
+        print("[LaserSetupRestart] flow: stopping session \(Self.tag(session)) (phase \(String(describing: session?.phase)), round \(session?.summary != nil ? "ended" : session?.state != nil ? "running" : "not started"))")
         #endif
+        let finishedTutorial = leanTutorial.stage == .completed && session?.preRoundTutorialPending == true
         await session?.stop()
         #if DEBUG
-        print("[LaserSetupRestart] flow: session stopped")
+        print("[LaserSetupRestart] flow: session \(Self.tag(session)) stopped")
         #endif
         guard operation == token else { return }
         session = nil
+        cancelLeanTutorialReplay()
+        leanTutorial.abandon()
         isStarting = false
         isClosing = false
+        returnsToPlacement = returnToPlacement
         route = .selection
         automaticRestarts = 0
-        message = "Camera setup has ended. You can start a fresh setup or use the replay demo."
+        message = finishedTutorial ? nil : "Camera setup has ended. You can start a fresh setup or use the replay demo."
     }
 
     /// Explicit user intent only. The same App-retained provider gets a new coordinator/generation.
     func retryLiveSetup() async {
         guard route == .liveSetup, !isStarting, !isClosing else { return }
         let solo = isSolo // Retry keeps the chosen mode; leaving resets it on the next start.
+        #if DEBUG
+        print("[LaserSetupRestart] flow: retry requested (Play again / Restart setup) from session \(Self.tag(session))")
+        #endif
+        let restartingTutorial = session?.preRoundTutorialPending == true && leanTutorial.isCompleted
         await closeLiveSetup()
         guard canStartLive else { return }
+        if restartingTutorial { requestLeanTutorialReplay() }
         await startLiveSetup(solo: solo)
     }
 
@@ -162,6 +218,7 @@ final class LaserInputFlow {
 
     func showDiagnostics() {
         guard canStartLive else { return }
+        cancelLeanTutorialReplay()
         route = .diagnostics
     }
 
@@ -175,9 +232,17 @@ final class LaserInputFlow {
     }
 
     func handleBackground() async {
+        cancelLeanTutorialReplay()
         if route == .liveSetup { await closeLiveSetup() }
         if route == .diagnostics { await closeDiagnostics() }
     }
+
+    #if DEBUG
+    /// Short session identity for DEBUG lifecycle lines (the input generation's first 8 characters).
+    private static func tag(_ session: GameSessionCoordinator?) -> String {
+        session.map { String($0.inputConfiguration.sessionGeneration.uuidString.prefix(8)) } ?? "none"
+    }
+    #endif
 
     private static func explain(_ error: any Error) -> String {
         switch error {

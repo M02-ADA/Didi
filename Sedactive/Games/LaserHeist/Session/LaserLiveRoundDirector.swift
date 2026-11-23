@@ -15,8 +15,8 @@ nonisolated struct LaserVaultZone: Equatable, Sendable {
 /// (11 November 2026); physical comfort/reach acceptance is still pending device testing.
 ///
 /// - Diamonds: candidate positions to either side of the torso and above the head.
-/// - Vault buttons: three on the player's OUTER side (toward their own corridor wall): high,
-///   level and low reaches of one arm. Live rounds draw each button exactly on its zone, with
+/// - Vault button: one activation zone on the player's OUTER side (toward their own corridor wall),
+///   at a level reach of one arm. Live rounds draw the button exactly on its zone, with
 ///   the mascot's own mirror and height scale (`GameWorldMapping.mascotPoint`), and the player's
 ///   wrists as reach cursors through the same mapping: cursor on a button = wrist in its zone.
 nonisolated enum LaserLiveRoundGeometryV1 {
@@ -50,17 +50,16 @@ nonisolated enum LaserLiveRoundGeometryV1 {
                                       eligiblePlayers: [player])
         }
     }
-    /// Vault buttons, outward from the player's own body centre: (outward, height) shares of their
-    /// standing height. One stack on the player's outer side, at HIGH (head/upper shoulder), MIDDLE
-    /// (chest) and LOW (upper thigh) reaches, 0.215 h apart (more than two radii: no overlap).
-    /// REACHABLE BY A REAL ARM (iPad, 12 November 2026: presses failed): the shoulder→wrist reach is
-    /// about 0.33 h (`humanWristReachShare`), so each zone's near edge now lies within 0.31 h of the
-    /// shoulder: HIGH and MIDDLE at 75–80 % of the arm, LOW at 91 % (a little downward stretch).
-    /// Before, LOW's near edge was 0.40 h away (unreachable without an 11 cm bend) and HIGH/MIDDLE's
-    /// centres were beyond a straight arm. A leaning player's hanging wrist (about 0.25 h out at
-    /// 0.47 h) stays 0.13 h from LOW: a lean alone is never a press.
-    static let vaultShares: [LaserVaultButton: (out: Double, y: Double)] = [
-        .top: (0.40, 0.93), .middle: (0.42, 0.715), .bottom: (0.38, 0.50)]
+    /// The vault's activation zone, outward from the player's own body centre: (outward, height)
+    /// shares of their standing height, on the player's outer side at chest height.
+    /// ONE BUTTON (Kevin, task owner, 19 November 2026): the HIGH / MIDDLE / LOW stack became one
+    /// activation button per player. Its zone is the former MIDDLE zone, unchanged in place and
+    /// radius: the one already validated as reachable by a real arm (iPad, 12 November 2026: its near
+    /// edge lies at about 75 % of the shoulder→wrist reach, `humanWristReachShare`). A leaning
+    /// player's hanging wrist (about 0.25 h out at 0.47 h) stays 0.30 h from its centre: a lean alone
+    /// is never a press. The zone was not widened with the larger drawn button: a larger zone needs
+    /// device data first.
+    static let vaultShares: [LaserVaultButton: (out: Double, y: Double)] = [.activate: (0.42, 0.715)]
     static let vaultRadiusShare = 0.105
     /// The human reference these shares assume (anthropometric averages): the shoulder joint
     /// (outward, height) and the shoulder→fingertip arm (`humanArmShare`) and shoulder→wrist reach
@@ -108,7 +107,7 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
     let baseEncounters: [LaserEncounter]
     let diamondRadius: Double
     /// Both players, or P1 alone in a DEBUG Solo Test practice (P1's lasers, diamonds and vault
-    /// buttons only; `LaserGame.soloPracticePlayer` opens a solo vault on P1's three presses).
+    /// button only; `LaserGame.soloPracticePlayer` opens a solo vault on P1's press).
     let roster: [PlayerID]
     var isSolo: Bool { roster.count == 1 }
     private let minutes: [[LaserEncounter]]
@@ -200,6 +199,21 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
                                                approachLead: 0.5, passageDuration: 1)
     }
 
+    /// Contact targets for the same accepted layout in gameplay and tutorial practice.
+    func vaultContactZones(gateIndex: Int) -> [LaserVaultZone] {
+        var zones: [LaserVaultZone] = []
+        for (playerIndex, player) in PlayerID.allCases.enumerated() where roster.contains(player) {
+            for (buttonIndex, button) in LaserVaultButton.allCases.enumerated() {
+                let zone = vaultZones[player]![button]!
+                let target = UUID(uuidString: String(format: "D1C00000-0000-4000-8000-%012d",
+                    1 + gateIndex * 6 + playerIndex * 3 + buttonIndex))!
+                zones.append(LaserVaultZone(targetID: target, playerID: player, button: button,
+                                            position: zone.position, radius: zone.radius))
+            }
+        }
+        return zones
+    }
+
     /// The round's hoverboards as game state, at rest on their lanes (`LaserGame.configureBoards`).
     func boards() throws -> LaserBoardField { try LaserBoardField(references: boardReferences) }
 
@@ -273,20 +287,10 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
             guard pending.isEmpty, let boundary = vaultBoundary, boundary <= time,
                   game.activeDiamonds.isEmpty, game.isEveryRegisteredEncounterSettled else { return nil }
             // The vault waits for every registered laser to be judged; it never withdraws one.
-            // A DEBUG Solo Test vault has the roster's (P1's) three buttons only.
+            // A DEBUG Solo Test vault has the roster's (P1's) button only.
             vaultOpened = true
             let id = UUID(uuidString: String(format: "D1B00000-0000-4000-8000-%012d", minute + 1))!
-            var zones: [LaserVaultZone] = []
-            for (playerIndex, player) in PlayerID.allCases.enumerated() where roster.contains(player) {
-                for (buttonIndex, button) in LaserVaultButton.allCases.enumerated() {
-                    let zone = vaultZones[player]![button]!
-                    let target = UUID(uuidString: String(format: "D1C00000-0000-4000-8000-%012d",
-                        1 + minute * 6 + playerIndex * 3 + buttonIndex))!
-                    zones.append(LaserVaultZone(targetID: target, playerID: player, button: button,
-                                                position: zone.position, radius: zone.radius))
-                }
-            }
-            return (max(boundary, game.gameTime), .openVault(id, zones: zones))
+            return (max(boundary, game.gameTime), .openVault(id, zones: vaultContactZones(gateIndex: minute)))
         default:
             return nil
         }

@@ -25,6 +25,14 @@ nonisolated struct LaserSetupPresence: Equatable, Sendable {
     var willRetry = false
     /// Why the last attempt did not finish (player-facing hint), if it failed.
     var lastIssue: StandingSampleIssue?
+    /// The last attempt was interrupted by the camera or processing, not by anything the players did.
+    var technicalRetry = false
+    /// A failed attempt is pausing before the next automatic attempt.
+    var retryPending = false
+    /// Why a player's calibration progress just fell back (a real step or lost tracking), shown
+    /// until their progress rises again or a new attempt starts. Never set by head-top jitter,
+    /// which no longer costs progress.
+    var progressDropReason: [PlayerID: StandingSampleIssue] = [:]
 }
 
 /// Timing for the automatic flow. None of these change evidence, freshness or identity rules.

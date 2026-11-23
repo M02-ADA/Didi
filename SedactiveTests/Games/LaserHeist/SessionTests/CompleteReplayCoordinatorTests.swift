@@ -43,7 +43,8 @@ struct CompleteReplayCoordinatorTests {
         #expect((normalCount + 4 ... normalCount + 8).contains(summary.diamondsCollected))
         #expect(summary.teamScore == 9_600 + 25 * summary.diamondsCollected)
         #expect(summary.diamondsCollected == session.diamondsCollected)
-        #expect(abs(summary.gameDuration - 326) < 1e-8 && abs(summary.activityDuration - 320) < 1e-8)
+        #expect(abs(summary.gameDuration - 326) < 1e-8 && abs(summary.activityDuration - 320) < 1e-8,
+                "game \(summary.gameDuration) s, activity \(summary.activityDuration) s")
         #expect(session.diamondStates.values.filter { $0.outcome == .closed }.count == 4)
         #expect(session.inputStatus == .stopped)
         #expect(session.events.filter { if case .roundEnded = $0.kind { true } else { false } }.count == 1)

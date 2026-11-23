@@ -5,11 +5,8 @@
 
 import SwiftUI
 
-/// The Sketch Home, the story intro video and the two "Put your iPad on the Floor" steps, shown on
-/// `LaserInputFlow`'s selection route. Which of these screens shows is local
-/// presentation state only: the route, the input source and every session
-/// belong to `LaserInputFlow` (Jevon). The last step's check button asks the
-/// flow to start camera setup. Developer Mode reveals replay and diagnostic tools on Home.
+/// Presents Home, the intro video and the iPad placement instructions.
+/// The placement check button asks LaserInputFlow to start camera setup.
 struct LaserHeistIntroView: View {
     let flow: LaserInputFlow
     /// DEBUG: opens the real-camera game scene preview (Edo's PR #31 route,
@@ -23,34 +20,55 @@ struct LaserHeistIntroView: View {
     enum Screen: Equatable {
         case home
         case introVideo
-        case setup(SetupInstructionView.Step)
+        case setup
     }
 
     var body: some View {
         ZStack {
             switch screen {
             case .home:
-                HomeView(bestScore: nil) { show(.introVideo) }
+                HomeView(bestScore: nil, onStart: {
+                    flow.cancelLeanTutorialReplay()
+                    show(.introVideo)
+                }, onReplayTutorial: {
+                    guard flow.requestLeanTutorialReplay() else { return }
+                    // The actual corridor/FTUE needs accepted setup. Help skips the story detour,
+                    // not mode selection, camera binding, calibration or readiness.
+                    show(.setup)
+                })
                     .overlay(alignment: .bottom) { homeOptions }
                     .transition(.opacity)
             case .introVideo:
                 // The video has its own sound: menu music pauses for it and resumes after.
                 IntroVideoView {
                     AudioService.shared.setMusic(.menu)
-                    screen = .setup(.holdIPad)
+                    screen = .setup
                 }
                 .onAppear { AudioService.shared.setMusic(nil) }
                 .transition(.opacity)
-            case .setup(let step):
-                SetupInstructionView(step: step, onBack: { back(from: step) }, onNext: { next(from: step) })
-                    .id(step)
+            case .setup:
+                SetupInstructionView(onBack: backFromSetup, onNext: startCalibration)
                     .transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 0.3), value: screen)
         .background(LaserHeistDesign.night)
         .preferredColorScheme(.dark)
-        .onAppear { AudioService.shared.setMusic(.menu) }
+        .onAppear {
+            AudioService.shared.setMusic(.menu)
+            #if DEBUG
+            // The legacy Help visual fixture opens directly on its Home entry point.
+            if ProcessInfo.processInfo.arguments.contains("-homeHelpFTUEPreview"),
+               !FTUEOnboardingPreview.isRequested { return }
+            #endif
+            let returnsToPlacement = flow.consumePlacementReturn()
+            let offersOnboarding = flow.offerLaunchOnboarding()
+            if returnsToPlacement || offersOnboarding { screen = .setup }
+        }
+        .onChange(of: flow.tutorialReplayRequested) { _, pending in
+            if !pending, flow.route == .selection { screen = .home }
+        }
+        .onDisappear { flow.cancelLeanTutorialReplay() }
     }
 
     private func show(_ next: Screen) {
@@ -58,14 +76,24 @@ struct LaserHeistIntroView: View {
         screen = next
     }
 
-    private func back(from step: SetupInstructionView.Step) {
-        show(step == .holdIPad ? .home : .setup(.holdIPad))
+    private func backFromSetup() {
+        flow.cancelLeanTutorialReplay()
+        show(.home)
     }
 
-    private func next(from step: SetupInstructionView.Step) {
-        guard step == .standIPadOnFloor else { return show(.setup(.standIPadOnFloor)) }
+    private func startCalibration() {
         guard flow.canStartLive else { return }
         AudioService.shared.play(.uiTap)
+        #if DEBUG
+        // Explicit Simulator visual QA only. Reuse the existing synthetic FTUE fixture;
+        // production always follows the real setup path below.
+        if FTUEOnboardingPreview.isRequested ||
+            (ProcessInfo.processInfo.arguments.contains("-homeHelpFTUEPreview") && flow.tutorialReplayRequested) {
+            if flow.tutorialReplayRequested { LeanFTUEPreviewLaunch.requestManualReplay() }
+            flow.showReplay()
+            return
+        }
+        #endif
         // In the mode chosen on Home (TEMPORARY selector; always co-op in Release).
         Task { await flow.startSelectedSetup() }
     }
@@ -109,6 +137,8 @@ struct LaserHeistIntroView: View {
                     }
                     .accessibilityIdentifier("chooseReplay")
                     .accessibilityHint("A sample round with no camera.")
+                    Button("Reset Lean tutorial") { flow.leanTutorial.resetForNextPlay() }
+                        .accessibilityIdentifier("resetLeanTutorial")
                     Button("Camera diagnostics") { flow.showDiagnostics() }
                         .accessibilityIdentifier("cameraDiagnostics")
                     if let onInGameCamera {

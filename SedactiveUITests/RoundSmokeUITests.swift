@@ -21,7 +21,6 @@ final class RoundSmokeUITests: XCTestCase {
 
     func testLaunchEndRoundAndRetryBuildANewRound() {
         let app = XCUIApplication()
-        app.launchArguments = ["-showDebugTools"]
         app.launchArguments = ["--synthetic-gameplay-preview"]
         app.launch()
         LaserHeistJourney.enterRound(app, timeout: timeout)
@@ -44,6 +43,7 @@ final class RoundSmokeUITests: XCTestCase {
     func testInputSelectionCanOpenReplayAndReturnWithoutStartingCamera() {
         let app = XCUIApplication()
         app.launchArguments = ["-showDebugTools"]
+        LaserHeistJourney.markTutorialCompleted(app)
         app.launch()
         let replay = app.buttons["chooseReplay"]
         let camera = app.buttons["startMission"]   // Sketch Home: camera setup follows the two Set Up steps
@@ -67,6 +67,7 @@ final class RoundSmokeUITests: XCTestCase {
         #if targetEnvironment(simulator)
         let app = XCUIApplication()
         app.launchArguments = ["-showDebugTools"]
+        LaserHeistJourney.markTutorialCompleted(app)
         app.launch()
         let camera = app.buttons["startMission"]
         XCTAssertTrue(camera.waitForExistence(timeout: timeout))
@@ -77,13 +78,14 @@ final class RoundSmokeUITests: XCTestCase {
             if permission.buttons["Allow"].exists { permission.buttons["Allow"].tap() }
             else if permission.buttons["OK"].exists { permission.buttons["OK"].tap() }
         }
-        let error = app.staticTexts["liveSetupError"]
-        XCTAssertTrue(error.waitForExistence(timeout: timeout), "Simulator must show the unavailable-camera path")
         let retry = app.buttons["retryLiveSetup"]
-        XCTAssertTrue(retry.exists && retry.isEnabled)
+        XCTAssertTrue(retry.waitForExistence(timeout: timeout) && retry.isEnabled)
         retry.tap()
-        XCTAssertTrue(error.waitForExistence(timeout: timeout))
-        app.buttons["leaveLiveSetup"].tap()
+        XCTAssertTrue(retry.waitForExistence(timeout: timeout))
+        let back = app.buttons["navigationBack"]
+        back.tap()
+        XCTAssertTrue(app.buttons["setupNext"].waitForExistence(timeout: timeout))
+        back.tap()
         XCTAssertTrue(camera.waitForExistence(timeout: timeout))
         XCTAssertTrue(camera.isEnabled, "A stopped source must allow a new explicit setup")
         #else
@@ -103,16 +105,20 @@ enum LaserHeistJourney {
         if replay.exists { replay.tap() }
     }
 
-    /// Home › START MISSION › intro video (skipped) › both "Put your iPad on the Floor" steps › camera setup.
+    static func markTutorialCompleted(_ app: XCUIApplication) {
+        for module in ["lean", "heart", "jumpDuck", "progress"] {
+            app.launchArguments += ["-laserHeist.ftue.\(module).v1.completed", "YES"]
+        }
+    }
+
+    /// Home › START MISSION › intro video (skipped) › iPad placement instructions › camera setup.
     static func startCameraSetup(_ app: XCUIApplication, timeout: TimeInterval) {
         app.buttons["startMission"].tap()
         let skipVideo = app.buttons["skipIntroVideo"]
         XCTAssertTrue(skipVideo.waitForExistence(timeout: timeout), "The intro video did not show")
         skipVideo.tap()
         let next = app.buttons["setupNext"]
-        XCTAssertTrue(next.waitForExistence(timeout: timeout), "Set Up step 1 did not show")
-        next.tap()
-        XCTAssertTrue(next.waitForExistence(timeout: timeout), "Set Up step 2 did not show")
+        XCTAssertTrue(next.waitForExistence(timeout: timeout), "Set Up did not show")
         next.tap()
     }
 }

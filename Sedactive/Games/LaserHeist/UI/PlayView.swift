@@ -23,13 +23,14 @@ struct PlayView: View {
     var onExit: (() -> Void)?
     var liveSession: GameSessionCoordinator?
     var onLiveRetry: (() -> Void)?
+    var leanTutorial: LeanTutorial?
 
     @State private var generation = UUID()
 
     var body: some View {
         let roundGeneration = liveSession?.inputConfiguration.sessionGeneration ?? generation
         ReplayRoundView(generation: roundGeneration, avatarSource: avatarSource, cutoutSource: cutoutSource,
-                        onExit: onExit, suppliedSession: liveSession,
+                        onExit: onExit, suppliedSession: liveSession, tutorial: leanTutorial,
                         retry: { if let onLiveRetry { onLiveRetry() } else { generation = UUID() } })
             .id(roundGeneration)
     }
@@ -42,6 +43,27 @@ private struct ReplayRoundView: View {
     let cutoutSource: LiveCutoutSource?
     let onExit: (() -> Void)?
     let suppliedSession: GameSessionCoordinator?
+    let tutorial: LeanTutorial?
+    @State private var needsLeanProjection = true
+    @Environment(\.scenePhase) private var scenePhase
+    // Render subscriptions outlive the SwiftUI value that installed them. Read current lifecycle
+    // through State storage instead of capturing that value's startup (inactive) environment.
+    @State private var trainingSceneActive = false
+    @State private var practicePresentation = FTUEPracticePresentation()
+    @State private var heartTutorialDemo = HeartTutorialDemo()
+    @State private var leanTravel = LeanTutorialTravel()
+    @State private var collectiblePresentation = FTUECollectiblePresentation()
+    @State private var tutorialVaultPractice: FTUEVaultPractice?
+    @State private var tutorialVaultPresenter: GameplayScenePresenter?
+    #if DEBUG
+    @State private var vaultDiagnosticStart: Double?
+    @State private var vaultDiagnosticInspected = false
+    @State private var vaultPreviewSceneStatus = ""
+    #endif
+    @State private var tutorialDiamondTime: FTUEDiamondTimeSession?
+    @State private var tutorialDiamondPresentation = LaserReplayPresentation()
+    @State private var tutorialDiamondFlights = DiamondHUDFlightModel()
+    @State private var tutorialHeartArt: HeartArt?
     let retry: () -> Void
     @State private var scene = LaserScene()
     @State private var presentation = LaserReplayPresentation()
@@ -59,6 +81,34 @@ private struct ReplayRoundView: View {
     @State private var frameRefresh: EventSubscription?
     #if DEBUG
     @Environment(\.developerTools) private var developerTools
+    @State private var leanPreview = LeanTutorial(defaults: FTUEOnboardingPreview.defaults ?? UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!)
+    @State private var previewLaserPractice: FTUELaserPractice?
+    @State private var previewHeartTraining: HeartTrainingEncounter?
+    @State private var leanPreviewConfiguration: LaserRoundConfiguration?
+    @State private var leanPreviewInput: LeanFTUESyntheticInput?
+    @State private var leanPreviewStart: (() -> Void)?
+    @State private var leanPreviewTask: Task<Void, Never>?
+    @State private var leanPreviewAudit = ""
+    @State private var leanPreviewLayoutDone = false
+    private var leanHeldStage: LeanTutorial.Stage? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-leanFTUEHold"), args.indices.contains(i + 1) else { return nil }
+        return ["left", "right", "free"].contains(args[i + 1]) ? .freeLean : .introduction
+    }
+    private var leanRequestedLayout: Int {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-leanFTUELayout"), args.indices.contains(i + 1) else { return 0 }
+        return args[i + 1] == "left" ? 1 : args[i + 1] == "right" ? 2 : 0
+    }
+    private var leanPreviewStatus: String {
+        if leanPreview.isActive { return "SYNTHETIC FTUE PREVIEW · no camera · game not started" }
+        if leanPreview.stage == .completed, session?.state != nil { return "SYNTHETIC replay · tutorial complete" }
+        return "Preparing synthetic corridor…"
+    }
+    private var isLeanPreview: Bool {
+        ProcessInfo.processInfo.arguments.contains("-leanFTUEPreview") || ProcessInfo.processInfo.arguments.contains("-homeHelpFTUEPreview")
+    }
+    private var isLeanPreviewSolo: Bool { ProcessInfo.processInfo.arguments.contains("-leanFTUESolo") }
     @State private var heartPreview = HeartAnimationPreview()
     @State private var diamondReadout = DebugDiamondVisualReadout()
     @State private var preview = LaserApproachPreview()
@@ -81,7 +131,7 @@ private struct ReplayRoundView: View {
     private static let landscapePreview = ProcessInfo.processInfo.arguments.contains("-landscape")
     #endif
 
-    var body: some View {
+    private var world: some View {
         RealityView { content in
             content.camera = .virtual
             #if DEBUG
@@ -105,11 +155,65 @@ private struct ReplayRoundView: View {
             content.add(scene.root)
             // Live cutouts and avatars update on the render loop, on the host clock their capture
             // times use, so stale input falls back or relaxes without waiting for a newer frame.
+            let frameContent = content
             frameRefresh = content.subscribe(to: SceneEvents.Update.self) { [weak scene] _ in
                 let now = CACurrentMediaTime()
                 scene?.refreshLiveCutouts(now: now)
                 scene?.refreshLiveAvatars(now: now)
+                if let scene, let tutorial = activeTutorial {
+                    leanTravel.update(scene: scene, tutorial: tutorial, generation: generation, at: now,
+                        eligible: trainingSceneActive && (suppliedSession == nil || suppliedSession?.canStartLiveRound == true))
+                }
+                if let scene { updateHeartTraining(scene: scene, at: now); updateLaserPractice(scene: scene, at: now) }
+                if let tutorial = activeTutorial {
+                    let active = tutorial.isActive && !tutorial.isSuspended && trainingSceneActive
+                        && (suppliedSession == nil || suppliedSession?.canStartLiveRound == true)
+                    tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: now, active: active)
+                    if let scene {
+                        updateTutorialVaultPractice(tutorial, scene: scene, at: now)
+                        updateTutorialDiamondTime(tutorial, scene: scene, content: frameContent, at: now)
+                    }
+                } else {
+                    if tutorialVaultPractice != nil { retireTutorialVaultPractice() }
+                    if tutorialDiamondTime != nil { retireTutorialDiamondTime() }
+                }
+                if needsLeanProjection, wantsLeanProjection, let scene {
+                    let viewport = presentation.pawBoardDiamonds.viewportFrame.size
+                    if let fraction = LeanCueProjection.headTop(scene: scene, viewport: viewport, project: {
+                        frameContent.project(point: $0, to: .named(DiamondHUDFlightModel.space))
+                    }) {
+                        tutorial?.setHeadTop(fraction, generation: generation)
+                        #if DEBUG
+                        if isLeanPreview { leanPreview.setHeadTop(fraction, generation: generation) }
+                        #endif
+                        needsLeanProjection = false
+                    }
+                }
+                if let scene, let tutorial, let suppliedSession, tutorial.isPractising || tutorial.collection != nil {
+                    // Session readiness drives travel. A fresh CP1/K03 sample still gates contact.
+                    let ready = tutorial.canExploreLean(in: suppliedSession)
+                    updateLeanAndCollectibles(tutorial, scene: scene, context: suppliedSession.inputContext,
+                        input: suppliedSession.inputConfiguration, configuration: suppliedSession.configuration,
+                        eligible: ready,
+                        contactPlayers: tutorial.collection == nil ? nil : freshTutorialPlayers(suppliedSession, at: now),
+                        at: now)
+                }
+                if activeTutorial?.collection == nil { collectiblePresentation.clear() }
                 #if DEBUG
+                if isLeanPreview, let scene, let input = leanPreviewInput {
+                    if leanHeldStage != nil, !leanPreviewLayoutDone, !needsLeanProjection {
+                        leanPreviewAudit = LeanFTUELayoutAudit.inspect(scene: scene, solo: isLeanPreviewSolo,
+                            index: leanRequestedLayout, origin: presentation.pawBoardDiamonds.viewportFrame.origin) {
+                            frameContent.project(point: $0, to: .named(DiamondHUDFlightModel.space))
+                        }
+                        leanPreviewLayoutDone = true
+                    }
+                    if leanHeldStage == nil, leanPreview.isPractising || leanPreview.collection != nil {
+                        updateLeanAndCollectibles(leanPreview, scene: scene, context: input.context,
+                            input: input.configuration, configuration: leanPreviewConfiguration, eligible: true,
+                            contactPlayers: input.collectibleContactFixture, at: now)
+                    }
+                }
                 heartPreview.update(now: now)
                 MaskBenchmark.recorder.renderTick(now) // no-op without `-maskBench`
                 #endif
@@ -191,6 +295,62 @@ private struct ReplayRoundView: View {
             // Optional world-construction guides. Replay body markers live in the presentation adapter.
             #if DEBUG
             let arguments = ProcessInfo.processInfo.arguments
+            if isLeanPreview {
+                let previewContent = content
+                do {
+                    let script = try LaserReplayScript.load().freshRound(generation: generation)
+                    let input = script.input
+                    let calibrations = input.configuration.calibrations.filter { !isLeanPreviewSolo || $0.key == .player1 }
+                    var previewConfiguration = input.configuration.replacingCalibrations(calibrations)
+                    if isLeanPreviewSolo { previewConfiguration.soloPlayer = .player1 }
+                    let inputSource = LeanFTUESyntheticInput(configuration: previewConfiguration,
+                        geometry: input.cameraGeometryRevision, tutorial: leanPreview,
+                        roster: isLeanPreviewSolo ? [.player1] : PlayerID.allCases, hold: leanHeldStage != nil)
+                    let templates = try await RobotAvatarLayer.sharedTemplates()
+                    guard !Task.isCancelled else { return }
+                    scene.attachLiveAvatars(mailbox: inputSource.mailbox, templates: templates, pump: inputSource,
+                        players: Set(inputSource.roster))
+                    inputSource.practice = { previewLaserPractice }
+                    inputSource.onBodySnapshot = { packet, host in
+                        try? previewLaserPractice?.receive(packet, at: host, maximumAge: LiveAvatarPresenter.maximumPoseAge)
+                    }
+                    leanPreviewInput = inputSource
+                    scene.isLaserVisible = false
+                    leanPreviewConfiguration = script.configuration
+                    leanPreviewStart = {
+                        leanPreviewTask = Task { @MainActor in
+                            do {
+                                scene.detachLiveAvatars(); leanPreviewInput = nil
+                                guard try await installAvatars(calibrations: calibrations,
+                                    layout: input.configuration.playerPlaneLayout) != nil, !Task.isCancelled else { return }
+                                scene.players[.player2]?.isEnabled = !isLeanPreviewSolo
+                                let replay = try LaserReplayDriver.makeSession(script: script)
+                                session = replay
+                                try await replay.start()
+                                guard !Task.isCancelled else { await replay.stop(); return }
+                                presentation.start(on: previewContent, scene: scene, session: replay)
+                            } catch { startupError = String(describing: error) }
+                        }
+                    }
+                    LeanFTUEPreviewLaunch.applyReset(to: leanPreview)
+                    leanPreview.freezesIntroductionForLayout = leanHeldStage == .introduction
+                    // Isolated returning-player review; never resets production first-play storage.
+                    let manualReplay = LeanFTUEPreviewLaunch.consumeManualReplay()
+                    if manualReplay && !FTUEOnboardingPreview.isRequested {
+                        UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.completionKey)
+                        UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.heartCompletionKey)
+                        UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.jumpDuckCompletionKey)
+                        UserDefaults(suiteName: "LaserHeist.LeanFTUEPreview")!.set(true, forKey: LeanTutorial.progressCompletionKey)
+                    }
+                    leanPreview.prepare(generation: generation, roster: inputSource.roster, replayRequested: manualReplay)
+                    leanPreview.beginIfEligible(generation: generation, eligible: true)
+                    if let held = leanHeldStage, held != .introduction {
+                        leanPreview.showPracticeForLayout(held, generation: generation)
+                    }
+                    if leanPreview.stage == .completed { let start = leanPreviewStart; leanPreviewStart = nil; start?() }
+                } catch { startupError = String(describing: error) }
+                return
+            }
             if HeartAnimationPreview.isRequested {
                 do {
                     let input = try LaserReplayScript.load().input.configuration
@@ -404,6 +564,21 @@ private struct ReplayRoundView: View {
                 presentation.start(on: content, scene: scene, session: replay)
             } catch { startupError = String(describing: error) }
         }
+    }
+
+    private var activeTutorial: LeanTutorial? {
+        #if DEBUG
+        if isLeanPreview { return leanPreview }
+        #endif
+        return tutorial
+    }
+
+    private var gameplaySurface: some View {
+        world
+        .blur(radius: (activeTutorial?.heartPhase?.usesOverlay == true || activeTutorial?.progressPhase != nil || activeTutorial?.stage == .vaultButtonIntroduction || activeTutorial?.stage == .collectiblesIntroduction || activeTutorial?.stage == .diamondCollectionIntroduction) && activeTutorial?.isSuspended == false ? 5 : 0)
+        #if DEBUG
+        .blur(radius: isLeanPreview && (leanPreview.stage == .introduction || leanPreview.stage == .jumpDuckIntroduction) && !leanPreview.isSuspended ? 5 : 0)
+        #endif
         #if DEBUG
         // Launch with `-landscape` to frame the 3D view at the narrowest landscape iPad's aspect
         // (4:3) on a Simulator that cannot be rotated: the camera then composes exactly as in
@@ -415,45 +590,126 @@ private struct ReplayRoundView: View {
         // After the DEBUG framing, so the paw board maps onto the 3D view as framed.
         .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .global)
-        } action: { presentation.pawBoardDiamonds.viewportFrame = $0 }
+        } action: {
+            presentation.pawBoardDiamonds.viewportFrame = $0
+            tutorialDiamondPresentation.pawBoardDiamonds.viewportFrame = $0
+            needsLeanProjection = true
+        }
         .ignoresSafeArea()
         .background(.black)
         .overlay {
-            if let session {
+            if let bonus = tutorialDiamondTime, let tutorial = activeTutorial {
+                tutorialDiamondHUD(bonus, tutorial: tutorial)
+            } else if let session {
                 let model = session.summary == nil ? hudModel(session) : nil
                 ZStack {
                     if let seconds = model?.diamondTimeRemaining, seconds > 0 {
                         DiamondTimeRushFrame(secondsRemaining: seconds)
                     }
                     if session.showsDiamondTimePaws {
-                        DiamondTimePawOverlay(session: session, presentation: presentation.pawBoardDiamonds)
+                        DiamondTimePawOverlay(time: session.state?.gameTime ?? 0, paws: session.diamondTimePaws,
+                            states: session.diamondStates, presentation: presentation.pawBoardDiamonds)
                     }
                     // The debug HUD takes the place of the normal HUD.
                     if let model, !Self.showsReplayDebugHUD {
-                        GameplayHUD(model: model, actions: hudActions(session))
+                        GameplayHUD(model: model, actions: hudActions(session), isFTUEActive: tutorial?.isActive == true, ftueJourney: tutorial?.progressJourney,
+                            onFTUEProgressFrame: { tutorial?.setProgressHUDFrame($0, generation: generation) },
+                            onHealthFrame: { tutorial?.setHealthHUDFrame($0, generation: generation) })
                     }
                     // PERFECT! / ZAPPED! on the HUD's title line, never over the results.
-                    if session.summary == nil {
+                    if session.summary == nil, activeTutorial?.isSuspended != true, scenePhase == .active,
+                       (activeTutorial?.heartPhase != .hurt && activeTutorial?.practiceMove == nil) || suppliedSession?.canStartLiveRound != false {
                         LaserTeamCalloutView(model: teamCallouts)
+                    }
+                    // The blink into Diamond Time, over everything; only while the entry plays.
+                    if let entry = session.finalVaultEntry, !entry.isComplete, entry.blinkClosure > 0 {
+                        DiamondTimeBlinkView(closure: entry.blinkClosure)
+                    }
+                }
+            }
+            #if DEBUG
+            if FinalVaultPreview.isRequested {
+                DiamondTimeBlinkView(closure: finalVaultPreview.blinkClosure,
+                                     forcesReducedMotion: ProcessInfo.processInfo.arguments.contains("reduce"))
+            }
+            #endif
+        }
+        #if DEBUG
+        .overlay {
+            if isLeanPreview, leanPreview.isActive {
+                ZStack {
+                    if tutorialDiamondTime == nil, let configuration = leanPreviewConfiguration {
+                        GameplayHUD(model: .init(state: tutorialVaultPractice?.state(health: previewHeartTraining?.state.teamHealth)
+                                        ?? previewHeartTraining?.state, events: [], configuration: configuration,
+                                        activityDuration: configuration.activityDuration, soloPractice: isLeanPreviewSolo),
+                                    actions: leanTutorialActions(leanPreview), isFTUEActive: leanPreview.isActive, ftueJourney: leanPreview.progressJourney,
+                                    onFTUEProgressFrame: { leanPreview.setProgressHUDFrame($0, generation: generation) },
+                                    onHealthFrame: { leanPreview.setHealthHUDFrame($0, generation: generation) })
+                    }
+                    if !leanPreview.isSuspended {
+                        if scenePhase == .active { LaserTeamCalloutView(model: teamCallouts) }
+                        LeanTutorialOverlay(tutorial: leanPreview, solo: isLeanPreviewSolo,
+                            posterOnly: ProcessInfo.processInfo.arguments.contains("-leanFTUEReduceMotion"))
                     }
                 }
             }
         }
+        .overlay(alignment: .bottomLeading) {
+            if isLeanPreview {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(leanPreviewStatus)
+                        .accessibilityIdentifier("leanPreviewStatus")
+                    if let practice = tutorialVaultPractice {
+                        Text(verbatim: vaultPreviewSceneStatus)
+                            .accessibilityIdentifier("ftueVaultSceneStatus")
+                        let pressed = practice.vault?.buttons.values.filter { !$0.isEmpty }.count ?? 0
+                        Text(verbatim: "SYNTHETIC VAULT · active: \(pressed) · opened: \(practice.didOpen)")
+                            .accessibilityIdentifier("ftueVaultPracticeStatus")
+                    }
+                    if let practice = previewLaserPractice {
+                        Text("SYNTHETIC \(practice.move.rawValue) attempt \(practice.attemptNumber) · \(String(describing: practice.outcome)) · no practice damage")
+                            .accessibilityIdentifier("ftuePracticeStatus")
+                    }
+                    Text(leanPreviewAudit).accessibilityIdentifier("leanPreviewAudit")
+                        .font(.system(size: 1)).foregroundStyle(.clear).frame(width: 1, height: 1)
+                    if !leanPreview.isActive {
+                        Button("Retry sample round", action: retry).accessibilityIdentifier("leanPreviewRetry")
+                    }
+                }.font(.caption2).foregroundStyle(.white).padding(8)
+                    .background(.black.opacity(0.5))
+            }
+        }
+        .onChange(of: leanPreview.stage) { _, stage in
+            guard isLeanPreview else { return }
+            if stage == .completed {
+                if FTUEOnboardingPreview.isRequested {
+                    leanPreviewStart = nil
+                    leave()
+                } else {
+                    let start = leanPreviewStart; leanPreviewStart = nil; start?()
+                }
+            }
+        }
+        #endif
         .overlay {
             if let final = session?.summary { ResultsView(summary: final, onRetry: retry, onHome: homeAction) }
         }
         .overlayPreferenceValue(PickupHUDAnchorKey.self) { anchors in
-            DiamondHUDFlightOverlay(
-                model: diamondFlights,
-                scoreAnchor: anchors[.score],
-                healthAnchor: anchors[.health],
-                showsDiagnostics: showsDiamondFlightDiagnostics
-            )
+            if tutorialDiamondTime != nil {
+                DiamondHUDFlightOverlay(model: tutorialDiamondFlights, scoreAnchor: anchors[.score], healthAnchor: nil)
+            } else if !hasTutorialOverlay {
+                DiamondHUDFlightOverlay(
+                    model: diamondFlights,
+                    scoreAnchor: anchors[.score],
+                    healthAnchor: anchors[.health],
+                    showsDiagnostics: showsDiamondFlightDiagnostics
+                )
+            }
         }
         .coordinateSpace(name: DiamondHUDFlightModel.space)
         .safeAreaInset(edge: .bottom) {
             // Results carry their own Back to Home (the same `leave`).
-            if onExit != nil, session?.summary == nil, suppliedSession == nil {
+            if onExit != nil, session?.summary == nil, suppliedSession == nil, !hasTutorialOverlay {
                 Button("Back to input selection", systemImage: "chevron.backward") { leave() }
                 .buttonStyle(.borderedProminent).controlSize(.large)
                 .disabled(leaving).accessibilityIdentifier("leaveReplay")
@@ -467,6 +723,10 @@ private struct ReplayRoundView: View {
             if let error { print("[LaserLive] scene startup failed, no live frame host: \(error)") }
         }
         #endif
+    }
+
+    var body: some View {
+        gameplaySurface
         .overlay(alignment: .topLeading) {
             if let session, session.summary == nil, Self.showsReplayDebugHUD { ReplaySliceHUD(session: session) }
             if let startupError { Text("Replay could not start: \(startupError)").padding().background(.black).foregroundStyle(.white) }
@@ -533,7 +793,7 @@ private struct ReplayRoundView: View {
         .overlay(alignment: .bottomTrailing) {
             GeometryReader { geometry in
                 VStack { Spacer(); HStack { Spacer()
-                    if !HeartAnimationPreview.isRequested, !developerTools.hidesRoundPanel,
+                    if !HeartAnimationPreview.isRequested, !hasTutorialOverlay, !developerTools.hidesRoundPanel,
                        (developerTools.isEnabled && developerTools.showsRoundPanel) || TimingIndicatorControls.isComparison {
                         TimingIndicatorControls(session: session, scene: scene, retry: retry, viewport: geometry.size)
                     }
@@ -541,6 +801,28 @@ private struct ReplayRoundView: View {
             }.ignoresSafeArea()
         }
         #endif
+        .task(id: activeTutorial?.isActive == true) {
+            guard activeTutorial?.isActive == true, tutorialHeartArt == nil else { return }
+            tutorialHeartArt = try? await HeartArt.load()
+        }
+        .onAppear { trainingSceneActive = scenePhase == .active }
+        .onChange(of: scenePhase) { _, phase in
+            trainingSceneActive = phase == .active
+            activeTutorial?.suspendPracticeClock()
+            leanTravel.suspend()
+            collectiblePresentation.suspend()
+            tutorialVaultPractice?.suspend(at: CACurrentMediaTime())
+            tutorialDiamondTime?.suspend(at: CACurrentMediaTime())
+            guard activeTutorial?.heartPhase == .hurt || activeTutorial?.practiceMove != nil else { return }
+            teamCallouts.setTutorialSuspended(phase != .active || activeTutorial?.isSuspended == true)
+            updateHeartTraining(scene: scene, at: CACurrentMediaTime())
+            updateLaserPractice(scene: scene, at: CACurrentMediaTime())
+        }
+        .onChange(of: suppliedSession.map { tutorial?.canExploreLean(in: $0) == true }) { _, _ in
+            tutorial?.suspendPracticeClock()
+            leanTravel.suspend()
+            collectiblePresentation.suspend()
+        }
         .onChange(of: session?.phase) { _, phase in
             scene.setTimingPaused(phase == .paused)
             if phase != .running { diamondFlights.clear() }
@@ -576,6 +858,8 @@ private struct ReplayRoundView: View {
         }
         .onDisappear {
             pendingLiveStart?.cancel(); pendingLiveStart = nil
+            retireTutorialVaultPractice()
+            retireTutorialDiamondTime()
             presentation.stop()
             // No gameplay sound outlives its scene (Retry, Home, teardown).
             AudioService.shared.stopEffects()
@@ -587,7 +871,17 @@ private struct ReplayRoundView: View {
             // Revoke any pose attachment and remove the avatars and their lights
             // before this scene is replaced (Retry).
             scene.detachLiveAvatars()
+            heartTutorialDemo.stop()
+            suppliedSession?.retireHeartTraining()
+            suppliedSession?.retireFTUELaserPractice()
+            practicePresentation.stop(callouts: teamCallouts)
+            collectiblePresentation.clear()
+            leanTravel.stop()
             #if DEBUG
+            leanPreviewTask?.cancel(); leanPreviewTask = nil
+            leanPreviewInput?.stop(); leanPreviewInput = nil; leanPreviewStart = nil
+            if isLeanPreview { LeanFTUEPreviewLaunch.cancelManualReplay() }
+            leanPreview.abandon()
             heartPreview.stop()
             MaskBenchmark.recorder.suspend(reason: "view closed")
             cutoutFeed?.stop()
@@ -623,6 +917,23 @@ private struct ReplayRoundView: View {
         #endif
     }
 
+    private var wantsLeanProjection: Bool {
+        #if DEBUG
+        tutorial != nil || isLeanPreview
+        #else
+        tutorial != nil
+        #endif
+    }
+
+    private var hasTutorialOverlay: Bool {
+        if suppliedSession?.preRoundTutorialPending == true { return true }
+        #if DEBUG
+        return isLeanPreview && leanPreview.isActive
+        #else
+        return false
+        #endif
+    }
+
     /// Results › Back to Home, when this round has somewhere to return to.
     private var homeAction: (() -> Void)? {
         guard onExit != nil else { return nil }
@@ -634,6 +945,9 @@ private struct ReplayRoundView: View {
     private func leave() {
         guard let onExit, !leaving else { return }
         leaving = true
+        collectiblePresentation.clear()
+        retireTutorialVaultPractice()
+        retireTutorialDiamondTime()
         AudioService.shared.play(.uiTap)
         Task { @MainActor in
             await session?.stop()
@@ -642,9 +956,388 @@ private struct ReplayRoundView: View {
         }
     }
 
+    private func leanTutorialActions(_ tutorial: LeanTutorial) -> GameplayHUDActions {
+        GameplayHUDActions(pause: {
+            tutorialVaultPractice?.suspend(at: CACurrentMediaTime())
+            tutorial.setSuspended(true, generation: generation)
+        },
+            resume: { tutorial.setSuspended(false, generation: generation) }, leave: leave)
+    }
+
+    private var previewDiamondTimeHealth: Int? {
+        #if DEBUG
+        previewHeartTraining?.state.teamHealth
+        #else
+        nil
+        #endif
+    }
+
+    private func tutorialDiamondHUD(_ round: FTUEDiamondTimeSession, tutorial: LeanTutorial) -> some View {
+        let configuration = round.inputs.configuration
+        let state = round.state(health: suppliedSession?.heartTraining?.state.teamHealth
+            ?? previewDiamondTimeHealth)
+        let model = GameplayHUDModel(state: state, events: round.events, configuration: configuration,
+            activityDuration: configuration.activityDuration, diamondsCollected: round.game.diamondsCollected,
+            enteringFinalVault: !round.entry.isComplete)
+        return ZStack {
+            if let seconds = model.diamondTimeRemaining, seconds > 0 {
+                DiamondTimeRushFrame(secondsRemaining: seconds)
+            }
+            if round.showsPawBoard {
+                DiamondTimePawOverlay(time: state.gameTime, paws: round.paws, states: round.game.diamonds,
+                                      presentation: tutorialDiamondPresentation.pawBoardDiamonds)
+            }
+            GameplayHUD(model: model, actions: leanTutorialActions(tutorial),
+                        isFTUEActive: true, ftueJourney: tutorial.progressJourney)
+        }
+    }
+
+    private func updateTutorialVaultPractice(_ tutorial: LeanTutorial, scene: LaserScene, at now: Double) {
+        guard !leaving, tutorial.stage == .vaultPractice, tutorial.generation == generation else {
+            if tutorialVaultPractice != nil { retireTutorialVaultPractice() }
+            #if DEBUG
+            if vaultDiagnosticStart != nil {
+                vaultDiagnosticStart = nil
+                vaultDiagnosticInspected = false
+                vaultTraceState = nil
+                vaultTraceCount = 0
+                vaultPreviewSceneStatus = ""
+            }
+            #endif
+            return
+        }
+        var inputs = suppliedSession?.tutorialVaultInputs(generation: generation)
+        var snapshot = suppliedSession?.latestSnapshot
+        #if DEBUG
+        if isLeanPreview, let input = leanPreviewInput {
+            inputs = tutorialVaultPractice?.inputs ?? input.vaultPracticeInputs()
+            snapshot = input.latestSnapshot
+        }
+        #endif
+        if let practice = tutorialVaultPractice, let context = suppliedSession?.inputContext,
+           context != practice.inputs.round.context { retireTutorialVaultPractice() }
+
+        let consolesReady = inputs?.round.roster.allSatisfy { scene.robotAvatars?.consoles[$0] != nil } == true
+        var evidenceReady = FTUEVaultPractice.hasCurrentBodySnapshot(snapshot, inputs: inputs, at: now)
+        #if DEBUG
+        if vaultDiagnosticStart == nil {
+            vaultDiagnosticStart = now
+            print("[FTUEVault] practice generation=\(generation) roster=\(tutorial.roster) inputs=\(inputs != nil) consoles=\(consolesReady) fresh=\(evidenceReady) active=\(trainingSceneActive) paused=\(tutorial.isSuspended) readiness=\(String(describing: suppliedSession?.liveReadiness?.phase))")
+        }
+        if isLeanPreview, ProcessInfo.processInfo.arguments.contains("-leanFTUEVaultInitialDropout"),
+           let start = vaultDiagnosticStart, now - start < 4 {
+            evidenceReady = false
+        }
+        #endif
+        #if DEBUG
+        defer {
+            traceTutorialVault(inputs: inputs, snapshot: snapshot, at: now, consolesReady: consolesReady, evidenceReady: evidenceReady)
+        }
+        #endif
+        // A ready, bound session can show its encounter while waiting for a fresh contact packet.
+        // Keep the practice clock and consumer suspended until the original evidence gate is met.
+        guard trainingSceneActive, !tutorial.isSuspended, let inputs, consolesReady else {
+            tutorialVaultPractice?.suspend(at: now)
+            return
+        }
+        do {
+            if tutorialVaultPractice == nil {
+                let presenter = GameplayScenePresenter(scene: scene, configuration: inputs.round.configuration,
+                                                       encounters: [], showsDebugMarkers: false)
+                presenter.vault.visiblePlayers = Set(inputs.round.roster)
+                presenter.vault.liveConsoles = { [weak scene] player in scene?.robotAvatars?.consoles[player] }
+                presenter.onSound = { AudioService.shared.play($0) }
+                tutorialVaultPresenter = presenter
+                tutorialVaultPractice = try FTUEVaultPractice(inputs: inputs, at: now)
+            }
+            guard let practice = tutorialVaultPractice, let presenter = tutorialVaultPresenter else { return }
+            if evidenceReady {
+                #if DEBUG
+                if isLeanPreview, let input = leanPreviewInput, let packet = snapshot {
+                    snapshot = try input.vaultPracticeSnapshot(packet, practice: practice)
+                }
+                #endif
+                let shifts = snapshot.flatMap { suppliedSession?.vaultZoneShifts(for: $0) } ?? [:]
+                try practice.update(at: now, snapshot: snapshot, zoneShifts: shifts)
+            } else {
+                practice.suspend(at: now)
+            }
+            let state = practice.state
+            presenter.apply(state: state, events: practice.events, snapshot: nil)
+            #if DEBUG
+            if !vaultDiagnosticInspected {
+                vaultDiagnosticInspected = true
+                let door = scene.root.findEntity(named: "vaultDoor")
+                let camera = scene.root.findEntity(named: "camera") as? PerspectiveCamera
+                let consoles = presenter.vault.consoleViews.values.compactMap {
+                    $0.root.findEntity(named: "vault.console.button.activate")
+                }
+                let viewport = presentation.pawBoardDiamonds.viewportFrame
+                let aspect = Float(viewport.width / max(1, viewport.height))
+                func inFrame(_ entity: Entity) -> Bool {
+                    guard let camera, entity.isEnabledInHierarchy, entity.scene != nil else { return false }
+                    let point = camera.convert(position: entity.position(relativeTo: nil), from: nil)
+                    let limit = -point.z * tan(camera.camera.fieldOfViewInDegrees * .pi / 360)
+                    return point.z < 0 && abs(point.x) < limit * aspect && abs(point.y) < limit
+                }
+                let doorVisible = door.map(inFrame) == true
+                let inFrameCount = consoles.filter(inFrame).count
+                let doorPosition = door.flatMap { door in camera.map { door.position(relativeTo: $0) } }
+                let buttonPositions = camera.map { camera in consoles.map { $0.position(relativeTo: camera) } }
+                vaultPreviewSceneStatus = "SYNTHETIC VAULT SCENE · door: \(doorVisible) · buttons: \(inFrameCount) · waiting: \(!evidenceReady)"
+                print("[FTUEVault] applied generation=\(generation) doorParent=\(door?.parent?.name ?? "nil") doorInFrame=\(doorVisible) doorRelativeToCamera=\(String(describing: doorPosition)) buttonsInFrame=\(inFrameCount)/\(inputs.round.roster.count) buttonPositions=\(String(describing: buttonPositions)) aspect=\(aspect) travel=\(scene.travelOffset) camera=\(String(describing: camera?.transform)) fresh=\(evidenceReady)")
+            }
+            #endif
+            guard evidenceReady else { return }
+            // Give the shared opening its authored on-screen time even if a RealityKit
+            // playback controller reports completion before its first rendered frame.
+            let openingDuration = VaultDoor.openingDuration(reduceMotion: presenter.vault.reducesMotion())
+            if let openedAt = practice.openedAt, state.gameTime - openedAt >= openingDuration,
+               !presenter.vault.holdsTravel(for: state) {
+                tutorial.finishVaultPractice(practice, generation: generation, doorIsClear: true)
+                #if DEBUG
+                if Self.tracesTutorialVault {
+                    print("[FTUEVault] completion generation=\(generation) encounter=\(practice.presentationID) accepted=\(tutorial.stage != .vaultPractice)")
+                }
+                #endif
+                retireTutorialVaultPractice()
+            } else if let failedAt = practice.failedAt,
+                      state.gameTime - failedAt >= VaultPresentation.exitFadeDuration {
+                // Retry the same production opportunity after its failure feedback.
+                retireTutorialVaultPractice()
+            }
+        } catch {
+            retireTutorialVaultPractice()
+            startupError = String(describing: error)
+        }
+    }
+
+    #if DEBUG
+    private static let tracesTutorialVault = ProcessInfo.processInfo.arguments.contains("-ftueVaultDiagnostics")
+    @State private var vaultTraceState: String?
+    @State private var vaultTraceCount = 0
+
+    private func traceTutorialVault(inputs: FTUEVaultPractice.Inputs?, snapshot: BodySnapshot?, at now: Double,
+                                    consolesReady: Bool, evidenceReady: Bool) {
+        guard Self.tracesTutorialVault, vaultTraceCount < 16 else { return }
+        let practice = tutorialVaultPractice
+        let context = inputs?.round.context
+        let wrists = (practice?.contactReadout ?? []).map {
+            "\($0.playerID)/\($0.button)/\($0.wrist):\($0.status):pressed=\($0.pressed)"
+        }.sorted()
+        let readiness = "scene=\(consolesReady) plan=\(inputs != nil) currentBody=\(evidenceReady) wristPacket=\(snapshot?.wristContact != nil) active=\(trainingSceneActive) paused=\(activeTutorial?.isSuspended == true)"
+        let key = "\(readiness) \(snapshot != nil) \(wrists) opened=\(practice?.didOpen == true)"
+        guard key != vaultTraceState else { return }
+        vaultTraceState = key
+        vaultTraceCount += 1
+        let age = snapshot.map { now - $0.capturedAt }
+        let remaining = practice.flatMap { practice in practice.vault.map { max(0, $0.deadline - practice.state.gameTime) } }
+        print("[FTUEVault] generation=\(generation) encounter=\(String(describing: practice?.presentationID)) roster=\(inputs?.round.roster ?? []) host=\(now) start=\(String(describing: vaultDiagnosticStart)) \(readiness) source=\(String(describing: context?.wristContact?.sourceEpoch)) cal=\(String(describing: context?.calibrationRevisions)) frame=\(String(describing: snapshot?.frameID)) age=\(String(describing: age)) remaining=\(String(describing: remaining)) wrists=\(wrists) opened=\(practice?.didOpen == true)")
+    }
+    #endif
+
+    private func retireTutorialVaultPractice() {
+        tutorialVaultPresenter?.stop()
+        tutorialVaultPresenter?.vault.buttons.removeFromParent()
+        tutorialVaultPresenter?.vault.root.removeFromParent()
+        tutorialVaultPresenter = nil
+        tutorialVaultPractice = nil
+    }
+
+    private func updateTutorialDiamondTime(_ tutorial: LeanTutorial, scene: LaserScene,
+                                           content: RealityViewCameraContent, at now: Double) {
+        guard !leaving, tutorial.stage == .diamondTimeDemo, tutorial.generation == generation else {
+            if tutorialDiamondTime != nil { retireTutorialDiamondTime() }
+            return
+        }
+        var inputs = suppliedSession?.tutorialDiamondTimeInputs(generation: generation)
+        var snapshot = suppliedSession?.latestSnapshot
+        #if DEBUG
+        if isLeanPreview, let input = leanPreviewInput {
+            inputs = tutorialDiamondTime?.inputs ?? input.diamondTimeInputs()
+            snapshot = input.latestSnapshot
+        }
+        #endif
+        let eligible = inputs != nil && trainingSceneActive && !tutorial.isSuspended
+        if let round = tutorialDiamondTime {
+            let currentContext = suppliedSession?.inputContext ?? inputs?.context
+            if let currentContext, round.inputs.context != currentContext { retireTutorialDiamondTime() }
+        }
+        do {
+            if eligible, let inputs {
+                if tutorialDiamondTime == nil {
+                    tutorialDiamondTime = try FTUEDiamondTimeSession(inputs: inputs, at: now)
+                    tutorialDiamondPresentation.diamondFlights = tutorialDiamondFlights
+                }
+                if let round = tutorialDiamondTime {
+                    #if DEBUG
+                    if isLeanPreview, let input = leanPreviewInput, let packet = snapshot, round.showsPawBoard {
+                        snapshot = try input.diamondTimeSnapshot(packet, round: round)
+                    }
+                    #endif
+                    try round.update(at: now, snapshot: snapshot)
+                    if round.isComplete {
+                        retireTutorialDiamondTime()
+                        tutorial.finishDiamondTime(round, generation: generation)
+                        return
+                    }
+                }
+            } else {
+                tutorialDiamondTime?.suspend(at: now)
+            }
+        } catch {
+            retireTutorialDiamondTime()
+            startupError = String(describing: error)
+            return
+        }
+        if let round = tutorialDiamondTime {
+            tutorialDiamondPresentation.renderTutorialDiamondTime(round, on: content, scene: scene, running: eligible)
+        }
+    }
+
+    private func retireTutorialDiamondTime() {
+        tutorialDiamondPresentation.stop()
+        tutorialDiamondTime = nil
+    }
+
+    /// Only the existing render callback drives the scoped training encounter.
+    private func updateHeartTraining(scene: LaserScene, at now: Double) {
+        guard let tutorial = activeTutorial, tutorial.heartPhase != nil else {
+            heartTutorialDemo.stop()
+            if activeTutorial?.isActive != true {
+                suppliedSession?.retireHeartTraining()
+                #if DEBUG
+                previewHeartTraining = nil
+                #endif
+            }
+            return
+        }
+        guard tutorial.heartPhase == .hurt else { heartTutorialDemo.stop(); return }
+        let suspended = tutorial.isSuspended || !trainingSceneActive
+        if let suppliedSession {
+            suppliedSession.updateHeartTraining(at: now, suspended: suspended)
+            let paused = suspended || !suppliedSession.canStartLiveRound
+            heartTutorialDemo.update(scene: scene, training: suppliedSession.heartTraining, callouts: teamCallouts, suspended: paused)
+            if !paused, let receipt = heartTutorialDemo.feedbackFinished(teamCallouts) {
+                suppliedSession.finishHeartTrainingFeedback(id: receipt.id, generation: generation)
+                if suppliedSession.heartTraining?.feedbackFinished == true {
+                    tutorial.finishTrainingEncounter(suppliedSession.heartTraining!, generation: generation)
+                }
+            }
+        }
+        else {
+        #if DEBUG
+        if isLeanPreview, let configuration = leanPreviewConfiguration, let input = leanPreviewInput {
+            if previewHeartTraining == nil {
+                previewHeartTraining = try? HeartTrainingEncounter(configuration: configuration, context: input.context,
+                    roster: Set(leanPreview.roster))
+            }
+            previewHeartTraining?.update(at: now, eligible: !suspended, context: input.context)
+            heartTutorialDemo.update(scene: scene, training: previewHeartTraining, callouts: teamCallouts, suspended: suspended)
+            if !suspended, let receipt = heartTutorialDemo.feedbackFinished(teamCallouts) {
+                previewHeartTraining?.finishFeedback(id: receipt.id, generation: generation)
+                if previewHeartTraining?.feedbackFinished == true {
+                    tutorial.finishTrainingEncounter(previewHeartTraining!, generation: generation)
+                }
+            }
+        }
+        #endif
+        }
+    }
+
+    private func updateLaserPractice(scene: LaserScene, at now: Double) {
+        guard let tutorial = activeTutorial, tutorial.practiceMove != nil else {
+            practicePresentation.stop(callouts: teamCallouts)
+            suppliedSession?.retireFTUELaserPractice()
+            #if DEBUG
+            previewLaserPractice = nil
+            #endif
+            return
+        }
+        let suspended = tutorial.isSuspended || !trainingSceneActive
+        if let suppliedSession {
+            suppliedSession.updateFTUELaserPractice(at: now, generation: generation, suspended: suspended)
+            guard let practice = suppliedSession.laserPractice else { return }
+            let paused = suspended || !suppliedSession.canStartLiveRound
+            practicePresentation.update(scene: scene, practice: practice, callouts: teamCallouts, suspended: paused)
+            if !paused, let attempt = practicePresentation.finishedAttempt(teamCallouts) {
+                suppliedSession.finishFTUEPracticeFeedback(attempt: attempt, generation: generation)
+                if let current = suppliedSession.laserPractice {
+                    tutorial.synchronizePractice(current, generation: generation)
+                    #if DEBUG
+                    if current.move == .duck, current.completed,
+                       ProcessInfo.processInfo.arguments.contains("-ftueDuckDiagnostics") {
+                        print("[FTUE Duck] generation=\(generation) attempt=\(attempt) feedback=finished transition=\(tutorial.stage)")
+                    }
+                    #endif
+                }
+            }
+        } else {
+            #if DEBUG
+            if isLeanPreview, leanPreviewConfiguration != nil, let input = leanPreviewInput {
+                if previewLaserPractice == nil {
+                    previewLaserPractice = try? .init(input: input.configuration, configuration: try LaserFullReplayPlan.roundConfiguration(),
+                        context: input.context, poseFirst: PoseFirstCandidate.isEnabled)
+                }
+                try? previewLaserPractice?.update(at: now, eligible: !suspended, context: input.context)
+                if let practice = previewLaserPractice {
+                    practicePresentation.update(scene: scene, practice: practice, callouts: teamCallouts, suspended: suspended)
+                    if !suspended, let attempt = practicePresentation.finishedAttempt(teamCallouts) {
+                        try? previewLaserPractice?.feedbackFinished(attempt: attempt, generation: generation)
+                        if let current = previewLaserPractice { tutorial.synchronizePractice(current, generation: generation) }
+                    }
+                }
+            }
+            #endif
+        }
+    }
+
+    private func freshTutorialPlayers(_ session: GameSessionCoordinator, at now: Double) -> Set<PlayerID> {
+        guard let snapshot = session.latestSnapshot, let context = session.inputContext,
+              now >= snapshot.capturedAt, now - snapshot.capturedAt <= LiveAvatarPresenter.maximumPoseAge else { return [] }
+        return Set(session.inputConfiguration.roster.filter {
+            context.accepts(snapshot, playerID: $0) && snapshot.players[$0]?.trackingStatus == .reliable
+        })
+    }
+
+    private func updateLeanAndCollectibles(_ tutorial: LeanTutorial, scene: LaserScene,
+                                          context: BodyInputContext?, input: BodyInputConfiguration,
+                                          configuration: LaserRoundConfiguration?, eligible: Bool,
+                                          contactPlayers: Set<PlayerID>? = nil, at now: Double) {
+        let allowed = eligible && trainingSceneActive && !tutorial.isSuspended && !leaving
+            && tutorial.generation == generation
+        let value = scene.liveAvatars?.lastAppliedFrame.flatMap { frame in
+            LeanMovementObservation.make(frame: frame, context: context, generation: generation,
+                roster: tutorial.roster, eligible: allowed, now: now, bounds: scene.robotAvatars?.steering?.bounds) {
+                    scene.robotAvatars?.steeringReading($0)
+                }
+        }
+        let trackedPlayers = Set(value?.players.keys.map { $0 } ?? [])
+        let players = contactPlayers.map { trackedPlayers.intersection($0) } ?? trackedPlayers
+        if tutorial.isPractising {
+            #if DEBUG
+            if RobotAvatarLayer.debugTestSteer != nil {
+                tutorial.advancePractice(generation: generation, at: now, ready: false)
+                return
+            }
+            #endif
+            if let value {
+                if tutorial.shouldRead(value.source) { tutorial.observe(value, generation: generation, at: now) }
+            } else { tutorial.observe(nil, generation: generation, at: now) }
+            tutorial.advancePractice(generation: generation, at: now, ready: allowed)
+        } else if let kind = tutorial.collection, let context, let configuration {
+            if let receipt = collectiblePresentation.update(scene: scene, kind: kind,
+                configuration: configuration, input: input, context: context, at: now,
+                ready: allowed, contactsFrom: players, heartArt: tutorialHeartArt) {
+                tutorial.acceptPickup(receipt)
+            }
+        } else { collectiblePresentation.suspend() }
+    }
+
     /// Live pause/continue intents go to the session. Replay retains its fixture-driven controls.
     private func hudActions(_ session: GameSessionCoordinator) -> GameplayHUDActions {
-        GameplayHUDActions(pause: session.isReplay ? nil : { session.pauseLiveRound() },
+        if let tutorial, tutorial.isActive { return leanTutorialActions(tutorial) }
+        return GameplayHUDActions(pause: session.isReplay ? nil : { session.pauseLiveRound() },
                            resume: session.isReplay ? nil : { session.continueLiveRound() },
                            leave: { Task { await session.stop() } })
     }
@@ -663,10 +1356,14 @@ private struct ReplayRoundView: View {
             fixture = true
         }
         #endif
-        return GameplayHUDModel(state: session.state, events: session.events, configuration: configuration,
+        return GameplayHUDModel(state: tutorial?.isActive == true
+                                    ? (tutorialVaultPractice?.state(health: session.heartTraining?.state.teamHealth)
+                                       ?? session.heartTraining?.state ?? session.state) : session.state,
+                                events: session.events, configuration: configuration,
                                 activityDuration: session.activityDuration, stageProgress: session.stageProgress,
                                 diamondsCollected: collected, diamondsAreFixture: fixture,
-                                enteringFinalVault: session.finalVaultEntry.map { !$0.isComplete } ?? false)
+                                enteringFinalVault: session.finalVaultEntry.map { !$0.presentsDiamondTime } ?? false,
+                                soloPractice: session.isSoloPractice)
     }
 
     #if DEBUG

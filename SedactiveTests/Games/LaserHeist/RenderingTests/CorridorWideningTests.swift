@@ -63,14 +63,13 @@ struct CorridorWideningTests {
         let wallInView = layout.environmentWidth / 2 / (visible / layout.cameraPosition.z)   // depth from the camera
         let behindPlayers = wallInView - layout.cameraPosition.z
         #expect(behindPlayers > 0 && behindPlayers < 3, "walls come into view \(behindPlayers) m behind the players")
-        // The console stands free of the wall; its face and the mascot's dock stay where the camera's view puts them.
+        // The mascot's dock, the reach plane, the button (on the gate's frame) and its station stay where
+        // they are, whichever walls the corridor has.
         let arm = LaserGateConsole.Arm(shoulder: [0, 1.0], length: 0.6)
         for player in PlayerID.allCases {
             let before = LaserGateConsole(player: player, arm: arm, visibleHalfWidth: visible, wallHalfWidth: 3.15, planeZ: 0)
             let after = LaserGateConsole(player: player, arm: arm, visibleHalfWidth: visible, wallHalfWidth: layout.environmentWidth / 2, planeZ: 0)
-            #expect(before.dockX == after.dockX && before.faceX == after.faceX && before.buttons == after.buttons)
-            // The console is a free-standing unit: nothing of it stretches with the wall (iPad, 14 November 2026).
-            #expect(before == after, "the whole console, housing and pedestal, is unchanged by the wall's place")
+            #expect(before == after)
         }
     }
 
