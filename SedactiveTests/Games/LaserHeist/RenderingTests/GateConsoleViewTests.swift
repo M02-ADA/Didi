@@ -493,6 +493,43 @@ struct GateConsoleViewTests {
         #expect(!vault.buttons.isEnabled, "removed once out of view (with the door)")
     }
 
+    /// iPad, 23 November 2026 (live Solo, three gates): after a gate opened and its door passed, the
+    /// next door came in with its buttons RED, but when the game state next arrived without a time to
+    /// the next vault (it still held the opened gate) the old gate's press and GREEN were replayed onto
+    /// the new door's buttons, 1.5–8 s later, with nobody pressing. They must stay red until that
+    /// door's own gate.
+    @Test(arguments: [LaserRoundPhase.activity, .vault])
+    func aPassedGatesPressAndGreenAreNeverReplayedOntoTheNextDoor(phase: LaserRoundPhase) throws {
+        let scene = LaserScene()
+        scene.installVaultDoor(nil)
+        let configuration = try LaserRoundConfiguration(evidenceTiming: .init(windowBefore: 0.125, windowAfter: 0.125, deliveryAllowance: 0.125),
+                                                        clearanceMargin: 0.005, diamondPoints: 25)
+        let vault = VaultPresentation(scene: scene, configuration: configuration)
+        vault.reducesMotion = { true }
+        vault.liveConsoles = { $0 == .player1 ? Self.console($0) : nil }
+        vault.visiblePlayers = [.player1]
+        let id = UUID(), generation = UUID()
+        func state(_ phase: LaserRoundPhase, _ t: Double, opened: Bool) -> LaserGameState {
+            LaserGameState(sessionGeneration: generation, phase: phase, gameTime: t, activityProgress: 0, teamHealth: 5, teamScore: 0,
+                           encounters: [], missionProgress: opened ? 1 : 0,
+                           vault: LaserVaultState(id: id, deadline: 5, buttons: opened ? [.player1: [.activate]] : [:], opened: opened))
+        }
+        vault.update(state: state(.vault, 0, opened: false), travelDistance: 10)
+        vault.update(state: state(.vault, 1, opened: true), travelDistance: 10)
+        let p1 = try #require(vault.consoleViews[.player1])
+        #expect(p1.state == .opened, "the gate opened: green")
+        // Travel resumes and the opened door passes out of view.
+        vault.update(state: state(.activity, 3, opened: true), travelDistance: 22)
+        #expect(!vault.buttons.isEnabled)
+        // The next door comes down the corridor with its own buttons: red, not ready.
+        vault.update(state: state(.activity, 40, opened: true), travelDistance: 60, upcomingVaultIn: 3)
+        #expect(vault.buttons.isEnabled && p1.state == .unavailable && !p1.capIsGreen)
+        // The state arrives without a time to the next vault (it still holds the passed gate).
+        vault.update(state: state(phase, 43, opened: true), travelDistance: 63)
+        #expect(p1.state == .unavailable && !p1.capIsGreen, "the next door's button stays red: \(p1.state)")
+        #expect(p1.presses[.activate, default: 0] == 0, "and the passed gate's press is not replayed on it")
+    }
+
     /// The corridor's ease into and out of a gate is continuous: it meets cruise speed without a kink
     /// and stops exactly at the gate's start.
     @Test func theGateTravelEaseIsContinuous() {

@@ -197,6 +197,7 @@ final class PlayerHoverboard {
         contactShadow.position = [0, 0.003, 0]
         model.addChild(contactShadow)
         reactionFX = HoverboardReactionFX(root: root, model: model)
+        reactionFX.warmMaterials()
         // Translucent layers in a fixed order (the floor's light first): the field, the expanding
         // ring and the arcs' glow composite over it instead of hiding it with their depth.
         let order = ModelSortGroup()

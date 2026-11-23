@@ -35,6 +35,51 @@ struct PlayView: View {
     }
 }
 
+/// The round view's heavy objects, each built on first use and kept for the view's identity.
+///
+/// PERFORMANCE (Kevin, 22 November 2026): SwiftUI evaluates a view's `@State` initial values every time
+/// it re-creates the view VALUE, keeping only the first. During a live round the root view re-renders
+/// on every frame (it reads the session's state, written each tick), so it re-created this view each
+/// frame, and `@State private var scene = LaserScene()` built and threw away a whole scene and its
+/// presentation every frame (about 30 ms in a Debug Simulator build,
+/// `LaserSceneConstructionCostTests`). Behind one `@State` holder they are built once, lazily.
+@MainActor
+private final class RoundObjects {
+    /// The live round's start, waiting for its plan (`pendingLiveStart`), with the content and the avatar
+    /// feed it needs; all cleared once it fires or the view closes.
+    var pendingLiveStart: EventSubscription?
+    var liveContent: RealityViewCameraContent?
+    var deferredAvatarFeed: (() throws -> any AvatarPosePump)?
+    lazy var scene = LaserScene()
+    lazy var presentation = LaserReplayPresentation()
+    lazy var diamondFlights = DiamondHUDFlightModel()
+    lazy var teamCallouts = LaserTeamCalloutModel()
+    #if DEBUG
+    lazy var heartPreview = HeartAnimationPreview()
+    lazy var diamondReadout = DebugDiamondVisualReadout()
+    lazy var preview = LaserApproachPreview()
+    lazy var environmentPreview = EnvironmentPreview()
+    lazy var hoverboardPreview = HoverboardPreview()
+    lazy var finalVaultPreview = FinalVaultPreview()
+    lazy var hitReactionPreview = LaserHitReactionPreview()
+    lazy var gateConsolePreview = GateConsolePreview()
+    lazy var directorPreview = DirectorLaserPreview()
+    lazy var robotDemo = RobotDemoDriver()
+    #endif
+    init() {
+        #if DEBUG
+        LaserPerfMonitor.alive("RoundObjects.made", 1)
+        #endif
+    }
+}
+
+/// The round view's session, observable (the HUD and overlays follow it) and held apart from the
+/// view so the RealityKit closures that set it capture it weakly.
+@MainActor @Observable
+private final class RoundSessionSlot {
+    var session: GameSessionCoordinator?
+}
+
 /// Identity replacement disposes the old scene, driver, provider, clock and coordinator on Retry.
 private struct ReplayRoundView: View {
     let generation: UUID
@@ -43,34 +88,46 @@ private struct ReplayRoundView: View {
     let onExit: (() -> Void)?
     let suppliedSession: GameSessionCoordinator?
     let retry: () -> Void
-    @State private var scene = LaserScene()
-    @State private var presentation = LaserReplayPresentation()
-    @State private var diamondFlights = DiamondHUDFlightModel()
-    @State private var teamCallouts = LaserTeamCalloutModel()
-    @State private var session: GameSessionCoordinator?
+    /// The round's scene, presentation and models, built once per round view (`RoundObjects`).
+    @State private var objects = RoundObjects()
+    private var scene: LaserScene { objects.scene }
+    private var presentation: LaserReplayPresentation { objects.presentation }
+    private var diamondFlights: DiamondHUDFlightModel { objects.diamondFlights }
+    private var teamCallouts: LaserTeamCalloutModel { objects.teamCallouts }
+    /// The round's session, in an observable holder that RealityKit closures capture weakly.
+    @State private var sessionSlot = RoundSessionSlot()
+    private var session: GameSessionCoordinator? {
+        get { sessionSlot.session } nonmutating set { sessionSlot.session = newValue }
+    }
     /// A live session mounted before its round plan exists (scene loaded during setup): starts the
     /// presentation on the first rendered frame after the plan is installed.
-    @State private var pendingLiveStart: EventSubscription?
+    private var pendingLiveStart: EventSubscription? {
+        get { objects.pendingLiveStart } nonmutating set { objects.pendingLiveStart = newValue }
+    }
     /// The live avatars' pose feed, attached with the round plan (see the avatar setup).
-    @State private var deferredAvatarFeed: (() throws -> any AvatarPosePump)?
+    private var deferredAvatarFeed: (() throws -> any AvatarPosePump)? {
+        get { objects.deferredAvatarFeed } nonmutating set { objects.deferredAvatarFeed = newValue }
+    }
     @State private var startupError: String?
     @State private var leaving = false
     /// The per-frame host-clock tick: live cutout expiry and live avatars.
     @State private var frameRefresh: EventSubscription?
     #if DEBUG
-    @State private var heartPreview = HeartAnimationPreview()
-    @State private var diamondReadout = DebugDiamondVisualReadout()
-    @State private var preview = LaserApproachPreview()
-    @State private var environmentPreview = EnvironmentPreview()
-    @State private var hoverboardPreview = HoverboardPreview()
-    @State private var finalVaultPreview = FinalVaultPreview()
-    @State private var hitReactionPreview = LaserHitReactionPreview()
-    @State private var gateConsolePreview = GateConsolePreview()
+    private var heartPreview: HeartAnimationPreview { objects.heartPreview }
+    private var diamondReadout: DebugDiamondVisualReadout { objects.diamondReadout }
+    private var preview: LaserApproachPreview { get { objects.preview } nonmutating set { objects.preview = newValue } }
+    private var environmentPreview: EnvironmentPreview {
+        get { objects.environmentPreview } nonmutating set { objects.environmentPreview = newValue }
+    }
+    private var hoverboardPreview: HoverboardPreview { get { objects.hoverboardPreview } nonmutating set { objects.hoverboardPreview = newValue } }
+    private var finalVaultPreview: FinalVaultPreview { objects.finalVaultPreview }
+    private var hitReactionPreview: LaserHitReactionPreview { objects.hitReactionPreview }
+    private var gateConsolePreview: GateConsolePreview { objects.gateConsolePreview }
     @State private var cutoutFeed: SyntheticCutoutFeed?
-    @State private var directorPreview = DirectorLaserPreview()
+    private var directorPreview: DirectorLaserPreview { get { objects.directorPreview } nonmutating set { objects.directorPreview = newValue } }
     @State private var verticalLaserPreview: VerticalLaserPreview?
     @State private var verticalLaserReplay: VerticalLaserReplay?
-    @State private var robotDemo = RobotDemoDriver()
+    private var robotDemo: RobotDemoDriver { objects.robotDemo }
     @State private var robotDemoActive = false
     /// The demo's K03 attachment (`-avatarPackets`); revoked on teardown.
     @State private var demoAvatars: LiveAvatarPresenter?
@@ -84,6 +141,7 @@ private struct ReplayRoundView: View {
         RealityView { content in
             content.camera = .virtual
             #if DEBUG
+            LaserPerfMonitor.shared.sessionBegan()
             if let selected = TimingIndicatorControls.launchVariant { scene.selectTimingVariant(selected) }
             presentation.holdsTimingComparison = TimingIndicatorControls.isComparison
             #endif
@@ -104,15 +162,26 @@ private struct ReplayRoundView: View {
             content.add(scene.root)
             // Live cutouts and avatars update on the render loop, on the host clock their capture
             // times use, so stale input falls back or relaxes without waiting for a newer frame.
+            // Captures only what it uses, weakly: never this view (`self`), whose state holds the round's
+            // scene, presentation and session (see `RoundObjects`).
+            #if DEBUG
+            frameRefresh = content.subscribe(to: SceneEvents.Update.self) { [weak scene, weak heartPreview, weak sessionSlot] _ in
+                let now = CACurrentMediaTime()
+                scene?.refreshLiveCutouts(now: now)
+                PerfSpans.measure("avatars") { scene?.refreshLiveAvatars(now: now) }
+                heartPreview?.update(now: now)
+                MaskBenchmark.recorder.renderTick(now) // no-op without `-maskBench`
+                if LaserPerfMonitor.isEnabled {
+                    LaserPerfMonitor.shared.frame(now: now, phase: Self.perfPhase(sessionSlot?.session), scene: scene)
+                }
+            }
+            #else
             frameRefresh = content.subscribe(to: SceneEvents.Update.self) { [weak scene] _ in
                 let now = CACurrentMediaTime()
                 scene?.refreshLiveCutouts(now: now)
                 scene?.refreshLiveAvatars(now: now)
-                #if DEBUG
-                heartPreview.update(now: now)
-                MaskBenchmark.recorder.renderTick(now) // no-op without `-maskBench`
-                #endif
             }
+            #endif
             if let avatarSource {
                 do {
                     let templates = try await RobotAvatarLayer.sharedTemplates()
@@ -172,17 +241,23 @@ private struct ReplayRoundView: View {
                 } else {
                     // Loaded early (behind the camera setup screen), so the first heavy scene load and
                     // shader compile happen before anyone is linked or calibrated, not right after.
-                    let liveContent = content
-                    pendingLiveStart = content.subscribe(to: SceneEvents.Update.self) { [weak suppliedSession] _ in
-                        guard let suppliedSession, suppliedSession.hasLiveRoundPlan, session == nil else { return }
-                        session = suppliedSession
-                        pendingLiveStart?.cancel(); pendingLiveStart = nil
-                        if let attach = deferredAvatarFeed {
-                            deferredAvatarFeed = nil
-                            do { scene.attachLiveAvatarPump(try attach()) }
+                    // LIFECYCLE (Kevin, 22 November 2026, measured): RealityKit keeps an update handler's
+                    // closure alive after `cancel()`, so this one captures only weak references: never this
+                    // view or the content (held by `RoundObjects` until it is used or the view closes).
+                    objects.liveContent = content
+                    pendingLiveStart = content.subscribe(to: SceneEvents.Update.self) {
+                        [weak suppliedSession, weak objects, weak sessionSlot] _ in
+                        guard let suppliedSession, let objects, let sessionSlot, suppliedSession.hasLiveRoundPlan,
+                              sessionSlot.session == nil, let liveContent = objects.liveContent else { return }
+                        sessionSlot.session = suppliedSession
+                        objects.pendingLiveStart?.cancel(); objects.pendingLiveStart = nil
+                        objects.liveContent = nil
+                        if let attach = objects.deferredAvatarFeed {
+                            objects.deferredAvatarFeed = nil
+                            do { objects.scene.attachLiveAvatarPump(try attach()) }
                             catch { print("PlayView: live avatar feed unavailable: \(error)") }
                         }
-                        presentation.start(on: liveContent, scene: scene, session: suppliedSession)
+                        objects.presentation.start(on: liveContent, scene: objects.scene, session: suppliedSession)
                     }
                 }
                 return
@@ -419,7 +494,7 @@ private struct ReplayRoundView: View {
         .background(.black)
         .overlay {
             if let session {
-                let model = session.summary == nil ? hudModel(session) : nil
+                let model = session.summary == nil ? PerfSpans.measure("hudModel") { hudModel(session) } : nil
                 ZStack {
                     if let seconds = model?.diamondTimeRemaining, seconds > 0 {
                         DiamondTimeRushFrame(secondsRemaining: seconds)
@@ -568,9 +643,21 @@ private struct ReplayRoundView: View {
         #endif
         .onChange(of: session?.summary?.sessionGeneration) { _, final in
             if final != nil { presentation.stop() }
+            #if DEBUG
+            // `-autoRetry N` (lifecycle stress runs): Results › Retry, N times, two seconds after each Results.
+            if final != nil, Self.autoRetriesLeft > 0 {
+                Self.autoRetriesLeft -= 1
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(2))
+                    retry()
+                }
+            }
+            #endif
         }
         .onDisappear {
             pendingLiveStart?.cancel(); pendingLiveStart = nil
+            objects.liveContent = nil
+            objects.deferredAvatarFeed = nil
             presentation.stop()
             // No gameplay sound outlives its scene (Retry, Home, teardown).
             AudioService.shared.stopEffects()
@@ -583,6 +670,7 @@ private struct ReplayRoundView: View {
             // before this scene is replaced (Retry).
             scene.detachLiveAvatars()
             #if DEBUG
+            LaserPerfMonitor.shared.sessionEnded()
             heartPreview.stop()
             MaskBenchmark.recorder.suspend(reason: "view closed")
             cutoutFeed?.stop()
@@ -604,6 +692,12 @@ private struct ReplayRoundView: View {
     }
 
     #if DEBUG
+    /// `-autoRetry N`: how many automatic Retries are left in this app run (lifecycle stress runs).
+    private static var autoRetriesLeft: Int = {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let i = arguments.firstIndex(of: "-autoRetry"), i + 1 < arguments.count else { return 0 }
+        return Int(arguments[i + 1]) ?? 0
+    }()
     private static let showsReplayDebugHUD = ProcessInfo.processInfo.arguments.contains("-replayDebugHUD")
     #else
     private static let showsReplayDebugHUD = false
@@ -681,6 +775,21 @@ private struct ReplayRoundView: View {
         #endif
         scene.robotAvatars = robots
         return robots
+    }
+
+    /// What the round shows now, for `LaserPerfMonitor` (`-perfLog`): solo/co-op and the phase.
+    private static func perfPhase(_ session: GameSessionCoordinator?) -> String {
+        guard let session else { return "loading" }
+        let players = session.inputConfiguration.roster.count == 1 ? "solo" : "coop"
+        if session.summary != nil { return "\(players).results" }
+        if session.phase == .paused { return "\(players).paused" }
+        switch session.state?.phase {
+        case .activity?: return "\(players).gameplay"
+        case .vault?: return "\(players).gate"
+        case .diamondTime?: return session.finalVaultEntry.map { !$0.isComplete } == true ? "\(players).vaultEntry" : "\(players).diamondTime"
+        case .ended?: return "\(players).ended"
+        case nil: return "\(players).\(session.phase)"
+        }
     }
 
     /// Which source frame each player shows, for the synthetic cutout preview.

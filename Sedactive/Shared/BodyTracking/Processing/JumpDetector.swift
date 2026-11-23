@@ -61,7 +61,7 @@ nonisolated struct LiveJumpEstimator: Sendable {
   static let uprightLegShare = 0.9
   /// Candidate: the latest run of grounded sole heights (relative to the calibrated soles) that
   /// stayed within the still band; emptied by any gap in sole evidence.
-  private var still: [(time: Double, raw: Double)] = []
+  private var still = JumpStillRun()
   private var airborneSince: Double?
   private var heldRise = false
   private var recentHips: [(time: Double, hip: Double)] = []
@@ -134,11 +134,11 @@ nonisolated struct LiveJumpEstimator: Sendable {
       #if DEBUG
       note(String(format: "capture gap %.3f s resets%@", dt, airborne ? " (ENDS FLIGHT)" : ""))
       #endif
-      airborne = false; missing = 0; recent = []; previousLift = nil; still = []
+      airborne = false; missing = 0; recent = []; previousLift = nil; still.removeAll()
     }
     lastFrame = frameID; lastTime = time
     guard let leftSole, let rightSole, standingHeight > 0, standingHeight.isFinite else {
-      missing += 1; lift = nil; previousLift = nil; still = []
+      missing += 1; lift = nil; previousLift = nil; still.removeAll()
       #if DEBUG
       let flightLost = airborne && time - (lastSolesTime ?? time) > Self.maximumGap
       note("no soles (\(missing) in a row)" + (flightLost ? " → FLIGHT ENDED BY DROPOUT" : airborne ? " (flight kept)" : "")
@@ -160,15 +160,14 @@ nonisolated struct LiveJumpEstimator: Sendable {
         upright = hipY - (raw + floorLevel) >= Self.uprightLegShare * (standingHip - floorLevel)
       }
       let band = max(Self.stillBandShare * standingHeight, Self.noiseMultiple * noise)
-      still.append((time, raw))
-      while still.count > 1, still.map(\.raw).max()! - still.map(\.raw).min()! > band { still.removeFirst() }
-      if still.last!.time - still.first!.time >= Self.ballisticApexLimit - 1e-6 {
+      still.append(time: time, raw: raw, band: band)
+      if still.lastTime - still.firstTime >= Self.ballisticApexLimit - 1e-6 {
         #if DEBUG
         if airborne { note("FLIGHT ENDED: soles still \(Int(Self.ballisticApexLimit * 1000)) ms (apex rule)") }
         #endif
         if airborne { airborne = false; airborneSince = nil } // still that long: not a flight
         if upright {
-          let level = still.map(\.raw).reduce(0, +) / Double(still.count)
+          let level = still.mean
           let shift = level - baseline
           baseline = level
           recent = recent.map { ($0.time, $0.lift - shift) }
@@ -333,5 +332,69 @@ nonisolated struct ExperimentalJumpDetector: Sendable {
     guard count >= ExperimentalJumpPolicyV1.minimumSamples, time - (runStart ?? time) >= ExperimentalJumpPolicyV1.dwell else { return unknown("Temporal dwell pending") }
     if phase == .groundedCandidate { grounded = true }
     return .init(phase: phase, reason: "EXPERIMENTAL only; 2D projection is not physical ground-contact proof")
+  }
+}
+
+
+/// The jump estimator's still run (`LiveJumpEstimator.still`): the latest grounded sole heights whose
+/// range stays within the still band, oldest dropped first until it does. Exactly the run the earlier
+/// array kept, with its maximum, minimum and sum maintained as samples arrive and leave, so a frame
+/// costs O(1) amortized however long a player stands still.
+///
+/// PERFORMANCE (Kevin, 22 November 2026; Edo-owned, for his review): the earlier array re-scanned the
+/// whole run two or three times per frame, per player, and a player standing steady never left the
+/// band, so the run grew through the round: 118 µs per step at the start of a five-minute steady
+/// round, 2,036 µs at its end (Debug, `JumpEstimatorCostTests`), on the camera worker. Same members,
+/// same first and last times; the mean differs from the earlier left-to-right sum only by
+/// floating-point rounding (`JumpStillRunTests`).
+nonisolated struct JumpStillRun: Sendable {
+  private var times: [Double] = []
+  private var raws: [Double] = []
+  private var head = 0
+  /// Indices into the run: raw heights decreasing (front = the run's maximum) and increasing (minimum).
+  private var maxima: [Int] = [], maxHead = 0
+  private var minima: [Int] = [], minHead = 0
+  private var sum = 0.0
+
+  var count: Int { raws.count - head }
+  var isEmpty: Bool { count == 0 }
+  /// The oldest and latest sample times (the run must not be empty).
+  var firstTime: Double { times[head] }
+  var lastTime: Double { times[times.count - 1] }
+  var maximum: Double { raws[maxima[maxHead]] }
+  var minimum: Double { raws[minima[minHead]] }
+  var mean: Double { sum / Double(count) }
+
+  mutating func removeAll() { self = JumpStillRun() }
+
+  /// Adds a sample, then drops the oldest while more than one remain and their range exceeds `band`.
+  mutating func append(time: Double, raw: Double, band: Double) {
+    let index = raws.count
+    times.append(time)
+    raws.append(raw)
+    sum += raw
+    while maxima.count > maxHead, raws[maxima[maxima.count - 1]] <= raw { maxima.removeLast() }
+    maxima.append(index)
+    while minima.count > minHead, raws[minima[minima.count - 1]] >= raw { minima.removeLast() }
+    minima.append(index)
+    while count > 1, maximum - minimum > band {
+      sum -= raws[head]
+      head += 1
+      if maxima[maxHead] < head { maxHead += 1 }
+      if minima[minHead] < head { minHead += 1 }
+    }
+    if head >= 1024, head * 2 >= raws.count { compact() }
+  }
+
+  /// Drops the samples that left the run (bounded memory) and re-sums the rest exactly.
+  private mutating func compact() {
+    times.removeFirst(head)
+    raws.removeFirst(head)
+    maxima = maxima[maxHead...].map { $0 - head }
+    minima = minima[minHead...].map { $0 - head }
+    maxHead = 0
+    minHead = 0
+    head = 0
+    sum = raws.reduce(0, +)
   }
 }

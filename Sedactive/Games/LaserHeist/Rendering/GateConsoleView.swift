@@ -103,6 +103,16 @@ final class GateConsoleView {
     private(set) var lightLevel: Float = 0
     private var reduceMotion = false
 
+    #if DEBUG
+    /// `-perfLog`: each button state change with what it shows (cap colour, halo, accents) and when.
+    private func logState(_ event: String) {
+        guard LaserPerfMonitor.isEnabled else { return }
+        LaserPerfMonitor.emit(String(format: "[GateButton] %@ %@ · state %@ · cap %@ · halo %06X · accents %06X · host %.3f",
+                                     console.player.rawValue, event, "\(state)", capIsGreen ? "GREEN" : "red",
+                                     haloColor, accentColor, CACurrentMediaTime()))
+    }
+    #endif
+
     init(console: LaserGateConsole) {
         self.console = console
         root.name = "vault.console.\(console.player.rawValue)"
@@ -132,6 +142,9 @@ final class GateConsoleView {
         setSideComplete(false)
         let wasDown = state != .available
         apply(ready ? .available : .unavailable)
+        #if DEBUG
+        logState(ready ? "reset(ready)" : "reset(waiting)")
+        #endif
         if ready, wasDown, !reduceMotion, let cap {
             // Arming: a mechanical spring rise with a small overshoot.
             arms += 1
@@ -144,6 +157,9 @@ final class GateConsoleView {
     func setUnavailable() {
         guard state == .available else { return }
         apply(.unavailable)
+        #if DEBUG
+        logState("timeout")
+        #endif
     }
 
     /// How close the player's fist is to pressing (0 far … 1 on the button, `RobotAvatarLayer.reachPull`):
@@ -167,6 +183,9 @@ final class GateConsoleView {
     func complete(reduceMotion: Bool) {
         guard state == .available || state == .unavailable else { return }
         presses[.activate, default: 0] += 1
+        #if DEBUG
+        defer { logState("pressed") }
+        #endif
         guard !reduceMotion, let cap else { return apply(.completed) }
         state = .completed
         approachLevel = 0
@@ -198,7 +217,12 @@ final class GateConsoleView {
     /// turns GREEN: the cap, a white flash of the accents settling green, the halo popping bright green
     /// and the green light. Once per gate; a button that was never pressed stays as it is.
     func open(reduceMotion: Bool) {
+        #if DEBUG
+        guard state == .completed else { return logState("open ignored (not pressed)") }
+        defer { logState("opened") }
+        #else
         guard state == .completed else { return }
+        #endif
         opens += 1
         guard !reduceMotion else { return apply(.opened) }
         state = .opened

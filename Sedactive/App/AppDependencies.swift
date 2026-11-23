@@ -39,6 +39,10 @@ import Foundation
     #if DEBUG
     let diagnostics = LiveInputDiagnosticsModel(camera: camera, bodyInput: bodyInput)
     cameraDiagnostics = diagnostics
+    // `-perfLog` (Kevin, DEBUG only): the perf log reads the pipeline's own capture statistics.
+    let captureMetrics = camera.frames.metrics
+    LaserPerfMonitor.cameraStatistics = { captureMetrics.snapshot }
+    LaserPerfMonitor.start()
     #endif
     #if DEBUG
     let route: LaserInputFlow.Route = ProcessInfo.processInfo.arguments.contains("--synthetic-gameplay-preview")

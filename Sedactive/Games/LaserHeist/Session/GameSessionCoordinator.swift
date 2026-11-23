@@ -16,6 +16,10 @@ nonisolated struct LaserLiveFrameAttachment: Equatable, Sendable {
 /// One CP1 consumer per round. Replay uses synthetic time; configured live rounds use host-time readiness.
 @MainActor @Observable
 final class GameSessionCoordinator {
+    #if DEBUG
+    /// `-perfLog` live-instance count (DEBUG only, Kevin 22 November 2026).
+    private let perfToken = PerfAliveToken("GameSessionCoordinator")
+    #endif
     private(set) var configuration: LaserRoundConfiguration?
     private(set) var encounters: [LaserEncounter]
     let inputConfiguration: BodyInputConfiguration

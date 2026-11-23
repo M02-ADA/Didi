@@ -9,8 +9,14 @@ import UIKit
 /// synchronous coordinator signal and never creates a per-frame Task or another clock.
 @MainActor
 final class LaserReplayPresentation {
+    #if DEBUG
+    /// `-perfLog` live-instance count (DEBUG only, Kevin 22 November 2026).
+    private let perfToken = PerfAliveToken("LaserReplayPresentation")
+    #endif
     private var subscription: EventSubscription?
     private var session: GameSessionCoordinator?
+    /// The RealityView content this presentation renders into, from `start` until `stop`.
+    private var content: RealityViewCameraContent?
     /// The replay's frame-update signal (TEAM_ALIGNMENT §C), one per generation.
     private var flightScenePhase: LaserRoundPhase?
     var diamondFlights: DiamondHUDFlightModel?
@@ -126,7 +132,19 @@ final class LaserReplayPresentation {
             presenter?.vault.liveConsoles = { [weak scene] player in scene?.robotAvatars?.consoles[player] }
         }
         // Sound follows what the presenter shows; the round's music joins in.
+        #if DEBUG
+        presenter?.onSound = { cue in
+            let asked = CACurrentMediaTime()
+            AudioService.shared.play(cue)
+            // `-perfLog`: how long asking for a verdict's sound held this frame (main thread).
+            if LaserPerfMonitor.isEnabled, cue == .laserHit || cue == .laserClear {
+                LaserPerfMonitor.emit(String(format: "[SoundCall] %@ · host %.3f · main thread %.1f ms", cue.rawValue,
+                                             asked, (CACurrentMediaTime() - asked) * 1000))
+            }
+        }
+        #else
         presenter?.onSound = { AudioService.shared.play($0) }
+        #endif
         teamCallouts?.clear()
         presenter?.onTeamCallout = { [weak self] callout, cueShown in self?.teamCallouts?.show(callout.kind, compact: cueShown) }
         presenter?.onCueShownChanged = { [weak self] shown in self?.teamCallouts?.cueShownChanged(shown) }
@@ -160,22 +178,32 @@ final class LaserReplayPresentation {
                 return Self.normalDiamonds(session.diamondStates, layout: layout, display: display)
             }
         }
-        subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self, weak scene] event in
-            guard let self, let scene, self.session === session, self.subscription != nil else { return }
+        // LIFECYCLE (Kevin, 22 November 2026, measured): RealityKit keeps an update handler's closure
+        // alive after `cancel()`, so this one captures nothing strongly (`content` is read from
+        // `self.content`, cleared by `stop()`). Capturing the session and content strongly kept every
+        // finished round's coordinator, and with it its game state, alive for the rest of the app run.
+        self.content = content
+        subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self, weak scene, weak session] event in
+            guard let self, let scene, let session, self.session === session, self.subscription != nil,
+                  let content = self.content else { return }
             if !session.isReplay {
                 guard let attachment = self.liveAttachment else { return }
-                session.advanceLive(frameHost: attachment)
+                PerfSpans.measure("advanceLive") { session.advanceLive(frameHost: attachment) }
                 #if DEBUG
                 for line in self.dropoutProbe.observe(session.latestSnapshot, roster: session.inputConfiguration.roster,
                                                       phase: "\(session.phase)") { print(line) }
                 #endif
-                self.render(scene: scene, session: session)
-                self.updateHeart(scene: scene, session: session, frameHost: attachment) { world in
-                    content.project(point: world, to: .named(DiamondHUDFlightModel.space))
+                PerfSpans.measure("render") { self.render(scene: scene, session: session) }
+                PerfSpans.measure("heart") {
+                    self.updateHeart(scene: scene, session: session, frameHost: attachment) { world in
+                        content.project(point: world, to: .named(DiamondHUDFlightModel.space))
+                    }
                 }
-                self.renderPawBoard(on: content, scene: scene, session: session)
-                session.collectAvatarDiamondContacts(self.avatarDiamondContacts(scene: scene, session: session),
-                                                     frameHost: attachment)
+                PerfSpans.measure("pawBoard") { self.renderPawBoard(on: content, scene: scene, session: session) }
+                PerfSpans.measure("avatarContacts") {
+                    session.collectAvatarDiamondContacts(self.avatarDiamondContacts(scene: scene, session: session),
+                                                         frameHost: attachment)
+                }
                 return
             }
             guard session.phase == .running else { return }
@@ -238,6 +266,7 @@ final class LaserReplayPresentation {
         diamondFlights?.clear()
         subscription?.cancel()
         subscription = nil
+        content = nil
         if let liveAttachment { session?.detachLiveFrameHost(liveAttachment) }
         liveAttachment = nil
         presenter?.stop()
@@ -381,14 +410,16 @@ final class LaserReplayPresentation {
         if newAccent {
             lastPawAccent = beat.start
             pawShake = (time, beat.level)
-            switch beat.level {
-            case 1: AudioService.shared.play(.diamondCollect)
-            case 2: AudioService.shared.play(.diamondChainRise)
-            default: AudioService.shared.play(.diamondChainCrest)
+            PerfSpans.measure("pickupSound") {
+                switch beat.level {
+                case 1: AudioService.shared.play(.diamondCollect)
+                case 2: AudioService.shared.play(.diamondChainRise)
+                default: AudioService.shared.play(.diamondChainCrest)
+                }
             }
         }
         if crossedCrest {
-            AudioService.shared.play(.diamondChainBass)
+            PerfSpans.measure("pickupSound") { AudioService.shared.play(.diamondChainBass) }
             pawShake = (time, beat.level)
         }
         lastPawAccentLevel = beat.level
@@ -396,27 +427,33 @@ final class LaserReplayPresentation {
 
     private func render(scene: LaserScene, session: GameSessionCoordinator) {
         guard let state = session.state else { return }
-        updatePawPickupFeedback(session: session, at: state.gameTime)
+        PerfSpans.measure("pickupFeedback") { updatePawPickupFeedback(session: session, at: state.gameTime) }
         if flightScenePhase != state.phase { diamondFlights?.clear(); flightScenePhase = state.phase }
         diamondFlights?.session(state.sessionGeneration, running: session.phase == .running && session.summary == nil)
-        presenter?.apply(state: state, events: session.events, snapshot: session.latestSnapshot,
-                         upcomingVaultIn: session.isCompleteReplay
-                            ? Self.upcomingVaultIn(state: state, activityDuration: session.activityDuration)
-                            : session.liveVaultIn,
-                         finalVault: session.finalVaultEntry, showsPawBoard: session.showsDiamondTimePaws)
+        PerfSpans.measure("presenterApply") {
+            presenter?.apply(state: state, events: session.events, snapshot: session.latestSnapshot,
+                             upcomingVaultIn: session.isCompleteReplay
+                                ? Self.upcomingVaultIn(state: state, activityDuration: session.activityDuration)
+                                : session.liveVaultIn,
+                             finalVault: session.finalVaultEntry, showsPawBoard: session.showsDiamondTimePaws)
+        }
         if !playedFinalVaultTurn, session.phase == .running, state.phase == .diamondTime,
            let entry = session.finalVaultEntry,
            entry.elapsed >= FinalVaultDoorMotion.start, entry.elapsed < FinalVaultDoorMotion.end {
             playedFinalVaultTurn = true
             AudioService.shared.play(.finalVaultTurn)
         }
-        AudioService.shared.startDiamondTimeMusicIfReady(
-            isInside: session.phase == .running && state.phase == .diamondTime
-                && (session.isReplay || session.finalVaultEntry?.isComplete == true))
+        PerfSpans.measure("dtMusic") {
+            AudioService.shared.startDiamondTimeMusicIfReady(
+                isInside: session.phase == .running && state.phase == .diamondTime
+                    && (session.isReplay || session.finalVaultEntry?.isComplete == true))
+        }
         if session.showsDiamondTimePaws, session.phase == .running,
            !UIAccessibility.isReduceMotionEnabled, let pawShake {
-            presenter?.finalVault.applyDiamondTimeShake(
-                DiamondTimePickupRhythm.shake(age: state.gameTime - pawShake.time, level: pawShake.level))
+            PerfSpans.measure("dtShake") {
+                presenter?.finalVault.applyDiamondTimeShake(
+                    DiamondTimePickupRhythm.shake(age: state.gameTime - pawShake.time, level: pawShake.level))
+            }
         }
         // The wrists' reach cursors (the tracked wrist the gate judges) are an engineering view only
         // (owner, 12 November 2026: players see the mascots and the buttons, no helper circles):

@@ -30,6 +30,10 @@ protocol AvatarPosePump: AnyObject {
 /// never reach a scene being replaced.
 @MainActor
 final class LiveAvatarPresenter {
+    #if DEBUG
+    /// `-perfLog` live-instance count (DEBUG only, Kevin 22 November 2026).
+    private let perfToken = PerfAliveToken("LiveAvatarPresenter")
+    #endif
     /// Presentation policy (experimental, Kevin's; not a tracker value): how
     /// long after its capture a pose is still shown when no newer one arrives.
     nonisolated static let maximumPoseAge = 0.25
