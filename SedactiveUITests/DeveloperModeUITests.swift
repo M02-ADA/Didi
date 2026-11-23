@@ -29,7 +29,7 @@ final class DeveloperModeUITests: XCTestCase {
         XCTAssertFalse(app.buttons["openSFXReplayLab"].exists)
     }
 
-    func testCleanCameraSetupHasNoDebugShortcuts() {
+    func testCleanCameraSetupAndReturnHomeHaveNoDebugCopy() {
         let app = launch()
         XCTAssertTrue(app.buttons["startMission"].waitForExistence(timeout: 20))
         LaserHeistJourney.startCameraSetup(app, timeout: 30)
@@ -37,6 +37,13 @@ final class DeveloperModeUITests: XCTestCase {
         XCTAssertTrue(app.buttons["navigationBack"].waitForExistence(timeout: 30))
         XCTAssertFalse(app.buttons["debugSkipToReplay"].exists)
         XCTAssertFalse(app.buttons["setupDiagnosticsToggle"].exists)
+
+        let back = app.buttons["navigationBack"]
+        back.tap()
+        XCTAssertTrue(app.buttons["setupNext"].waitForExistence(timeout: 30))
+        back.tap()
+        XCTAssertTrue(app.buttons["startMission"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.descendants(matching: .any)["inputFlowMessage"].exists)
     }
 
     func testXcodeOptInCanBeTurnedOff() {

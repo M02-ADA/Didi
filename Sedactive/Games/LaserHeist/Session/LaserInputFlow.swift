@@ -9,7 +9,14 @@ final class LaserInputFlow {
     private(set) var session: GameSessionCoordinator?
     private(set) var isStarting = false
     private(set) var isClosing = false
+    private static let cameraSetupEndedNotice = "Camera setup has ended. You can start a fresh setup or use the replay demo."
     private(set) var message: String?
+
+    func homeMessage(showsDeveloperTools: Bool) -> String? {
+        if message == Self.cameraSetupEndedNotice, !showsDeveloperTools { return nil }
+        return message
+    }
+
     private(set) var returnsToPlacement = false
     let leanTutorial: LeanTutorial
     private var operation: UUID?
@@ -175,7 +182,7 @@ final class LaserInputFlow {
         returnsToPlacement = returnToPlacement
         route = .selection
         automaticRestarts = 0
-        message = finishedTutorial ? nil : "Camera setup has ended. You can start a fresh setup or use the replay demo."
+        message = finishedTutorial ? nil : Self.cameraSetupEndedNotice
     }
 
     /// Explicit user intent only. The same App-retained provider gets a new coordinator/generation.

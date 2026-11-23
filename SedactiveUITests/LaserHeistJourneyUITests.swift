@@ -69,6 +69,8 @@ final class LaserHeistJourneyUITests: XCTestCase {
         leave.tap()
         XCTAssertTrue(start.waitForExistence(timeout: timeout), "Back from placement did not return Home")
 
+        XCTAssertTrue(app.descendants(matching: .any)["inputFlowMessage"].exists)
+
         // Replay demo › Results › Back to Home.
         app.buttons["chooseReplay"].tap()
         let end = app.buttons["endRound"]

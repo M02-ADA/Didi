@@ -100,9 +100,17 @@ struct LaserHeistIntroView: View {
 
     /// The flow's other choices and its messages (e.g. a camera that could not
     /// start), kept small under the Sketch layout rather than redesigning it.
+    private var showsDeveloperTools: Bool {
+        #if DEBUG
+        developerTools.isEnabled
+        #else
+        false
+        #endif
+    }
+
     private var homeOptions: some View {
         VStack(spacing: 10) {
-            if let message = flow.message {
+            if let message = flow.homeMessage(showsDeveloperTools: showsDeveloperTools) {
                 Label(message, systemImage: "info.circle")
                     .font(.callout)
                     .foregroundStyle(LaserHeistDesign.cream)
