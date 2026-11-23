@@ -43,7 +43,10 @@ struct LaserHeistIntroView: View {
         .animation(.easeInOut(duration: 0.3), value: screen)
         .background(LaserHeistDesign.night)
         .preferredColorScheme(.dark)
-        .onAppear { AudioService.shared.setMusic(.menu) }
+        .onAppear {
+            if flow.consumePlacementReturn() { screen = .setup }
+            AudioService.shared.setMusic(.menu)
+        }
     }
 
     private func show(_ next: Screen) {

@@ -61,20 +61,6 @@ struct ContentView: View {
         replayView(flow: flow)
       case .liveSetup:
         liveSetup(flow: flow)
-        #if DEBUG
-          .overlay(alignment: .top) {
-            if flow.session?.isSoloPractice == true {
-              Text("SOLO PRACTICE · 1 Player · not a co-op result")
-                .font(.system(size: 13, weight: .heavy, design: .monospaced))
-                .padding(.horizontal, 12).padding(.vertical, 5)
-                .background(Color(sketch: 0xFFC83A), in: Capsule())
-                .foregroundStyle(Color(sketch: 0x16123A))
-                .padding(.top, 4)
-                .allowsHitTesting(false)
-                .accessibilityIdentifier("soloTestBanner")
-            }
-          }
-        #endif
       case .diagnostics:
         #if DEBUG
         LiveInputDiagnosticsView(model: dependencies.cameraDiagnostics)
@@ -92,24 +78,26 @@ struct ContentView: View {
         // Automatic setup mounts the game scene from the start (hidden behind the camera screen),
         // so its first load does not stall tracking right after calibration (iPad, 11 November).
         ZStack {
+          let recovering = flow.session.map { LaserTrackingWarning.Input(session: $0).isTrackingPause } ?? false
+          let stageShown = recovering || Self.showsSetupStage(flow.session)
           if let session = flow.session, session.hasLiveRoundPlan || session.automaticSetup {
             PlayView(avatarSource: { try VisionK03MailboxPump(bridge: dependencies.visionPoseBridge, mailbox: $0) },
                      onExit: { Task { await flow.closeLiveSetup() } }, liveSession: session,
                      onLiveRetry: { Task { await flow.retryLiveSetup() } })
               .id(ObjectIdentifier(session)) // a new session (Retry) gets a fresh scene
+              .allowsHitTesting(!stageShown)
+              .accessibilityHidden(stageShown)
           }
           // The setup stage, with its camera preview, stays MOUNTED for the whole visit and is only
           // hidden over the game: attaching or detaching the preview layer reconfigures the running
           // capture session and stalls frames 220–500 ms (iPad, 11 November 2026), which aborted
           // every countdown and, repeated, lost the player and restarted setup.
-          let stageShown = Self.showsSetupStage(flow.session)
-          liveSetupStage(flow, preview: cameraPreview)
+          liveSetupStage(flow, preview: cameraPreview, recovering: recovering)
             .opacity(stageShown ? 1 : 0)
             .allowsHitTesting(stageShown)
             .accessibilityHidden(!stageShown)
-          // In-round tracking warning (Kevin, 13 November 2026): over the still-mounted stage while a
-          // started round is paused for tracking, from the session's own state (LaserTrackingWarning).
-          if let session = flow.session, session.hasLiveRoundPlan {
+          // Non-tracking pauses still use the in-game pause presentation.
+          if !stageShown, let session = flow.session, session.hasLiveRoundPlan {
             LaserTrackingWarningOverlay(flow: flow, session: session).id(ObjectIdentifier(session))
           }
           // The countdown shows only the session's own remaining time (no second clock).
@@ -118,10 +106,7 @@ struct ContentView: View {
             RoundCountdownOverlay(value: Int(remaining.rounded(.up)))
           }
           #if DEBUG
-          // DEBUG test round controls (Kevin): from the round's start to its Results, above the
-          // setup stage too, so a tracking pause never hides them. They place themselves under the
-          // HUD's pause button, clear of both players' gate consoles.
-          if let session = flow.session, session.hasLiveRoundPlan, session.state != nil, session.summary == nil {
+          if !stageShown, let session = flow.session, session.hasLiveRoundPlan, session.state != nil, session.summary == nil {
             DebugRoundControls(session: session)
           }
           #endif
@@ -131,10 +116,7 @@ struct ContentView: View {
   /// mounted, then except while counting down, playing or showing results.
   static func showsSetupStage(_ session: GameSessionCoordinator?) -> Bool {
     guard let session, session.hasLiveRoundPlan || session.automaticSetup else { return true }
-    // A started round is never covered by the camera setup stage, paused or not (Kevin, 13 November
-    // 2026: in a squat the calibration stage showed before the tracking warning). Its pauses show
-    // over the frozen game: the tracking warning, a pause notice or the HUD's pause menu
-    // (`LaserTrackingWarningOverlay`). The stage returns only with a new setup (Recalibrate).
+    // Started rounds use their own recovery check before reusing the calibration stage.
     if session.state != nil && session.summary == nil { return false }
     return session.phase != .countdown && session.phase != .running && session.summary == nil
   }
@@ -167,49 +149,48 @@ struct ContentView: View {
 
 /// Jevon's setup controls on the Sketch "stand here" stage (Kevin's presentation).
 @MainActor
-private func liveSetupStage(_ flow: LaserInputFlow, preview: AnyView?) -> some View {
+private func liveSetupStage(_ flow: LaserInputFlow, preview: AnyView?, recovering: Bool) -> some View {
   CalibrationStageView(cameraPreview: preview,
     cameraAspect: AppDependencies.shared.camera.negotiated.map {
       CGFloat($0.outputWidth) / CGFloat(max(1, $0.outputHeight)) } ?? 16 / 9,
-    playerStatus: flow.session?.automaticSetup == true ? flow.session?.presence.players ?? [:] : [:],
+    playerStatus: flow.session.map { session in
+      guard recovering else { return session.presence.players }
+      let input = LaserTrackingWarning.Input(session: session)
+      return Dictionary(uniqueKeysWithValues: session.inputConfiguration.roster.map { player in
+        if let status = session.presence.players[player], case .calibrating = status {
+          return (player, status)
+        }
+        let ready = input.hasPacket && !input.identityLost && !input.awaitsIdentityRecovery
+        let status: LaserSetupPlayerStatus = ready && input.attention[player] == nil ? .linked : .searching
+        return (player, status)
+      })
+    } ?? [:],
     solo: flow.session?.isSoloPractice == true,
-    onBack: { Task { await flow.closeLiveSetup() } }) {
-    PlayerSetupView(flow: flow, isOverlay: true)
+    showsCameraUnavailableLabel: false,
+    onBack: { Task { await flow.closeLiveSetup(returnToPlacement: true) } }) {
+    PlayerSetupView(flow: flow, isOverlay: true, isRecovering: recovering)
   }
-  .overlay(alignment: .bottom) {
-    if let camera = AppDependencies.shared.camera.negotiated {
-      Text("Camera: \(camera.deviceName)")
-        .font(.caption.weight(.semibold))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(.black.opacity(0.7), in: Capsule())
-        .foregroundStyle(.white)
-        .padding(.bottom, 16)
-        .allowsHitTesting(false)
-    }
-  }
-  #if DEBUG
-  .overlay(alignment: .bottomTrailing) { SetupDiagnosticsToggle(flow: flow) }
-  #endif
   #if DEBUG
   // DEBUG only, for testing without an iPad: ends camera setup (nothing is
   // calibrated or marked ready) and opens the seeded synthetic replay through
   // the same flow. Never compiled into Release.
   .overlay(alignment: .bottomLeading) {
-    Button("DEBUG · Skip camera & play synthetic replay") {
-      Task {
-        await flow.closeLiveSetup()
-        flow.showReplay()
+    if !recovering, ProcessInfo.processInfo.arguments.contains("-enableCalibrationReplaySkip") {
+      Button("DEBUG · Skip camera & play synthetic replay") {
+        Task {
+          await flow.closeLiveSetup()
+          flow.showReplay()
+        }
       }
+      .font(.system(size: 15, weight: .heavy, design: .monospaced))
+      .padding(.horizontal, 14).padding(.vertical, 8)
+      .background(Color(sketch: 0xFFC83A), in: Capsule())
+      .foregroundStyle(Color(sketch: 0x16123A))
+      .buttonStyle(.plain)
+      .disabled(flow.isClosing)
+      .padding([.leading, .bottom], 16)
+      .accessibilityIdentifier("debugSkipToReplay")
     }
-    .font(.system(size: 15, weight: .heavy, design: .monospaced))
-    .padding(.horizontal, 14).padding(.vertical, 8)
-    .background(Color(sketch: 0xFFC83A), in: Capsule())
-    .foregroundStyle(Color(sketch: 0x16123A))
-    .buttonStyle(.plain)
-    .disabled(flow.isClosing)
-    .padding([.leading, .bottom], 16)
-    .accessibilityIdentifier("debugSkipToReplay")
   }
   #endif
   .onAppear { AudioService.shared.setMusic(.menu) }

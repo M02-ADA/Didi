@@ -32,6 +32,7 @@ struct CalibrationStageView<Panel: View>: View {
     var playerStatus: [PlayerID: LaserSetupPlayerStatus] = [:]
     /// DEBUG Solo Test: one centred box for P1 instead of two.
     var solo = false
+    var showsCameraUnavailableLabel = true
     let onBack: () -> Void
     @ViewBuilder var panel: () -> Panel
 
@@ -58,7 +59,7 @@ struct CalibrationStageView<Panel: View>: View {
                         .accessibilityLabel("Camera preview")
                         .accessibilityIdentifier("calibrationCameraSurface")
                         .offset(x: image.minX, y: image.minY)
-                } else {
+                } else if showsCameraUnavailableLabel {
                     cameraUnavailable(k)
                         .frame(width: image.width)
                         .offset(x: image.minX, y: image.maxY - 60 * k)
