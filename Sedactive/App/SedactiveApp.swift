@@ -14,17 +14,19 @@ struct SedactiveApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .background { LandscapeSceneRequest() }
+                .background { GameWindowPreferences() }
         }
     }
 }
 
 /// Targets the window SwiftUI actually mounted, including scenes on external displays.
-private struct LandscapeSceneRequest: UIViewRepresentable {
+private struct GameWindowPreferences: UIViewRepresentable {
     @Environment(\.scenePhase) private var scenePhase
 
     func makeUIView(context: Context) -> SceneView {
-        SceneView()
+        let view = SceneView()
+        view.isUserInteractionEnabled = false
+        return view
     }
 
     func updateUIView(_ view: SceneView, context: Context) {
@@ -40,6 +42,13 @@ private struct LandscapeSceneRequest: UIViewRepresentable {
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
+            if traitCollection.userInterfaceIdiom == .pad {
+                // Keep the game above 70% of its design size where the window manager allows it.
+                let artboard = LaserHeistDesign.artboard
+                window?.windowScene?.sizeRestrictions?.minimumSize = CGSize(
+                    width: (artboard.width * 0.7).rounded(.up),
+                    height: (artboard.height * 0.7).rounded(.up))
+            }
             if isSceneActive { requestLandscape() }
         }
 
