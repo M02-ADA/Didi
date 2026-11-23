@@ -9,7 +9,7 @@ import Testing
     }
 
     static func finishRound(_ round: FTUEDiamondTimeSession) throws {
-        let entered = round.entry.timeline.total
+        let entered = round.entry.timeline.end
         try round.update(at: entered, snapshot: nil)
         try round.update(at: entered + LaserRoundConfiguration.defaultDiamondTimeDuration + 0.01, snapshot: nil)
     }
@@ -36,7 +36,7 @@ import Testing
         let player: PlayerID = solo ? .player1 : .player2
         let hand = LaserContactHand(playerID: player, wrist: .left)
         let outside = [hand: WristPlanePoint(x: -4, y: 0)]
-        let opening = round.entry.timeline.total
+        let opening = round.entry.timeline.end
         try round.update(at: opening, snapshot: try fixture.packet(3, opening - 0.1, points: outside))
         #expect(round.showsPawBoard && round.game.gameTime == 0 && round.game.activeDiamonds.isEmpty)
         #expect(round.entry.timeline.jumpers == (solo ? [.player1] : PlayerID.allCases))
@@ -89,7 +89,7 @@ import Testing
         let round = try Self.makeRound(fixture, solo: solo)
         let player: PlayerID = solo ? .player1 : .player2
         let hand = LaserContactHand(playerID: player, wrist: .left)
-        let opening = round.entry.timeline.total
+        let opening = round.entry.timeline.end
         try round.update(at: opening, snapshot: nil)
 
         let freshness = try #require(round.inputs.context.wristContact?.freshness)

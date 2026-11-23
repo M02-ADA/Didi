@@ -34,7 +34,9 @@ import Observation
         }
     }
     func hasReachedExplanationEndpoint(_ phase: ProgressTutorialPhase) -> Bool {
-        isActivePresentation && fillEnd == Self.endpoint(for: .progressExplanation(phase))
+        // Once the final fill is visible, the explanation owns its presentation.
+        // A transient readiness hold only pauses progress animation.
+        (phase == .diamond || isActivePresentation) && fillEnd == Self.endpoint(for: .progressExplanation(phase))
     }
 
     func reset(generation: UUID?) {
