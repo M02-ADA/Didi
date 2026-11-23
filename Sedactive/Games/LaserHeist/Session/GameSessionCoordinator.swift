@@ -7,6 +7,7 @@
 
 import Foundation
 import Observation
+import UIKit
 
 /// Scene/update ownership only. This token is not player identity or capture generation.
 nonisolated struct LaserLiveFrameAttachment: Equatable, Sendable {
@@ -16,6 +17,10 @@ nonisolated struct LaserLiveFrameAttachment: Equatable, Sendable {
 /// One CP1 consumer per round. Replay uses synthetic time; configured live rounds use host-time readiness.
 @MainActor @Observable
 final class GameSessionCoordinator {
+    #if DEBUG
+    /// `-perfLog` live-instance count (DEBUG only, Kevin 22 November 2026).
+    private let perfToken = PerfAliveToken("GameSessionCoordinator")
+    #endif
     private(set) var configuration: LaserRoundConfiguration?
     private(set) var encounters: [LaserEncounter]
     let inputConfiguration: BodyInputConfiguration
@@ -27,8 +32,11 @@ final class GameSessionCoordinator {
     var isCompleteReplay: Bool { replayDriver?.script.fullRound != nil }
     /// Read-only domain state for the separately reviewed K06 rendering handoff.
     var diamondStates: [UUID: LaserDiamondState] { game?.diamonds ?? [:] }
+    /// Diamond Time's own view (the paw board; the mascots no longer shown): from the middle of the
+    /// entry's blink, while the eyelids are shut (`LaserFinalVaultTimeline.blinkSwitch`). Its input
+    /// and seconds still start only when the entry is complete (the eyes open).
     var showsDiamondTimePaws: Bool {
-        !isReplay && state?.phase == .diamondTime && finalVaultEntry?.isComplete == true
+        !isReplay && state?.phase == .diamondTime && finalVaultEntry?.presentsDiamondTime == true
     }
 
     // Published on the live frame host so an expired hand disappears even without a new packet.
@@ -44,6 +52,13 @@ final class GameSessionCoordinator {
     var activityDuration: Double { replayDriver?.script.activityDuration ?? configuration?.activityDuration ?? 0 }
     private(set) var phase: SessionState = .idle {
         didSet {
+            switch phase {
+            case .countdown, .running, .paused:
+                if displayWakeLock == nil { displayWakeLock = RoundDisplayWakeLock() }
+            case .idle, .starting, .awaitingSetup, .restartRequired, .finished, .failed:
+                displayWakeLock?.release()
+                displayWakeLock = nil
+            }
             #if DEBUG
             if oldValue != phase {
                 print(String(format: "[LaserState] t %.3f · session %@ → %@ · readiness %@ · setup %@", ProcessInfo.processInfo.systemUptime,
@@ -52,6 +67,7 @@ final class GameSessionCoordinator {
             #endif
         }
     }
+    @ObservationIgnored private var displayWakeLock: RoundDisplayWakeLock?
     private(set) var state: LaserGameState?
     /// How far the current stage has run toward its gate, 0…1, for the HUD's continuous progress
     /// (`GameplayHUDModel`); nil outside a stage's activity and gate. From the live director's own
@@ -86,10 +102,73 @@ final class GameSessionCoordinator {
               boundary > time else { return nil }
         return boundary - time
     }
+    private(set) var laserPractice: FTUELaserPractice?
+    var isPresentingFTUEDuckRetry: Bool {
+        lifetime != nil && preRoundTutorialPending && phase == .awaitingSetup
+            && laserPractice?.canFinishDuckRetryFeedback(in: inputContext) == true
+    }
+
+    func updateFTUELaserPractice(at now: Double, generation: UUID, suspended: Bool) {
+        guard generation == inputConfiguration.sessionGeneration, lifetime != nil, preRoundTutorialPending,
+              phase == .awaitingSetup, game == nil, let configuration, let context = inputContext else { return }
+        let eligible = !suspended && ((canStartLiveRound && pairInPlay) || isPresentingFTUEDuckRetry)
+        if laserPractice == nil, eligible {
+            let accepted = provider.acceptedCalibrations.filter { inputConfiguration.roster.contains($0.key) }
+            let input = inputConfiguration.replacingCalibrations(accepted)
+            laserPractice = try? .init(input: input, configuration: configuration, context: context, poseFirst: poseFirstCandidate)
+        }
+        try? laserPractice?.update(at: now, eligible: eligible, context: context)
+    }
+    func finishFTUEPracticeFeedback(attempt: UUID, generation: UUID) {
+        guard lifetime != nil, preRoundTutorialPending else { return }
+        try? laserPractice?.feedbackFinished(attempt: attempt, generation: generation)
+    }
+    func retireFTUELaserPractice() { laserPractice = nil }
+
+    /// Session-owned instructional round; ordinary gameplay remains uninitialized.
+    private(set) var heartTraining: HeartTrainingEncounter?
+    func updateHeartTraining(at now: Double, suspended: Bool) {
+        guard lifetime != nil, preRoundTutorialPending, phase == .awaitingSetup,
+              game == nil, let configuration, let context = inputContext else { return }
+        let eligible = !suspended && canStartLiveRound && setup?.hasConfirmedReliablePair == true
+        if heartTraining == nil, eligible {
+            heartTraining = try? HeartTrainingEncounter(configuration: configuration, context: context,
+                roster: Set(inputConfiguration.roster))
+        }
+        heartTraining?.update(at: now, eligible: eligible, context: context)
+    }
+    func finishHeartTrainingFeedback(id: UUID, generation: UUID) {
+        guard lifetime != nil, preRoundTutorialPending else { return }
+        heartTraining?.finishFeedback(id: id, generation: generation)
+    }
+    func retireHeartTraining() { heartTraining = nil }
+
+    /// Hold BEFORE the initial countdown; released only after the complete FTUE.
+    private(set) var preRoundTutorialPending = false
+    func setPreRoundTutorialPending(_ pending: Bool) {
+        guard state == nil, phase == .idle || phase == .awaitingSetup else { return }
+        preRoundTutorialPending = pending
+    }
+
     private(set) var liveFrameHostReady = false
     var canStartLiveRound: Bool {
         hasLiveRoundPlan && liveFrameHostReady && phase == .awaitingSetup && liveReadiness?.phase == .ready
     }
+    /// Read-only inputs for an independently owned pre-round tutorial bonus round.
+    func tutorialDiamondTimeInputs(generation: UUID) -> FTUEDiamondTimeSession.Inputs? {
+        guard preRoundTutorialPending, state == nil, canStartLiveRound, pairInPlay, provider.status == .running,
+              let context = provider.currentContext, context == installedLiveWristContext,
+              context.sessionGeneration == generation, context.isActive, context.wristContact != nil,
+              let configuration, let diamonds = wristDiamondConfiguration else { return nil }
+        return .init(configuration: configuration, diamonds: diamonds, context: context,
+                     roster: inputConfiguration.roster)
+    }
+
+    func tutorialVaultInputs(generation: UUID) -> FTUEVaultPractice.Inputs? {
+        guard let inputs = tutorialDiamondTimeInputs(generation: generation), let liveDirector else { return nil }
+        return .init(round: inputs, zones: liveDirector.vaultContactZones(gateIndex: 0))
+    }
+
     var hasWristDiamondPlan: Bool { wristDiamondConfiguration != nil }
     var liveWristBlockers: [LaserLiveWristBlocker] {
         var result: [LaserLiveWristBlocker] = []
@@ -533,6 +612,7 @@ final class GameSessionCoordinator {
     }
 
     func stop(reason: LaserRoundOutcome = .aborted) async {
+        heartTraining = nil; laserPractice = nil
         setupTask?.cancel(); setupTask = nil
         let hadLifetime = lifetime != nil
         wristDiamonds = nil
@@ -580,6 +660,9 @@ final class GameSessionCoordinator {
                     bindingConfirmed: pairInPlay && setup?.canCancelCalibration == false,
                     at: hostNow())
             } catch { debugRestart("observe threw: \(error)"); liveReadiness?.requireRestart() }
+        }
+        if preRoundTutorialPending, let context = inputContext, context == provider.currentContext {
+            try? laserPractice?.receive(packet, at: hostNow(), maximumAge: liveReadiness?.policy?.maximumEvidenceAge ?? 0)
         }
         synchronizeLiveGame(packet: packet)
     }
@@ -845,7 +928,7 @@ final class GameSessionCoordinator {
         logSetupHeartbeat(setup, at: now)
         #endif
         // Both references accepted, the round planned and the scene drawing: count down.
-        if canStartLiveRound, !countdownRequested, (try? beginLiveCountdown()) != nil {
+        if canStartLiveRound, !preRoundTutorialPending, !countdownRequested, (try? beginLiveCountdown()) != nil {
             #if DEBUG
             setupTimeline.mark("countdown", at: now)
             #endif
@@ -1115,7 +1198,7 @@ final class GameSessionCoordinator {
     }
 
     func beginLiveCountdown() throws {
-        guard !isReplay, lifetime != nil, hasLiveRoundPlan, liveFrameHostReady else {
+        guard !isReplay, lifetime != nil, hasLiveRoundPlan, liveFrameHostReady, !preRoundTutorialPending else {
             throw LaserDataError.invalidValue("missing live plan/policy")
         }
         readInputStatus()
@@ -1416,7 +1499,17 @@ final class GameSessionCoordinator {
                 }
             default:
                 if game != nil || phase == .countdown || phase == .paused {
-                    try pauseLiveGame(at: readiness.gameTime)
+                    var pauseTime = readiness.gameTime
+                    if phase != .paused, readiness.phase == .paused,
+                       let blocker = readiness.blocker,
+                       [.source, .binding, .calibration, .measurements, .staleEvidence].contains(blocker),
+                       let game, game.roundPhase == .vault {
+                        // A stalled source can jump past the vault deadline on the very tick
+                        // that detects tracking loss. Only spend time the vault had processed.
+                        pauseTime = game.gameTime
+                        try liveReadiness?.restorePausedTime(to: pauseTime)
+                    }
+                    try pauseLiveGame(at: pauseTime)
                 }
             }
         } catch {
@@ -1439,7 +1532,7 @@ final class GameSessionCoordinator {
         if finalVaultEntry == nil {
             finalVaultEntry = LaserFinalVaultEntry(roster: inputConfiguration.roster)
             print(String(format: "[LaserFinalVault] entry starts at game %.2f s · %d mascot(s), %.2f s held",
-                         game.gameTime, finalVaultEntry!.timeline.jumpers.count, finalVaultEntry!.timeline.total))
+                         game.gameTime, finalVaultEntry!.timeline.jumpers.count, finalVaultEntry!.timeline.end))
         }
         guard var entry = finalVaultEntry, !entry.isComplete else { return }
         guard liveReadiness?.isClockHeld == true else {
@@ -1493,6 +1586,16 @@ final class GameSessionCoordinator {
                     sample?.geometry.leftSoleY.value.map { String(format: "%.2f", $0) } ?? "-",
                     sample?.geometry.rightSoleY.value.map { String(format: "%.2f", $0) } ?? "-",
                     sample.map { "\($0.jumpState.phase)" } ?? "-"))
+                // Jump lasers: the player's rolling jump trace (`JumpTraceLog`), to find where a real jump
+                // was lost. Times are capture host times; `host − game` maps them to game time.
+                if target.requiredMove == .jump {
+                    let gameNow = game?.gameTime ?? 0, hostNow = hostNow()
+                    print(String(format: "[LaserJumpTrace] ==== %@ jump laser → %@ · crossing game %.3f · game now %.3f host now %.3f (host − game %.3f) · minimum flight %.2f s, tolerance %.2f s",
+                        player.rawValue, "\(verdict)", target.crossingTime, gameNow, hostNow, hostNow - gameNow,
+                        PoseFirstCandidate.jumpMinimumFlight, PoseFirstCandidate.jumpTimingTolerance))
+                    for line in JumpTraceLog.lines(for: player) { print("[LaserJumpTrace] \(player.rawValue) \(line.text)") }
+                    print("[LaserJumpTrace] ==== end")
+                }
             } }
             #endif
         }
@@ -1501,6 +1604,7 @@ final class GameSessionCoordinator {
     }
 
     private func finishLiveInput() {
+        heartTraining = nil; laserPractice = nil
         guard liveTerminationTask == nil else { return }
         setupTask?.cancel(); setupTask = nil
         wristDiamonds = nil
@@ -1623,5 +1727,37 @@ nonisolated struct LaserStageProgress: Equatable, Sendable {
         guard let raw else { value = nil; return }
         high = max(high, min(1, max(0, raw)))
         value = high
+    }
+}
+
+
+/// Keeps the app-wide idle timer disabled while any round holds a lock.
+@MainActor
+private final class RoundDisplayWakeLock {
+    private static var activeIDs: Set<UUID> = []
+    private static var previousSetting = false
+    private let id = UUID()
+
+    init() {
+        let application = UIApplication.shared
+        if Self.activeIDs.isEmpty {
+            Self.previousSetting = application.isIdleTimerDisabled
+            application.isIdleTimerDisabled = true
+        }
+        Self.activeIDs.insert(id)
+    }
+
+    func release() {
+        Self.release(id)
+    }
+
+    deinit {
+        let id = id
+        Task { @MainActor in Self.release(id) }
+    }
+
+    private static func release(_ id: UUID) {
+        guard activeIDs.remove(id) != nil, activeIDs.isEmpty else { return }
+        UIApplication.shared.isIdleTimerDisabled = previousSetting
     }
 }

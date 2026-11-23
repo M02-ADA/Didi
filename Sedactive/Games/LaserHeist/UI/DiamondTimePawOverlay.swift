@@ -2,17 +2,17 @@ import SwiftUI
 
 /// One flat playfield for the session's paw positions, targets, and confirmed pickups.
 struct DiamondTimePawOverlay: View {
-    let session: GameSessionCoordinator
+    let time: Double
+    let paws: [LaserContactHand: LaserDiamondPosition]
+    let states: [UUID: LaserDiamondState]
     let presentation: PawBoardDiamondPresentation
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let time = session.state?.gameTime ?? 0
-        let paws = session.diamondTimePaws
         let renderedIDs = presentation.renderedIDs
         let pickupLevels = presentation.pickupLevels
         let latestCrestID = presentation.latestCrestID
-        let diamonds = session.diamondStates.values.filter {
+        let diamonds = states.values.filter {
             if case .diamondTime = $0.lifetime { true } else { false }
         }.sorted { $0.spawn.id.uuidString < $1.spawn.id.uuidString }
         GeometryReader { proxy in
@@ -26,8 +26,10 @@ struct DiamondTimePawOverlay: View {
             let unit = min(availableWidth / LaserDiamondTimeBoard.width, availableHeight / LaserDiamondTimeBoard.height)
             if unit > 0 {
                 Canvas { context, size in
-                    draw(context, size: size, unit: unit, time: time, diamonds: diamonds, paws: paws, renderedIDs: renderedIDs,
-                         pickupLevels: pickupLevels, latestCrestID: latestCrestID)
+                    PerfSpans.measure("pawCanvas") {
+                        draw(context, size: size, unit: unit, time: time, diamonds: diamonds, paws: paws, renderedIDs: renderedIDs,
+                             pickupLevels: pickupLevels, latestCrestID: latestCrestID)
+                    }
                 }
                 .frame(width: unit * LaserDiamondTimeBoard.width, height: unit * LaserDiamondTimeBoard.height)
                 .onGeometryChange(for: CGRect.self) {

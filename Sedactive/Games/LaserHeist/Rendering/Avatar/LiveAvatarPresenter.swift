@@ -30,6 +30,10 @@ protocol AvatarPosePump: AnyObject {
 /// never reach a scene being replaced.
 @MainActor
 final class LiveAvatarPresenter {
+    #if DEBUG
+    /// `-perfLog` live-instance count (DEBUG only, Kevin 22 November 2026).
+    private let perfToken = PerfAliveToken("LiveAvatarPresenter")
+    #endif
     /// Presentation policy (experimental, Kevin's; not a tracker value): how
     /// long after its capture a pose is still shown when no newer one arrives.
     nonisolated static let maximumPoseAge = 0.25
@@ -41,6 +45,9 @@ final class LiveAvatarPresenter {
     let mailbox: AvatarPoseMailbox
     private var pump: (any AvatarPosePump)?
     private var stopped = false
+    /// Read-only presentation observation, qualified by this existing single mailbox drain.
+    /// Cleared on expiry/reset/source loss; never a second E07 drain or gameplay input.
+    private(set) var lastAppliedFrame: AvatarPoseFrame?
     /// The feed ended while the scene stays up: the mascots remain, dimmed and neutral.
     private(set) var feedEnded = false
 
@@ -71,6 +78,8 @@ final class LiveAvatarPresenter {
             feedEnded = true
             drain.reset.all = true
         }
+        if !drain.hasCurrent || drain.reset.all || !drain.reset.calibration.isEmpty { lastAppliedFrame = nil }
+        if let frame = drain.frame { lastAppliedFrame = frame }
         #if DEBUG
         if let frame = drain.frame {
             for player in PlayerID.allCases {
@@ -107,6 +116,7 @@ final class LiveAvatarPresenter {
     /// Ends the attachment; every later offer, drain and tick does nothing.
     func stop() {
         stopped = true
+        lastAppliedFrame = nil
         pump?.stop()
         pump = nil
         mailbox.revoke()

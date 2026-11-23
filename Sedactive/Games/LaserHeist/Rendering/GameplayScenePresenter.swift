@@ -34,6 +34,10 @@ import UIKit
 /// It keeps no clock and decides nothing.
 @MainActor
 final class GameplayScenePresenter {
+    #if DEBUG
+    /// `-perfLog` live-instance count (DEBUG only, Kevin 22 November 2026).
+    private let perfToken = PerfAliveToken("GameplayScenePresenter")
+    #endif
     struct Diagnostics: Equatable {
         var badges = 0
         var teamEffects = 0
@@ -230,6 +234,7 @@ final class GameplayScenePresenter {
         updateCue(state: state, at: time)
         scene.setTimingPresentation(endedAt == nil && scene.timingVariant != .approved ? LaserTimingPresentation.make(state: state,
             configuration: configuration, withdrawn: Set(withdrawnAt.keys)).flatMap { Self.timingFits($0, state) ? $0 : nil } : nil)
+        soundMovementBar(scene.timingPresentation)
         // The team callout goes out in the frame its verdict is shown, knowing whether a cue is up.
         let shown = Self.cueOnScreen(scene)
         if shown != cueShown { cueShown = shown; onCueShownChanged?(shown) }
@@ -341,9 +346,11 @@ final class GameplayScenePresenter {
                              target.requiredMove.rawValue, target.crossingTime, "\(judgement)", event.gameTime - target.crossingTime))
                 // Crossing → verdict (game) → shown (this frame's game time); the zap's first visible
                 // frame is the next avatar render (`RobotAvatarLayer.advanceHit`, no lead-in).
-                print(String(format: "[LaserZapTiming] %@ %@ %@ · crossing %.3f · verdict %+.3f s · shown %+.3f s", player.rawValue,
-                             target.requiredMove.rawValue, "\(judgement)".prefix(5).description, target.crossingTime,
-                             event.gameTime - target.crossingTime, state.gameTime - target.crossingTime))
+                let zapTiming = String(format: "[LaserZapTiming] %@ %@ %@ · crossing %.3f · verdict %+.3f s · shown %+.3f s · host %.3f",
+                                       player.rawValue, target.requiredMove.rawValue, "\(judgement)".prefix(5).description,
+                                       target.crossingTime, event.gameTime - target.crossingTime,
+                                       state.gameTime - target.crossingTime, CACurrentMediaTime())
+                if LaserPerfMonitor.isEnabled { LaserPerfMonitor.emit(zapTiming) } else { print(zapTiming) }
                 #endif
                 let outcome: LaserFeedback.Outcome? = switch judgement {
                 case .clear: .clear
@@ -678,7 +685,13 @@ final class GameplayScenePresenter {
     /// interaction plane, so it is on the plane at exactly `crossingTime`.
     /// While the team travels this moves exactly with the corridor.
     func depth(of target: LaserTarget, at time: Double) -> Float {
-        scene.mapping.interactionPlaneZ - scene.layout.travelSpeed * Float(target.crossingTime - time)
+        Self.obstacleDepth(in: scene, crossingTime: target.crossingTime, at: time)
+    }
+
+    /// Shared corridor convention: an obstacle and corridor details advance at the same speed.
+    /// Tutorial presentation reuses this projection without scheduling an ordinary encounter.
+    static func obstacleDepth(in scene: LaserScene, crossingTime: Double, at time: Double) -> Float {
+        scene.mapping.interactionPlaneZ - scene.layout.travelSpeed * Float(crossingTime - time)
     }
 
     /// A gate is in view once it is no farther down the corridor than the laser spawn point.
@@ -751,8 +764,24 @@ final class GameplayScenePresenter {
         scene.setMoveCue(move, actionRemaining: remaining)
         // The cue sounds when the action is called (the same moment the 3D cue
         // turns solid), once per attempt and move: both players share one sound.
-        if time >= cue, let attempt, cuedAttempts.insert("\(attempt)-\(move)").inserted {
+        if scene.timingVariant != .converging, time >= cue, let attempt, cuedAttempts.insert("\(attempt)-\(move)").inserted {
             onSound?(move == .duck ? .cueDuck : .cueJump)
+        }
+    }
+
+    private func soundMovementBar(_ timing: LaserTimingPresentation?) {
+        guard scene.timingVariant == .converging, let timing, timing.showsArrowBar else { return }
+
+        let key = "\(timing.attemptID)-\(timing.move)"
+        if timing.gameTime < timing.arrowGoTime {
+            // Two READY pulses, spaced half a second apart, followed by GO.
+            let beat = timing.gameTime < timing.arrowGoTime - LaserTimingPresentation.arrowBeatInterval ? 0 : 1
+            if cuedAttempts.insert("ready-\(beat)-\(key)").inserted {
+                onSound?(.movementReady)
+            }
+        } else if (timing.move == .jump || timing.evidenceWindow.contains(timing.gameTime)),
+                  cuedAttempts.insert("go-\(key)").inserted {
+            onSound?(.movementGo)
         }
     }
 

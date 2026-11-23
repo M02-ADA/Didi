@@ -4,6 +4,92 @@ import Testing
 
 @MainActor
 struct LiveGameLoopTests {
+    @Test func practiceConsumesExistingSoleInputStreamWithoutNormalEffects() async throws {
+        let rig = try LiveGameRig(practiceScheduling: true)
+        rig.session.setPreRoundTutorialPending(true)
+        try await rig.prepare()
+        let generation = rig.session.inputConfiguration.sessionGeneration
+        rig.controls.input.acceptedCalibrations = try LaserReplayScript.load().freshRound(generation: generation).input.configuration.calibrations
+        rig.session.updateFTUELaserPractice(at: 0.375, generation: generation, suspended: false)
+        #expect(rig.session.laserPractice != nil)
+        for i in 4...34 {
+            let host = Double(i) * 0.125
+            try await rig.send(host)
+            rig.session.updateFTUELaserPractice(at: host, generation: generation, suspended: false)
+        }
+        #expect(rig.session.laserPractice?.outcome == .hit)
+        #expect(rig.session.state == nil && rig.session.events.isEmpty && rig.session.results.isEmpty)
+        #expect(rig.session.liveReadiness?.gameTime == 0 && rig.controls.input.claimCount == 1 && rig.controls.input.observerCount == 1)
+        let attempt = try #require(rig.session.laserPractice?.attemptID)
+        rig.session.finishFTUEPracticeFeedback(attempt: attempt, generation: UUID())
+        #expect(rig.session.laserPractice?.attemptID == attempt)
+        await rig.session.stop()
+        #expect(rig.session.laserPractice == nil)
+        rig.session.finishFTUEPracticeFeedback(attempt: attempt, generation: generation)
+        #expect(rig.session.laserPractice == nil)
+    }
+
+    @Test func heartTrainingIsHeldSessionOwnedAndRetiredBeforeFreshNormalRound() async throws {
+        let rig = try LiveGameRig()
+        rig.session.updateHeartTraining(at: 0, suspended: false)
+        #expect(rig.session.heartTraining == nil)
+        rig.session.setPreRoundTutorialPending(true)
+        try await rig.prepare()
+        for i in 0...20 {
+            let time = 0.5 + Double(i) * 0.125
+            try await rig.send(time)
+            rig.session.updateHeartTraining(at: time, suspended: false)
+        }
+        let lesson = try #require(rig.session.heartTraining)
+        #expect(lesson.state.teamHealth == 4 && lesson.damage?.players == Set(PlayerID.allCases))
+        #expect(rig.session.state == nil && rig.session.events.isEmpty && rig.session.results.isEmpty)
+        #expect(rig.session.liveReadiness?.gameTime == 0 && rig.session.preRoundTutorialPending)
+        #expect(rig.controls.input.claimCount == 1 && rig.controls.input.observerCount == 1)
+        rig.session.retireHeartTraining()
+        rig.session.setPreRoundTutorialPending(false)
+        try rig.session.beginLiveCountdown()
+        try await rig.send(3.125); try await rig.send(3.25)
+        #expect(rig.session.state?.teamHealth == 5 && rig.session.phase == .running)
+        rig.session.updateHeartTraining(at: 3.25, suspended: false)
+        #expect(rig.session.heartTraining == nil)
+        await rig.session.stop()
+        #expect(rig.session.heartTraining == nil)
+    }
+
+    @Test func leanTutorialHoldsOnlyInitialCountdownWithoutSpendingGameTime() async throws {
+        let rig = try LiveGameRig()
+        rig.session.setPreRoundTutorialPending(true)
+        try await rig.prepare()
+        #expect(rig.session.canStartLiveRound)
+        #expect(throws: LaserDataError.self) { try rig.session.beginLiveCountdown() }
+        for time in [0.5, 0.625, 0.75, 0.875] { try await rig.send(time) }
+        #expect(rig.session.state == nil && rig.session.events.isEmpty && rig.session.results.isEmpty)
+        #expect(rig.session.liveReadiness?.gameTime == 0)
+        rig.session.setPreRoundTutorialPending(false)
+        try rig.session.beginLiveCountdown()
+        try await rig.send(1.0); try await rig.send(1.125)
+        #expect(rig.session.phase == .running && rig.session.state?.gameTime == 0)
+        rig.session.setPreRoundTutorialPending(true)
+        #expect(!rig.session.preRoundTutorialPending, "tutorial cannot interrupt an active round")
+        #expect(rig.controls.input.claimCount == 1 && rig.controls.input.observerCount == 1)
+        await rig.session.stop()
+    }
+
+    @Test func completingTutorialCannotBypassLostReadiness() async throws {
+        let rig = try LiveGameRig()
+        rig.session.setPreRoundTutorialPending(true)
+        try await rig.prepare()
+        try await rig.send(0.5, crown: nil)
+        rig.session.setPreRoundTutorialPending(false)
+        #expect(throws: LaserDataError.self) { try rig.session.beginLiveCountdown() }
+        #expect(rig.session.state == nil && rig.session.liveReadiness?.gameTime == 0)
+        try await rig.send(0.625); try await rig.send(0.75)
+        try rig.session.beginLiveCountdown()
+        try await rig.send(1.0)
+        #expect(rig.session.phase == .running && rig.session.state?.gameTime == 0)
+        await rig.session.stop()
+    }
+
     @Test func countdownAndOriginalCaptureReachProductionJudgeAtEqualDeadline() async throws {
         let rig = try LiveGameRig()
         try await rig.run()
@@ -214,6 +300,34 @@ struct LiveGameLoopTests {
         await rig.session.stop()
     }
 
+    @Test func trackingLossAcrossVaultDeadlineKeepsTheRemainingTime() async throws {
+        let rig = try LiveGameRig()
+        try await rig.run()
+        for index in 6...11 { try await rig.send(Double(index) * 0.125) }
+        try rig.session.beginLiveVault(id: UUID())
+        for index in 12...50 { try await rig.send(Double(index) * 0.125) }
+        let beforeLoss = try #require(rig.session.state)
+        let deadline = try #require(beforeLoss.vault?.deadline)
+        let remaining = deadline - beforeLoss.gameTime
+        #expect(remaining == 0.125)
+
+        // The first unusable pose lands exactly on the deadline. Keep the camera and
+        // binding alive while measurements are unavailable for longer than five seconds.
+        for index in 51...120 {
+            try await rig.send(Double(index) * 0.125, crown: nil)
+            #expect(rig.session.phase == .paused && rig.session.summary == nil)
+            #expect(rig.session.state?.gameTime == beforeLoss.gameTime)
+            #expect(rig.session.state?.vault == beforeLoss.vault)
+        }
+
+        for hostTime in [15.125, 15.25, 15.375, 15.5] { try await rig.send(hostTime) }
+        let resumed = try #require(rig.session.state)
+        #expect(rig.session.phase == .running && rig.session.summary == nil)
+        #expect(resumed.vault == beforeLoss.vault)
+        #expect(deadline - resumed.gameTime == remaining)
+        await rig.session.stop()
+    }
+
     @Test func abortWhilePausedFreezesSummaryAndLateTicksCannotResumeIt() async throws {
         let rig = try LiveGameRig()
         try await rig.run()
@@ -338,13 +452,14 @@ struct LiveGameLoopTests {
     let session: GameSessionCoordinator
     private var frame: UInt64 = 3
     private(set) var frameHost: LaserLiveFrameAttachment?
-    init(encounterCount: Int = 1,
+    init(encounterCount: Int = 1, practiceScheduling: Bool = false,
          planner: (@MainActor (LaserLiveRecoveryRequest) throws -> [LaserEncounter]?)? = nil) throws {
         let controls = try GateSetupControls()
         self.controls = controls
         let configuration = try LaserRoundConfiguration(
             evidenceTiming: LaserEvidenceTiming(windowBefore: 0.125, windowAfter: 0.125, deliveryAllowance: 0.125),
-            clearanceMargin: 0.005, diamondPoints: nil, actionCueLead: 0.125)
+            clearanceMargin: 0.005, diamondPoints: nil,
+            scheduling: practiceScheduling ? try LaserFullReplayPlan.roundConfiguration().scheduling : nil, actionCueLead: 0.125)
         let encounters = try (0..<encounterCount).map { index in
             let id = UUID(uuidString: String(format: "34000000-0000-4000-8000-%012d", index + 1))!
             return try LaserEncounter(id: id, attemptID: id, targets: PlayerID.allCases.map {

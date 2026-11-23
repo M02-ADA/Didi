@@ -445,6 +445,110 @@ struct FinalVaultPresentationTests {
         }
     }
 
+    // MARK: - Fixed places in the vault (20 November 2026)
+
+    /// Co-op: P1 left and P2 right of the vault's centre, symmetric, as far apart as the lanes
+    /// (wider than a board, so neither mascots nor boards overlap); Solo: the one mascot on the centre.
+    @Test func theLandingPlacesAreFixedSymmetricAndOrdered() async throws {
+        let scene = try await scene(robots: true)
+        let vault = FinalVaultPresentation(scene: scene)
+        vault.update(.inside(LaserFinalVaultTimeline(roster: PlayerID.allCases)))
+        let p1 = vault.landingX(.player1), p2 = vault.landingX(.player2), c = FinalVaultPresentation.centerX
+        #expect(p1 < c && c < p2, "P1 left, P2 right")
+        #expect(abs((p1 + p2) / 2 - c) < 1e-6, "symmetric about the vault's centre")
+        let lanes = scene.mapping.laneCenterX
+        #expect(abs((p2 - p1) - abs(lanes[.player2, default: 0] - lanes[.player1, default: 0])) < 1e-6, "as far apart as the lanes")
+        #expect(p2 - p1 > 2 * PlayerHoverboard.halfWidth + 0.2, "clear of each other: \(p2 - p1) m")
+        vault.update(.inside(LaserFinalVaultTimeline(roster: [.player1])))
+        #expect(vault.landingX(.player1) == c, "Solo: on the centre")
+        vault.update(.hidden)
+    }
+
+    /// Where each mascot is drawn (world X).
+    private func drawnX(_ robots: RobotAvatarLayer, _ player: PlayerID) throws -> Float {
+        try #require(robots.robots[player]?.container).position(relativeTo: nil).x
+    }
+
+    /// THE FIX: wherever the mascots stand before the vault (far out, near the centre, asymmetric),
+    /// the jump starts where they are and lands on the same two places, every time; the drawn mascot
+    /// never jumps between frames (no snap), and Diamond Time starts on those places. The live root
+    /// is held off-centre throughout (the game state's boards), so nothing of it leaks inside.
+    @Test(arguments: [false, true]) func everyEntryLandsOnTheSamePlacesWhereverTheyStarted(solo: Bool) async throws {
+        let roster: [PlayerID] = solo ? [.player1] : PlayerID.allCases
+        let scene = try await scene(robots: true, players: Set(roster))
+        let robots = try #require(scene.robotAvatars)
+        robots.smoothing = 0.03
+        let vault = FinalVaultPresentation(scene: scene)
+        let timeline = LaserFinalVaultTimeline(roster: roster)
+        let starts: [[PlayerID: Float]] = solo
+            ? [[.player1: -1.7], [.player1: 0], [.player1: 1.6], [.player1: -0.7]]
+            : [[.player1: -1.7, .player2: 1.7], [.player1: -0.4, .player2: 0.4], [.player1: -1.5, .player2: 0.2], [.player1: -0.2, .player2: 1.6]]
+        var landed: [[PlayerID: Float]] = [], began: [[PlayerID: Float]] = []
+        var now = 0.0
+        for start in starts {
+            vault.update(.hidden)
+            robots.authoritativeBoardX = start
+            for _ in 0..<30 { now += 1.0 / 60; robots.render(now: now) }
+            // Where they really start (the steering keeps its own bounds and spacing).
+            began.append(Dictionary(uniqueKeysWithValues: try roster.map { ($0, try drawnX(robots, $0)) }))
+            var last: [PlayerID: Float] = [:]
+            let dt = 1.0 / 120
+            for step in 0...Int(timeline.total / dt) {
+                now += dt
+                vault.update(.entry(timeline, elapsed: Double(step) * dt))
+                robots.render(now: now)
+                for player in roster {
+                    let x = try drawnX(robots, player)
+                    if let before = last[player] { #expect(abs(x - before) < 0.06, "\(player) from \(start[player]!): sideways step \(abs(x - before)) at \(Double(step) * dt)") }
+                    last[player] = x
+                }
+            }
+            vault.update(.entry(timeline, elapsed: timeline.total))
+            robots.render(now: now + 1.0 / 60)
+            vault.update(.inside(timeline))
+            for _ in 0..<30 { now += 1.0 / 60; robots.render(now: now) }
+            landed.append(Dictionary(uniqueKeysWithValues: try roster.map { ($0, try drawnX(robots, $0)) }))
+        }
+        for player in roster {
+            let xs = began.map { $0[player]! }
+            #expect((xs.max()! - xs.min()!) > 1.0, "\(player): the starts really differ (\(xs))")
+        }
+        print("FINAL VAULT LANDING " + zip(began, landed).map { b, l in
+            roster.map { String(format: "%@ %+.3f → %+.3f", $0.rawValue, b[$0]!, l[$0]!) }.joined(separator: ", ") }.joined(separator: " | "))
+        for (start, end) in zip(began, landed) {
+            for player in roster {
+                #expect(abs(end[player]! - vault.landingX(player)) < 0.005, "from \(start): \(player) at \(end[player]!), place \(vault.landingX(player))")
+            }
+            if !solo { #expect(end[.player1]! < end[.player2]!, "P1 stays left of P2") }
+        }
+        // Repeated entries: the same places to the millimetre.
+        for player in roster { #expect(landed.allSatisfy { abs($0[player]! - landed[0][player]!) < 0.001 }) }
+        robots.authoritativeBoardX = [:]
+        vault.update(.hidden)
+        #expect(!robots.walksInVault)
+    }
+
+    /// Replay (inside without the entry) shows the mascots on the same places; leaving the vault
+    /// drops them, so the next round starts from the corridor again.
+    @Test func theReplaysInsideUsesTheSamePlacesAndLeavingDropsThem() async throws {
+        let scene = try await scene(robots: true)
+        let robots = try #require(scene.robotAvatars)
+        robots.smoothing = 0.03
+        let vault = FinalVaultPresentation(scene: scene)
+        robots.authoritativeBoardX = [.player1: -1.6, .player2: 0.9]
+        var now = 0.0
+        for _ in 0..<30 { now += 1.0 / 60; robots.render(now: now) }
+        vault.update(.inside(nil))
+        for _ in 0..<30 { now += 1.0 / 60; robots.render(now: now) }
+        for player in PlayerID.allCases {
+            #expect(abs(try drawnX(robots, player) - vault.landingX(player)) < 0.005, "\(player) on its place")
+        }
+        vault.update(.hidden)
+        for _ in 0..<30 { now += 1.0 / 60; robots.render(now: now) }
+        #expect(abs(try drawnX(robots, .player1) - -1.6) < 0.02, "back in the corridor: the live position again")
+        robots.authoritativeBoardX = [:]
+    }
+
     /// A held root keeps the scripted mascot still against live tracking, then blends back.
     @Test func aHeldRootBlendsBackToTheTrackedRoot() async throws {
         let scene = try await scene(robots: true, players: [.player1])

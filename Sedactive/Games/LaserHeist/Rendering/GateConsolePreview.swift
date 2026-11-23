@@ -17,7 +17,8 @@ import SwiftUI
 /// the preview has no entry/freshness rules and no game: presentation review only, never gameplay.
 /// `seconds` holds the scripted moment (screenshots); otherwise it loops. `skip` starts the gate at
 /// the corridor's far end (56 s away) and jumps its time left at `skipAt`, as DEBUG "Skip to Next
-/// Gate" does in a round, to review the approach glide (`VaultPresentation.glide`).
+/// Gate" does in a round, to review the approach glide (`VaultPresentation.glide`). `timeout`: nobody
+/// reaches and the gate times out (`timeoutAfter`), to review the timeout (the hand cue fading).
 @MainActor
 final class GateConsolePreview {
     static var isRequested: Bool { ProcessInfo.processInfo.arguments.contains("-gateConsolePreview") }
@@ -43,6 +44,17 @@ final class GateConsolePreview {
         return arguments[(index + 1)...].prefix { !$0.hasPrefix("-") }.contains("skip")
     }
     static let skipAt = 0.4, skippedLead = 56.0
+
+    /// `timeout`: nobody reaches; the gate's time runs out `timeoutAfter` seconds after it starts
+    /// (review of the timeout: the hand cue fades, the buttons go dark).
+    static var timesOut: Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-gateConsolePreview") else { return false }
+        return arguments[(index + 1)...].prefix { !$0.hasPrefix("-") }.contains("timeout")
+    }
+    static let timeoutAfter = 3.0
+    /// The reaches played (none when the gate times out).
+    static var scriptedReaches: [(button: LaserVaultButton, from: Double, to: Double)] { timesOut ? [] : reaches }
 
     /// The script: lean to the wall, upright at the dock (the button pulses), then the reach.
     static let leanUntil = 2.4, dockedUntil = 3.0
@@ -136,9 +148,11 @@ final class GateConsolePreview {
                 scene.setTravelDistance(approachTravel + vault.corridorCatchUp)
                 return
             }
-            let state = LaserGameState(sessionGeneration: generation, phase: .vault, gameTime: t, activityProgress: 0, teamHealth: 5,
+            let deadline = Self.timesOut ? Self.leanUntil + Self.timeoutAfter : Self.leanUntil + round.vaultDuration + 1
+            let state = LaserGameState(sessionGeneration: generation, phase: Self.timesOut && t >= deadline ? .ended(.vaultFailed) : .vault,
+                                       gameTime: t, activityProgress: 0, teamHealth: 5,
                                        teamScore: 0, encounters: [], missionProgress: 0,
-                                       vault: LaserVaultState(id: vaultID, deadline: Self.leanUntil + round.vaultDuration + 1,
+                                       vault: LaserVaultState(id: vaultID, deadline: deadline,
                                                               buttons: pressed, opened: opens))
             // Once open, the team waits for the passage (the same signal a round uses), then travels
             // on at cruise and passes the gate.
@@ -173,7 +187,7 @@ final class GateConsolePreview {
         let h = r.standingHeight, L = r.laneCenterX, hipY = r.standingHipY
         let out = LaserLiveRoundGeometryV1.outward(player)
         // Lean to the wall first; LOW, like its zone, also takes a slight lean (0.06 h) while reaching.
-        let reaching = reaches.first(where: { t >= $0.from && t < $0.to })
+        let reaching = scriptedReaches.first(where: { t >= $0.from && t < $0.to })
         var reachK = 0.0
         if let r = reaching {
             let u: Double = (t - r.from) / (r.to - r.from)
@@ -191,7 +205,7 @@ final class GateConsolePreview {
             return (sh + dir * upper, sh + dir * (upper + fore))
         }
         var arm = hanging(outer, out)
-        if let reach = reaches.first(where: { t >= $0.from && t < $0.to }), let share = LaserLiveRoundGeometryV1.vaultShares[reach.button] {
+        if let reach = scriptedReaches.first(where: { t >= $0.from && t < $0.to }), let share = LaserLiveRoundGeometryV1.vaultShares[reach.button] {
             // A deliberate reach (a straight sweep up the column would pass through the other
             // buttons' zones, as it would for a player): the hand rises close to the body to the
             // button's height, then the arm extends sideways to its straight-arm point, the elbow

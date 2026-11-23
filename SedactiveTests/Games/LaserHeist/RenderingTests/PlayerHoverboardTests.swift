@@ -415,6 +415,39 @@ struct PlayerHoverboardTests {
         #expect(ring.max.x > 0.58 && ring.max.x < 0.7 && ring.min.y > 0.01 && ring.max.y < 0.06, "a band just outside the rim")
     }
 
+    /// iPad, 23 November 2026: the HIT discharge's translucent glow was built from separate quads that
+    /// overlapped at every bend, so the 45 % glow stacked into visible square blocks and the white
+    /// core broke into dashes at the sharp bends. Each ribbon is now one joined strip that never
+    /// folds back over itself as the game camera sees it.
+    @Test("Each discharge ribbon is one joined strip that never overlaps itself")
+    func dischargeRibbonsAreJoinedStripsWithoutOverlap() {
+        let camera = RimOutline.towardCamera
+        for site in 0..<HoverboardReaction.arcSites {
+            for variant in 0..<HoverboardReaction.arcVariants {
+                for ribbon in RimOutline.arc(site: site, variant: variant) {
+                    let positions = ribbon.positions.elements
+                    #expect(positions.count == 2 * 15, "one pair of vertices per path point, shared by both segments")
+                    // Seen from the camera, every quad of the strip winds the same way: no fold.
+                    // Seen from the camera, every quad splits into two triangles winding the same way
+                    // (along whichever diagonal the builder picks), and all quads wind alike: no fold.
+                    var signs: Set<Bool> = []
+                    for k in 0..<(positions.count / 2 - 1) {
+                        let l0 = positions[2 * k], r0 = positions[2 * k + 1], l1 = positions[2 * k + 2], r1 = positions[2 * k + 3]
+                        func area(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) -> Float {
+                            simd_dot(simd_cross(b - a, c - a), camera)
+                        }
+                        let first = [area(l0, l1, r1), area(l0, r1, r0)], second = [area(l1, r1, r0), area(l1, r0, l0)]
+                        let split = (first[0] > 0) == (first[1] > 0) ? first : second
+                        #expect((split[0] > 0) == (split[1] > 0), "site \(site) variant \(variant) quad \(k) is a bow-tie")
+                        #expect(split.allSatisfy { abs($0) > 1e-9 }, "no degenerate triangle")
+                        signs.insert(split[0] > 0)
+                    }
+                    #expect(signs.count == 1, "site \(site) variant \(variant): the strip folds over itself")
+                }
+            }
+        }
+    }
+
     @Test("The peaks change the board's outline: an expanding ring and a taller field; sparks at the beats")
     func peaksExpandBeyondTheBoard() {
         let clear = HoverboardReaction.clear, hit = HoverboardReaction.hit

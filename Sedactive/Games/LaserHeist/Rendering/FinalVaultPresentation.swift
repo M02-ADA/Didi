@@ -123,6 +123,8 @@ final class FinalVaultPresentation {
     private let wallY: Float
     /// Mascots this presentation moves; their moves are cleared when it hides.
     private var moved: Set<PlayerID> = []
+    /// The mascots in the vault (the entry's jumpers; inside without a timeline, the mascots shown).
+    private var roster: [PlayerID] = PlayerID.allCases
     /// Each jumper's root (lane-local) at take-off: the cinematic is held there against live
     /// tracking, then blended back to the live root while they settle inside.
     private var anchors: [PlayerID: SIMD3<Float>] = [:]
@@ -150,6 +152,31 @@ final class FinalVaultPresentation {
     static let doorwayAim: Float = 0.75
     /// Vertical speed at touchdown (m/s): still falling, as a jump ends.
     static let touchdownSpeed: Float = 1.2
+
+    // MARK: Fixed places in the vault (20 November 2026)
+    //
+    // The jump used to come down on each mascot's own take-off root, which carries the lean
+    // steering's travel (and the walk in the vault started from that root too): a mascot that had
+    // leaned far out landed, and stayed, far out. Now each lands on a fixed place, wherever it
+    // took off: co-op, P1 left and P2 right of the vault's centre, symmetric, as far apart as the
+    // players' lanes (the authored lane centres, ±0.7 m: 1.4 m, clear of each other); Solo, the one
+    // mascot on the centre. The jump itself is unchanged; only where its continuation ends.
+
+    /// The vault's centre (world X): the wall, its doorway and the room are centred on the corridor.
+    static let centerX: Float = 0
+
+    /// Where `player` lands in the vault (world X), whatever their lateral position before it.
+    func landingX(_ player: PlayerID) -> Float {
+        guard roster.count > 1 else { return Self.centerX }
+        let lanes = scene.mapping.laneCenterX
+        let spacing = abs(lanes[.player2, default: 0.7] - lanes[.player1, default: -0.7])
+        return Self.centerX + (player == .player1 ? -spacing / 2 : spacing / 2)
+    }
+
+    /// The same place as the mascot's root (lane-local X): what its walk in the vault starts from.
+    func landingRootX(_ player: PlayerID) -> Float {
+        landingX(player) - scene.mapping.laneCenterX[player, default: 0]
+    }
 
     /// How far the camera moves forward in the push: from its gameplay pose, through the doorway,
     /// to `pushEndBeyondWall` inside the room.
@@ -246,14 +273,20 @@ final class FinalVaultPresentation {
     @discardableResult
     func update(_ stage: Stage) -> Float {
         self.stage = stage
+        switch stage {
+        case .entry(let timeline, _), .inside(let timeline?): roster = timeline.jumpers
+        case .inside(nil): roster = scene.robotAvatars.map { robots in PlayerID.allCases.filter { robots.robots[$0] != nil } } ?? PlayerID.allCases
+        case .hidden: break
+        }
         // Floor walking from when they settle inside (the landing's blend back to live), so the
         // feet are planted on the floor before Diamond Time starts, not re-planted at its start.
+        // The walk starts on each mascot's fixed place, where the landing put it.
         let inside: Bool = switch stage {
         case .inside: true
         case .entry(let timeline, let elapsed): elapsed >= timeline.land.lowerBound
         case .hidden: false
         }
-        scene.robotAvatars?.setVaultWalking(inside)
+        scene.robotAvatars?.setVaultWalking(inside, entryRootX: Dictionary(uniqueKeysWithValues: roster.map { ($0, landingRootX($0)) }))
         switch stage {
         case .hidden:
             hide()
@@ -313,7 +346,7 @@ final class FinalVaultPresentation {
     private func placeWall(at t: Double, timeline: LaserFinalVaultTimeline, travelled: Float) {
         guard let closed, let jamb, let backdrop else { return }
         let z = Self.stopZ - Self.approachDistance + travelled
-        wall.position = [0, wallY, z]
+        wall.position = [Self.centerX, wallY, z]
         // The same haze as the checkpoint door while the vault is far down the corridor.
         let haze = CorridorDepth.haze(atDistance: scene.cameraWorldPosition.z - z) * LaserScene.vaultHazeShare
         if haze < 0.001 { wall.components.remove(OpacityComponent.self) }
@@ -378,15 +411,20 @@ final class FinalVaultPresentation {
             move.offset = continuation(player, at: Float((t - jump.upperBound) / Self.continueDuration)) + carried
             return move
         }
-        move.offset = landing + carried
+        // On its fixed place: as the held take-off root blends back to the live root (which the walk
+        // starts on that same place, `landingRootX`), the sideways part of the landing goes with it.
+        var down = landing(player)
+        down.x *= max(0, min(1, move.anchorWeight))
+        move.offset = down + carried
         let u = Float((t - touchdown) / Self.touchdownRecovery)
         if u < 1 { move.squash = 1 - Self.touchdownSquash * sin(.pi * u) }
         return move
     }
 
-    /// Where the jump comes down (lane-local): on the mascot's own place, `pushDistance` inside
-    /// the vault, where the camera's push ends at the gameplay distance from it.
-    private var landing: SIMD3<Float> { [0, 0, -pushDistance] }
+    /// Where the jump comes down (relative to the take-off root): on the mascot's fixed place
+    /// (`landingX`), `pushDistance` inside the vault, where the camera's push ends at the gameplay
+    /// distance from it.
+    func landing(_ player: PlayerID) -> SIMD3<Float> { [landingX(player) - laneX(player), 0, -pushDistance] }
 
     /// The arc from the mascot's place to the doorway and just through it (lane-local
     /// metres): up first, then down into the opening, crossing the wall late in the flight.
@@ -398,8 +436,8 @@ final class FinalVaultPresentation {
     }
 
     /// The jump carried on beyond the doorway (`c` 0…1 over `continueDuration`): leaves the arc
-    /// with its position and velocity, lands on `landing` still falling (`touchdownSpeed`) with
-    /// no sideways or forward speed, so the feet do not skate.
+    /// with its position and velocity, lands on `landing` (the mascot's fixed place) still falling
+    /// (`touchdownSpeed`) with no sideways or forward speed, so the feet do not skate.
     func continuation(_ player: PlayerID, at c: Float) -> SIMD3<Float> {
         let (x, y, z) = Self.jumpControls(laneX: laneX(player), throughZ: throughZ)
         let start = SIMD3<Float>(x.3, y.3, z.3)
@@ -409,7 +447,7 @@ final class FinalVaultPresentation {
         let v0 = SIMD3<Float>(3 * (x.3 - x.2), 3 * (y.3 - y.2), 3 * (z.3 - z.2)) / flight * span
         let v1 = SIMD3<Float>(0, -Self.touchdownSpeed * span, 0)
         let k = min(1, max(0, c)), k2 = k * k, k3 = k2 * k
-        return start * (2 * k3 - 3 * k2 + 1) + v0 * (k3 - 2 * k2 + k) + landing * (-2 * k3 + 3 * k2) + v1 * (k3 - k2)
+        return start * (2 * k3 - 3 * k2 + 1) + v0 * (k3 - 2 * k2 + k) + landing(player) * (-2 * k3 + 3 * k2) + v1 * (k3 - k2)
     }
 
     private var throughZ: Float { Self.stopZ - 0.6 - scene.mapping.interactionPlaneZ }

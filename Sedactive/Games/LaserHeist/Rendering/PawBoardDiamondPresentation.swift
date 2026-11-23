@@ -69,7 +69,8 @@ final class PawBoardDiamondPresentation {
             }
 
             guard let placement = place(spawn.position),
-                  let diamond = shown[spawn.id]?.diamond ?? scene.makeDiamond(passage: true) else { continue }
+                  let diamond = shown[spawn.id]?.diamond ?? PerfSpans.measure("makeGem", { scene.makeDiamond(passage: true) })
+            else { continue }
             if shown[spawn.id] == nil {
                 diamond.root.name = "diamondTime.pawBoard.\(spawn.id)"
                 diamond.showIdle()
@@ -79,18 +80,20 @@ final class PawBoardDiamondPresentation {
                 shown[spawn.id] = (diamond, placement)
             }
             if !pickedUp {
-                diamond.updatePassagePose(age: age, glow: .collectible, cameraPosition: placement.cameraPosition)
+                PerfSpans.measure("gemPose") {
+                    diamond.updatePassagePose(age: age, glow: .collectible, cameraPosition: placement.cameraPosition)
+                }
             }
             if pickedUp, diamond.phase == .idle {
                 onCollected?(spawn.id, placement.position)
                 let fullBurst = fullBurstEnds.count < Self.fullBurstLimit
                 if fullBurst { fullBurstEnds[spawn.id] = time + Diamond.effectLifetime }
-                diamond.collect(fullBurst: fullBurst)
+                PerfSpans.measure(fullBurst ? "collectFull" : "collectLite") { diamond.collect(fullBurst: fullBurst) }
             }
             rendered.insert(spawn.id)
         }
         for id in Set(shown.keys).subtracting(rendered) {
-            shown.removeValue(forKey: id)?.diamond.retire()
+            PerfSpans.measure("retireGem") { shown.removeValue(forKey: id)?.diamond.retire() }
             fullBurstEnds[id] = nil
         }
         if renderedIDs != rendered { renderedIDs = rendered }

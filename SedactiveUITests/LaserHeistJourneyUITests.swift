@@ -13,8 +13,20 @@ final class LaserHeistJourneyUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
     }
 
+    func testLaunchWhileDeviceIsHeldInPortraitUsesLandscape() {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        LaserHeistJourney.markTutorialCompleted(app)
+        app.launch()
+
+        XCTAssertTrue(app.buttons["startMission"].waitForExistence(timeout: timeout))
+        expectation(for: NSPredicate { _, _ in app.frame.width > app.frame.height }, evaluatedWith: app)
+        waitForExpectations(timeout: 10)
+    }
+
     func testHomeSetUpCameraSetupReplayResultsAndBackToHome() {
         let app = XCUIApplication()
+        LaserHeistJourney.markTutorialCompleted(app)
         app.launch()
         let start = app.buttons["startMission"]
         let next = app.buttons["setupNext"]
@@ -37,7 +49,7 @@ final class LaserHeistJourneyUITests: XCTestCase {
 
         // Camera setup opens on the stage with the session's own controls; leaving returns Home.
         LaserHeistJourney.startCameraSetup(app, timeout: timeout)
-        let leave = app.buttons["leaveLiveSetup"]
+        let leave = app.buttons["navigationBack"]
         XCTAssertTrue(leave.waitForExistence(timeout: timeout), "camera setup did not open")
         // A first camera request shows the system permission alert over the app;
         // answer it as a player would, then leave at once, startup finished or not.
@@ -49,8 +61,12 @@ final class LaserHeistJourneyUITests: XCTestCase {
             if allow.exists { allow.tap() } else { permission.buttons.matching(identifier: "OK").firstMatch.tap() }
         }
         XCTAssertTrue(leave.waitForExistence(timeout: timeout) && leave.isHittable)
+        XCTAssertFalse(app.buttons["debugSkipToReplay"].exists)
+        XCTAssertFalse(app.buttons["leaveLiveSetup"].exists)
         leave.tap()
-        XCTAssertTrue(start.waitForExistence(timeout: timeout), "leaving camera setup did not return Home")
+        XCTAssertTrue(next.waitForExistence(timeout: timeout), "Back did not return to iPad placement")
+        leave.tap()
+        XCTAssertTrue(start.waitForExistence(timeout: timeout), "Back from placement did not return Home")
 
         // Replay demo › Results › Back to Home.
         app.buttons["chooseReplay"].tap()
@@ -69,6 +85,8 @@ final class LaserHeistJourneyUITests: XCTestCase {
     /// replay (no calibration is forged), then Results, Play Again and Home.
     func testDebugSkipFromCalibrationPlaysTheFullReplay() {
         let app = XCUIApplication()
+        app.launchArguments.append("-enableCalibrationReplaySkip")
+        LaserHeistJourney.markTutorialCompleted(app)
         app.launch()
         let start = app.buttons["startMission"]
         XCTAssertTrue(start.waitForExistence(timeout: timeout))

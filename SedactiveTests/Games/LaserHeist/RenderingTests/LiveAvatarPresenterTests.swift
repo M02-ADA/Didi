@@ -76,6 +76,24 @@ struct LiveAvatarPresenterTests {
         #expect(PlayerID.allCases.allSatisfy { surface(scene, $0)?.isEnabled == false })
     }
 
+    @Test(arguments: ["expiry", "control", "stop"])
+    func readOnlyAdmittedFrameCannotOutliveItsExistingLease(action: String) async throws {
+        let (scene, mailbox, original) = try await attached()
+        mailbox.publish(original.status)
+        let end = try play(.idle, frames: 8, into: scene, mailbox: mailbox, source: original)
+        let presenter = try #require(scene.liveAvatars)
+        #expect(presenter.lastAppliedFrame?.source.frameID == 8)
+        let diagnostics = mailbox.diagnostics
+        _ = presenter.lastAppliedFrame
+        #expect(mailbox.diagnostics == diagnostics, "observing cannot drain or alter the mailbox")
+        if action == "expiry" { scene.refreshLiveAvatars(now: end + LiveAvatarPresenter.maximumPoseAge + 0.1) }
+        else if action == "control" {
+            var changed = original; changed.controlRevision += 1; changed.statusRevision += 1
+            mailbox.publish(changed.status); scene.refreshLiveAvatars(now: end + 0.01)
+        } else { scene.detachLiveAvatars() }
+        #expect(presenter.lastAppliedFrame == nil)
+    }
+
     /// Attached but silent (producer not started): honest, dimmed and neutral.
     @Test func withoutPosesTheMascotsStayDimmedAndNeutral() async throws {
         let (scene, _, _) = try await attached()

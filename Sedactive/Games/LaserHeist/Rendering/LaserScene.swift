@@ -102,6 +102,10 @@ struct LaserWorldLayout {
 /// state (TEAM_ALIGNMENT §B, §C).
 @MainActor
 final class LaserScene {
+    #if DEBUG
+    /// `-perfLog` live-instance count (DEBUG only, Kevin 22 November 2026).
+    private let perfToken = PerfAliveToken("LaserScene")
+    #endif
     enum EnvironmentSource: String {
         case realityComposerPro = "Reality Composer Pro"
         case codeFallback = "code fallback"
@@ -337,6 +341,19 @@ final class LaserScene {
     /// `LaserHazard.setJoin`), so no emitter or post stands mid-corridor.
     /// Built from the gate artwork when it is installed. The caller (the
     /// gameplay presenter) pools and reuses these.
+    /// Full-width tutorial hazard, reusing the ordinary gate artwork and lighting.
+    func makeHeartTrainingHazard() -> LaserHazard {
+        let k = mapping.metersPerGameUnit
+        let y = RobotAvatarLayer.standingHeight * 0.8 / k
+        let hazard = LaserHazard(name: "heartTraining.laser", span: fullLaserSpan,
+            band: (y - 0.009 / k)...(y + 0.009 / k), mapping: mapping, fallbackThickness: 0.018)
+        if let laserArtwork { hazard.install(artwork: laserArtwork.clone(recursive: true)) }
+        hazard.floorWorldY = layout.corridorFloorY
+        hazard.hazeCameraZ = layout.cameraPosition.z
+        root.addChild(hazard.root)
+        return hazard
+    }
+
     func makeLaneHazard(for player: PlayerID) -> LaserHazard {
         let hazard = LaserHazard(name: "laser.\(player.rawValue).\(laneHazards.count)", span: laneSpan(for: player),
                                  band: laser.band, mapping: mapping, fallbackThickness: layout.laserCoreThickness)

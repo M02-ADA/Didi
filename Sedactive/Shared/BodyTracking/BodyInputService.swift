@@ -96,23 +96,59 @@ nonisolated struct LiveBodyInputState: Sendable {
         let floorLeft = calibration.mapping.gameY(imageY: calibration.standingLeftSoleImageY, layout: layout)
         let floorRight = calibration.mapping.gameY(imageY: calibration.standingRightSoleImageY, layout: layout)
         var estimator = jumps[id] ?? LiveJumpEstimator()
+        let standingHeight = calibration.mapping.gameY(imageY: calibration.standingCrownImageY, layout: layout)
+          - min(floorLeft, floorRight)
+        let standingHip = calibration.mapping.gameY(imageY: calibration.standingHipImageY, layout: layout)
+        let hipY = poseFirstCandidate ? BodyMeasurementExtractor.hipGameY(
+          candidate: pose.frame.candidates.first { $0.candidateID == (slot.candidateID ?? slot.presentCandidateID) },
+          calibration: calibration, layout: layout) : nil
+        // Butt-kick flights: during a flight already seen, an ankle hidden by the folded leg is bounded
+        // by the hips (`LiveJumpEstimator.flightSoles`), and the sample carries that bound as its sole.
+        var soles = (left: sample.geometry.leftSoleY.validity == .valid ? sample.geometry.leftSoleY.value : nil,
+                     right: sample.geometry.rightSoleY.validity == .valid ? sample.geometry.rightSoleY.value : nil,
+                     bounded: false)
+        if poseFirstCandidate {
+          soles = LiveJumpEstimator.flightSoles(left: soles.left, right: soles.right, inFlight: estimator.isInFlight,
+            hipY: hipY, standingHip: standingHip, standingLeftSole: floorLeft, standingRightSole: floorRight,
+            standingHeight: standingHeight)
+          if soles.bounded, let l = soles.left, let r = soles.right {
+            let g = sample.geometry
+            let presence = sample.presenceOnly
+            sample = PlayerBodySample(playerID: sample.playerID, calibrationRevision: sample.calibrationRevision,
+              trackingStatus: sample.trackingStatus,
+              geometry: .init(crownY: g.crownY, leftWristY: g.leftWristY, rightWristY: g.rightWristY,
+                leftSoleY: g.leftSoleY.validity == .valid ? g.leftSoleY : BodyMeasurementExtractor.scalar(l),
+                rightSoleY: g.rightSoleY.validity == .valid ? g.rightSoleY : BodyMeasurementExtractor.scalar(r),
+                centerX: g.centerX, trunkLeanX: g.trunkLeanX),
+              jumpState: sample.jumpState)
+            sample.presenceOnly = presence
+          }
+        }
         let jump = estimator.step(frameID: pose.source.frameID, capturedAt: pose.source.capturedAt,
-          leftSole: sample.geometry.leftSoleY.validity == .valid ? sample.geometry.leftSoleY.value : nil,
-          rightSole: sample.geometry.rightSoleY.validity == .valid ? sample.geometry.rightSoleY.value : nil,
+          leftSole: soles.left, rightSole: soles.right,
           standingLeftSole: floorLeft, standingRightSole: floorRight,
-          standingHeight: calibration.mapping.gameY(imageY: calibration.standingCrownImageY, layout: layout)
-            - min(floorLeft, floorRight),
+          standingHeight: standingHeight,
           calibrationRevision: calibration.revision,
-          hipY: poseFirstCandidate ? BodyMeasurementExtractor.hipGameY(
-            candidate: pose.frame.candidates.first { $0.candidateID == (slot.candidateID ?? slot.presentCandidateID) },
-            calibration: calibration, layout: layout) : nil,
-          standingHip: calibration.mapping.gameY(imageY: calibration.standingHipImageY, layout: layout),
+          hipY: hipY, standingHip: standingHip,
           candidateRules: poseFirstCandidate)
         jumps[id] = estimator
         #if DEBUG
         // Frame-level jump evidence while the lower sole is off the floor (no image data).
         let standing = calibration.mapping.gameY(imageY: calibration.standingCrownImageY, layout: layout) - min(floorLeft, floorRight)
         let enter = estimator.enterThreshold(standingHeight: standing)
+        // The rolling jump trace (`JumpTraceLog`): this frame's raw lower-body joints and the estimator's decision.
+        let traced = pose.frame.candidates.first { $0.candidateID == (slot.candidateID ?? slot.presentCandidateID) }
+        func g(_ m: EstimatedScalar) -> String { m.validity == .valid ? m.value.map { String(format: "%.3f", $0) } ?? "x" : "x" }
+        let hipGame = BodyMeasurementExtractor.hipGameY(candidate: traced, calibration: calibration, layout: layout)
+        JumpTraceLog.add(id, time: pose.source.capturedAt, String(format:
+          "t %.3f f %llu · hipL %@ hipR %@ kneeL %@ kneeR %@ ankL %@ ankR %@ · soles %@/%@ hip %@ · lift %@ enter %.3f · %@ · %@",
+          pose.source.capturedAt, pose.source.frameID,
+          JumpTraceLog.joint(traced?.joints[.leftHip]), JumpTraceLog.joint(traced?.joints[.rightHip]),
+          JumpTraceLog.joint(traced?.joints[.leftKnee]), JumpTraceLog.joint(traced?.joints[.rightKnee]),
+          JumpTraceLog.joint(traced?.joints[.leftAnkle]), JumpTraceLog.joint(traced?.joints[.rightAnkle]),
+          g(sample.geometry.leftSoleY) + (soles.bounded ? "(hip-bound)" : ""), g(sample.geometry.rightSoleY),
+          (hipGame.map { String(format: "%.3f", $0) } ?? "x") + String(format: " (stand hip %.3f floor %.3f/%.3f)", standingHip, floorLeft, floorRight),
+          estimator.lift.map { String(format: "%.3f", $0) } ?? "x", enter, "\(jump.phase)", estimator.decision))
         if jump.phase != .grounded || (estimator.lift ?? 0) > enter / 2 {
           print(String(format: "[LaserJumpFrame] %@ frame %llu t %.3f · lift %@ baseline %.3f enter %.3f noise %.4f → %@",
             id.rawValue, pose.source.frameID, pose.source.capturedAt,
@@ -124,6 +160,26 @@ nonisolated struct LiveBodyInputState: Sendable {
         sample = PlayerBodySample(playerID: sample.playerID, calibrationRevision: sample.calibrationRevision,
           trackingStatus: sample.trackingStatus, geometry: sample.geometry, jumpState: jump)
         sample.presenceOnly = presenceOnly
+      } else if poseFirstCandidate, usable, let calibration, calibration.referenceQuality != nil,
+                slot.state == .uncertain, !slot.requiresRebind, var estimator = jumps[id], estimator.isInFlight {
+        // A flight in progress keeps its estimator through a brief UNCERTAIN tracking gap (iPad,
+        // 21 November 2026: at the top of a butt-kick jump the tracker lost the player for 5 frames,
+        // 0.17 s, and the discarded estimator forgot the flight). No evidence this frame: the sample
+        // stays as tracking made it; the estimator only counts the frame as missing soles, so its own
+        // gap limit (`LiveJumpEstimator.maximumGap`) decides. Lost, rebinding or not flying: reset.
+        let layout = config.playerPlaneLayout
+        let floorLeft = calibration.mapping.gameY(imageY: calibration.standingLeftSoleImageY, layout: layout)
+        let floorRight = calibration.mapping.gameY(imageY: calibration.standingRightSoleImageY, layout: layout)
+        _ = estimator.step(frameID: pose.source.frameID, capturedAt: pose.source.capturedAt, leftSole: nil, rightSole: nil,
+          standingLeftSole: floorLeft, standingRightSole: floorRight,
+          standingHeight: calibration.mapping.gameY(imageY: calibration.standingCrownImageY, layout: layout) - min(floorLeft, floorRight),
+          calibrationRevision: calibration.revision, hipY: nil,
+          standingHip: calibration.mapping.gameY(imageY: calibration.standingHipImageY, layout: layout), candidateRules: true)
+        jumps[id] = estimator
+        #if DEBUG
+        JumpTraceLog.add(id, time: pose.source.capturedAt, String(format: "t %.3f f %llu · tracking %@ (no evidence) · %@",
+          pose.source.capturedAt, pose.source.frameID, "\(slot.reason)", estimator.decision))
+        #endif
       } else { jumps[id] = nil }
       players[id] = sample
     }
