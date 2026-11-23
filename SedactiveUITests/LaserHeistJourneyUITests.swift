@@ -13,6 +13,16 @@ final class LaserHeistJourneyUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
     }
 
+    func testLaunchWhileDeviceIsHeldInPortraitUsesLandscape() {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launch()
+
+        XCTAssertTrue(app.buttons["startMission"].waitForExistence(timeout: timeout))
+        expectation(for: NSPredicate { _, _ in app.frame.width > app.frame.height }, evaluatedWith: app)
+        waitForExpectations(timeout: 10)
+    }
+
     func testHomeSetUpCameraSetupReplayResultsAndBackToHome() {
         let app = XCUIApplication()
         app.launch()
