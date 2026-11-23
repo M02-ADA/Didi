@@ -1490,7 +1490,17 @@ final class GameSessionCoordinator {
                 }
             default:
                 if game != nil || phase == .countdown || phase == .paused {
-                    try pauseLiveGame(at: readiness.gameTime)
+                    var pauseTime = readiness.gameTime
+                    if phase != .paused, readiness.phase == .paused,
+                       let blocker = readiness.blocker,
+                       [.source, .binding, .calibration, .measurements, .staleEvidence].contains(blocker),
+                       let game, game.roundPhase == .vault {
+                        // A stalled source can jump past the vault deadline on the very tick
+                        // that detects tracking loss. Only spend time the vault had processed.
+                        pauseTime = game.gameTime
+                        try liveReadiness?.restorePausedTime(to: pauseTime)
+                    }
+                    try pauseLiveGame(at: pauseTime)
                 }
             }
         } catch {

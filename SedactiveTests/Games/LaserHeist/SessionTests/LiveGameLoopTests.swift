@@ -300,6 +300,34 @@ struct LiveGameLoopTests {
         await rig.session.stop()
     }
 
+    @Test func trackingLossAcrossVaultDeadlineKeepsTheRemainingTime() async throws {
+        let rig = try LiveGameRig()
+        try await rig.run()
+        for index in 6...11 { try await rig.send(Double(index) * 0.125) }
+        try rig.session.beginLiveVault(id: UUID())
+        for index in 12...50 { try await rig.send(Double(index) * 0.125) }
+        let beforeLoss = try #require(rig.session.state)
+        let deadline = try #require(beforeLoss.vault?.deadline)
+        let remaining = deadline - beforeLoss.gameTime
+        #expect(remaining == 0.125)
+
+        // The first unusable pose lands exactly on the deadline. Keep the camera and
+        // binding alive while measurements are unavailable for longer than five seconds.
+        for index in 51...120 {
+            try await rig.send(Double(index) * 0.125, crown: nil)
+            #expect(rig.session.phase == .paused && rig.session.summary == nil)
+            #expect(rig.session.state?.gameTime == beforeLoss.gameTime)
+            #expect(rig.session.state?.vault == beforeLoss.vault)
+        }
+
+        for hostTime in [15.125, 15.25, 15.375, 15.5] { try await rig.send(hostTime) }
+        let resumed = try #require(rig.session.state)
+        #expect(rig.session.phase == .running && rig.session.summary == nil)
+        #expect(resumed.vault == beforeLoss.vault)
+        #expect(deadline - resumed.gameTime == remaining)
+        await rig.session.stop()
+    }
+
     @Test func abortWhilePausedFreezesSummaryAndLateTicksCannotResumeIt() async throws {
         let rig = try LiveGameRig()
         try await rig.run()
