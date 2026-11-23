@@ -15,6 +15,8 @@ enum SoundCue: String, CaseIterable {
     case uiTap = "ui-tap"
     case cueDuck = "cue-duck"
     case cueJump = "cue-jump"
+    case movementReady = "movement-ready"
+    case movementGo = "movement-go"
     case laserClear = "laser-clear"
     case laserHit = "laser-hit"
     case vaultButton = "vault-button"
@@ -41,7 +43,7 @@ enum SoundCue: String, CaseIterable {
     /// even when both players' events arrive together or a button is tapped twice.
     var minimumInterval: TimeInterval {
         switch self {
-        case .uiTap, .vaultWarning, .diamondTimeTick, .diamondTimeUrgentTick: 0.12
+        case .uiTap, .movementReady, .vaultWarning, .diamondTimeTick, .diamondTimeUrgentTick: 0.12
         case .vaultButton, .diamondCollect: 0.06
         case .diamondChainRise, .diamondChainCrest, .diamondChainBass: 0.10
         case .cueDuck, .cueJump, .laserClear, .laserHit: 0.25
@@ -77,7 +79,7 @@ enum SoundCue: String, CaseIterable {
     var ducksMusic: Bool {
         if isCountdownTick { return true }
         return switch self {
-        case .cueDuck, .cueJump, .laserClear, .diamondTime, .roundSuccess, .roundFailure: true
+        case .cueDuck, .cueJump, .movementReady, .movementGo, .laserClear, .diamondTime, .roundSuccess, .roundFailure: true
         default: false
         }
     }

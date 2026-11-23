@@ -17,13 +17,25 @@ final class LaserTeamCalloutModel {
         let kind: LaserTeamCalloutKind
         /// A DUCK/JUMP cue was on screen: the callout sits small, just under the HUD, clear of it.
         let compact: Bool
-        let start: Date
+        var start: Date
         /// A cue appeared under a full-size callout: it gets out of the way from here.
         var yieldedAt: Date?
     }
 
     private(set) var shown: Shown?
     private var serial = 0
+    private(set) var finishedSerial: Int?
+    private var tutorialPausedAt: Date?
+    func showTrainingDamage(_ receipt: HeartTrainingDamage) { show(.zapped, compact: false) }
+    func setTutorialSuspended(_ suspended: Bool, at now: Date = .now) {
+        if suspended {
+            if tutorialPausedAt == nil { tutorialPausedAt = now }
+        } else if let pause = tutorialPausedAt {
+            if var current = shown { current.start += now.timeIntervalSince(pause); shown = current }
+            tutorialPausedAt = nil
+        }
+    }
+
 
     func show(_ kind: LaserTeamCalloutKind, compact: Bool, at now: Date = .now) {
         serial += 1
@@ -37,8 +49,10 @@ final class LaserTeamCalloutModel {
         shown = current
     }
 
-    func finish(_ serial: Int) { if shown?.serial == serial { shown = nil } }
-    func clear() { shown = nil }
+    func finish(_ serial: Int) {
+        if shown?.serial == serial, tutorialPausedAt == nil { shown = nil; finishedSerial = serial }
+    }
+    func clear() { shown = nil; tutorialPausedAt = nil; finishedSerial = nil }
 }
 
 
@@ -366,7 +380,9 @@ struct LaserTeamCalloutView: View {
                     // Leaves the view tree once played: no timeline keeps running afterwards.
                     let end = shown.yieldedAt.map { $0.timeIntervalSince(shown.start) + LaserTeamCalloutMotion.yieldFade }
                         ?? LaserTeamCalloutMotion.duration(shown.kind, reduceMotion: reduce)
-                    try? await Task.sleep(for: .seconds(end + 0.05))
+                    let remaining = max(0, end - Date.now.timeIntervalSince(shown.start))
+                    do { try await Task.sleep(for: .seconds(remaining + 0.05)) } catch { return }
+                    guard !Task.isCancelled else { return }
                     model.finish(shown.serial)
                 }
                 .accessibilityElement()

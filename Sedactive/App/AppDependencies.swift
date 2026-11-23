@@ -68,7 +68,12 @@ import Foundation
     #else
     let soloSession: (@MainActor () throws -> GameSessionCoordinator)? = nil
     #endif
-    inputFlow = LaserInputFlow(initialRoute: route,
+    #if DEBUG
+    let tutorial = FTUEOnboardingPreview.defaults.map { LeanTutorial(defaults: $0) }
+    #else
+    let tutorial: LeanTutorial? = nil
+    #endif
+    inputFlow = LaserInputFlow(initialRoute: route, leanTutorial: tutorial,
       makeLiveSession: {
         // Preserve Edo's existing Vision setup layout. No round plan or collision tuning is
         // selected here; measured game/visual layout acceptance remains a separate gate.
@@ -92,3 +97,18 @@ import Foundation
       })
   }
 }
+
+#if DEBUG
+/// UI tests use the same unique suite for the app route and the real-scene preview.
+enum FTUEOnboardingPreview {
+  static var defaults: UserDefaults? {
+    guard let suite = ProcessInfo.processInfo.environment["FTUE_ONBOARDING_TEST_SUITE"],
+          suite.hasPrefix("LaserHeist.FTUEOnboardingTest.") else { return nil }
+    return UserDefaults(suiteName: suite)
+  }
+
+  static var isRequested: Bool {
+    defaults != nil && ProcessInfo.processInfo.arguments.contains("-homeHelpFTUEPreview")
+  }
+}
+#endif
