@@ -703,7 +703,8 @@ private struct ReplayRoundView: View {
                     }
                     // PERFECT! / ZAPPED! on the HUD's title line, never over the results.
                     if session.summary == nil, activeTutorial?.isSuspended != true, scenePhase == .active,
-                       (activeTutorial?.heartPhase != .hurt && activeTutorial?.practiceMove == nil) || suppliedSession?.canStartLiveRound != false {
+                       (activeTutorial?.heartPhase != .hurt && activeTutorial?.practiceMove == nil)
+                            || suppliedSession?.canStartLiveRound != false || suppliedSession?.isPresentingFTUEDuckRetry == true {
                         LaserTeamCalloutView(model: teamCallouts)
                     }
                     // The blink into Diamond Time, over everything; only while the entry plays.
@@ -1298,7 +1299,7 @@ private struct ReplayRoundView: View {
         let suspended = tutorial.isSuspended || !trainingSceneActive
         if let suppliedSession {
             suppliedSession.updateHeartTraining(at: now, suspended: suspended)
-            let paused = suspended || !suppliedSession.canStartLiveRound
+            let paused = suspended || (!suppliedSession.canStartLiveRound && !suppliedSession.isPresentingFTUEDuckRetry)
             heartTutorialDemo.update(scene: scene, training: suppliedSession.heartTraining, callouts: teamCallouts, suspended: paused)
             if !paused, let receipt = heartTutorialDemo.feedbackFinished(teamCallouts) {
                 suppliedSession.finishHeartTrainingFeedback(id: receipt.id, generation: generation)

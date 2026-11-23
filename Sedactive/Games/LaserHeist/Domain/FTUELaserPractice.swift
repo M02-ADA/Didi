@@ -43,6 +43,12 @@ nonisolated struct FTUELaserPractice {
     var requiresFailureFeedback: Bool {
         outcome == .hit || (outcome == .unavailable && move == .duck && roster.count > 1)
     }
+    /// Committed Co-op DUCK failure can finish its visual feedback while tracking recovers
+    /// in the same input context. The next attempt still requires live readiness.
+    func canFinishDuckRetryFeedback(in current: BodyInputContext?) -> Bool {
+        move == .duck && roster.count > 1 && requiresFailureFeedback && context == current
+    }
+
     var state: LaserGameState {
         .init(sessionGeneration: generation, phase: .activity, gameTime: elapsed, activityProgress: 0,
             teamHealth: configuration.initialTeamHealth, teamScore: 0,
