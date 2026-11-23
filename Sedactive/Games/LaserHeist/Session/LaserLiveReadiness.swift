@@ -234,6 +234,10 @@ nonisolated struct LaserLiveReadiness: Sendable {
         try block(.presentation, at: time)
     }
 
+    mutating func restorePausedTime(to committedTime: Double) throws {
+        try clock?.restorePausedTime(to: committedTime)
+    }
+
     /// Stops game time at the last evaluated host time while staying RUNNING: evidence rules
     /// still apply, but no capture maps to game time until `releaseClock` starts a new epoch.
     mutating func holdClock() throws {
