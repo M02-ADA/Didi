@@ -26,8 +26,10 @@ struct DiamondTimePawOverlay: View {
             let unit = min(availableWidth / LaserDiamondTimeBoard.width, availableHeight / LaserDiamondTimeBoard.height)
             if unit > 0 {
                 Canvas { context, size in
-                    draw(context, size: size, unit: unit, time: time, diamonds: diamonds, paws: paws, renderedIDs: renderedIDs,
-                         pickupLevels: pickupLevels, latestCrestID: latestCrestID)
+                    PerfSpans.measure("pawCanvas") {
+                        draw(context, size: size, unit: unit, time: time, diamonds: diamonds, paws: paws, renderedIDs: renderedIDs,
+                             pickupLevels: pickupLevels, latestCrestID: latestCrestID)
+                    }
                 }
                 .frame(width: unit * LaserDiamondTimeBoard.width, height: unit * LaserDiamondTimeBoard.height)
                 .onGeometryChange(for: CGRect.self) {

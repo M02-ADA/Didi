@@ -214,8 +214,13 @@ final class AudioService {
 
     private static func bundlePlayer(_ name: String) -> (any SoundPlaying)? {
         let ext = name.hasPrefix("lh-music-") ? "mp3" : "caf"
-        guard let url = Bundle.main.url(forResource: name, withExtension: ext) else { return nil }
-        return try? AVAudioPlayer(contentsOf: url)
+        guard let url = Bundle.main.url(forResource: name, withExtension: ext),
+              let player = try? AVAudioPlayer(contentsOf: url) else { return nil }
+        #if DEBUG
+        return QueuedSoundPlayer(player, name: name)
+        #else
+        return QueuedSoundPlayer(player)
+        #endif
     }
 
     // MARK: - Effects
@@ -450,4 +455,113 @@ final class AudioService {
 
     /// Whether the selected track is playing (tests and debugging).
     var isMusicPlaying: Bool { wantedMusic.flatMap { musicPlayers[$0]?.isPlaying } == true }
+}
+
+/// An `AVAudioPlayer` driven from one serial audio queue instead of the main thread.
+///
+/// PERFORMANCE (Kevin, 22 November 2026, measured on an iPad Pro 11" M5; this file is unassigned, for
+/// review): `-[AVAudioPlayer play]` sets up its audio queue with a synchronous round trip to the system
+/// audio server (`allocAudioQueue` → `xpc_connection_send_message_with_reply_sync`, Time Profiler). On
+/// the main thread that blocked a frame for 21–81 ms per Diamond Time pickup cue and 135 ms when the
+/// Diamond Time music started (`PerfSpans` `pickupSound`, `dtMusic`): the frame drops and the long
+/// spikes in Diamond Time, where pickups chain several cues a second. Every call that changes the
+/// player now runs on `queue`, in the order it was made, so nothing reorders (a stop always follows
+/// its start, a fade its play); the main thread no longer waits for the audio server. The sound starts
+/// as soon as the server answers, as before; only the frame no longer waits for it.
+///
+/// `isPlaying` is true from the moment a start is asked for until the queue has run it (then the
+/// player's own state), so callers that wait for a sound to finish (the Diamond Time sting before its
+/// music, the countdown's ducking of pickups) see it as playing at once, as they did. `play()` returns
+/// `true` when the start is queued: a prepared player's start is not expected to fail.
+@MainActor
+final class QueuedSoundPlayer: SoundPlaying {
+    /// The one queue every player's changes run on (ordered across players too).
+    nonisolated private static let queue = DispatchQueue(label: "Sedactive.audio.players", qos: .userInteractive)
+
+    /// The wrapped player, handed to `queue`. `AVAudioPlayer` is not `Sendable`; it is only changed on
+    /// `queue` (one serial queue) and only read elsewhere (`isPlaying`, times), which it allows.
+    private struct Box: @unchecked Sendable { let player: AVAudioPlayer }
+
+    private let box: Box
+    /// Starts asked for and not yet run on `queue`.
+    private var pendingStarts = 0
+    let duration: TimeInterval
+    /// The level last asked for (a fade's target), as `AVAudioPlayer.volume` reports it.
+    private var level: Float
+    var volume: Float {
+        get { level }
+        set { level = newValue; run { $0.volume = newValue } }
+    }
+    var numberOfLoops: Int { didSet { let n = numberOfLoops; run { $0.numberOfLoops = n } } }
+    var currentTime: TimeInterval {
+        get { box.player.currentTime }
+        set { run { $0.currentTime = newValue } }
+    }
+    var isPlaying: Bool { pendingStarts > 0 || box.player.isPlaying }
+    var deviceCurrentTime: TimeInterval { box.player.deviceCurrentTime }
+
+    #if DEBUG
+    /// The bundled resource (`-perfLog` timing lines name the HIT and CLEAR cues).
+    private var name = ""
+    convenience init(_ player: AVAudioPlayer, name: String) {
+        self.init(player)
+        self.name = name
+    }
+    #endif
+
+    init(_ player: AVAudioPlayer) {
+        box = Box(player: player)
+        duration = player.duration
+        level = player.volume
+        numberOfLoops = player.numberOfLoops
+    }
+
+    @discardableResult func prepareToPlay() -> Bool {
+        run { $0.prepareToPlay() }
+        return true
+    }
+
+    @discardableResult func play() -> Bool { start { $0.play() } }
+
+    @discardableResult func play(atTime time: TimeInterval) -> Bool { start { $0.play(atTime: time) } }
+
+    func pause() { run { $0.pause() } }
+
+    func stop() { run { $0.stop() } }
+
+    func setVolume(_ volume: Float, fadeDuration duration: TimeInterval) {
+        level = volume // the fade's target; the player itself fades on `queue`
+        run { $0.setVolume(volume, fadeDuration: duration) }
+    }
+
+    private func run(_ change: @escaping @Sendable (AVAudioPlayer) -> Void) {
+        let box = box
+        Self.queue.async { change(box.player) }
+    }
+
+    private func start(_ begin: @escaping @Sendable (AVAudioPlayer) -> Bool) -> Bool {
+        pendingStarts += 1
+        let box = box
+        #if DEBUG
+        let asked = CACurrentMediaTime()
+        let cue = name
+        let logsOnset = LaserPerfMonitor.isEnabled && (cue == "lh-laser-hit" || cue == "lh-laser-clear")
+        #endif
+        Self.queue.async { [weak self] in
+            _ = begin(box.player)
+            #if DEBUG
+            // `-perfLog`: from the start being asked for to `play()` returning (queue wait + server call).
+            let returned = CACurrentMediaTime()
+            PerfSpans.record("audioStartLatency", returned - asked)
+            if logsOnset {
+                Task { @MainActor in
+                    LaserPerfMonitor.emit(String(format: "[SoundOnset] %@ · asked host %.3f · play() returned %+.0f ms",
+                                                 cue, asked, (returned - asked) * 1000))
+                }
+            }
+            #endif
+            Task { @MainActor in self?.pendingStarts -= 1 }
+        }
+        return true
+    }
 }

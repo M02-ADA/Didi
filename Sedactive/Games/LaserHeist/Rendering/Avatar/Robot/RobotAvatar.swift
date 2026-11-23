@@ -593,6 +593,10 @@ struct RobotRetargeter {
 /// own `jointTransforms`, written once per player per new body frame.
 @MainActor
 final class RobotAvatarLayer {
+    #if DEBUG
+    /// `-perfLog` live-instance count (DEBUG only, Kevin 22 November 2026).
+    private let perfToken = PerfAliveToken("RobotAvatarLayer")
+    #endif
     struct Robot {
         let container: Entity
         let model: ModelEntity
@@ -888,6 +892,13 @@ final class RobotAvatarLayer {
     /// frame and ending it after `LaserHitReaction.duration`.
     private func advanceHit(_ player: PlayerID, time: Double) -> (LaserHitReaction, LaserHitReaction.Frame, Double)? {
         guard var hit = hits[player] else { return nil }
+        #if DEBUG
+        if hit.start == nil, LaserPerfMonitor.isEnabled {
+            // `-perfLog`: the zap's first animated frame (host clock), to set against `[LaserZapTiming]`.
+            LaserPerfMonitor.emit(String(format: "[HitOnset] %@ first zap frame · host %.3f · avatar time %.3f",
+                                         player.rawValue, CACurrentMediaTime(), time))
+        }
+        #endif
         let start = hit.start ?? time
         hit.start = start
         let tau = time - start
@@ -1187,6 +1198,9 @@ final class RobotAvatarLayer {
     init(scene: LaserScene, players: Set<PlayerID>, references: [PlayerID: AvatarReference] = [:],
          templates: [PlayerID: Entity], hoverboard: Entity? = nil, withBoards: Bool = true) {
         self.scene = scene
+        // The HIT zap's shared textures, built here (round load) instead of in the first HIT's
+        // impact frame, where they cost 32 ms on the iPad (23 November 2026). Once per app run.
+        _ = LaserHitZap.Resources.shared
         let hoverboard = withBoards ? hoverboard ?? PlayerHoverboard.loadedTemplate : nil
         for player in PlayerID.allCases where players.contains(player) {
             guard let entity = scene.players[player], let template = templates[player] else { continue }
