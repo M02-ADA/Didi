@@ -102,6 +102,10 @@ struct LaserWorldLayout {
 /// state (TEAM_ALIGNMENT §B, §C).
 @MainActor
 final class LaserScene {
+    #if DEBUG
+    /// `-perfLog` live-instance count (DEBUG only, Kevin 22 November 2026).
+    private let perfToken = PerfAliveToken("LaserScene")
+    #endif
     enum EnvironmentSource: String {
         case realityComposerPro = "Reality Composer Pro"
         case codeFallback = "code fallback"

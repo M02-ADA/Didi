@@ -34,6 +34,10 @@ import UIKit
 /// It keeps no clock and decides nothing.
 @MainActor
 final class GameplayScenePresenter {
+    #if DEBUG
+    /// `-perfLog` live-instance count (DEBUG only, Kevin 22 November 2026).
+    private let perfToken = PerfAliveToken("GameplayScenePresenter")
+    #endif
     struct Diagnostics: Equatable {
         var badges = 0
         var teamEffects = 0
@@ -342,9 +346,11 @@ final class GameplayScenePresenter {
                              target.requiredMove.rawValue, target.crossingTime, "\(judgement)", event.gameTime - target.crossingTime))
                 // Crossing → verdict (game) → shown (this frame's game time); the zap's first visible
                 // frame is the next avatar render (`RobotAvatarLayer.advanceHit`, no lead-in).
-                print(String(format: "[LaserZapTiming] %@ %@ %@ · crossing %.3f · verdict %+.3f s · shown %+.3f s", player.rawValue,
-                             target.requiredMove.rawValue, "\(judgement)".prefix(5).description, target.crossingTime,
-                             event.gameTime - target.crossingTime, state.gameTime - target.crossingTime))
+                let zapTiming = String(format: "[LaserZapTiming] %@ %@ %@ · crossing %.3f · verdict %+.3f s · shown %+.3f s · host %.3f",
+                                       player.rawValue, target.requiredMove.rawValue, "\(judgement)".prefix(5).description,
+                                       target.crossingTime, event.gameTime - target.crossingTime,
+                                       state.gameTime - target.crossingTime, CACurrentMediaTime())
+                if LaserPerfMonitor.isEnabled { LaserPerfMonitor.emit(zapTiming) } else { print(zapTiming) }
                 #endif
                 let outcome: LaserFeedback.Outcome? = switch judgement {
                 case .clear: .clear

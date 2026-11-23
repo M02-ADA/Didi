@@ -576,6 +576,10 @@ final class HoverboardReactionFX {
             let emitter = Entity()
             emitter.name = "hoverboard.sparks\(site)"
             emitter.position = RimOutline.sparkSite(site)
+            // Built with the board, not on the first HIT (iPad, 23 November 2026: the first HIT's
+            // emitters and materials cost 12.8 ms in the impact frame). Not emitting: nothing shows
+            // until a reaction's burst; `start` sets each reaction's own emitter as before.
+            emitter.components.set(Self.sparkEmitter(.hit, site: site))
             return emitter
         }
         anchor.name = "hoverboard.reaction"
@@ -592,6 +596,31 @@ final class HoverboardReactionFX {
     func sort(in group: ModelSortGroup) {
         for (i, entity) in ([field, pulse] + arcs).enumerated() {
             entity.components.set(ModelSortGroupComponent(group: group, order: Int32(i + 1)))
+        }
+    }
+
+    private static var materialsWarmed = false
+
+    /// Makes every material HIT and CLEAR show, frame by frame, ahead of play (once per app run;
+    /// the caches are shared). Only fills the caches: nothing on the board changes. The first HIT
+    /// made them in its impact frame instead, 10.9 ms on the iPad (23 November 2026).
+    func warmMaterials() {
+        guard !Self.materialsWarmed else { return }
+        Self.materialsWarmed = true
+        for kind in [HoverboardReaction.hit, .clear] {
+            for frame in 0...Int(kind.duration * 120) {
+                let tau = Double(frame) / 120
+                let pose = kind.pose(at: tau, reduceMotion: false)
+                for slot in slots { if let key = Self.key(kind, slot.role, slot.role.glow(in: pose)) { _ = Self.material(key) } }
+                for i in 0..<HoverboardReaction.segments {
+                    if let key = Self.key(kind, .ring, kind.segment(i, at: tau, reduceMotion: false)) { _ = Self.material(key) }
+                    let glow = kind.field(i, at: tau, reduceMotion: false)
+                    if glow.fieldLevel > 0 { _ = Self.fieldMaterial(FieldKey(kind: kind, tone: glow.tone, level: glow.fieldLevel)) }
+                }
+                if let ring = kind.pulse(at: tau, reduceMotion: false) {
+                    _ = Self.pulseMaterial(FieldKey(kind: kind, tone: ring.tone, level: ring.level))
+                }
+            }
         }
     }
 
@@ -1058,6 +1087,15 @@ nonisolated enum RimOutline {
     }
 
     /// Triangles for a quad strip, facing `facing` (or both ways).
+    /// Whether quad `q` split along q0–q2 gives two triangles that wind the same way as the camera
+    /// sees them (false for a concave quad split across its reflex corner, which would fold).
+    static func splitsCleanly(_ q: [UInt32], _ positions: [SIMD3<Float>]) -> Bool {
+        let p = q.map { positions[Int($0)] }
+        let first = simd_dot(simd_cross(p[1] - p[0], p[2] - p[0]), towardCamera)
+        let second = simd_dot(simd_cross(p[2] - p[0], p[3] - p[0]), towardCamera)
+        return (first > 0) == (second > 0)
+    }
+
     private static func quad(_ q: [UInt32], _ positions: [SIMD3<Float>], facing: SIMD3<Float>?, into indices: inout [UInt32]) {
         let p = q.map { positions[Int($0)] }
         let front = [q[0], q[1], q[2], q[0], q[2], q[3]], back = [q[0], q[2], q[1], q[0], q[3], q[2]]
@@ -1156,19 +1194,53 @@ nonisolated enum RimOutline {
                 path.append(base + (top - base) * s + out + SIMD3(0, 0, zig * 0.5))
             }
         }
-        func ribbon(halfWidth: Float, forward: Float, material: UInt32) -> MeshDescriptor {
+        // One continuous strip per ribbon: neighbouring segments share their joint (mitred, the
+        // mitre capped so a sharp bend never folds the strip back over itself). Separate quads that
+        // overlapped at every bend stacked the 45 % glow into visible blocks and opened gaps in the
+        // white core at the sharp bends (iPad, 23 November 2026). Only the two tips reach past the
+        // line, as before.
+        func ribbon(along line: [SIMD3<Float>], widths: [Float], tip: Float, forward: Float, material: UInt32) -> MeshDescriptor {
             var positions: [SIMD3<Float>] = [], indices: [UInt32] = []
-            let taper = { (i: Int) -> Float in 0.45 + 0.55 * sin(.pi * Float(i) / Float(points - 1)) }
-            for k in 0..<(points - 1) {
-                let a = path[k], b = path[k + 1]
-                let d = simd_normalize(b - a)
-                var side = simd_cross(d, towardCamera)
-                side = simd_length(side) > 1e-4 ? simd_normalize(side) : SIMD3(0, 1, 0)
-                let base = UInt32(positions.count)
-                let ea = a - d * halfWidth * 0.5 + towardCamera * forward, eb = b + d * halfWidth * 0.5 + towardCamera * forward
-                positions += [ea - side * halfWidth * taper(k), eb - side * halfWidth * taper(k + 1),
-                              eb + side * halfWidth * taper(k + 1), ea + side * halfWidth * taper(k)]
-                quad([base, base + 1, base + 2, base + 3], positions, facing: nil, into: &indices)
+            let last = line.count - 1
+            let directions = (0..<last).map { simd_normalize(line[$0 + 1] - line[$0]) }
+            // The mitre is capped by each segment's length as the camera sees it (the path also
+            // zigzags toward the camera, which shortens it on screen).
+            let lengths = (0..<last).map { k -> Float in
+                let step = line[k + 1] - line[k]
+                return simd_length(step - towardCamera * simd_dot(step, towardCamera))
+            }
+            func side(_ d: SIMD3<Float>) -> SIMD3<Float> {
+                let s = simd_cross(d, towardCamera)
+                return simd_length(s) > 1e-4 ? simd_normalize(s) : SIMD3(0, 1, 0)
+            }
+            for k in 0...last {
+                var center = line[k] + towardCamera * forward
+                let width = widths[k]
+                let offset: SIMD3<Float>
+                if k == 0 {
+                    center -= directions[0] * tip
+                    offset = side(directions[0]) * width
+                } else if k == last {
+                    center += directions[last - 1] * tip
+                    offset = side(directions[last - 1]) * width
+                } else {
+                    let before = side(directions[k - 1]), after = side(directions[k])
+                    let sum = before + after
+                    let bisector = simd_length(sum) > 1e-4 ? simd_normalize(sum) : before
+                    let cosHalf = max(simd_dot(bisector, before), 0.05)
+                    let sinHalf = (1 - cosHalf * cosHalf).squareRoot()
+                    var mitre = width / cosHalf
+                    if sinHalf > 1e-4 { mitre = min(mitre, 0.5 * min(lengths[k - 1], lengths[k]) / sinHalf) }
+                    offset = bisector * mitre
+                }
+                positions += [center - offset, center + offset]
+            }
+            for k in 0..<last {
+                let i = UInt32(k * 2)
+                // A quad at a sharp bend can be concave: split it along the diagonal that keeps
+                // both triangles flat on screen, so it never folds over itself.
+                let q: [UInt32] = [i, i + 2, i + 3, i + 1]
+                quad(RimOutline.splitsCleanly(q, positions) ? q : [q[1], q[2], q[3], q[0]], positions, facing: nil, into: &indices)
             }
             var descriptor = MeshDescriptor(name: "discharge.\(site).\(variant).\(material)")
             descriptor.positions = MeshBuffers.Positions(positions)
@@ -1176,9 +1248,25 @@ nonisolated enum RimOutline {
             descriptor.materials = .allFaces(material)
             return descriptor
         }
-        return [ribbon(halfWidth: 0.034, forward: -0.004, material: 0),
-                ribbon(halfWidth: 0.015, forward: 0, material: 1),
-                ribbon(halfWidth: 0.0065, forward: 0.004, material: 2)]
+        let taper = (0..<points).map { Float(0.45 + 0.55 * sin(.pi * Double($0) / Double(points - 1))) }
+        // The bolt and its white core follow the zigzag exactly.
+        let bolt = ribbon(along: path, widths: taper.map { 0.015 * $0 }, tip: 0.0075, forward: 0, material: 1)
+        let core = ribbon(along: path, widths: taper.map { 0.0065 * $0 }, tip: 0.00325, forward: 0.004, material: 2)
+        // The glow follows the zigzag smoothed (gentle bends, so the mitre is never capped) and is
+        // widened by how far the zigzag strays from it there, so it still covers the bolt as wide
+        // as the old per-segment glow did (3.4 cm round every point) without stacking.
+        var smooth = path
+        for _ in 0..<3 {
+            smooth = smooth.indices.map { k in
+                k == 0 || k == points - 1 ? smooth[k] : (smooth[k - 1] + 2 * smooth[k] + smooth[k + 1]) / 4
+            }
+        }
+        let glowWidths = (0..<points).map { k -> Float in
+            let gap = path[k] - smooth[k] // the zigzag's offset from the smoothed line, on screen
+            return 0.034 * taper[k] + simd_length(gap - towardCamera * simd_dot(gap, towardCamera))
+        }
+        let glow = ribbon(along: smooth, widths: glowWidths, tip: 0.017, forward: -0.004, material: 0)
+        return [glow, bolt, core]
     }
 
     /// The expanding energy ring: a band round the whole outline from just outside the rim lip,

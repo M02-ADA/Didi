@@ -280,7 +280,11 @@ final class VaultPresentation {
             return hideAll()
         }
         guard !hidden else { return }
-        showActivations(vault)
+        // STALE GATE (iPad, 23 November 2026): a state that still holds a gate whose door already
+        // passed (the next door is coming in) must not replay that gate's press and green onto the
+        // next door's buttons; they stay red until their own gate.
+        let passed = vault.id == handedOffID
+        if !passed { showActivations(vault) }
         // The buttons build up as each player's fist reaches toward them (presentation only).
         if consoleMode, let robots = scene.robotAvatars {
             for (player, view) in consoleViews { view.setApproach(robots.consoleApproach(player)) }
@@ -288,7 +292,7 @@ final class VaultPresentation {
         if !isOpen, opens {
             open(vault, at: state.gameTime)
         }
-        showOpenButtons(vault)
+        if !passed { showOpenButtons(vault) }
         updateCountdown(vault, at: state.gameTime, failed: ended == .vaultFailed || failed.contains(vault.id))
         place(travelDistance: travelDistance)
     }
@@ -307,6 +311,7 @@ final class VaultPresentation {
         openedID = nil
         greenID = nil
         passedID = nil
+        handedOffID = nil
         failedID = nil
         succeeded = []
         failed = []
@@ -352,6 +357,8 @@ final class VaultPresentation {
 
     /// The vault whose opened passage has been clear (`holdsTravel`).
     private var passedID: UUID?
+    /// The opened vault whose door was handed on to the next door's approach (`approach`).
+    private var handedOffID: UUID?
 
     /// How long before a gate the mascots are drawn onto their docks (the dock assist), so they
     /// are docked when the gate's time starts: the press zones follow the mascot's distance from
@@ -404,6 +411,9 @@ final class VaultPresentation {
             return false
         }
         if !approaching {
+            // The opened gate's door has passed: its presses and green are done with, and the
+            // buttons now coming in belong to the next door (`update` never replays them there).
+            handedOffID = state.vault?.id
             hideAll()
             hidden = false
             approaching = true
@@ -605,6 +615,14 @@ final class VaultPresentation {
     private func open(_ vault: LaserVaultState, at time: Double) {
         openedID = vault.id
         openedAt = time
+        #if DEBUG
+        if LaserPerfMonitor.isEnabled {
+            let pressed = PlayerID.allCases.map { "\($0.rawValue)=\(vault.buttons[$0, default: []].count)" }.joined(separator: " ")
+            LaserPerfMonitor.emit(String(format: "[GateUnlock] door opens · game %.3f · vault.opened %@ · succeeded event %@ · presses %@ · consoles %@ · host %.3f",
+                                         time, vault.opened ? "yes" : "no", succeeded.contains(vault.id) ? "yes" : "no",
+                                         pressed, consoleMode ? "yes" : "no", CACurrentMediaTime()))
+        }
+        #endif
         scene.setVaultDoorState(.open, animated: true, reduceMotion: reducesMotion())
         countdown.isEnabled = false
         digitsRoot.isEnabled = false
