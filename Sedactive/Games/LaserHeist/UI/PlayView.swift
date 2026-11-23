@@ -24,6 +24,7 @@ struct PlayView: View {
     var liveSession: GameSessionCoordinator?
     var onLiveRetry: (() -> Void)?
     var leanTutorial: LeanTutorial?
+    var onTutorialDiamondTimeFinished: ((UUID) -> Void)?
 
     @State private var generation = UUID()
 
@@ -31,6 +32,7 @@ struct PlayView: View {
         let roundGeneration = liveSession?.inputConfiguration.sessionGeneration ?? generation
         ReplayRoundView(generation: roundGeneration, avatarSource: avatarSource, cutoutSource: cutoutSource,
                         onExit: onExit, suppliedSession: liveSession, tutorial: leanTutorial,
+                        onTutorialDiamondTimeFinished: onTutorialDiamondTimeFinished,
                         retry: { if let onLiveRetry { onLiveRetry() } else { generation = UUID() } })
             .id(roundGeneration)
     }
@@ -93,6 +95,7 @@ private struct ReplayRoundView: View {
     let onExit: (() -> Void)?
     let suppliedSession: GameSessionCoordinator?
     let tutorial: LeanTutorial?
+    let onTutorialDiamondTimeFinished: ((UUID) -> Void)?
     @State private var needsLeanProjection = true
     @Environment(\.scenePhase) private var scenePhase
     // Render subscriptions outlive the SwiftUI value that installed them. Read current lifecycle
@@ -110,6 +113,13 @@ private struct ReplayRoundView: View {
     @State private var vaultPreviewSceneStatus = ""
     #endif
     @State private var tutorialDiamondTime: FTUEDiamondTimeSession?
+    @State private var diamondExitFrame: DiamondExitFrame?
+
+    private struct DiamondExitFrame {
+        let game: LaserGame
+        let paws: [LaserContactHand: LaserDiamondPosition]
+        let state: LaserGameState
+    }
     @State private var tutorialDiamondPresentation = LaserReplayPresentation()
     @State private var tutorialDiamondFlights = DiamondHUDFlightModel()
     @State private var tutorialHeartArt: HeartArt?
@@ -221,6 +231,7 @@ private struct ReplayRoundView: View {
             // this view's tutorial state, runs through `objects.onFrame` (cleared in `onDisappear`).
             let frameContent = content
             objects.onFrame = { now, scene in
+                guard diamondExitFrame == nil else { return }
                 if let scene, let tutorial = activeTutorial {
                     leanTravel.update(scene: scene, tutorial: tutorial, generation: generation, at: now,
                         eligible: trainingSceneActive && (suppliedSession == nil || suppliedSession?.canStartLiveRound == true))
@@ -770,7 +781,7 @@ private struct ReplayRoundView: View {
             if stage == .completed {
                 if FTUEOnboardingPreview.isRequested {
                     leanPreviewStart = nil
-                    leave()
+                    if onTutorialDiamondTimeFinished == nil { leave() }
                 } else {
                     let start = leanPreviewStart; leanPreviewStart = nil; start?()
                 }
@@ -1057,17 +1068,18 @@ private struct ReplayRoundView: View {
 
     private func tutorialDiamondHUD(_ round: FTUEDiamondTimeSession, tutorial: LeanTutorial) -> some View {
         let configuration = round.inputs.configuration
-        let state = round.state(health: suppliedSession?.heartTraining?.state.teamHealth
+        let game = diamondExitFrame?.game ?? round.game
+        let state = diamondExitFrame?.state ?? round.state(health: suppliedSession?.heartTraining?.state.teamHealth
             ?? previewDiamondTimeHealth)
         let model = GameplayHUDModel(state: state, events: round.events, configuration: configuration,
-            activityDuration: configuration.activityDuration, diamondsCollected: round.game.diamondsCollected,
+            activityDuration: configuration.activityDuration, diamondsCollected: game.diamondsCollected,
             enteringFinalVault: !round.entry.isComplete)
         return ZStack {
             if let seconds = model.diamondTimeRemaining, seconds > 0 {
                 DiamondTimeRushFrame(secondsRemaining: seconds)
             }
-            if round.showsPawBoard {
-                DiamondTimePawOverlay(time: state.gameTime, paws: round.paws, states: round.game.diamonds,
+            if diamondExitFrame != nil || round.showsPawBoard {
+                DiamondTimePawOverlay(time: state.gameTime, paws: diamondExitFrame?.paws ?? round.paws, states: game.diamonds,
                                       presentation: tutorialDiamondPresentation.pawBoardDiamonds)
             }
             GameplayHUD(model: model, actions: leanTutorialActions(tutorial),
@@ -1258,10 +1270,21 @@ private struct ReplayRoundView: View {
                         snapshot = try input.diamondTimeSnapshot(packet, round: round)
                     }
                     #endif
+                    let lastFrame = onTutorialDiamondTimeFinished.map { _ in
+                        DiamondExitFrame(game: round.game, paws: round.paws,
+                            state: round.state(health: suppliedSession?.heartTraining?.state.teamHealth
+                                ?? previewDiamondTimeHealth))
+                    }
                     try round.update(at: now, snapshot: snapshot)
                     if round.isComplete {
-                        retireTutorialDiamondTime()
                         tutorial.finishDiamondTime(round, generation: generation)
+                        if tutorial.stage == .completed, let lastFrame, let onTutorialDiamondTimeFinished {
+                            // Keep the last rendered scene and HUD until the root's cover is opaque.
+                            diamondExitFrame = lastFrame
+                            onTutorialDiamondTimeFinished(generation)
+                        } else {
+                            retireTutorialDiamondTime()
+                        }
                         return
                     }
                 }

@@ -10,6 +10,24 @@ import SwiftUI
 struct ContentView: View {
   private let dependencies = AppDependencies.shared
   @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var homeExit: FTUEHomeExit?
+
+  private enum FTUEHomeExit: Equatable {
+    case covering(UUID)
+    case covered(UUID)
+    case revealing(UUID)
+
+    var opacity: Double {
+      if case .revealing = self { return 0 }
+      return 1
+    }
+
+    var hidesOutgoingScene: Bool {
+      if case .covering = self { return false }
+      return true
+    }
+  }
   #if DEBUG
   @State private var showingLiveWrist = InGameCameraPreviewView.wristRequested(ProcessInfo.processInfo.arguments)
   @State private var showingGameCamera = InGameCameraPreviewView.requested(ProcessInfo.processInfo.arguments)
@@ -32,6 +50,15 @@ struct ContentView: View {
       routedContent(flow:flow)
       #endif
     }
+    .allowsHitTesting(homeExit == nil)
+    .accessibilityHidden(homeExit != nil)
+    .overlay {
+      LaserHeistDesign.night
+        .ignoresSafeArea()
+        .opacity(homeExit?.opacity ?? 0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
     #if DEBUG
     // Device checks: `-startCameraSetup` opens Camera Setup at launch (same flow as the button).
     .task {
@@ -44,19 +71,38 @@ struct ContentView: View {
     }
     #endif
     .onChange(of: scenePhase) { _, phase in
-      if phase == .background { Task { await flow.handleBackground() } }
+      if phase == .background {
+        if case let .covering(generation) = homeExit {
+          // A backgrounded app cannot rely on an animation completion to release camera input.
+          finishCover(generation, flow: flow)
+        } else if case .revealing = homeExit {
+          homeExit = nil
+        }
+        Task { await flow.handleBackground() }
+      }
     }
   }
   @ViewBuilder private func routedContent(flow: LaserInputFlow) -> some View {
+      if homeExit?.hidesOutgoingScene == true, flow.route != .selection {
+        LaserHeistDesign.night.ignoresSafeArea()
+      } else {
+        routeView(flow: flow)
+      }
+  }
+
+  @ViewBuilder private func routeView(flow: LaserInputFlow) -> some View {
       switch flow.route {
       case .selection:
         // Sketch Home and Set Up (Kevin): presentation over the same flow. In
         // DEBUG, Home also offers PR #31's real-camera game scene preview.
-        #if DEBUG
-        LaserHeistIntroView(flow: flow, onInGameCamera: { showingGameCamera = true })
-        #else
-        LaserHeistIntroView(flow: flow)
-        #endif
+        Group {
+          #if DEBUG
+          LaserHeistIntroView(flow: flow, onInGameCamera: { showingGameCamera = true })
+          #else
+          LaserHeistIntroView(flow: flow)
+          #endif
+        }
+        .task { revealHome() }
       case .replay:
         replayView(flow: flow)
       case .liveSetup:
@@ -90,7 +136,8 @@ struct ContentView: View {
           if let session = flow.session, session.hasLiveRoundPlan || session.automaticSetup {
             PlayView(avatarSource: { try VisionK03MailboxPump(bridge: dependencies.visionPoseBridge, mailbox: $0) },
                      onExit: { Task { await flow.closeLiveSetup() } }, liveSession: session,
-                     onLiveRetry: { Task { await flow.retryLiveSetup() } }, leanTutorial: flow.leanTutorial)
+                     onLiveRetry: { Task { await flow.retryLiveSetup() } }, leanTutorial: flow.leanTutorial,
+                     onTutorialDiamondTimeFinished: { beginHomeExit($0, flow: flow) })
               .blur(radius: (flow.leanTutorial.stage == .introduction || flow.leanTutorial.stage == .jumpDuckIntroduction) && !flow.leanTutorial.isSuspended ? 5 : 0)
               .id(ObjectIdentifier(session)) // a new session (Retry) gets a fresh scene
               .allowsHitTesting(!stageShown)
@@ -125,10 +172,67 @@ struct ContentView: View {
         .onChange(of: flow.session?.canStartLiveRound, initial: true) { _, _ in
           flow.presentLeanTutorialIfReady()
         }
-        .onChange(of: flow.leanTutorial.stage) { _, stage in
-          guard stage == .completed, let generation = flow.leanTutorial.generation else { return }
-          Task { await flow.closeCompletedLeanTutorial(generation: generation) }
+  }
+
+  private func beginHomeExit(_ generation: UUID, flow: LaserInputFlow) {
+    guard homeExit == nil, !flow.isClosing else { return }
+    if flow.route == .liveSetup {
+      guard flow.session?.inputConfiguration.sessionGeneration == generation,
+            flow.leanTutorial.generation == generation, flow.leanTutorial.stage == .completed else { return }
+    } else {
+      guard flow.route == .replay else { return }
+    }
+
+    if reduceMotion {
+      homeExit = .covering(generation)
+      finishCover(generation, flow: flow)
+    } else {
+      withAnimation(.easeInOut(duration: 0.18), completionCriteria: .removed) {
+        homeExit = .covering(generation)
+      } completion: {
+        finishCover(generation, flow: flow)
+      }
+    }
+  }
+
+  private func finishCover(_ generation: UUID, flow: LaserInputFlow) {
+    guard homeExit == .covering(generation) else { return }
+    if flow.route == .liveSetup,
+       flow.session?.inputConfiguration.sessionGeneration != generation {
+      homeExit = nil
+      return
+    }
+    // Remove the old scene only after purple is opaque. This also retires its renderer.
+    homeExit = .covered(generation)
+    switch flow.route {
+    case .liveSetup:
+      Task {
+        await flow.closeCompletedLeanTutorial(generation: generation)
+        // A replacement session owns its own route. Do not leave it hidden.
+        if homeExit == .covered(generation), flow.route == .liveSetup, !flow.isClosing {
+          homeExit = nil
         }
+      }
+    case .replay:
+      flow.leaveReplay()
+    case .selection:
+      revealHome()
+    case .diagnostics:
+      homeExit = nil
+    }
+  }
+
+  private func revealHome() {
+    guard case let .covered(generation) = homeExit else { return }
+    if reduceMotion || scenePhase != .active {
+      homeExit = nil
+    } else {
+      withAnimation(.easeInOut(duration: 0.22), completionCriteria: .removed) {
+        homeExit = .revealing(generation)
+      } completion: {
+        if homeExit == .revealing(generation) { homeExit = nil }
+      }
+    }
   }
   /// A practice tick may be held during a binding flicker which the existing readiness
   /// policy still admits. Holding practice is not itself a request to return to setup.
@@ -169,7 +273,11 @@ struct ContentView: View {
             .font(.caption2.monospaced()).padding(6).background(.black.opacity(0.7))
             .foregroundStyle(.white).allowsHitTesting(false)
         }
-    } else { PlayView(onExit: { flow.leaveReplay() }) }
+    } else {
+      PlayView(onExit: { flow.leaveReplay() },
+               onTutorialDiamondTimeFinished: FTUEOnboardingPreview.isRequested
+                 ? { beginHomeExit($0, flow: flow) } : nil)
+    }
     #else
     PlayView(onExit: { flow.leaveReplay() })
     #endif
