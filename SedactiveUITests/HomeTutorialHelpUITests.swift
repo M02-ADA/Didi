@@ -2,6 +2,39 @@ import XCTest
 
 /// Real Home and LaserScene; only the explicit DEBUG fixture supplies SYNTHETIC practice input.
 final class HomeTutorialHelpUITests: XCTestCase {
+    func testPlacementSurvivesBackgroundButForceCloseReturnsHome() {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments = ["-homeHelpFTUEPreview"]
+        app.launchEnvironment["FTUE_ONBOARDING_TEST_SUITE"] = "LaserHeist.FTUEOnboardingTest.\(UUID())"
+        let start = app.buttons["startMission"]
+        let next = app.buttons["setupNext"]
+
+        func openPlacement() {
+            XCTAssertTrue(start.waitForExistence(timeout: 15))
+            XCTAssertFalse(next.exists)
+            start.tap()
+            let skip = app.buttons["skipIntroVideo"]
+            XCTAssertTrue(skip.waitForExistence(timeout: 15))
+            skip.tap()
+            XCTAssertTrue(next.waitForExistence(timeout: 15))
+        }
+
+        app.launch()
+        openPlacement()
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 10))
+        app.activate()
+        XCTAssertTrue(next.waitForExistence(timeout: 15), "Backgrounding keeps the current placement page")
+        XCTAssertFalse(start.exists)
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(start.waitForExistence(timeout: 15))
+        XCTAssertFalse(next.exists)
+    }
+
     func testOnboardingCompletionAndHelpReplayReturnHome() {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft
@@ -21,11 +54,13 @@ final class HomeTutorialHelpUITests: XCTestCase {
         }
 
         app.launch()
+        XCTAssertTrue(start.waitForExistence(timeout: 15))
+        start.tap()
+        let skip = app.buttons["skipIntroVideo"]
+        XCTAssertTrue(skip.waitForExistence(timeout: 15))
+        skip.tap()
         XCTAssertTrue(next.waitForExistence(timeout: 15))
-        capture("first-launch-placement")
-        app.terminate()
-        app.launch()
-        XCTAssertTrue(next.waitForExistence(timeout: 15), "Unfinished onboarding returns on relaunch")
+        capture("first-mission-placement")
         for visit in 1...2 {
             next.tap()
             XCTAssertTrue(elements["leanTutorialTitle"].waitForExistence(timeout: 45))
@@ -168,8 +203,9 @@ final class HomeTutorialHelpUITests: XCTestCase {
         XCTAssertEqual(scene.label, "SYNTHETIC VAULT SCENE · door: true · buttons: \(solo ? 1 : 2) · waiting: true")
         capture("synthetic-vault-before-fresh-evidence")
         waitForPractice(0, opened: false)
-        let banner = solo ? "PRESS YOUR BUTTON" : "PRESS THE BUTTONS"
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", banner)).firstMatch.exists)
+        let banner = NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@",
+                                 "PRESS THE BUTTONS", "TO OPEN THE DOOR")
+        XCTAssertTrue(app.staticTexts.containing(banner).firstMatch.exists)
         XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.500")
         XCTAssertFalse(diamond.exists)
         capture("synthetic-vault-practice")

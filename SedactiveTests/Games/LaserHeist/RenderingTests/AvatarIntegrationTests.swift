@@ -291,8 +291,6 @@ struct AvatarIntegrationTests {
         #expect(mascots.count == 2)
         let door = scene.layout.vaultDoorStopZ
         var feedback: [(String, SIMD4<Float>)] = [
-            ("countdown", screenRect([0, VaultPresentation.countdownHeight, door + 0.04],
-                                     size: [VaultPresentation.countdownWidth, 0.16], in: scene, aspect: aspect)),
             ("number", screenRect([0, VaultPresentation.digitCenterY, door + 0.05],
                                   size: [0.36, VaultPresentation.digitHeight], in: scene, aspect: aspect)),
         ]

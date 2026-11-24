@@ -53,14 +53,7 @@ struct LaserHeistIntroView: View {
         .preferredColorScheme(.dark)
         .onAppear {
             AudioService.shared.setMusic(.menu)
-            #if DEBUG
-            // The legacy Help visual fixture opens directly on its Home entry point.
-            if ProcessInfo.processInfo.arguments.contains("-homeHelpFTUEPreview"),
-               !FTUEOnboardingPreview.isRequested { return }
-            #endif
-            let returnsToPlacement = flow.consumePlacementReturn()
-            let offersOnboarding = flow.offerLaunchOnboarding()
-            if returnsToPlacement || offersOnboarding { screen = .setup }
+            if flow.consumePlacementReturn() { screen = .setup }
         }
         .onChange(of: flow.tutorialReplayRequested) { _, pending in
             if !pending, flow.route == .selection { screen = .home }

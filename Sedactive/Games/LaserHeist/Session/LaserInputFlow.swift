@@ -13,15 +13,7 @@ final class LaserInputFlow {
     private(set) var returnsToPlacement = false
     let leanTutorial: LeanTutorial
     private var operation: UUID?
-    private var offeredLaunchOnboarding = false
 
-    /// Offer placement once per app process. An incomplete visit can be started again
-    /// from Home, and a new process reads the same stored completion record.
-    func offerLaunchOnboarding() -> Bool {
-        guard route == .selection, !offeredLaunchOnboarding else { return false }
-        offeredLaunchOnboarding = true
-        return !leanTutorial.isCompleted
-    }
     /// Explicit Home intent, consumed by exactly one setup generation; never persisted.
     private(set) var tutorialReplayRequested = false
     @discardableResult func requestLeanTutorialReplay() -> Bool {

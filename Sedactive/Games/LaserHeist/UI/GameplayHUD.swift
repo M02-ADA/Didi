@@ -32,6 +32,8 @@ struct GameplayHUDModel: Equatable {
     /// Whether the round has reached its diamond (Diamond Time or after it).
     var diamondReached: Bool
     var banner: Banner
+    let vaultDuration: Double
+    var vaultSecondsRemaining: Double?
     /// A DEBUG Solo Practice round (one player, one gate button): the gate's instruction says so.
     var soloPractice = false
     /// Whole seconds of Diamond Time left: the authoritative phase-change time
@@ -103,6 +105,7 @@ struct GameplayHUDModel: Equatable {
          activityDuration: Double, stageProgress: Double? = nil, diamondsCollected: Int? = nil,
          diamondsAreFixture: Bool = false, enteringFinalVault: Bool = false, soloPractice: Bool = false) {
         self.soloPractice = soloPractice
+        vaultDuration = configuration.vaultDuration
         maxHealth = configuration.initialTeamHealth
         health = state?.teamHealth ?? configuration.initialTeamHealth
         score = state?.teamScore ?? 0
@@ -146,6 +149,10 @@ struct GameplayHUDModel: Equatable {
         case .diamondTime: banner = enteringFinalVault ? .none : .retrieveDiamonds
         default: banner = .none
         }
+        if state.phase == .vault, let vault = state.vault, !vault.opened,
+           vault.deadline > state.gameTime {
+            vaultSecondsRemaining = vault.deadline - state.gameTime
+        }
         if inDiamondTime, !enteringFinalVault, let start = events.last(where: {
             $0.sessionGeneration == state.sessionGeneration && $0.kind == .phaseChanged(.diamondTime)
         })?.gameTime {
@@ -188,6 +195,10 @@ struct GameplayHUD: View {
             // Sketch artboard: 1210 × 834 pt (11-inch iPad landscape).
             let k = min(proxy.size.width / 1210, proxy.size.height / 834)
             ZStack(alignment: .top) {
+                if let seconds = model.vaultSecondsRemaining {
+                    VaultCountdownAura(secondsRemaining: seconds, duration: model.vaultDuration)
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                }
                 LinearGradient(colors: [Self.navy.opacity(0.75), Self.navy.opacity(0)], startPoint: .top, endPoint: .bottom)
                     .frame(height: 159 * k)
                     .frame(maxWidth: .infinity)
@@ -364,17 +375,10 @@ struct GameplayHUD: View {
             EmptyView()
         case .pressButtons:
             VStack(spacing: 2 * k) {
-                // One activation switch per player (19 November 2026): co-op needs both, Solo
-                // Practice its one. The hint says how a live press works: lean to the own side (the
-                // board docks beside the button on the gate's frame), then reach out (one wrist zone
-                // on the player's outer side, `LaserLiveRoundGeometryV1`). Not Sketch copy; pending Theo.
-                Text(model.soloPractice ? "PRESS YOUR BUTTON" : "PRESS THE BUTTONS")
+                Text("PRESS THE BUTTONS")
                     .font(.system(size: 52.7 * k, weight: .black, design: .rounded))
-                Text("TO OPEN THE DOOR").font(.system(size: 18.7 * k, weight: .black, design: .rounded))
-                Text(model.soloPractice ? "Lean to your side, then reach out and press it"
-                                        : "Each player: lean to your side, then reach out to your button")
-                    .font(.system(size: 16 * k, weight: .bold, design: .rounded))
-                    .padding(.top, 4 * k)
+                Text("TO OPEN THE DOOR")
+                    .font(.system(size: 36 * k, weight: .black, design: .rounded))
             }
             .modifier(SketchTitle(k: k))
             .transition(titleTransition)
