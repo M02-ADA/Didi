@@ -124,14 +124,10 @@ struct ContentView: View {
         // Automatic setup mounts the game scene from the start (hidden behind the camera screen),
         // so its first load does not stall tracking right after calibration (iPad, 11 November).
         ZStack {
-          let recoveringExploration = (flow.leanTutorial.isPractising || flow.leanTutorial.collection != nil)
-            && flow.session.map { Self.showsLeanSetupRecovery(tutorial: flow.leanTutorial, session: $0) } == true
-          let recoveringTutorialBonus = flow.leanTutorial.stage == .diamondTimeDemo && flow.session.map {
-            $0.tutorialDiamondTimeInputs(generation: $0.inputConfiguration.sessionGeneration) == nil
-          } == true
-          let recovering = recoveringExploration || recoveringTutorialBonus
-          let stageShown = Self.showsSetupStage(flow.session)
-            && (!flow.leanTutorial.isActive || recovering)
+          let tutorialWarning = flow.session.flatMap {
+            LaserTrackingWarning(tutorial: flow.leanTutorial, session: $0)
+          }
+          let stageShown = Self.showsSetupStage(flow.session) && !flow.leanTutorial.isActive
             && !(flow.leanTutorial.stage == .completed && (flow.session?.preRoundTutorialPending == true || flow.session?.canStartLiveRound == true))
           if let session = flow.session, session.hasLiveRoundPlan || session.automaticSetup {
             PlayView(avatarSource: { try VisionK03MailboxPump(bridge: dependencies.visionPoseBridge, mailbox: $0) },
@@ -140,14 +136,14 @@ struct ContentView: View {
                      onTutorialDiamondTimeFinished: { beginHomeExit($0, flow: flow) })
               .blur(radius: (flow.leanTutorial.stage == .introduction || flow.leanTutorial.stage == .jumpDuckIntroduction) && !flow.leanTutorial.isSuspended ? 5 : 0)
               .id(ObjectIdentifier(session)) // a new session (Retry) gets a fresh scene
-              .allowsHitTesting(!stageShown)
-              .accessibilityHidden(stageShown)
+              .allowsHitTesting(!stageShown && tutorialWarning == nil)
+              .accessibilityHidden(stageShown || tutorialWarning != nil)
           }
           // The setup stage, with its camera preview, stays MOUNTED for the whole visit and is only
           // hidden over the game: attaching or detaching the preview layer reconfigures the running
           // capture session and stalls frames 220–500 ms (iPad, 11 November 2026), which aborted
           // every countdown and, repeated, lost the player and restarted setup.
-          liveSetupStage(flow, preview: cameraPreview, recovering: recovering)
+          liveSetupStage(flow, preview: cameraPreview)
             .opacity(stageShown ? 1 : 0)
             .allowsHitTesting(stageShown)
             .accessibilityHidden(!stageShown)
@@ -160,7 +156,11 @@ struct ContentView: View {
              let remaining = session.liveReadiness?.countdownRemaining {
             RoundCountdownOverlay(value: Int(remaining.rounded(.up)))
           }
-          if !stageShown, flow.leanTutorial.isActive, !flow.leanTutorial.isSuspended {
+          if let tutorialWarning {
+            LaserTrackingWarningScreen(warning: tutorialWarning, busy: flow.isStarting || flow.isClosing,
+              recalibrate: { Task { await flow.retryLiveSetup() } },
+              leave: { Task { await flow.closeLiveSetup() } })
+          } else if !stageShown, flow.leanTutorial.isActive, !flow.leanTutorial.isSuspended {
             LeanTutorialOverlay(tutorial: flow.leanTutorial, solo: flow.isSolo)
           }
           #if DEBUG
@@ -234,18 +234,6 @@ struct ContentView: View {
       }
     }
   }
-  /// A practice tick may be held during a binding flicker which the existing readiness
-  /// policy still admits. Holding practice is not itself a request to return to setup.
-  /// Once readiness really blocks, retain the original recovery presentation.
-  static func showsLeanSetupRecovery(tutorial: LeanTutorial, session: GameSessionCoordinator) -> Bool {
-    guard tutorial.stage == .freeLean else { return !tutorial.canExploreLean(in: session) }
-    guard let input = session.inputContext, input.isActive,
-          input.sessionGeneration == tutorial.generation,
-          tutorial.roster == session.inputConfiguration.roster,
-          tutorial.roster.allSatisfy({ input.calibrationRevisions[$0] != nil }),
-          session.inputStatus == .running, session.preRoundTutorialPending else { return true }
-    return !tutorial.canExploreLean(in: session) && !session.canStartLiveRound
-  }
   /// Whether the camera setup stage is in front: always until a live round's game scene is
   /// mounted, then except while counting down, playing or showing results.
   static func showsSetupStage(_ session: GameSessionCoordinator?) -> Bool {
@@ -287,33 +275,22 @@ struct ContentView: View {
 
 /// Jevon's setup controls on the Sketch "stand here" stage (Kevin's presentation).
 @MainActor
-private func liveSetupStage(_ flow: LaserInputFlow, preview: AnyView?, recovering: Bool) -> some View {
+private func liveSetupStage(_ flow: LaserInputFlow, preview: AnyView?) -> some View {
   CalibrationStageView(cameraPreview: preview,
     cameraAspect: AppDependencies.shared.camera.negotiated.map {
       CGFloat($0.outputWidth) / CGFloat(max(1, $0.outputHeight)) } ?? 16 / 9,
-    playerStatus: flow.session.map { session in
-      guard recovering else { return session.presence.players }
-      let input = LaserTrackingWarning.Input(session: session)
-      return Dictionary(uniqueKeysWithValues: session.inputConfiguration.roster.map { player in
-        if let status = session.presence.players[player], case .calibrating = status {
-          return (player, status)
-        }
-        let ready = input.hasPacket && !input.identityLost && !input.awaitsIdentityRecovery
-        let status: LaserSetupPlayerStatus = ready && input.attention[player] == nil ? .linked : .searching
-        return (player, status)
-      })
-    } ?? [:],
+    playerStatus: flow.session?.presence.players ?? [:],
     solo: flow.session?.isSoloPractice == true,
     showsCameraUnavailableLabel: false,
     onBack: { Task { await flow.closeLiveSetup(returnToPlacement: true) } }) {
-    PlayerSetupView(flow: flow, isOverlay: true, isRecovering: recovering)
+    PlayerSetupView(flow: flow, isOverlay: true)
   }
   #if DEBUG
   // DEBUG only, for testing without an iPad: ends camera setup (nothing is
   // calibrated or marked ready) and opens the seeded synthetic replay through
   // the same flow. Never compiled into Release.
   .overlay(alignment: .bottomLeading) {
-    if !recovering, ProcessInfo.processInfo.arguments.contains("-enableCalibrationReplaySkip") {
+    if ProcessInfo.processInfo.arguments.contains("-enableCalibrationReplaySkip") {
       Button("DEBUG · Skip camera & play synthetic replay") {
         Task {
           await flow.closeLiveSetup()

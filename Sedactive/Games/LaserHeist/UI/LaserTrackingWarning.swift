@@ -85,6 +85,28 @@ nonisolated struct LaserTrackingWarning: Equatable, Sendable {
         return [.binding, .staleEvidence, .source].contains(input.readinessBlocker)
     }
 
+    /// FTUE has no started round yet. Use its existing readiness gate so a short
+    /// tracking flicker doesn't interrupt a tutorial step.
+    @MainActor init?(tutorial: LeanTutorial, session: GameSessionCoordinator) {
+        guard tutorial.isActive, !tutorial.isSuspended, session.preRoundTutorialPending,
+              tutorial.generation == session.inputConfiguration.sessionGeneration,
+              !session.canStartLiveRound, session.liveReadiness?.blocker != .presentation else { return nil }
+
+        let input = Input(session: session)
+        // Leg/arm evidence can be briefly obscured by the duck being taught.
+        if session.isPresentingFTUEDuckRetry, input.hasPacket, !input.identityLost,
+           input.readinessBlocker == .measurements, !input.attention.values.contains(.tracking) { return nil }
+
+        if input.identityLost || input.sessionPhase == .restartRequired {
+            (stage, detail, primary) = (.needsRecalibration,
+                "We lost track of your position. Recalibrate to restart the tutorial.", .recalibrate)
+        } else {
+            let hint = LiveEvidenceAttention.line(input.attention, solo: input.solo)
+                ?? (input.solo ? "Stand in the middle, whole body in view." : "Stand in your places, whole body in view.")
+            (stage, detail, primary) = (.waitingForPlayers, "\(hint) The tutorial continues when tracking returns.", nil)
+        }
+    }
+
     /// What the warning shows for this state (once it is up).
     init(_ input: Input) {
         if input.identityLost {

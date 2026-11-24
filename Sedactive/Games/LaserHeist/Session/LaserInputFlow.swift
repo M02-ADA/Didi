@@ -191,7 +191,7 @@ final class LaserInputFlow {
     /// Restarts setup by itself when the current one can no longer link the players, before
     /// any round has started. Bounded; then the players choose "Restart setup".
     func restartAutomaticallyIfNeeded() async {
-        guard route == .liveSetup, !isStarting, !isClosing, message == nil,
+        guard route == .liveSetup, !isStarting, !isClosing, message == nil, !leanTutorial.isActive,
               automaticRestarts < Self.maximumAutomaticRestarts, let session, session.automaticSetup,
               session.state == nil, session.summary == nil,
               session.phase == .restartRequired || session.setup?.phase == .restartRequired else { return }
