@@ -52,6 +52,23 @@ struct GameplayHUDTests {
         #expect(opacity(0) == 0)
     }
 
+    @Test func vaultAuraFollowsOnlyTheActiveCountdown() throws {
+        let config = try configuration()
+        func remaining(_ phase: LaserRoundPhase, at time: Double, opened: Bool = false) -> Double? {
+            GameplayHUDModel(state: state(time, phase, vault: vault(opened: opened)), events: [],
+                             configuration: config, activityDuration: 300).vaultSecondsRemaining
+        }
+        #expect(remaining(.vault, at: 25) == 5)
+        #expect(remaining(.vault, at: 29) == 1)
+        #expect(remaining(.vault, at: 30) == nil)
+        #expect(remaining(.vault, at: 25, opened: true) == nil)
+        #expect(remaining(.activity, at: 25) == nil)
+        #expect(remaining(.ended(.vaultFailed), at: 30) == nil)
+        #expect(VaultCountdownAura.opacity(secondsRemaining: 5, duration: 5, steady: true)
+                == VaultCountdownAura.opacity(secondsRemaining: 1, duration: 5, steady: true))
+        #expect(VaultCountdownAura.opacity(secondsRemaining: 0, duration: 5, steady: false) == 0)
+    }
+
     @Test func showsTheAuthoritativeHealthScoreAndVaults() throws {
         let model = GameplayHUDModel(state: state(4, .activity, health: 3, score: 700, opened: 2), events: [],
                                      configuration: try configuration(), activityDuration: 300)
