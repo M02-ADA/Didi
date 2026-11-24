@@ -364,17 +364,10 @@ struct GameplayHUD: View {
             EmptyView()
         case .pressButtons:
             VStack(spacing: 2 * k) {
-                // One activation switch per player (19 November 2026): co-op needs both, Solo
-                // Practice its one. The hint says how a live press works: lean to the own side (the
-                // board docks beside the button on the gate's frame), then reach out (one wrist zone
-                // on the player's outer side, `LaserLiveRoundGeometryV1`). Not Sketch copy; pending Theo.
-                Text(model.soloPractice ? "PRESS YOUR BUTTON" : "PRESS THE BUTTONS")
+                Text("PRESS THE BUTTONS")
                     .font(.system(size: 52.7 * k, weight: .black, design: .rounded))
-                Text("TO OPEN THE DOOR").font(.system(size: 18.7 * k, weight: .black, design: .rounded))
-                Text(model.soloPractice ? "Lean to your side, then reach out and press it"
-                                        : "Each player: lean to your side, then reach out to your button")
-                    .font(.system(size: 16 * k, weight: .bold, design: .rounded))
-                    .padding(.top, 4 * k)
+                Text("TO OPEN THE DOOR")
+                    .font(.system(size: 36 * k, weight: .black, design: .rounded))
             }
             .modifier(SketchTitle(k: k))
             .transition(titleTransition)

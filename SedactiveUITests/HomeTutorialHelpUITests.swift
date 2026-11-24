@@ -166,8 +166,9 @@ final class HomeTutorialHelpUITests: XCTestCase {
         XCTAssertEqual(scene.label, "SYNTHETIC VAULT SCENE · door: true · buttons: \(solo ? 1 : 2) · waiting: true")
         capture("synthetic-vault-before-fresh-evidence")
         waitForPractice(0, opened: false)
-        let banner = solo ? "PRESS YOUR BUTTON" : "PRESS THE BUTTONS"
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", banner)).firstMatch.exists)
+        let banner = NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@",
+                                 "PRESS THE BUTTONS", "TO OPEN THE DOOR")
+        XCTAssertTrue(app.staticTexts.containing(banner).firstMatch.exists)
         XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.500")
         XCTAssertFalse(diamond.exists)
         capture("synthetic-vault-practice")
