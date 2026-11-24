@@ -36,11 +36,14 @@ import Testing
         return .init(sessionGeneration: practice.generation, frameID: frame, capturedAt: time,
             cameraGeometryRevision: 1, players: players)
     }
-    static func run(_ practice: inout FTUELaserPractice, clear: Set<PlayerID>, unavailable: Set<PlayerID> = [], start: Double = 1000) throws {
+    static func run(_ practice: inout FTUELaserPractice, clear: Set<PlayerID>, unavailable: Set<PlayerID> = [], start: Double = 1000, earlyDuck: Bool = false) throws {
         try practice.update(at: start, eligible: true, context: practice.context)
         for i in 1...90 {
             let time = start + Double(i) * 0.05
-            let p = try packet(practice, at: time - 0.01, frame: UInt64(start * 100) + UInt64(i), clear: clear, unavailable: unavailable)
+            let capture = time - 0.01
+            let window = practice.configuration.evidenceTiming.captureWindow(crossing: practice.crossing)
+            let posture = earlyDuck ? (capture - start < window.lowerBound ? Set(practice.roster) : []) : clear
+            let p = try packet(practice, at: capture, frame: UInt64(start * 100) + UInt64(i), clear: posture, unavailable: unavailable)
             try practice.receive(p, at: time, maximumAge: 0.25)
             try practice.update(at: time, eligible: true, context: practice.context)
             if practice.outcome != .pending { break }

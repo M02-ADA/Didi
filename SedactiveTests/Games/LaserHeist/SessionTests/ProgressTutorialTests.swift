@@ -90,6 +90,11 @@ import Testing
         }
         #expect(tutorial.progressJourney.fillEnd == GameplayHUDModel.diamondPosition)
         #expect(tutorial.progressJourney.hasReachedExplanationEndpoint(.diamond))
+        tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: 1.82, active: false)
+        #expect(!tutorial.progressJourney.isActivePresentation)
+        #expect(tutorial.progressJourney.hasReachedExplanationEndpoint(.diamond))
+        tutorial.finishProgress(.diamond, generation: generation)
+        tutorial.finishVaultPractice(accepted, generation: generation, doorIsClear: true)
         tutorial.finishProgress(.diamond, generation: generation)
         #expect(tutorial.stage == .diamondCollectionIntroduction && !tutorial.isCompleted)
         tutorial.progressJourney.update(stage: tutorial.stage, generation: generation, at: 1.84, active: true)

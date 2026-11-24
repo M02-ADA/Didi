@@ -76,6 +76,8 @@ struct ResultsView: View {
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.35)) { celebrating = false }
     }
 
+    private var isGameOver: Bool { summary.outcome == .healthDepleted }
+
     private var scoreCard: some View {
         SketchArtboard {
             ZStack {
@@ -83,7 +85,11 @@ struct ResultsView: View {
                     .resizable()
                     .scaledToFill()
                     .sketchBackdrop()
-                ResultsMascots()
+                if isGameOver {
+                    GameOverMascots()
+                } else {
+                    ResultsMascots()
+                }
             }
         } content: { k in
 
@@ -98,15 +104,25 @@ struct ResultsView: View {
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("resultsTitle")
 
-            scorePanel(k)
-                .sketchFrame(x: 307, y: 239, width: 597, height: 328, k: k)
+            ZStack(alignment: .top) {
+                scorePanel(k)
+                if isGameOver {
+                    // The app does not record a best score yet.
+                    Text("HIGH SCORE: —")
+                        .font(.system(size: 24.4 * k, weight: .medium, design: .monospaced))
+                        .tracking(8.78 * k)
+                        .foregroundStyle(LaserHeistDesign.cream)
+                        .offset(y: 268 * k)
+                }
+            }
+            .sketchFrame(x: 307, y: 239, width: 597, height: 328, k: k)
 
             HStack(spacing: 33 * k) {
                 if let onHome {
                     Button(action: onHome) {
                         Label("Back to Home", systemImage: "house.fill")
                             .font(.system(size: 25 * k, weight: .bold, design: .rounded))
-                            .foregroundStyle(LaserHeistDesign.cream)
+                            .foregroundStyle(LaserHeistDesign.cream.opacity(isGameOver ? 0.72 : 1))
                     }
                     .buttonStyle(GradientCapsuleButtonStyle(top: Color(sketch: 0x6561A4), bottom: Color(sketch: 0x4D4778),
                                                             edgeTop: Color(sketch: 0x948ECA), edgeBottom: Color(sketch: 0x3B3765),
@@ -148,13 +164,13 @@ struct ResultsView: View {
                 .frame(height: 29 * k)
                 .offset(x: 4.4 * k, y: 30 * k)
             Text(summary.teamScore, format: .number.grouping(.never))
-                .font(.system(size: 263.2 * k, weight: .bold))
+                .font(.system(size: (isGameOver ? 225 : 263.2) * k, weight: .bold))
                 .foregroundStyle(LaserHeistDesign.cream)
                 .shadow(color: .black.opacity(0.37), radius: 0, x: 8 * k, y: 12 * k)
                 .lineLimit(1)
                 .minimumScaleFactor(0.4)
-                .frame(width: 560 * k, height: 273 * k)
-                .offset(y: 27 * k)
+                .frame(width: 560 * k, height: (isGameOver ? 220 : 273) * k)
+                .offset(y: (isGameOver ? 52 : 27) * k)
                 .accessibilityIdentifier("teamScore")
         }
         .accessibilityElement(children: .ignore)
@@ -165,7 +181,7 @@ struct ResultsView: View {
     private var title: String {
         switch summary.outcome {
         case .completed: "Great Job Agents!"
-        case .healthDepleted: "Team health depleted"
+        case .healthDepleted: "TRY AGAIN AGENTS"
         case .vaultFailed: "Vault timed out"
         case .aborted: "Round ended early"
         case .technicalInterruption: "Round interrupted"
@@ -332,6 +348,34 @@ private struct ResultsMascots: View {
                 .resizable()
                 .frame(width: 318 * k, height: 383 * k)
                 .position(x: proxy.size.width - (width - 949 - 318 / 2) * k, y: proxy.size.height - (height - 531 - 383 / 2) * k)
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The Hi-Fi crops the mascots at the screen corners. Their widths scale
+/// with the score card, while their feet stay anchored to the screen edge.
+private struct GameOverMascots: View {
+    var body: some View {
+        GeometryReader { proxy in
+            let artboard = LaserHeistDesign.artboard
+            let k = min(proxy.size.width / artboard.width, proxy.size.height / artboard.height)
+            ZStack(alignment: .bottomLeading) {
+                Image("LaserHeistUI/game-over-lemon")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 184 * k)
+                    .offset(x: -9 * k, y: 9 * k)
+                Image("LaserHeistUI/game-over-tangerine")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 274 * k)
+                    .offset(x: proxy.size.width - 232 * k, y: 20 * k)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .bottomLeading)
+            .clipped()
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)

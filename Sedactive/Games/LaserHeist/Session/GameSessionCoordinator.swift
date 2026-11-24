@@ -94,10 +94,15 @@ final class GameSessionCoordinator {
         return boundary - time
     }
     private(set) var laserPractice: FTUELaserPractice?
+    var isPresentingFTUEDuckRetry: Bool {
+        lifetime != nil && preRoundTutorialPending && phase == .awaitingSetup
+            && laserPractice?.canFinishDuckRetryFeedback(in: inputContext) == true
+    }
+
     func updateFTUELaserPractice(at now: Double, generation: UUID, suspended: Bool) {
         guard generation == inputConfiguration.sessionGeneration, lifetime != nil, preRoundTutorialPending,
               phase == .awaitingSetup, game == nil, let configuration, let context = inputContext else { return }
-        let eligible = !suspended && canStartLiveRound && pairInPlay
+        let eligible = !suspended && ((canStartLiveRound && pairInPlay) || isPresentingFTUEDuckRetry)
         if laserPractice == nil, eligible {
             let accepted = provider.acceptedCalibrations.filter { inputConfiguration.roster.contains($0.key) }
             let input = inputConfiguration.replacingCalibrations(accepted)
