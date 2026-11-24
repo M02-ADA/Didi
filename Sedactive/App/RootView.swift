@@ -50,6 +50,7 @@ struct ContentView: View {
       routedContent(flow:flow)
       #endif
     }
+    .environment(dependencies.highScore)
     .allowsHitTesting(homeExit == nil)
     .accessibilityHidden(homeExit != nil)
     .overlay {
@@ -139,6 +140,15 @@ struct ContentView: View {
                      onLiveRetry: { Task { await flow.retryLiveSetup() } }, leanTutorial: flow.leanTutorial,
                      onTutorialDiamondTimeFinished: { beginHomeExit($0, flow: flow) })
               .blur(radius: (flow.leanTutorial.stage == .introduction || flow.leanTutorial.stage == .jumpDuckIntroduction) && !flow.leanTutorial.isSuspended ? 5 : 0)
+              .onChange(of: session.summary, initial: true) { _, summary in
+                guard let summary, flow.route == .liveSetup, flow.session === session,
+                      summary.sessionGeneration == session.inputConfiguration.sessionGeneration,
+                      !session.isReplay, !session.preRoundTutorialPending, !flow.leanTutorial.isActive else { return }
+                #if DEBUG
+                guard session.debugSkips.isEmpty, session.debugGateSkips.isEmpty else { return }
+                #endif
+                dependencies.highScore.record(summary, isNormalGameplay: true)
+              }
               .id(ObjectIdentifier(session)) // a new session (Retry) gets a fresh scene
               .allowsHitTesting(!stageShown)
               .accessibilityHidden(stageShown)
