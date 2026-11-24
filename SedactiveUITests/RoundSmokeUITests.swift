@@ -42,6 +42,7 @@ final class RoundSmokeUITests: XCTestCase {
 
     func testInputSelectionCanOpenReplayAndReturnWithoutStartingCamera() {
         let app = XCUIApplication()
+        app.launchArguments.append("-showHomeDebugTools")
         app.launch()
         let replay = app.buttons["chooseReplay"]
         let camera = app.buttons["startMission"]   // Sketch Home: camera setup follows the two Set Up steps

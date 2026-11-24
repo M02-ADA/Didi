@@ -16,6 +16,7 @@ struct HomeView: View {
     let onStart: () -> Void
     var onReplayTutorial: (() -> Void)? = nil
     #if DEBUG
+    static let showsDebugTools = ProcessInfo.processInfo.arguments.contains("-showHomeDebugTools")
     @State private var showsSFXReplayLab = false
     #endif
 
@@ -63,14 +64,16 @@ struct HomeView: View {
         }
         #if DEBUG
         .overlay(alignment: .topLeading) {
-            Button("SFX Replay Lab", systemImage: "waveform") {
-                AudioService.shared.play(.uiTap)
-                showsSFXReplayLab = true
+            if Self.showsDebugTools {
+                Button("SFX Replay Lab", systemImage: "waveform") {
+                    AudioService.shared.play(.uiTap)
+                    showsSFXReplayLab = true
+                }
+                .buttonStyle(.bordered)
+                .tint(LaserHeistDesign.cream)
+                .padding()
+                .accessibilityIdentifier("openSFXReplayLab")
             }
-            .buttonStyle(.bordered)
-            .tint(LaserHeistDesign.cream)
-            .padding()
-            .accessibilityIdentifier("openSFXReplayLab")
         }
         .fullScreenCover(isPresented: $showsSFXReplayLab) { SFXReplayLabView() }
         #endif

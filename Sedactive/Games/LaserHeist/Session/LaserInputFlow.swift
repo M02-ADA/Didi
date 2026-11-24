@@ -153,7 +153,6 @@ final class LaserInputFlow {
         #if DEBUG
         print("[LaserSetupRestart] flow: stopping session \(Self.tag(session)) (phase \(String(describing: session?.phase)), round \(session?.summary != nil ? "ended" : session?.state != nil ? "running" : "not started"))")
         #endif
-        let finishedTutorial = leanTutorial.stage == .completed && session?.preRoundTutorialPending == true
         await session?.stop()
         #if DEBUG
         print("[LaserSetupRestart] flow: session \(Self.tag(session)) stopped")
@@ -167,7 +166,7 @@ final class LaserInputFlow {
         returnsToPlacement = returnToPlacement
         route = .selection
         automaticRestarts = 0
-        message = finishedTutorial ? nil : "Camera setup has ended. You can start a fresh setup or use the replay demo."
+        message = nil
     }
 
     /// Explicit user intent only. The same App-retained provider gets a new coordinator/generation.
@@ -251,7 +250,7 @@ final class LaserInputFlow {
         case is CancellationError:
             "Camera setup was stopped. You can start a fresh setup when ready."
         default:
-            "Camera setup could not continue. Try a fresh setup, or use the replay demo."
+            "Camera setup could not continue. Try a fresh setup."
         }
     }
 }
