@@ -24,9 +24,16 @@ final class GameplayHighScore {
         records[generation]
     }
 
+    static func isEligible(_ outcome: LaserRoundOutcome) -> Bool {
+        switch outcome {
+        case .completed, .healthDepleted, .vaultFailed: true
+        case .aborted, .technicalInterruption: false
+        }
+    }
+
     func record(_ summary: RoundSummary, isNormalGameplay: Bool) {
         guard isNormalGameplay,
-              summary.outcome == .completed || summary.outcome == .healthDepleted,
+              Self.isEligible(summary.outcome),
               records[summary.sessionGeneration] == nil else { return }
 
         let isNew = summary.teamScore > highScore

@@ -84,7 +84,7 @@ struct ResultsView: View {
     private var isNewHighScore: Bool { record?.isNew == true }
     private var isGameOver: Bool { summary.outcome == .healthDepleted && !isNewHighScore }
     private var showsHighScore: Bool {
-        summary.outcome == .completed || summary.outcome == .healthDepleted
+        GameplayHighScore.isEligible(summary.outcome)
     }
 
     private var scoreCard: some View {
@@ -97,13 +97,13 @@ struct ResultsView: View {
                 if isGameOver {
                     GameOverMascots()
                 } else {
-                    if showsHighScore { ResultsEdgeDiamonds() }
+                    if isNewHighScore || summary.outcome == .completed { ResultsEdgeDiamonds() }
                     ResultsMascots()
                 }
             }
         } content: { k in
 
-            Text(title)
+            Text(Self.title(for: summary.outcome, isNewHighScore: isNewHighScore))
                 .textCase(.uppercase)
                 .font(.system(size: 43 * k, weight: .bold))
                 .foregroundStyle(LaserHeistDesign.cream)
@@ -141,7 +141,7 @@ struct ResultsView: View {
                     Button(action: onHome) {
                         Label("Back to Home", systemImage: "house.fill")
                             .font(.system(size: 25 * k, weight: .bold, design: .rounded))
-                            .foregroundStyle(LaserHeistDesign.cream.opacity(showsHighScore ? 0.72 : 1))
+                            .foregroundStyle(LaserHeistDesign.cream.opacity(showsHighScore && (summary.outcome != .vaultFailed || isNewHighScore) ? 0.72 : 1))
                     }
                     .buttonStyle(GradientCapsuleButtonStyle(top: Color(sketch: 0x6561A4), bottom: Color(sketch: 0x4D4778),
                                                             edgeTop: Color(sketch: 0x948ECA), edgeBottom: Color(sketch: 0x3B3765),
@@ -198,9 +198,9 @@ struct ResultsView: View {
         .accessibilityIdentifier("resultsScore")
     }
 
-    private var title: String {
+    static func title(for outcome: LaserRoundOutcome, isNewHighScore: Bool) -> String {
         if isNewHighScore { return "CONGRATULATIONS" }
-        return switch summary.outcome {
+        return switch outcome {
         case .completed: "GREAT JOB AGENTS!"
         case .healthDepleted: "TRY AGAIN AGENTS"
         case .vaultFailed: "Vault timed out"
