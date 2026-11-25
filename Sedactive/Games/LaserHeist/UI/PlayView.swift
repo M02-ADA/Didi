@@ -1418,8 +1418,6 @@ private struct ReplayRoundView: View {
                     scene.robotAvatars?.steeringReading($0)
                 }
         }
-        let trackedPlayers = Set(value?.players.keys.map { $0 } ?? [])
-        let players = contactPlayers.map { trackedPlayers.intersection($0) } ?? trackedPlayers
         if tutorial.isPractising {
             #if DEBUG
             if RobotAvatarLayer.debugTestSteer != nil {
@@ -1432,6 +1430,14 @@ private struct ReplayRoundView: View {
             } else { tutorial.observe(nil, generation: generation, at: now) }
             tutorial.advancePractice(generation: generation, at: now, ready: allowed)
         } else if let kind = tutorial.collection, let context, let configuration {
+            let trackedPlayers: Set<PlayerID>
+            if kind == .diamond, let frame = scene.liveAvatars?.lastAppliedFrame {
+                trackedPlayers = Set(LeanMovementObservation.posedPlayers(in: frame, context: context,
+                    generation: generation, roster: tutorial.roster, now: now) ?? [])
+            } else {
+                trackedPlayers = Set(value?.players.keys.map { $0 } ?? [])
+            }
+            let players = contactPlayers.map { trackedPlayers.intersection($0) } ?? trackedPlayers
             if let receipt = collectiblePresentation.update(scene: scene, kind: kind,
                 configuration: configuration, input: input, context: context, at: now,
                 ready: allowed, contactsFrom: players, heartArt: tutorialHeartArt) {

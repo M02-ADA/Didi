@@ -14,6 +14,26 @@ nonisolated struct AvatarDiamondContactCapsule {
         let reach = radius + targetRadius
         return simd_length_squared(center - (start + projection * segment)) <= reach * reach
     }
+
+    /// Closest points on two finite segments, with endpoint checks for parallel or degenerate cases.
+    func overlaps(_ sweep: AvatarDiamondContactCapsule) -> Bool {
+        if overlaps(center: sweep.start, radius: sweep.radius) || overlaps(center: sweep.end, radius: sweep.radius)
+            || sweep.overlaps(center: start, radius: radius) || sweep.overlaps(center: end, radius: radius) {
+            return true
+        }
+        let a = end - start, b = sweep.end - sweep.start
+        let delta = start - sweep.start
+        let aa = simd_dot(a, a), bb = simd_dot(b, b), ab = simd_dot(a, b)
+        let determinant = simd_length_squared(simd_cross(a, b))
+        guard determinant > 0 else { return false }
+        let ad = simd_dot(a, delta), bd = simd_dot(b, delta)
+        let u = (ab * bd - bb * ad) / determinant
+        let v = (aa * bd - ab * ad) / determinant
+        guard (0...1).contains(u), (0...1).contains(v) else { return false }
+        let reach = radius + sweep.radius
+        return simd_length_squared(delta + u * a - v * b) <= reach * reach
+    }
+
 }
 
 extension RobotAvatarLayer {

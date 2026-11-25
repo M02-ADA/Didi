@@ -52,12 +52,19 @@ final class NormalDiamondPresentation {
     var onCollected: ((UUID, SIMD3<Float>) -> Void)?
 
     private let scene: LaserScene
+    private struct ContactSample {
+        let center: SIMD3<Float>
+        let time: Double
+    }
+
     private struct Shown {
         let diamond: Diamond
         let item: NormalDiamond
         var outcome: NormalDiamond.Outcome
         /// Game time after which a collected or closed diamond is removed.
         var until: Double?
+        var previousContact: ContactSample?
+        var time: Double
     }
     private var shown: [UUID: Shown] = [:]
 
@@ -71,9 +78,21 @@ final class NormalDiamondPresentation {
     /// Diamond ids with an entity in the scene (tests and debugging).
     var shownIDs: Set<UUID> { Set(shown.keys) }
 
-    func bodyContactSphere(id: UUID) -> (center: SIMD3<Float>, radius: Float)? {
-        guard let entry = shown[id], entry.outcome == .pending else { return nil }
-        return entry.diamond.bodyContactSphere
+    /// Sweep the visible gem between presented samples, clipped to the active passage.
+    func bodyContactPath(id: UUID) -> AvatarDiamondContactCapsule? {
+        guard let entry = shown[id], entry.outcome == .pending,
+              entry.time >= entry.item.entry, entry.time < entry.item.exit else { return nil }
+        let sphere = entry.diamond.bodyContactSphere
+        guard sphere.radius > 0 else { return nil }
+        var start = sphere.center
+        if let previous = entry.previousContact {
+            let interval = entry.time - previous.time
+            if interval > 0, interval <= LiveAvatarPresenter.maximumPoseAge {
+                let skipped = max(0, entry.item.entry - previous.time)
+                start = previous.center + Float(skipped / interval) * (sphere.center - previous.center)
+            }
+        }
+        return .init(start: start, end: sphere.center, radius: sphere.radius)
     }
 
     /// World depth of a diamond at a game time (same rule as laser gates).
@@ -115,6 +134,9 @@ final class NormalDiamondPresentation {
                     entry.outcome = item.outcome
                 }
                 if entry.outcome != .collected {
+                    entry.previousContact = entry.outcome == .pending
+                        ? ContactSample(center: entry.diamond.bodyContactSphere.center, time: entry.time) : nil
+                    entry.time = time
                     entry.diamond.root.position.z = z
                     entry.diamond.updatePassagePose(age: time - item.spawnedAt, glow: glow,
                                                       cameraPosition: scene.layout.cameraPosition)
@@ -134,7 +156,7 @@ final class NormalDiamondPresentation {
             diamond.showIdle()
             diamond.updatePassagePose(age: time - item.spawnedAt, glow: glow,
                                       cameraPosition: scene.layout.cameraPosition)
-            shown[item.id] = Shown(diamond: diamond, item: item, outcome: .pending)
+            shown[item.id] = Shown(diamond: diamond, item: item, outcome: .pending, time: time)
         }
         for (id, entry) in shown {
             if let until = entry.until, time >= until { remove(id) }
