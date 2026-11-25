@@ -173,7 +173,15 @@ final class HomeTutorialHelpUITests: XCTestCase {
             add(attachment)
         }
 
+        func assertNoDebugControls() {
+            XCTAssertFalse(app.otherElements["debugRoundControls"].exists)
+            XCTAssertFalse(app.buttons["leaveReplay"].exists)
+            XCTAssertFalse(app.buttons["timingSelector"].exists)
+            XCTAssertFalse(app.staticTexts["diamondFlightDiagnostics"].exists)
+        }
+
         func assertTutorialHUD() {
+            assertNoDebugControls()
             XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.949")
             XCTAssertEqual(app.images.matching(identifier: "ftueCenterCheckpoint").count, 1)
             XCTAssertFalse(countdown.exists)
@@ -208,6 +216,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.containing(banner).firstMatch.exists)
         XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.500")
         XCTAssertFalse(diamond.exists)
+        assertNoDebugControls()
         capture("synthetic-vault-practice")
         if !solo {
             waitForPractice(1, opened: false)
