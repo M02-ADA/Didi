@@ -170,6 +170,19 @@ final class PlayerHoverboard {
     /// The playing verdict reaction and its age (seconds of frame time).
     private(set) var activeReaction: (kind: HoverboardReaction, age: Double, reduceMotion: Bool)?
     private var reactionFX: HoverboardReactionFX!
+    /// The corridor floor below the lane (metres, lane space; negative): where a defeated
+    /// mascot lands once its board is gone (`MascotDefeat`).
+    let floorY: Float
+    /// The team defeat's board (`MascotDefeat`), set every frame by its rider's layer from the one
+    /// render clock; nil: none. It replaces the verdict reaction's pose while set: the HIT's
+    /// light, the overload wobble, the swell, and the vanish inside the boom (`boardScale`).
+    var defeat: MascotDefeat.Frame? {
+        didSet {
+            if defeat == nil, oldValue != nil { cancelReaction() }
+            // A teammate's board joins without a HIT of its own: give it the HIT's colours.
+            if defeat != nil, oldValue == nil, activeReaction?.kind != .hit { reactionFX.start(.hit) }
+        }
+    }
 
     /// - Parameters:
     ///   - template: the loaded board; it is cloned, never shown.
@@ -178,6 +191,7 @@ final class PlayerHoverboard {
     init(template: Entity, player: PlayerID, floorY: Float) {
         _ = Self.registration
         self.player = player
+        self.floorY = floorY
         root.name = "player.\(player.rawValue).hoverboard"
         model = template.clone(recursive: true)
         model.name = "hoverboard.model"
@@ -232,6 +246,14 @@ final class PlayerHoverboard {
     #endif
 
     private func advanceReaction(dt: Float) {
+        if let defeat, defeat.drivesBoard {
+            // The defeat's moment of the HIT light, and its own wobble and swell.
+            activeReaction = (.hit, defeat.boardTau, defeat.boardLightsReduced)
+            var pose = HoverboardReaction.hit.pose(at: defeat.boardTau, reduceMotion: defeat.boardLightsReduced)
+            pose.roll = defeat.boardRoll; pose.pitch = defeat.boardPitch; pose.yaw = defeat.boardYaw; pose.lift = defeat.boardLift
+            motion.reaction = pose
+            return
+        }
         guard var active = activeReaction else { return }
         active.age += Double(max(0, min(dt, 0.1)))
         #if DEBUG
@@ -259,7 +281,7 @@ final class PlayerHoverboard {
     var reactionLift: Float { motion.reaction.lift }
 
     private func apply() {
-        model.transform = Transform(scale: SIMD3(repeating: Self.scale),
+        model.transform = Transform(scale: SIMD3(repeating: Self.scale * (defeat?.boardScale ?? 1)),
                                     rotation: simd_quatf(angle: motion.reaction.yaw, axis: [0, 1, 0])
                                         * simd_quatf(angle: motion.roll, axis: [0, 0, 1]) * simd_quatf(angle: motion.pitch, axis: [1, 0, 0]),
                                     translation: [motion.offsetX, motion.height + motion.reaction.lift, 0])

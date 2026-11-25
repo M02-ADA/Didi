@@ -61,6 +61,8 @@ private final class RoundObjects {
     lazy var presentation = LaserReplayPresentation()
     lazy var diamondFlights = DiamondHUDFlightModel()
     lazy var teamCallouts = LaserTeamCalloutModel()
+    /// Results waits for the team defeat after shared health runs out (`TeamDefeatGate`).
+    lazy var defeatGate = TeamDefeatGate()
     #if DEBUG
     lazy var heartPreview = HeartAnimationPreview()
     lazy var diamondReadout = DebugDiamondVisualReadout()
@@ -69,6 +71,7 @@ private final class RoundObjects {
     lazy var hoverboardPreview = HoverboardPreview()
     lazy var finalVaultPreview = FinalVaultPreview()
     lazy var hitReactionPreview = LaserHitReactionPreview()
+    lazy var defeatPreview = MascotDefeatPreview()
     lazy var gateConsolePreview = GateConsolePreview()
     lazy var directorPreview = DirectorLaserPreview()
     lazy var robotDemo = RobotDemoDriver()
@@ -186,6 +189,7 @@ private struct ReplayRoundView: View {
     private var hoverboardPreview: HoverboardPreview { get { objects.hoverboardPreview } nonmutating set { objects.hoverboardPreview = newValue } }
     private var finalVaultPreview: FinalVaultPreview { objects.finalVaultPreview }
     private var hitReactionPreview: LaserHitReactionPreview { objects.hitReactionPreview }
+    private var defeatPreview: MascotDefeatPreview { objects.defeatPreview }
     private var gateConsolePreview: GateConsolePreview { objects.gateConsolePreview }
     @State private var cutoutFeed: SyntheticCutoutFeed?
     private var directorPreview: DirectorLaserPreview { get { objects.directorPreview } nonmutating set { objects.directorPreview = newValue } }
@@ -293,6 +297,8 @@ private struct ReplayRoundView: View {
                 let now = CACurrentMediaTime()
                 scene?.refreshLiveCutouts(now: now)
                 PerfSpans.measure("avatars") { scene?.refreshLiveAvatars(now: now) }
+                scene?.robotAvatars?.keepDefeatMoving()
+                objects?.defeatGate.tick(now: now, avatars: scene?.robotAvatars)
                 objects?.onFrame?(now, scene)
                 heartPreview?.update(now: now)
                 MaskBenchmark.recorder.renderTick(now) // no-op without `-maskBench`
@@ -305,6 +311,8 @@ private struct ReplayRoundView: View {
                 let now = CACurrentMediaTime()
                 scene?.refreshLiveCutouts(now: now)
                 scene?.refreshLiveAvatars(now: now)
+                scene?.robotAvatars?.keepDefeatMoving()
+                objects?.defeatGate.tick(now: now, avatars: scene?.robotAvatars)
                 objects?.onFrame?(now, scene)
             }
             #endif
@@ -506,6 +514,19 @@ private struct ReplayRoundView: View {
                 } catch { startupError = String(describing: error) }
                 return
             }
+            // Launch with `-replay -defeatPreview [solo|p1|p2|both] [reduce] [clean] [seconds]` to review the
+            // cartoon defeat after a fatal HIT (`MascotDefeat`; not in the Game Over flow yet).
+            if MascotDefeatPreview.isRequested {
+                do {
+                    let input = try LaserReplayScript.load().input
+                    let request = MascotDefeatPreview.requested
+                    let calibrations = input.configuration.calibrations.filter { request.mode != .solo || $0.key == .player1 }
+                    guard let robots = try await installAvatars(calibrations: calibrations,
+                                                                layout: input.configuration.playerPlaneLayout) else { return }
+                    defeatPreview.start(on: content, scene: scene, robots: robots, request: request)
+                } catch { startupError = String(describing: error) }
+                return
+            }
             // Launch with `-replay -finalVaultPreview [solo] [seconds]` to review the final vault entry.
             if FinalVaultPreview.isRequested {
                 do {
@@ -697,7 +718,11 @@ private struct ReplayRoundView: View {
             if let bonus = tutorialDiamondTime, let tutorial = activeTutorial {
                 tutorialDiamondHUD(bonus, tutorial: tutorial)
             } else if let session {
-                let model = session.summary == nil ? PerfSpans.measure("hudModel") { hudModel(session) } : nil
+                // The HUD stays through the team defeat, frozen at the round's final health, score and
+                // progress (`TeamDefeatGate`), and leaves with Results' fade; any other ending, as before.
+                let showsHUD = objects.defeatGate.showsHUD(session.summary)
+                let model = showsHUD ? objects.defeatGate.hud(PerfSpans.measure("hudModel") { hudModel(session) },
+                                                              roundEnded: session.summary != nil) : nil
                 ZStack {
                     if let seconds = model?.diamondTimeRemaining, seconds > 0 {
                         DiamondTimeRushFrame(secondsRemaining: seconds)
@@ -711,6 +736,9 @@ private struct ReplayRoundView: View {
                         GameplayHUD(model: model, actions: hudActions(session), isFTUEActive: tutorial?.isActive == true, ftueJourney: tutorial?.progressJourney,
                             onFTUEProgressFrame: { tutorial?.setProgressHUDFrame($0, generation: generation) },
                             onHealthFrame: { tutorial?.setHealthHUDFrame($0, generation: generation) })
+                        // Shown, not usable, once the round has ended (the pause keeps its place).
+                        .allowsHitTesting(session.summary == nil)
+                        .transition(.opacity)
                     }
                     // PERFECT! / ZAPPED! on the HUD's title line, never over the results.
                     if session.summary == nil, activeTutorial?.isSuspended != true, scenePhase == .active,
@@ -729,6 +757,7 @@ private struct ReplayRoundView: View {
                 DiamondTimeBlinkView(closure: finalVaultPreview.blinkClosure,
                                      forcesReducedMotion: ProcessInfo.processInfo.arguments.contains("reduce"))
             }
+            if MascotDefeatPreview.isRequested { MascotDefeatPreviewControls(preview: defeatPreview) }
             #endif
         }
         #if DEBUG
@@ -789,8 +818,15 @@ private struct ReplayRoundView: View {
         }
         #endif
         .overlay {
-            if let final = session?.summary { ResultsView(summary: final, onRetry: retry, onHome: homeAction) }
+            // After shared health runs out, Results waits for the team defeat and fades in over its
+            // finishing pose (`TeamDefeatGate`); every other ending shows it at once, as before.
+            // Held from the summary's first frame (`showsResults`), so it never flashes before the defeat.
+            if let final = session?.summary, objects.defeatGate.showsResults(final) {
+                ResultsView(summary: final, onRetry: retry, onHome: homeAction)
+                    .transition(.opacity)
+            }
         }
+        .animation(.easeInOut(duration: MascotDefeat.resultsFade), value: objects.defeatGate.released)
         .overlayPreferenceValue(PickupHUDAnchorKey.self) { anchors in
             if tutorialDiamondTime != nil {
                 DiamondHUDFlightOverlay(model: tutorialDiamondFlights, scoreAnchor: anchors[.score], healthAnchor: nil)
@@ -801,11 +837,14 @@ private struct ReplayRoundView: View {
         .coordinateSpace(name: DiamondHUDFlightModel.space)
         .safeAreaInset(edge: .bottom) {
             // Results carry their own Back to Home (the same `leave`).
-            if onExit != nil, session?.summary == nil, !hasTutorialOverlay {
+            // It stays (not usable) through the team defeat, like the HUD, and leaves with it.
+            if onExit != nil, objects.defeatGate.showsHUD(session?.summary), !hasTutorialOverlay {
                 Button("Back to input selection", systemImage: "chevron.backward") { leave() }
                 .buttonStyle(.borderedProminent).controlSize(.large)
                 .disabled(leaving).accessibilityIdentifier("leaveReplay")
+                .allowsHitTesting(session?.summary == nil)
                 .padding(.bottom, 8)
+                .transition(.opacity)
             }
         }
         #if DEBUG
@@ -936,7 +975,13 @@ private struct ReplayRoundView: View {
             if let session, session.summary == nil, DebugRoundControls.previewRequested { DebugRoundControls(session: session) }
         }
         #endif
-        .onChange(of: session?.summary?.sessionGeneration) { _, final in
+        .onChange(of: session?.summary?.sessionGeneration, initial: true) { _, final in
+            // Shared health gone: the team defeat plays (if the presenter has not started it in the
+            // fatal HIT's frame) and Results waits for it; then the round's presentation stops.
+            if let session, let summary = session.summary {
+                objects.defeatGate.roundEnded(summary, events: session.events, avatars: scene.robotAvatars,
+                                              now: CACurrentMediaTime())
+            }
             if final != nil { presentation.stop() }
             #if DEBUG
             // `-autoRetry N` (lifecycle stress runs): Results › Retry, N times, two seconds after each Results.

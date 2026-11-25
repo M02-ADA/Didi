@@ -378,8 +378,13 @@ final class GameplayScenePresenter {
                 onSound?(.vaultOpen)
             case .coopGateFailed(let gateID):
                 vault.markFailed(gateID)
-            case .roundEnded:
+            case .roundEnded(let outcome):
                 endedAt = endedAt ?? event.gameTime
+                // Shared health is gone: the whole team falls, in the fatal HIT's own frame
+                // (`MascotDefeat`; presentation only, the outcome is already final).
+                if outcome == .healthDepleted, let cast = TeamDefeatCast(events: events, generation: state.sessionGeneration) {
+                    scene.robotAvatars?.startTeamDefeat(cast)
+                }
             case .phaseChanged(.diamondTime):
                 diamondTimeStartedAt = event.gameTime
                 onSound?(.diamondTime)
