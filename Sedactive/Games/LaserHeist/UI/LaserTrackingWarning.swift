@@ -241,14 +241,9 @@ struct LaserTrackingWarningScreen: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .accessibilityLabel("Please fix your standing position")
+                    .accessibilityHint(warning.detail)
                     .accessibilityIdentifier("trackingWarning")
                     .layoutPriority(1)
-                Text(warning.detail)
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(Self.cream)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .accessibilityIdentifier("trackingWarningDetail")
                 HStack(spacing: 14) {
                     switch warning.primary {
                     case .recalibrate:
