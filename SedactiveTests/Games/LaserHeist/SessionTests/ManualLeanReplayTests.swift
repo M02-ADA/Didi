@@ -4,7 +4,7 @@ import Testing
 
 @MainActor struct ManualLeanReplayTests {
     @Test(arguments: [false, true], [false, true])
-    func firstPlayAndExplicitReplayChooseOnlyTheInitialHold(completed: Bool, manual: Bool) async throws {
+    func onlyExplicitReplayHoldsTheRound(completed: Bool, manual: Bool) async throws {
         let defaults = UserDefaults(suiteName: "LeanManual.\(UUID())")!
         defer { defaults.removeObject(forKey: LeanTutorial.completionKey); defaults.removeObject(forKey: LeanTutorial.heartCompletionKey) }
         defaults.set(completed, forKey: LeanTutorial.completionKey)
@@ -26,7 +26,8 @@ import Testing
         await flow.startSelectedSetup()
         #expect(constructed == 1 && !flow.tutorialReplayRequested)
         let session = try #require(flow.session)
-        #expect(session.preRoundTutorialPending == (!completed || manual))
+        #expect(session.preRoundTutorialPending == manual)
+        #expect(tutorial.generation == (manual ? session.inputConfiguration.sessionGeneration : nil))
         #expect(session.state == nil && !session.canStartLiveRound)
         flow.presentLeanTutorialIfReady()
         #expect(!tutorial.isActive, "Help never grants readiness/calibration")
@@ -92,7 +93,7 @@ import Testing
         fail = false
         await flow.retryLiveSetup()
         #expect(flow.session?.preRoundTutorialPending == false)
-        #expect(flow.leanTutorial.stage == .completed)
+        #expect(flow.leanTutorial.generation == nil)
         await flow.closeLiveSetup()
         flow.requestLeanTutorialReplay()
         await flow.startSelectedSetup()
@@ -102,8 +103,8 @@ import Testing
         await flow.handleBackground()
         #expect(flow.route == .selection && !flow.tutorialReplayRequested)
     }
-    @Test(arguments: [false, true])
-    func helpKeepsTheExistingSelectedModeAndRoster(solo: Bool) async throws {
+    @Test(arguments: [false, true], [false, true])
+    func normalPlayAndHelpRespectTheSelectedMode(solo: Bool, manual: Bool) async throws {
         func make(_ solo: Bool) throws -> GameSessionCoordinator {
             let script = try LaserReplayScript.load().freshRound(generation: UUID())
             var configuration = script.input.configuration
@@ -112,10 +113,11 @@ import Testing
         }
         let flow = LaserInputFlow(makeLiveSession: { try make(false) }, makeSoloSession: { try make(true) })
         flow.selectPlayerMode(soloPractice: solo)
-        flow.requestLeanTutorialReplay()
+        if manual { #expect(flow.requestLeanTutorialReplay()) }
         await flow.startSelectedSetup()
         #expect(flow.isSolo == solo)
-        #expect(flow.leanTutorial.roster == (solo ? [.player1] : PlayerID.allCases))
+        #expect(flow.session?.preRoundTutorialPending == manual)
+        #expect(flow.leanTutorial.roster == (manual ? (solo ? [.player1] : PlayerID.allCases) : []))
         await flow.closeLiveSetup()
     }
 

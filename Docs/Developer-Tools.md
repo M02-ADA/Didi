@@ -4,8 +4,10 @@ Berlaku untuk branch `developer`. Ikuti [TEAM_ALIGNMENT](TEAM_ALIGNMENT.md) untu
 
 | Mode | Perilaku yang harus dipertahankan |
 | --- | --- |
-| **Off** | Tanpa argumen QA khusus, tampilkan alur pemain terbaru dari `staging`, termasuk tutorial, kalibrasi, Home, HUD, Pause, dan Results. Permainan dimulai dengan dua pemain. Selector, panel skip, target sentuh transparan, dan diagnostik tidak tampil atau menerima sentuhan. |
+| **Off** | Tanpa argumen QA khusus, tampilkan alur pemain terbaru dari `staging`, termasuk kalibrasi, Home, HUD, Pause, dan Results. Permainan dimulai dengan dua pemain. Selector, panel skip, target sentuh transparan, dan diagnostik tidak tampil atau menerima sentuhan. |
 | **On** | Di Home tambahkan hanya **1 Player · Solo Practice / 2 Players · Co-op**. Di ronde live Solo dan Co-op, **Pause → Developer Tools** membuka panel dengan hanya dua aksi pengujian **Next Gate** dan **Diamond Time**. Tombol tutup panel adalah navigasi. |
+
+**FTUE berlaku sama untuk kedua mode.** Start Mission mengikuti alur biasa dari intro dan kalibrasi ke ronde, termasuk saat pertama kali bermain. FTUE hanya dimulai lewat menu **Replay Tutorial** di Home dan tetap memerlukan kalibrasi. Melewati FTUE saat bermain biasa tidak mengubah catatan penyelesaian tutorial. Pertahankan pengecualian branch ini saat merge dari staging.
 
 Di build Debug, tahan logo DIDI selama tiga detik untuk menyalakan atau mematikan mode. VoiceOver menyediakan aksi yang sama. Mode tidak disimpan. `-showDebugTools` hanya mengaktifkan izin yang sama untuk sesi Xcode. Saat mode dimatikan di Home, pilihan kembali ke Co-op. Build Release tidak menyediakan Developer Mode.
 

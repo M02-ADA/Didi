@@ -84,6 +84,7 @@ import Testing
             let input = try LaserReplayScript.load().freshRound(generation: UUID()).input.configuration
             return GameSessionCoordinator(provider: ControlledSessionInput(), inputConfiguration: input)
         })
+        try #require(flow.requestLeanTutorialReplay())
         await flow.startSelectedSetup()
         let session = try #require(flow.session), gen = session.inputConfiguration.sessionGeneration
         #expect(session.preRoundTutorialPending && !session.canStartLiveRound)
@@ -91,6 +92,13 @@ import Testing
         #expect(tutorial.stage == .notStarted)
         // Unit-only presentation completion events do not make the actual session ready.
         tutorial.beginIfEligible(generation: gen, eligible: true)
+        tutorial.introductionVisible(true, generation: gen)
+        tutorial.finishIntroduction(generation: gen)
+        tutorial.practiceVisible(.freeLean, generation: gen, at: 0)
+        for frame in 0...120 {
+            tutorial.advancePractice(generation: gen, at: Double(frame) / 8, ready: true)
+        }
+        try #require(tutorial.stage == .collectiblesIntroduction)
         let context = BodyInputContext(sessionGeneration: gen, cameraGeometryRevision: 1,
             calibrationRevisions: f.context.calibrationRevisions, cutovers: f.context.cutovers, isActive: true)
         f.finishCollections(tutorial, context: context)

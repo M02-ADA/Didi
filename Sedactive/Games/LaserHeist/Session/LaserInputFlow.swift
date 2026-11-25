@@ -120,8 +120,12 @@ final class LaserInputFlow {
         operation = token
         do {
             let session = try (isSolo ? makeSoloSession! : makeLiveSession)()
-            leanTutorial.prepare(generation: session.inputConfiguration.sessionGeneration, roster: session.inputConfiguration.roster, replayRequested: replayTutorial)
-            session.setPreRoundTutorialPending(leanTutorial.stage != .completed)
+            // On the developer branch, only the Home tutorial menu opts into FTUE.
+            if replayTutorial {
+                leanTutorial.prepare(generation: session.inputConfiguration.sessionGeneration,
+                                     roster: session.inputConfiguration.roster, replayRequested: true)
+                session.setPreRoundTutorialPending(true)
+            }
             self.session = session
             #if DEBUG
             print("[LaserSetupRestart] flow: starting session \(Self.tag(session))\(isSolo ? " (solo)" : "")")
@@ -177,7 +181,7 @@ final class LaserInputFlow {
         #if DEBUG
         print("[LaserSetupRestart] flow: retry requested (Play again / Restart setup) from session \(Self.tag(session))")
         #endif
-        let restartingTutorial = session?.preRoundTutorialPending == true && leanTutorial.isCompleted
+        let restartingTutorial = session?.preRoundTutorialPending == true
         await closeLiveSetup()
         guard canStartLive else { return }
         if restartingTutorial { requestLeanTutorialReplay() }
