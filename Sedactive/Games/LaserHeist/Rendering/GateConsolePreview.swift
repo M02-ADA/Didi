@@ -53,6 +53,23 @@ final class GateConsolePreview {
         return arguments[(index + 1)...].prefix { !$0.hasPrefix("-") }.contains("timeout")
     }
     static let timeoutAfter = 3.0
+    /// `hits`: a production HIT (`LaserScene.presentOutcome(.hit)`) on every shown mascot at each of
+    /// `hitTimes` in every loop: one before the gate's presses and one after the opened door has
+    /// passed, so the same HIT can be compared before and after a gate in one scene (and, from the
+    /// second loop on, after a gate has already been played).
+    static var hits: Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-gateConsolePreview") else { return false }
+        return arguments[(index + 1)...].prefix { !$0.hasPrefix("-") }.contains("hits")
+    }
+    static let hitTimes = [1.0, 8.6]
+    /// With `hits`, `defeat`: the second HIT (after the gate) is fatal: the team defeat
+    /// (`MascotDefeat`) plays on every shown mascot, as after a round's last heart.
+    static var defeats: Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-gateConsolePreview") else { return false }
+        return arguments[(index + 1)...].prefix { !$0.hasPrefix("-") }.contains("defeat")
+    }
     /// The reaches played (none when the gate times out).
     static var scriptedReaches: [(button: LaserVaultButton, from: Double, to: Double)] { timesOut ? [] : reaches }
 
@@ -103,8 +120,24 @@ final class GateConsolePreview {
         vault.liveConsoles = { [weak robots] player in robots?.consoles[player] }
         let references = configuration.calibrations.filter { roster.contains($0.key) }
             .mapValues { AvatarReference(calibration: $0, layout: configuration.playerPlaneLayout) }
+        if Self.hits {
+            // The HIT preview's high beam (a missed DUCK) at the mascots' plane.
+            scene.setLaserBand(lowerEdge: 1.239, upperEdge: 1.261)
+            scene.setLaserDepth(scene.mapping.interactionPlaneZ)
+            scene.setLaserDangerSide(.above)
+            scene.setLaserVisualState(.active)
+        }
         func step(to t: Double) {
             frame += 1
+            if Self.hits {
+                for time in Self.hitTimes where lastStep < time && t >= time {
+                    print(String(format: "[GateConsolePreview] t %.2f HIT on %@", t, roster.map(\.rawValue).sorted().joined(separator: ",")))
+                    for player in roster.sorted(by: { $0.rawValue < $1.rawValue }) {
+                        scene.presentOutcome(.hit, for: player)
+                        if Self.defeats, time == Self.hitTimes.last { robots.startDefeat(player, as: .struck, spreads: true) }
+                    }
+                }
+            }
             var players: [PlayerID: PlayerBodySample] = [:], poses: [PlayerID: PresentationPoseSample] = [:]
             for (player, r) in references {
                 guard let c = configuration.calibrations[player] else { continue }
@@ -169,7 +202,7 @@ final class GateConsolePreview {
         subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self] event in
             guard let self else { return }
             elapsed += event.deltaTime
-            if elapsed > Self.loop { elapsed = 0; pressed = [:]; previousInside = [:]; allPressedAt = nil; travelFrom = nil; approachTravel = 0; lastStep = 0; vault.reset() }
+            if elapsed > Self.loop { if Self.defeats { robots.cancelDefeats() }; elapsed = 0; pressed = [:]; previousInside = [:]; allPressedAt = nil; travelFrom = nil; approachTravel = 0; lastStep = 0; vault.reset() }
             step(to: elapsed + Double(frame) * 1e-6)
         }
     }
