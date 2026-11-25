@@ -9,6 +9,7 @@ import SwiftUI
 /// The placement check button asks LaserInputFlow to start camera setup.
 struct LaserHeistIntroView: View {
     let flow: LaserInputFlow
+    @Environment(GameplayHighScore.self) private var highScore
     /// DEBUG: opens the real-camera game scene preview (Edo's PR #31 route,
     /// owned by `ContentView`); `nil` hides the entry.
     var onInGameCamera: (() -> Void)? = nil
@@ -24,7 +25,7 @@ struct LaserHeistIntroView: View {
         ZStack {
             switch screen {
             case .home:
-                HomeView(bestScore: nil, onStart: {
+                HomeView(highScore: highScore.highScore, onStart: {
                     flow.cancelLeanTutorialReplay()
                     show(.introVideo)
                 }, onReplayTutorial: {

@@ -24,9 +24,36 @@ final class LaserHeistJourneyUITests: XCTestCase {
         waitForExpectations(timeout: 10)
     }
 
+    func testHomeHighScoreShowsStoredValueBelowStartMission() {
+        let app = XCUIApplication()
+        LaserHeistJourney.markTutorialCompleted(app)
+        // Use the argument domain to keep this UI check independent of saved Simulator records.
+        let score = app.staticTexts["homeHighScore"]
+        let start = app.buttons["startMission"]
+
+        for value in [0, 1625] {
+            app.launchArguments += ["-LaserHeist.highScore", String(value)]
+            app.launch()
+            XCTAssertTrue(score.waitForExistence(timeout: timeout))
+            XCTAssertEqual(score.label, "HIGH SCORE: \(value)")
+            XCTAssertTrue(start.exists)
+            XCTAssertGreaterThan(score.frame.minY, start.frame.maxY)
+            XCTAssertEqual(score.frame.midX, start.frame.midX, accuracy: 8)
+            if value > 0 {
+                let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                screenshot.name = "Home High Score"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+            }
+            app.terminate()
+            app.launchArguments.removeLast(2)
+        }
+    }
+
     func testHomeSetUpCameraSetupReplayResultsAndBackToHome() {
         let app = XCUIApplication()
         LaserHeistJourney.markTutorialCompleted(app)
+        app.launchArguments += ["-LaserHeist.highScore", "1625"]
         app.launch()
         let start = app.buttons["startMission"]
         let next = app.buttons["setupNext"]
@@ -78,6 +105,7 @@ final class LaserHeistJourneyUITests: XCTestCase {
         XCTAssertTrue(app.buttons["retryRound"].exists, "Results offered no Play Again")
         home.tap()
         XCTAssertTrue(start.waitForExistence(timeout: timeout), "Back to Home did not return Home")
+        XCTAssertEqual(app.staticTexts["homeHighScore"].label, "HIGH SCORE: 1625")
         XCTAssertFalse(end.exists, "the round is still running behind Home")
     }
 
