@@ -28,8 +28,13 @@ nonisolated struct LaserTrackingWarningModelTests {
         #expect(back.stage == .recovering && back.primary == nil)
         let tap = W(W.Input(roundStarted: true, sessionPhase: .paused, recoveryNeedsContinue: true))
         #expect(tap.primary == .continueRound)
-        let solo = W(W.Input(roundStarted: true, sessionPhase: .paused, setupPhase: .restartRequired, solo: true))
-        #expect(solo.stage != .needsRecalibration, "Solo re-links its one player")
+        let soloWaiting = W.Input(roundStarted: true, sessionPhase: .paused, readinessBlocker: .binding,
+                                  hasPacket: false, solo: true)
+        #expect(W(soloWaiting).stage == .waitingForPlayers)
+        var soloLost = soloWaiting
+        soloLost.soloNeedsRelink = true
+        #expect(W.triggers(soloLost))
+        #expect(W(soloLost).stage == .needsRecalibration && W(soloLost).primary == .recalibrate)
     }
 
     @Test func theLatchHoldsForThePauseAndClearsWhenItEnds() {

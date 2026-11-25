@@ -182,7 +182,7 @@ struct LiveRepeatedCalibrationTests {
                 let layout = configuration.playerPlaneLayout
                 let roster = configuration.roster
                 return GameSessionCoordinator(provider: provider, inputConfiguration: configuration,
-                    setupControls: LaserLiveSetupControls(service: provider),
+                    setupControls: LaserLiveSetupControls(service: provider, solo: solo),
                     liveRoundPlanner: { context, calibrations in
                         try LaserLiveWristRoundPlan.completeRound(context: context, calibrations: calibrations,
                             layout: layout, seed: 7, segmentLength: 60, roster: roster)
@@ -554,11 +554,10 @@ struct LiveRepeatedCalibrationTests {
         await rig.flow.closeLiveSetup()
     }
 
-    /// Both players leave mid-round: identity is lost, the round pauses, and the tracking warning's
-    /// Recalibrate (the flow's retry) runs while the old round's own cleanup is still in flight.
-    /// The new setup starts clean and the next game runs.
-    @Test func recalibrateFromAPausedRoundStartsACleanSetup() async throws {
-        let rig = try Rig()
+    /// After extended tracking loss, Recalibrate starts fresh setup in the same player mode.
+    @Test(arguments: [false, true])
+    func recalibrateFromAPausedRoundStartsACleanSetup(solo: Bool) async throws {
+        let rig = try Rig(solo: solo)
         await rig.flow.startLiveSetup()
         let first = try #require(rig.flow.session)
         guard try await rig.calibrate(first) != nil else { await rig.flow.closeLiveSetup(); return }
@@ -572,12 +571,13 @@ struct LiveRepeatedCalibrationTests {
         try #require(first.phase == .running)
         rig.feeder.set(mode: .nobody)
         let lost = CameraHostClock.now()
-        while first.phase == .running, CameraHostClock.now() - lost < 6 {
+        while LaserTrackingWarning(.init(session: first)).primary != .recalibrate,
+              CameraHostClock.now() - lost < 6 {
             first.advanceSetupAutomatically(); first.advanceLive(frameHost: host)
             try await Task.sleep(for: .milliseconds(33))
         }
-        rig.feeder.set(mode: .pair)
-        #expect(first.phase != .running, "the round stops judging without players (\(first.phase))")
+        try #require(LaserTrackingWarningLatch().peek(.init(session: first))?.primary == .recalibrate)
+        #expect(first.phase == .paused, "the round stops judging without players")
         #expect(first.state != nil, "the round is kept, not silently finished")
         // Recalibrate, with the old scene's teardown racing it.
         async let recalibrate: Void = rig.flow.retryLiveSetup()
@@ -585,7 +585,9 @@ struct LiveRepeatedCalibrationTests {
         _ = await (recalibrate, teardown)
         let next = try #require(rig.flow.session)
         #expect(next !== first && next.phase == .awaitingSetup && next.presence.attempts == 0)
+        #expect(next.inputConfiguration.roster == (solo ? [.player1] : PlayerID.allCases))
         #expect(rig.provider.currentContext?.sessionGeneration == next.inputConfiguration.sessionGeneration)
+        rig.feeder.set(mode: rig.defaultMode)
         guard try await rig.calibrate(next) != nil else { await rig.flow.closeLiveSetup(); return }
         #expect(try await rig.playToResults(next), "the next game runs")
         await rig.flow.closeLiveSetup()

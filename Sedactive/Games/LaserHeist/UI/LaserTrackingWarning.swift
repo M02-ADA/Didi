@@ -36,6 +36,7 @@ nonisolated struct LaserTrackingWarning: Equatable, Sendable {
         var setupPhase: LaserSetupPhase?
         var readinessBlocker: LaserLiveReadinessBlocker?
         var awaitsIdentityRecovery = false
+        var soloNeedsRelink = false
         var recoveryNeedsContinue = false
         var hasPacket = true
         var attention: [PlayerID: LiveEvidenceAttention] = [:]
@@ -53,15 +54,21 @@ nonisolated struct LaserTrackingWarning: Equatable, Sendable {
             hasPacket = session.latestSnapshot != nil
             attention = LiveEvidenceAttention.players(session.latestSnapshot, roster: session.inputConfiguration.roster)
             solo = session.isSoloPractice
+            #if DEBUG
+            soloNeedsRelink = solo && session.debugSoloTrackingLost
+            #endif
         }
 
         init(roundStarted: Bool = false, roundEnded: Bool = false, sessionPhase: SessionState? = nil,
              setupPhase: LaserSetupPhase? = nil, readinessBlocker: LaserLiveReadinessBlocker? = nil,
-             awaitsIdentityRecovery: Bool = false, recoveryNeedsContinue: Bool = false, hasPacket: Bool = true,
+             awaitsIdentityRecovery: Bool = false, soloNeedsRelink: Bool = false,
+             recoveryNeedsContinue: Bool = false, hasPacket: Bool = true,
              attention: [PlayerID: LiveEvidenceAttention] = [:], solo: Bool = false) {
             self.roundStarted = roundStarted; self.roundEnded = roundEnded; self.sessionPhase = sessionPhase
             self.setupPhase = setupPhase; self.readinessBlocker = readinessBlocker
-            self.awaitsIdentityRecovery = awaitsIdentityRecovery; self.recoveryNeedsContinue = recoveryNeedsContinue
+            self.awaitsIdentityRecovery = awaitsIdentityRecovery
+            self.soloNeedsRelink = soloNeedsRelink
+            self.recoveryNeedsContinue = recoveryNeedsContinue
             self.hasPacket = hasPacket; self.attention = attention; self.solo = solo
         }
 
@@ -73,7 +80,7 @@ nonisolated struct LaserTrackingWarning: Equatable, Sendable {
         }
 
         var identityLost: Bool {
-            !solo && (setupPhase == .restartRequired || sessionPhase == .restartRequired || awaitsIdentityRecovery)
+            setupPhase == .restartRequired || sessionPhase == .restartRequired || awaitsIdentityRecovery || soloNeedsRelink
         }
     }
 
@@ -110,8 +117,10 @@ nonisolated struct LaserTrackingWarning: Equatable, Sendable {
     /// What the warning shows for this state (once it is up).
     init(_ input: Input) {
         if input.identityLost {
-            (stage, detail, primary) = (.needsRecalibration,
-                "We can't tell who is who anymore. Recalibrate to keep playing; this round will end.", .recalibrate)
+            let message = input.solo
+                ? "We lost track of your position. Recalibrate to start a new round."
+                : "We can't tell who is who anymore. Recalibrate to keep playing; this round will end."
+            (stage, detail, primary) = (.needsRecalibration, message, .recalibrate)
         } else if input.recoveryNeedsContinue {
             (stage, detail, primary) = (.recovering, "Everyone is back. Tap Continue to resume; your score is kept.", .continueRound)
         } else if input.hasPacket, input.attention.isEmpty {
@@ -253,7 +262,9 @@ struct LaserTrackingWarningScreen: View {
                     Button("Continue", action: continueRound)
                         .buttonStyle(.borderedProminent).tint(.orange).foregroundStyle(.black)
                         .accessibilityIdentifier("trackingWarningContinue")
-                    Button("Recalibrate", action: recalibrate).buttonStyle(.bordered).tint(Self.cream)
+                    Button("Recalibrate", action: recalibrate)
+                        .buttonStyle(.bordered).tint(Self.cream)
+                        .accessibilityIdentifier("trackingWarningRecalibrate")
                 case nil:
                     // Never a trap: the players can always choose a fresh setup instead of waiting.
                     Button("Recalibrate", action: recalibrate).buttonStyle(.bordered).tint(Self.cream)

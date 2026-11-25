@@ -176,8 +176,9 @@ struct ContentView: View {
             LeanTutorialOverlay(tutorial: flow.leanTutorial, solo: flow.isSolo)
           }
           #if DEBUG
-          if !stageShown, let session = flow.session, session.hasLiveRoundPlan,
-             session.state != nil, session.summary == nil {
+          if !stageShown, tutorialWarning == nil, let session = flow.session, session.hasLiveRoundPlan,
+             session.state != nil, session.summary == nil,
+             !LaserTrackingWarning.Input(session: session).isTrackingPause {
             if developerTools.isEnabled, developerTools.showsRoundPanel {
               DebugRoundControls(session: session, onClose: { developerTools.closeRoundPanel() })
             } else if DebugRoundControls.gameplayToolsRequested, !developerTools.isEnabled {
