@@ -5,7 +5,7 @@ final class WristDiamondVisualUITests: XCTestCase {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
-        app.launchArguments = ["-replay","--synthetic-gameplay-preview","--wrist-diamond-preview"]
+        app.launchArguments = ["-replay", "--synthetic-gameplay-preview", "--wrist-diamond-preview", "-showDiamondFlightDiagnostics"]
         app.launch()
         let meshes = app.staticTexts["wristFixtureMeshes"]
         let generation = app.staticTexts["wristFixtureGeneration"]
