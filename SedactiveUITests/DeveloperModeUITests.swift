@@ -24,12 +24,12 @@ final class DeveloperModeUITests: XCTestCase {
             XCTAssertFalse(app.buttons[id].exists, id)
         }
 
-        picker.buttons["1 Player · Solo Practice"].tap()
+        picker.buttons["1 Player"].tap()
         logo.press(forDuration: 3.2)
         XCTAssertTrue(picker.waitForNonExistence(timeout: 5))
         logo.press(forDuration: 3.2)
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
-        XCTAssertTrue(picker.buttons["2 Players · Co-op"].isSelected)
+        XCTAssertTrue(picker.buttons["2 Players"].isSelected)
 
         app.terminate()
         app.launch()

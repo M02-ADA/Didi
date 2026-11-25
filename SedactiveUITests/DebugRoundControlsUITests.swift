@@ -19,6 +19,7 @@ final class DebugRoundControlsUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
 
         let screen = app.windows.firstMatch.frame
+        let scale = min(screen.width / 1210, screen.height / 834)
         let card = app.otherElements["debugRoundControls"]
         XCTAssertTrue(card.waitForExistence(timeout: 60))
         let nextGate = app.buttons["debugSkipToNextGate"], diamond = app.buttons["debugSkipToDiamondTime"]
@@ -26,12 +27,12 @@ final class DebugRoundControlsUITests: XCTestCase {
         XCTAssertFalse(app.buttons["debugTestMoveLeft"].exists, "Advanced starts collapsed")
         let compact = card.frame
         record("compact", ["card": compact, "nextGate": nextGate.frame, "diamond": diamond.frame, "screen": screen])
-        XCTAssertLessThanOrEqual(compact.maxY, screen.height * maxBottomFraction)
+        XCTAssertLessThanOrEqual(compact.maxY - screen.minY, screen.height * maxBottomFraction)
         XCTAssertLessThanOrEqual(compact.width * compact.height, screen.width * screen.height * 0.05, "a small card")
-        for button in [nextGate, diamond] { XCTAssertGreaterThanOrEqual(button.frame.height, 40) }
-        XCTAssertGreaterThan(compact.minY, 124, "under the HUD's pause button")
-        XCTAssertGreaterThan(compact.minX, 913, "right of the PERFECT!/ZAPPED! callout's ring")
-        XCTAssertLessThan(compact.maxY, 293, "above the mascots' heads")
+        for button in [nextGate, diamond] { XCTAssertGreaterThanOrEqual(button.frame.height, 44 * scale - 1) }
+        XCTAssertGreaterThan(compact.minY - screen.minY, 124 * scale, "under the HUD's pause button")
+        XCTAssertGreaterThan(compact.minX - screen.midX, (913 - 1210.0 / 2) * scale, "right of the PERFECT!/ZAPPED! callout's ring")
+        XCTAssertLessThan(compact.maxY - screen.minY, 293 * scale, "above the mascots' heads")
 
         // Advanced: opens with the diagnostics and the steering test, still above the consoles.
         app.buttons["debugAdvancedToggle"].tap()
@@ -40,7 +41,7 @@ final class DebugRoundControlsUITests: XCTestCase {
         XCTAssertTrue(app.buttons["debugTestMoveRight"].exists && app.buttons["debugTestMoveStop"].exists)
         let expanded = card.frame
         record("advanced", ["card": expanded, "testMoveLeft": left.frame])
-        XCTAssertLessThanOrEqual(expanded.maxY, screen.height * maxBottomFraction + 1)
+        XCTAssertLessThanOrEqual(expanded.maxY - screen.minY, screen.height * maxBottomFraction + 1)
         // The steering test still works from here (Stop enables once a test move runs).
         left.tap()
         XCTAssertTrue(app.buttons["debugTestMoveStop"].isEnabled)
@@ -55,7 +56,7 @@ final class DebugRoundControlsUITests: XCTestCase {
         XCTAssertTrue(pill.waitForExistence(timeout: 5))
         XCTAssertFalse(nextGate.exists)
         record("pill", ["pill": pill.frame])
-        XCTAssertGreaterThanOrEqual(pill.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(pill.frame.height, 44 * scale - 1)
         pill.tap()
         XCTAssertTrue(nextGate.waitForExistence(timeout: 5))
 

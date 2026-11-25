@@ -279,7 +279,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
             if help {
                 let replay = app.buttons["replayTutorial"]
                 XCTAssertTrue(replay.waitForExistence(timeout: 30))
-                app.segmentedControls["playerModeSelector"].buttons["1 Player · Solo Practice"].tap()
+                app.segmentedControls["playerModeSelector"].buttons["1 Player"].tap()
                 replay.tap(); app.buttons["setupNext"].tap()
             }
             XCTAssertTrue(element("leanTutorialTitle").waitForExistence(timeout: 45))
@@ -373,7 +373,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
         app.launch()
         let help = app.buttons["replayTutorial"]
         XCTAssertTrue(help.waitForExistence(timeout: 30))
-        app.segmentedControls["playerModeSelector"].buttons["1 Player · Solo Practice"].tap()
+        app.segmentedControls["playerModeSelector"].buttons["1 Player"].tap()
 
         for run in 1...3 {
             XCTAssertTrue(help.waitForExistence(timeout: 15))
@@ -431,7 +431,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
             app.launch()
             let help = app.buttons["replayTutorial"]
             XCTAssertTrue(help.waitForExistence(timeout: 30))
-            if solo { app.segmentedControls["playerModeSelector"].buttons["1 Player · Solo Practice"].tap() }
+            if solo { app.segmentedControls["playerModeSelector"].buttons["1 Player"].tap() }
             help.tap()
             app.buttons["setupNext"].tap()
             XCTAssertTrue(practice.waitForExistence(timeout: 45))
@@ -580,7 +580,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
             XCTAssertGreaterThan(help.frame.minX, app.frame.width * 0.75)
             XCTAssertGreaterThan(help.frame.minY, 24)
             XCTAssertLessThan(help.frame.maxY, app.buttons["startMission"].frame.minY)
-            if solo { app.segmentedControls["playerModeSelector"].buttons["1 Player · Solo Practice"].tap() }
+            if solo { app.segmentedControls["playerModeSelector"].buttons["1 Player"].tap() }
             capture("\(mode)-home-after")
             let closeup = XCTAttachment(screenshot: help.screenshot()); closeup.name = "help-button-closeup"; closeup.lifetime = .keepAlways; add(closeup)
             help.tap()

@@ -354,20 +354,35 @@ struct DebugRoundControls: View {
     }
 }
 
-/// The two skips: compact yellow buttons, 40 pt tall, the card's full width.
+/// Compact skip controls follow the HUD palette and fill the card width.
 private struct DebugSkipButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        return configuration.label
             .labelStyle(.titleAndIcon)
             .font(.system(size: 14, weight: .bold, design: .rounded))
-            .lineLimit(1).minimumScaleFactor(0.8)
-            .foregroundStyle(.black.opacity(isEnabled ? 1 : 0.45))
-            .frame(maxWidth: .infinity, minHeight: 40)
-            .background(Color.yellow.opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.35),
-                        in: .rect(cornerRadius: 10, style: .continuous))
-            .contentShape(.rect(cornerRadius: 10))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .foregroundStyle(LaserHeistDesign.cream.opacity(isEnabled ? 1 : 0.62))
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background {
+                shape.fill(
+                    LinearGradient(
+                        colors: [GameplayHUD.railBottom, GameplayHUD.navy],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .brightness(configuration.isPressed ? -0.08 : 0)
+                .opacity(isEnabled ? 1 : 0.5)
+            }
+            .overlay {
+                shape.strokeBorder(GameplayHUD.rim.opacity(isEnabled ? 1 : 0.55), lineWidth: 1.5)
+                    .allowsHitTesting(false)
+            }
+            .contentShape(shape)
     }
 }
 #endif

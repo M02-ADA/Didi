@@ -121,8 +121,8 @@ struct LaserHeistIntroView: View {
                 if flow.canSelectPlayerMode || flow.selectsSoloPractice {
                     Picker("Players", selection: Binding(get: { flow.selectsSoloPractice },
                                                          set: { flow.selectPlayerMode(soloPractice: $0) })) {
-                        Text("2 Players · Co-op").tag(false)
-                        Text("1 Player · Solo Practice").tag(true)
+                        Text("2 Players").tag(false)
+                        Text("1 Player").tag(true)
                     }
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 420)
@@ -157,6 +157,16 @@ struct LaserHeistIntroView: View {
             }
             #endif
         }
-        .padding(.bottom, 28)
+        .padding(.bottom, homeOptionsBottomInset)
+    }
+
+    private var homeOptionsBottomInset: CGFloat {
+        #if DEBUG
+        if developerTools.isEnabled, !HomeView.showsDebugTools,
+           flow.canSelectPlayerMode || flow.selectsSoloPractice {
+            return 16
+        }
+        #endif
+        return 28
     }
 }

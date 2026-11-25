@@ -5,7 +5,7 @@ Berlaku untuk branch `developer`. Ikuti [TEAM_ALIGNMENT](TEAM_ALIGNMENT.md) untu
 | Mode | Perilaku yang harus dipertahankan |
 | --- | --- |
 | **Off** | Tanpa argumen QA khusus, tampilkan alur pemain terbaru dari `staging`, termasuk kalibrasi, Home, HUD, Pause, dan Results. Permainan dimulai dengan dua pemain. Selector, panel skip, target sentuh transparan, dan diagnostik tidak tampil atau menerima sentuhan. |
-| **On** | Di Home tambahkan hanya **1 Player · Solo Practice / 2 Players · Co-op**. Di ronde live Solo dan Co-op, **Pause → Developer Tools** membuka panel dengan hanya dua aksi pengujian **Next Gate** dan **Diamond Time**. Memilih Developer Tools juga menjalankan Resume agar ronde lanjut dengan panel terbuka. Menutup panel tidak menjeda ronde. |
+| **On** | Di Home tambahkan hanya **2 Players / 1 Player**. Di ronde live Solo dan Co-op, **Pause → Developer Tools** membuka panel dengan hanya dua aksi pengujian **Next Gate** dan **Diamond Time**. Memilih Developer Tools juga menjalankan Resume agar ronde lanjut dengan panel terbuka. Menutup panel tidak menjeda ronde. |
 
 **FTUE berlaku sama untuk kedua mode.** Start Mission mengikuti alur biasa dari intro dan kalibrasi ke ronde, termasuk saat pertama kali bermain. FTUE hanya dimulai lewat menu **Replay Tutorial** di Home dan tetap memerlukan kalibrasi. Melewati FTUE saat bermain biasa tidak mengubah catatan penyelesaian tutorial. Pertahankan pengecualian branch ini saat merge dari staging.
 
