@@ -360,7 +360,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
-        app.launchArguments = ["-homeHelpFTUEPreview", "-leanFTUESolo", "-ftueCollectibleDiagnostics", "-showHomeDebugTools"]
+        app.launchArguments = ["-homeHelpFTUEPreview", "-leanFTUESolo", "-ftueCollectibleDiagnostics", "-showHomeDebugTools", "-showGameplayDebugTools"]
         app.launch()
         let help = app.buttons["replayTutorial"]
         XCTAssertTrue(help.waitForExistence(timeout: 30))
@@ -560,7 +560,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
         for solo in [false, true] {
             let mode = solo ? "solo" : "coop"
             // Home starts normally; only finishing the setup instruction enters the fixture.
-            app.launchArguments = ["-homeHelpFTUEPreview", "-showHomeDebugTools"] + (solo ? ["-leanFTUESolo"] : [])
+            app.launchArguments = ["-homeHelpFTUEPreview", "-showHomeDebugTools", "-showGameplayDebugTools"] + (solo ? ["-leanFTUESolo"] : [])
             app.launch()
             let help = app.buttons["replayTutorial"]
             XCTAssertTrue(help.waitForExistence(timeout: 30))

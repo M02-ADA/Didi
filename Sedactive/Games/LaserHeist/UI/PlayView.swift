@@ -835,19 +835,19 @@ private struct ReplayRoundView: View {
             }
         }
         .coordinateSpace(name: DiamondHUDFlightModel.space)
-        .safeAreaInset(edge: .bottom) {
-            // Results carry their own Back to Home (the same `leave`).
-            // It stays (not usable) through the team defeat, like the HUD, and leaves with it.
-            if onExit != nil, objects.defeatGate.showsHUD(session?.summary), !hasTutorialOverlay {
+        #if DEBUG
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            // A shortcut for explicit replay QA; players leave through the HUD or Results.
+            if DebugRoundControls.gameplayToolsRequested, suppliedSession == nil,
+               onExit != nil, objects.defeatGate.showsHUD(session?.summary), !hasTutorialOverlay {
                 Button("Back to input selection", systemImage: "chevron.backward") { leave() }
-                .buttonStyle(.borderedProminent).controlSize(.large)
-                .disabled(leaving).accessibilityIdentifier("leaveReplay")
-                .allowsHitTesting(session?.summary == nil)
-                .padding(.bottom, 8)
-                .transition(.opacity)
+                    .buttonStyle(.borderedProminent).controlSize(.large)
+                    .disabled(leaving).accessibilityIdentifier("leaveReplay")
+                    .allowsHitTesting(session?.summary == nil)
+                    .padding(.bottom, 8)
+                    .transition(.opacity)
             }
         }
-        #if DEBUG
         // A scene that failed to start never attaches the live frame host, so the setup stage (in
         // front of this view) waits on "Get ready!" with no visible reason: say why in the log.
         .onChange(of: startupError) { _, error in
@@ -922,13 +922,14 @@ private struct ReplayRoundView: View {
         }
         #if DEBUG
         .overlay(alignment: .bottomTrailing) {
-            GeometryReader { geometry in
-                VStack { Spacer(); HStack { Spacer()
-                    if !HeartAnimationPreview.isRequested, !hasTutorialOverlay {
-                        TimingIndicatorControls(session: session, scene: scene, retry: retry, viewport: geometry.size)
-                    }
-                } }
-            }.ignoresSafeArea()
+            if (TimingIndicatorControls.isComparison || DebugRoundControls.gameplayToolsRequested),
+               !HeartAnimationPreview.isRequested, !hasTutorialOverlay {
+                GeometryReader { geometry in
+                    TimingIndicatorControls(session: session, scene: scene, retry: retry, viewport: geometry.size)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                }
+                .ignoresSafeArea()
+            }
         }
         #endif
         .task(id: activeTutorial?.isActive == true) {

@@ -34,6 +34,8 @@ struct DebugRoundControls: View {
     /// (about x 913 pt on the 1210 pt screen), with the skips stacked. Advanced widens it, on demand.
     static let width: CGFloat = 218
     static let advancedWidth: CGFloat = 300
+    static let gameplayToolsRequested = ProcessInfo.processInfo.arguments.contains("-showGameplayDebugTools")
+
     /// `-debugRoundControlsPreview`: the card over a replay (`PlayView`), for Simulator layout review.
     static var previewRequested: Bool { ProcessInfo.processInfo.arguments.contains("-debugRoundControlsPreview") }
 

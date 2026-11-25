@@ -174,7 +174,8 @@ struct ContentView: View {
             LeanTutorialOverlay(tutorial: flow.leanTutorial, solo: flow.isSolo)
           }
           #if DEBUG
-          if !stageShown, let session = flow.session, session.hasLiveRoundPlan, session.state != nil, session.summary == nil {
+          if DebugRoundControls.gameplayToolsRequested, !stageShown, let session = flow.session,
+             session.hasLiveRoundPlan, session.state != nil, session.summary == nil {
             DebugRoundControls(session: session)
           }
           #endif
