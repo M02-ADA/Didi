@@ -196,4 +196,40 @@ struct LaserHitReactionTests {
         layer.remove()
         #expect(zap(scene, .player2) == nil && zap(scene, .player1) == nil)
     }
+
+    // MARK: - Drawing order (post-gate square, 25 November 2026)
+
+    /// The strike's pieces draw right after the mascots, in their depth pre-pass sort group, and
+    /// never write depth. Left to RealityKit's transparent sort, the mascots drew after these quads
+    /// once a gate's door and consoles were in the scene, and each quad's depth cut a square out of
+    /// the translucent body (seen on the iPad after the first gate).
+    @Test func theStrikeDrawsOverTheMascotAndNeverHidesItBehindASquare() throws {
+        let zap = LaserHitZap()
+        let parts = zap.root.children.compactMap { $0 as? ModelEntity }
+        let front = parts.filter { $0.name != "laserHitZap.glow" }
+        #expect(parts.count == 3 + LaserHitZap.arcSlots + LaserHitZap.sparkCount)
+        var orders: [String: Int32] = [:]
+        for part in front {
+            let sorted = try #require(part.components[ModelSortGroupComponent.self], "\(part.name)")
+            #expect(sorted.group == RobotAvatarLayer.mascotSortGroup, "\(part.name)")
+            // After the mascots (order 0) in that group.
+            #expect(sorted.order > 0, "\(part.name)")
+            orders[part.name] = sorted.order
+        }
+        // Back to front, as they stand: the current, the ring, the burst, the sparks.
+        let arcs = (0..<LaserHitZap.arcSlots).compactMap { orders["laserHitZap.arc\($0)"] }
+        let ring = try #require(orders["laserHitZap.ring"]), flash = try #require(orders["laserHitZap.flash"])
+        #expect(arcs.count == LaserHitZap.arcSlots && arcs.allSatisfy { $0 < ring } && ring < flash)
+        #expect((0..<LaserHitZap.sparkCount).allSatisfy { (orders["laserHitZap.spark\($0)"] ?? 0) > flash })
+        // The glow stands behind the body: outside the group.
+        let glow = try #require(parts.first { $0.name == "laserHitZap.glow" })
+        #expect(glow.components[ModelSortGroupComponent.self] == nil)
+        // Light, not a surface: no piece writes depth.
+        for part in parts {
+            for material in part.model?.materials ?? [] {
+                let unlit = try #require(material as? UnlitMaterial, "\(part.name)")
+                #expect(!unlit.writesDepth, "\(part.name)")
+            }
+        }
+    }
 }

@@ -79,6 +79,16 @@ final class LaserHitZap {
             return spark
         }
         for part in [glow] + arcs + [ring, flash] + sparks { root.addChild(part) }
+        // Drawn right after the mascots, in their sort group (`RobotAvatarLayer.mascotSortGroup`):
+        // the strike's pieces lie in front of the body and must blend over it. Outside the group,
+        // RealityKit's order between the group and these quads is not fixed: once a gate's door and
+        // consoles were in the scene (from the first gate on), the mascots drew after them, so each
+        // quad's depth cut a square out of the translucent body (iPad, 25 November 2026). Order
+        // follows depth: the current, the ring, the burst, the sparks. The glow behind the body
+        // stays outside the group.
+        for (index, part) in (arcs + [ring, flash] + sparks).enumerated() {
+            part.components.set(ModelSortGroupComponent(group: RobotAvatarLayer.mascotSortGroup, order: Int32(index + 1)))
+        }
     }
 
     /// The emission the struck mascot's own surface shows: hot white for the impact frame,
@@ -366,6 +376,9 @@ final class LaserHitZap {
             }
             material.blending = .transparent(opacity: 1.0)
             material.faceCulling = .none
+            // Light, not a surface: it never writes depth. In the mascots' depth pre-pass group a
+            // quad that did would hide the body behind its whole square, transparent texels included.
+            material.writesDepth = false
             return material
         }
 

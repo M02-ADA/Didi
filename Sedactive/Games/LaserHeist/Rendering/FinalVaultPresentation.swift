@@ -251,7 +251,7 @@ final class FinalVaultPresentation {
         return scene.layout.cameraPosition + [0, 0, -pushDistance]
     }
 
-    init(scene: LaserScene) {
+    init(scene: LaserScene, usesDoorwayAlphaCutout: Bool = false) {
         self.scene = scene
         let layout = scene.layout
         wallWidth = layout.corridorWidth
@@ -269,6 +269,17 @@ final class FinalVaultPresentation {
         jamb.isEnabled = false
         let mechanism = FinalVaultDoorRig(art: art.door, closed: art.closed, width: wallWidth, height: wallHeight)
         mechanism.root.isEnabled = false
+        if usesDoorwayAlphaCutout {
+            // Discard transparent doorway texels from both overlapping surfaces so they
+            // cannot occlude the translucent mascots as the mascots cross the wall.
+            for surface in [mechanism.frame, jamb] {
+                guard var model = surface.model,
+                      var material = model.materials.first as? UnlitMaterial else { continue }
+                material.opacityThreshold = 0.02
+                model.materials = [material]
+                surface.model = model
+            }
+        }
         wall.addChild(jamb)
         wall.addChild(mechanism.root)
         wall.addChild(closed)
