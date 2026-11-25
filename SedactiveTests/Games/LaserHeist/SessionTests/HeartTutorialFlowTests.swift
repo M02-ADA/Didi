@@ -136,7 +136,7 @@ import Testing
         let relaunched = LaserInputFlow(leanTutorial: LeanTutorial(defaults: f.defaults), makeLiveSession: {
             throw CameraFailure.permissionDenied
         })
-        #expect(!relaunched.offerLaunchOnboarding())
+        #expect(relaunched.route == .selection && relaunched.leanTutorial.isCompleted)
     }
     @Test func hudGeometryIsGenerationQualifiedAndClearedOnStop() {
         let f = LeanTutorialTests.Fixture(), tutorial = f.tutorial()

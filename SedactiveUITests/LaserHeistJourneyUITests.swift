@@ -20,14 +20,45 @@ final class LaserHeistJourneyUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.buttons["startMission"].waitForExistence(timeout: timeout))
+        for id in ["openSFXReplayLab", "chooseReplay", "resetLeanTutorial", "cameraDiagnostics", "chooseInGameCamera"] {
+            XCTAssertFalse(app.buttons[id].exists)
+        }
+        XCTAssertFalse(app.segmentedControls["playerModeSelector"].exists)
         expectation(for: NSPredicate { _, _ in app.frame.width > app.frame.height }, evaluatedWith: app)
         waitForExpectations(timeout: 10)
+    }
+
+    func testHomeHighScoreShowsStoredValueBelowStartMission() {
+        let app = XCUIApplication()
+        LaserHeistJourney.markTutorialCompleted(app)
+        // Use the argument domain to keep this UI check independent of saved Simulator records.
+        let score = app.staticTexts["homeHighScore"]
+        let start = app.buttons["startMission"]
+
+        for value in [0, 1625] {
+            app.launchArguments += ["-LaserHeist.highScore", String(value)]
+            app.launch()
+            XCTAssertTrue(score.waitForExistence(timeout: timeout))
+            XCTAssertEqual(score.label, "HIGH SCORE: \(value)")
+            XCTAssertTrue(start.exists)
+            XCTAssertGreaterThan(score.frame.minY, start.frame.maxY)
+            XCTAssertEqual(score.frame.midX, start.frame.midX, accuracy: 8)
+            if value > 0 {
+                let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                screenshot.name = "Home High Score"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+            }
+            app.terminate()
+            app.launchArguments.removeLast(2)
+        }
     }
 
     func testHomeSetUpCameraSetupReplayResultsAndBackToHome() {
         let app = XCUIApplication()
         app.launchArguments = ["-showDebugTools"]
         LaserHeistJourney.markTutorialCompleted(app)
+        app.launchArguments += ["-showHomeDebugTools", "-LaserHeist.highScore", "1625"]
         app.launch()
         let start = app.buttons["startMission"]
         let next = app.buttons["setupNext"]
@@ -69,7 +100,7 @@ final class LaserHeistJourneyUITests: XCTestCase {
         leave.tap()
         XCTAssertTrue(start.waitForExistence(timeout: timeout), "Back from placement did not return Home")
 
-        XCTAssertTrue(app.descendants(matching: .any)["inputFlowMessage"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["inputFlowMessage"].exists)
 
         // Replay demo › Results › Back to Home.
         app.buttons["chooseReplay"].tap()
@@ -81,6 +112,7 @@ final class LaserHeistJourneyUITests: XCTestCase {
         XCTAssertTrue(app.buttons["retryRound"].exists, "Results offered no Play Again")
         home.tap()
         XCTAssertTrue(start.waitForExistence(timeout: timeout), "Back to Home did not return Home")
+        XCTAssertEqual(app.staticTexts["homeHighScore"].label, "HIGH SCORE: 1625")
         XCTAssertFalse(end.exists, "the round is still running behind Home")
     }
 

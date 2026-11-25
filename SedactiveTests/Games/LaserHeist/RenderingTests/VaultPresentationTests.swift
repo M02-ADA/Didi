@@ -287,14 +287,9 @@ struct VaultPresentationTests {
             return screenRect([base.x, (size.y + 0.1) / 2, plane], size: [size.x + 0.2, size.y + 0.1], in: scene, aspect: aspect)
         }
         let door = scene.layout.vaultDoorStopZ
-        let countdown = screenRect([0, VaultPresentation.countdownHeight, door + 0.04],
-                                   size: [VaultPresentation.countdownWidth, 0.1], in: scene, aspect: aspect)
         // The authored lock light (VaultDoor.usda `UnlockedLight`).
         let light = screenRect([0, 2.91, door], size: [1.45, 0.24], in: scene, aspect: aspect)
         let screen = SIMD4<Float>(0, 1, 0, 1)
-        for obstacle in figures + [topBar, title, light] {
-            #expect(!overlaps(countdown, obstacle))
-        }
         var rects: [PlayerID: [SIMD4<Float>]] = [:]
         for player in PlayerID.allCases {
             for button in LaserVaultButton.allCases {
@@ -302,17 +297,17 @@ struct VaultPresentationTests {
                 let rect = screenRect(part.position(relativeTo: nil), size: .init(repeating: VaultPresentation.indicatorSize),
                                       in: scene, aspect: aspect)
                 #expect(rect.x >= screen.x && rect.y <= screen.y && rect.z >= screen.z && rect.w <= screen.w)
-                for obstacle in figures + [topBar, title, countdown, light] {
+                for obstacle in figures + [topBar, title, light] {
                     #expect(!overlaps(rect, obstacle), "\(player) \(button) overlaps at \(viewport)")
                 }
                 rects[player, default: []].append(rect)
             }
         }
         // The seconds-left number between the columns (a generous glyph box), and each
-        // column's completion outline, stay clear of the figures, HUD, countdown and light.
+        // column's completion outline, stay clear of the figures, HUD and light.
         let digit = screenRect([0, VaultPresentation.digitCenterY, door + 0.05],
                                size: [0.36, VaultPresentation.digitHeight], in: scene, aspect: aspect)
-        for obstacle in figures + [topBar, title, countdown, light] {
+        for obstacle in figures + [topBar, title, light] {
             #expect(!overlaps(digit, obstacle), "number overlaps at \(viewport)")
         }
         for player in PlayerID.allCases {
@@ -320,7 +315,7 @@ struct VaultPresentationTests {
             let outline = screenRect([x, VaultPresentation.outlineCenterY, VaultPresentation.indicatorDepthZ + 0.045],
                                      size: VaultPresentation.outlineSize, in: scene, aspect: aspect)
             #expect(outline.x >= 0 && outline.y <= 1 && outline.z >= 0 && outline.w <= 1)
-            for obstacle in figures + [topBar, title, countdown, light, digit] {
+            for obstacle in figures + [topBar, title, light, digit] {
                 #expect(!overlaps(outline, obstacle), "\(player) outline overlaps at \(viewport)")
             }
         }
@@ -763,8 +758,7 @@ extension VaultPresentationTests {
         try round.advance(to: 4.6)  // 1.4 s of game time left
         apply(presenter, round)
         #expect(presenter.vault.countdownDigit == 2 && presenter.vault.countdownUrgent == true)
-        let countdown = try #require(presenter.vault.root.findEntity(named: "vault.countdown"))
-        #expect(countdown.scale.y > 1.5)  // urgency is also thickness, not colour alone
+        #expect(presenter.vault.root.findEntity(named: "vault.countdown") == nil)
     }
 
     // MARK: Stop, abort, retry
@@ -878,7 +872,7 @@ extension VaultPresentationTests {
         }
         #expect(presenter.vault.diagnostics.reveals == 5 && presenter.vault.diagnostics.opens == 5)
         #expect(count("vault.indicator.") == 2 && count("vault.outline.") == 2 && count("vault.countdown.digit.") == 6)
-        #expect(count("vault.countdown") == 1 + 1 + 6)  // bar, digits holder, digits
+        #expect(count("vault.countdown") == 1 + 6)  // digits holder and digits
         #expect(count("vaultDoor") <= 2 && count("vaultDoor.exiting") <= 1)
         presenter.stop()
         #expect(count("vaultDoor.exiting") == 0)

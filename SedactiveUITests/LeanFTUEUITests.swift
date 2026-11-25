@@ -80,7 +80,7 @@ final class LeanFTUEUITests: XCTestCase {
             }
         }
         // A held DEBUG layout can be exited through the existing pause menu.
-        app.launchArguments = ["-replay", "-leanFTUEPreview", "-leanFTUEReset", "-hideDebugOverlay", "-leanFTUEHold", "left", "-showDebugTools"]
+        app.launchArguments = ["-replay", "-leanFTUEPreview", "-leanFTUEReset", "-hideDebugOverlay", "-leanFTUEHold", "left", "-showHomeDebugTools"]
         app.launch(); waitPractice()
         Thread.sleep(forTimeInterval: 4)
         XCTAssertTrue(freeLean.exists)

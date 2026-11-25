@@ -11,10 +11,16 @@ import UIKit
 
 @main
 struct SedactiveApp: App {
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .background { GameWindowPreferences() }
+        }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            // Camera play and the tutorial can run for minutes without a touch.
+            UIApplication.shared.isIdleTimerDisabled = phase != .background
         }
     }
 }

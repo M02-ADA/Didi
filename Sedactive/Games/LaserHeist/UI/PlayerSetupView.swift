@@ -12,7 +12,6 @@ struct PlayerSetupView: View {
     /// Over the Sketch "stand here" stage (Kevin): the same controls in a card,
     /// without the lane boxes the stage's guides replace.
     var isOverlay = false
-    var isRecovering = false
     @State private var actionError: String?
 
     var body: some View {
@@ -40,26 +39,7 @@ struct PlayerSetupView: View {
 
     @ViewBuilder private var calibrationHeadline: some View {
         let copy = automaticCopy
-        if isRecovering, let session = flow.session {
-            let input = LaserTrackingWarning.Input(session: session)
-            if input.identityLost || input.recoveryNeedsContinue || copy.action == .restartSetup {
-                Button {
-                    if input.identityLost || copy.action == .restartSetup {
-                        Task { await flow.retryLiveSetup() }
-                    } else {
-                        session.continueLiveRound()
-                    }
-                } label: {
-                    CalibrationStageHeadline(text: "stand here to continue", detail: nil)
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint(input.identityLost || copy.action == .restartSetup
-                    ? "Restarts setup and ends this round." : "Retries resuming the round.")
-                .disabled(flow.isClosing || flow.isStarting)
-            } else {
-                CalibrationStageHeadline(text: "stand here to continue", detail: nil)
-            }
-        } else if copy.action == .tryAgain || copy.action == .restartSetup {
+        if copy.action == .tryAgain || copy.action == .restartSetup {
             Button {
                 if copy.action == .tryAgain {
                     flow.session?.retryCalibrationManually()

@@ -28,10 +28,8 @@ import UIKit
 ///   where it stands, so the door never jumps back to its stop. At most one
 ///   copy exists; it is removed when its fade completes, or on the next
 ///   handoff, reset or stop.
-/// - `vault.deadline − gameTime`: the countdown bar, over the configured
-///   vault duration, and the whole seconds left as a number between the two
-///   button columns. In the last `urgentRemaining` seconds the bar thickens
-///   and turns warm. Game time freezes on pause, so do both.
+/// - `vault.deadline − gameTime`: the whole seconds left between the two
+///   button columns. The digit warms in the final seconds and holds when game time pauses.
 /// - `vault.buttons[player]`: one activation button per player (19 November
 ///   2026; it replaced three: top, middle, bottom). Live rounds with mascots
 ///   draw it on the player's side of the gate's door frame (`GateConsoleView`: unavailable while
@@ -43,18 +41,18 @@ import UIKit
 /// - `vault.opened` or `coopGateSucceeded`: the door opens, once. It then
 ///   stays put in the corridor and passes the players as travel resumes, and
 ///   is hidden before it reaches the camera.
-/// - `.ended(.vaultFailed)`: the countdown empties, turns red and reads 0;
+/// - `.ended(.vaultFailed)`: the countdown turns red and reads 0;
 ///   the door stays locked. Results follows at once (no added delay).
 /// - Any other end while the vault is closed (e.g. End round): hidden.
 ///
 /// Reduce Motion: no pops; the outline and the exiting door change at once;
 /// the door panels fade instead of sliding. Nothing is conveyed by colour
 /// alone: an active button adds a check, completion adds an outline,
-/// urgency thickens the bar, and failure shows 0.
+/// and failure shows 0.
 ///
 /// The indicators are status only, not hit targets; activation comes only
 /// from Jevon's `vault.buttons`. Their placement is provisional until G11
-/// (contact geometry). The countdown and number sit on the door and move
+/// (contact geometry). The countdown number sits on the door and moves
 /// with it; the button columns stand on the corridor walls beside the
 /// players, as in the Sketch, and travel with the door once it opens.
 @MainActor
@@ -93,11 +91,8 @@ final class VaultPresentation {
     static let indicatorSize: Float = 0.42
     /// Theo's button art, 772 × 1050 px.
     static let buttonSize: SIMD2<Float> = [0.31, 0.42]
-    /// Countdown bar just below the lock light, narrow enough to stay clear of P1.
-    static let countdownHeight: Float = 2.55
-    static let countdownWidth: Float = 1.4
     /// The seconds-left number, centred between the two columns.
-    static let digitHeight: Float = 0.42
+    static let digitHeight: Float = 0.56
     static let digitCenterY: Float = 1.6
     /// Margin of a completed column's outline around its indicator.
     static let outlinePadding: Float = 0.05
@@ -109,15 +104,12 @@ final class VaultPresentation {
 
     private let scene: LaserScene
     private let vaultDuration: Double
-    /// Parent of the countdown and number, on the door.
+    /// Parent of the countdown number, on the door.
     let root = Entity()
     /// Parent of the button columns and outlines, on the corridor walls.
     let buttons = Entity()
     private var indicators: [PlayerID: [LaserVaultButton: (part: Entity, idle: Entity, active: Entity)]] = [:]
     private var outlines: [PlayerID: Entity] = [:]
-    private let countdown = Entity()
-    private let countdownTrack: ModelEntity
-    private let countdownFill: ModelEntity
     private let digitsRoot = Entity()
     private var digits: [Int: Entity] = [:]
     private var attachedToDoor: Bool?
@@ -155,7 +147,7 @@ final class VaultPresentation {
     /// The vault whose frame buttons show it open (green, `showOpenButtons`).
     private var greenID: UUID?
     private var failedID: UUID?
-    /// The countdown look last applied: (urgent, failed).
+    /// The digit colour last applied: (urgent, failed).
     private var style: (urgent: Bool, failed: Bool)?
     private var hidden = true
     /// The next vault's locked door is coming down the corridor (no vault yet).
@@ -165,7 +157,7 @@ final class VaultPresentation {
     private var hasApplied = false
     private var exiting: (entity: Entity, fade: AnimationPlaybackController?)?
     private(set) var diagnostics = Diagnostics()
-    /// Remaining share of the vault opportunity shown, or `nil` when no countdown shows.
+    /// Remaining share of the vault opportunity, or `nil` when no countdown shows.
     private(set) var countdownFraction: Float?
     /// Whole seconds left as shown, or `nil` when no countdown shows.
     private(set) var countdownDigit: Int?
@@ -178,17 +170,6 @@ final class VaultPresentation {
         vaultDuration = configuration.vaultDuration
         root.name = "vault.indicators"
         root.isEnabled = false
-        countdown.name = "vault.countdown"
-        countdownTrack = ModelEntity(mesh: .generatePlane(width: Self.countdownWidth, height: 0.1),
-                                     materials: [Self.flat(Self.trackColor)])
-        countdownFill = ModelEntity(mesh: .generatePlane(width: Self.countdownWidth - 0.1, height: 0.06),
-                                    materials: [Self.flat(Self.fillColor)])
-        countdownFill.position.z = 0.002
-        countdown.addChild(countdownTrack)
-        countdown.addChild(countdownFill)
-        countdown.isEnabled = false
-        countdown.position = [0, Self.countdownHeight, 0.04]
-        root.addChild(countdown)
         digitsRoot.name = "vault.countdown.digits"
         digitsRoot.position = [0, Self.digitCenterY, 0.05]
         digitsRoot.isEnabled = false
@@ -280,7 +261,11 @@ final class VaultPresentation {
             return hideAll()
         }
         guard !hidden else { return }
-        showActivations(vault)
+        // STALE GATE (iPad, 23 November 2026): a state that still holds a gate whose door already
+        // passed (the next door is coming in) must not replay that gate's press and green onto the
+        // next door's buttons; they stay red until their own gate.
+        let passed = vault.id == handedOffID
+        if !passed { showActivations(vault) }
         // The buttons build up as each player's fist reaches toward them (presentation only).
         if consoleMode, let robots = scene.robotAvatars {
             for (player, view) in consoleViews { view.setApproach(robots.consoleApproach(player)) }
@@ -288,7 +273,7 @@ final class VaultPresentation {
         if !isOpen, opens {
             open(vault, at: state.gameTime)
         }
-        showOpenButtons(vault)
+        if !passed { showOpenButtons(vault) }
         updateCountdown(vault, at: state.gameTime, failed: ended == .vaultFailed || failed.contains(vault.id))
         place(travelDistance: travelDistance)
     }
@@ -307,6 +292,7 @@ final class VaultPresentation {
         openedID = nil
         greenID = nil
         passedID = nil
+        handedOffID = nil
         failedID = nil
         succeeded = []
         failed = []
@@ -352,6 +338,8 @@ final class VaultPresentation {
 
     /// The vault whose opened passage has been clear (`holdsTravel`).
     private var passedID: UUID?
+    /// The opened vault whose door was handed on to the next door's approach (`approach`).
+    private var handedOffID: UUID?
 
     /// How long before a gate the mascots are drawn onto their docks (the dock assist), so they
     /// are docked when the gate's time starts: the press zones follow the mascot's distance from
@@ -404,6 +392,9 @@ final class VaultPresentation {
             return false
         }
         if !approaching {
+            // The opened gate's door has passed: its presses and green are done with, and the
+            // buttons now coming in belong to the next door (`update` never replays them there).
+            handedOffID = state.vault?.id
             hideAll()
             hidden = false
             approaching = true
@@ -520,9 +511,6 @@ final class VaultPresentation {
             }
         }
         applyStyle(urgent: false, failed: false)
-        countdownFill.isEnabled = true
-        countdownFill.scale = .one
-        countdown.isEnabled = true
         digitsRoot.isEnabled = true
         for parts in indicators.values.flatMap(\.values) {
             parts.idle.isEnabled = true
@@ -605,8 +593,15 @@ final class VaultPresentation {
     private func open(_ vault: LaserVaultState, at time: Double) {
         openedID = vault.id
         openedAt = time
+        #if DEBUG
+        if LaserPerfMonitor.isEnabled {
+            let pressed = PlayerID.allCases.map { "\($0.rawValue)=\(vault.buttons[$0, default: []].count)" }.joined(separator: " ")
+            LaserPerfMonitor.emit(String(format: "[GateUnlock] door opens · game %.3f · vault.opened %@ · succeeded event %@ · presses %@ · consoles %@ · host %.3f",
+                                         time, vault.opened ? "yes" : "no", succeeded.contains(vault.id) ? "yes" : "no",
+                                         pressed, consoleMode ? "yes" : "no", CACurrentMediaTime()))
+        }
+        #endif
         scene.setVaultDoorState(.open, animated: true, reduceMotion: reducesMotion())
-        countdown.isEnabled = false
         digitsRoot.isEnabled = false
         countdownFraction = nil
         countdownDigit = nil
@@ -644,7 +639,6 @@ final class VaultPresentation {
                 for view in consoleViews.values { view.setUnavailable() }
                 // The buttons are dead: the mascots stop reaching for them and glide back to their boards.
                 if consoleMode { scene.robotAvatars?.consolesActive = false }
-                countdownFill.isEnabled = false
                 diagnostics.timeouts += 1
             }
             countdownFraction = 0
@@ -654,7 +648,6 @@ final class VaultPresentation {
         let remaining = max(0, vault.deadline - time)
         let fraction = vaultDuration > 0 ? Float(min(1, remaining / vaultDuration)) : 0
         countdownFraction = fraction
-        countdownFill.scale.x = max(fraction, 0.001)
         showDigit(Int(remaining.rounded(.up)))
         applyStyle(urgent: remaining <= Self.urgentRemaining, failed: false)
     }
@@ -666,14 +659,11 @@ final class VaultPresentation {
         for (value, digit) in digits { digit.isEnabled = value == shown }
     }
 
-    /// Urgency thickens the bar and warms it; failure turns the track red.
+    /// Urgency warms the digit; failure turns it red.
     /// Materials change only when the look changes, not every frame.
     private func applyStyle(urgent: Bool, failed: Bool) {
         if let style, style == (urgent, failed) { return }
         style = (urgent, failed)
-        countdown.scale = urgent ? [1, 1.6, 1] : .one
-        countdownFill.model?.materials = [Self.flat(urgent ? Self.urgentColor : Self.fillColor)]
-        countdownTrack.model?.materials = [Self.flat(failed ? Self.failedColor : Self.trackColor)]
         let digitColor = failed ? Self.failedColor : urgent ? Self.urgentColor : Self.fillColor
         for digit in digits.values {
             (digit.children.first as? ModelEntity)?.model?.materials = [Self.flat(digitColor)]
@@ -798,7 +788,6 @@ final class VaultPresentation {
         removeExiting()
         scene.setVaultDoorDepth(nil)
         scene.resetVaultDoor()
-        countdown.isEnabled = false
         digitsRoot.isEnabled = false
         countdownFraction = nil
         countdownDigit = nil
@@ -834,7 +823,6 @@ final class VaultPresentation {
 
     // MARK: - Look (placeholder until Theo's art)
 
-    private static let trackColor: UInt32 = 0x1C1944
     /// The wall consoles: the corridor's indigo, a lighter mounting face, the LOW ledge between.
     private static let consoleColor: UInt32 = 0x2A2560
     private static let consoleLedgeColor: UInt32 = 0x332D72
@@ -876,12 +864,18 @@ final class VaultPresentation {
     private static func digit(_ value: Int) -> Entity {
         let holder = Entity()
         holder.name = "vault.countdown.digit.\(value)"
-        let mesh = MeshResource.generateText("\(value)", extrusionDepth: 0.001,
-                                             font: .monospacedDigitSystemFont(ofSize: CGFloat(digitHeight), weight: .heavy))
+        let baseFont = UIFont.monospacedDigitSystemFont(ofSize: CGFloat(digitHeight), weight: .black)
+        let font = baseFont.fontDescriptor.withDesign(.rounded).map { UIFont(descriptor: $0, size: 0) } ?? baseFont
+        let mesh = MeshResource.generateText("\(value)", extrusionDepth: 0.012, font: font)
+        let center = mesh.bounds.center
         let text = ModelEntity(mesh: mesh, materials: [flat(fillColor)])
-        let bounds = mesh.bounds
-        text.position = [-bounds.center.x, -bounds.center.y, 0]
+        text.position = [-center.x, -center.y, 0]
         holder.addChild(text)
+
+        // Same hard offset as the Sketch HUD lettering, dark enough to lift the digit off the door.
+        let shadow = ModelEntity(mesh: mesh, materials: [flat(0x1A132D)])
+        shadow.position = text.position + SIMD3(0.017, -0.026, -0.018)
+        holder.addChild(shadow)
         return holder
     }
 

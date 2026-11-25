@@ -85,6 +85,28 @@ nonisolated struct LaserTrackingWarning: Equatable, Sendable {
         return [.binding, .staleEvidence, .source].contains(input.readinessBlocker)
     }
 
+    /// FTUE has no started round yet. Use its existing readiness gate so a short
+    /// tracking flicker doesn't interrupt a tutorial step.
+    @MainActor init?(tutorial: LeanTutorial, session: GameSessionCoordinator) {
+        guard tutorial.isActive, !tutorial.isSuspended, session.preRoundTutorialPending,
+              tutorial.generation == session.inputConfiguration.sessionGeneration,
+              !session.canStartLiveRound, session.liveReadiness?.blocker != .presentation else { return nil }
+
+        let input = Input(session: session)
+        // Leg/arm evidence can be briefly obscured by the duck being taught.
+        if session.isPresentingFTUEDuckRetry, input.hasPacket, !input.identityLost,
+           input.readinessBlocker == .measurements, !input.attention.values.contains(.tracking) { return nil }
+
+        if input.identityLost || input.sessionPhase == .restartRequired {
+            (stage, detail, primary) = (.needsRecalibration,
+                "We lost track of your position. Recalibrate to restart the tutorial.", .recalibrate)
+        } else {
+            let hint = LiveEvidenceAttention.line(input.attention, solo: input.solo)
+                ?? (input.solo ? "Stand in the middle, whole body in view." : "Stand in your places, whole body in view.")
+            (stage, detail, primary) = (.waitingForPlayers, "\(hint) The tutorial continues when tracking returns.", nil)
+        }
+    }
+
     /// What the warning shows for this state (once it is up).
     init(_ input: Input) {
         if input.identityLost {
@@ -211,44 +233,38 @@ struct LaserTrackingWarningScreen: View {
     static let cream = Color(red: 254 / 255, green: 229 / 255, blue: 187 / 255)
 
     var body: some View {
-        ZStack {
+        SketchArtboard {
             LinearGradient(colors: [Self.frameTop, Self.frameBottom], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
-            VStack(spacing: 18) {
-                Image("LaserHeistUI/Recalibrate")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .accessibilityLabel("Please fix your standing position")
-                    .accessibilityIdentifier("trackingWarning")
-                    .layoutPriority(1)
-                Text(warning.detail)
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(Self.cream)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .accessibilityIdentifier("trackingWarningDetail")
-                HStack(spacing: 14) {
-                    switch warning.primary {
-                    case .recalibrate:
-                        Button("Recalibrate", action: recalibrate)
-                            .buttonStyle(.borderedProminent).tint(.orange).foregroundStyle(.black)
-                            .accessibilityIdentifier("trackingWarningRecalibrate")
-                    case .continueRound:
-                        Button("Continue", action: continueRound)
-                            .buttonStyle(.borderedProminent).tint(.orange).foregroundStyle(.black)
-                            .accessibilityIdentifier("trackingWarningContinue")
-                        Button("Recalibrate", action: recalibrate).buttonStyle(.bordered).tint(Self.cream)
-                    case nil:
-                        // Never a trap: the players can always choose a fresh setup instead of waiting.
-                        Button("Recalibrate", action: recalibrate).buttonStyle(.bordered).tint(Self.cream)
-                            .accessibilityIdentifier("trackingWarningRecalibrate")
-                    }
-                    Button("Leave", role: .cancel, action: leave).buttonStyle(.bordered).tint(Self.cream)
+        } content: { k in
+            Image("LaserHeistUI/Recalibrate")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .sketchFrame(x: 0, y: -28, width: 1210, height: 834, k: k)
+                .accessibilityLabel("Please fix your standing position")
+                .accessibilityHint(warning.detail)
+                .accessibilityIdentifier("trackingWarning")
+            HStack(spacing: 14) {
+                switch warning.primary {
+                case .recalibrate:
+                    Button("Recalibrate", action: recalibrate)
+                        .buttonStyle(.borderedProminent).tint(.orange).foregroundStyle(.black)
+                        .accessibilityIdentifier("trackingWarningRecalibrate")
+                case .continueRound:
+                    Button("Continue", action: continueRound)
+                        .buttonStyle(.borderedProminent).tint(.orange).foregroundStyle(.black)
+                        .accessibilityIdentifier("trackingWarningContinue")
+                    Button("Recalibrate", action: recalibrate).buttonStyle(.bordered).tint(Self.cream)
+                case nil:
+                    // Never a trap: the players can always choose a fresh setup instead of waiting.
+                    Button("Recalibrate", action: recalibrate).buttonStyle(.bordered).tint(Self.cream)
+                        .accessibilityIdentifier("trackingWarningRecalibrate")
                 }
-                .controlSize(.large)
-                .disabled(busy)
+                Button("Leave", role: .cancel, action: leave).buttonStyle(.bordered).tint(Self.cream)
             }
-            .padding(.horizontal, 32).padding(.vertical, 24)
+            .controlSize(.large)
+            .disabled(busy)
+            // Keep the controls below the frame without shrinking the artwork.
+            .sketchFrame(x: 0, y: 744, width: 1210, height: 60, k: k)
         }
         .preferredColorScheme(.dark)
     }

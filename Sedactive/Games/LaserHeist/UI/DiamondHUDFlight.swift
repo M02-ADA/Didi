@@ -130,7 +130,9 @@ struct DiamondHUDFlightOverlay: View {
     let model: DiamondHUDFlightModel
     let scoreAnchor: Anchor<CGRect>?
     var healthAnchor: Anchor<CGRect>? = nil
-    var showsDiagnostics = false
+    #if DEBUG
+    private static let showsDiagnostics = ProcessInfo.processInfo.arguments.contains("-showDiamondFlightDiagnostics")
+    #endif
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -162,7 +164,7 @@ struct DiamondHUDFlightOverlay: View {
                     }
                 }
                 #if DEBUG
-                if showsDiagnostics {
+                if Self.showsDiagnostics {
                     Text("Flights \(model.started) · arrivals \(model.arrivals) · active \(model.flights.count)")
                         .font(.caption2.monospaced()).foregroundStyle(.cyan).frame(maxHeight: .infinity, alignment: .bottom)
                         .accessibilityIdentifier("diamondFlightDiagnostics")

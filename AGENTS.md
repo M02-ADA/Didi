@@ -21,3 +21,5 @@ Read `Docs/TEAM_ALIGNMENT.md` before your first change in a session. It is the t
   These are areas to look for, not a list of installed skills.
 - **Testing:** run the tests relevant to your change (§F).
 - **Finish with the §F report:** changed files, tests and results, skills used, limitations, and integration work for other owners.
+
+- **Branch `developer`:** baca [aturan Developer Mode](Docs/Developer-Tools.md) sebelum mengubah atau merge UI debug. Pertahankan perilaku pemain dari `staging` dan batasi Developer Mode ke pilihan 1/2 pemain, Next Gate, dan Diamond Time.

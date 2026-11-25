@@ -56,6 +56,28 @@ struct NormalDiamondPresentationTests {
         #expect(view.collections == 0)
     }
 
+    @Test func aDiamondThatCrossesTheBodyBetweenRenderedFramesIsCollectible() async throws {
+        let scene = try await scene()
+        let view = NormalDiamondPresentation(scene: scene)
+        let item = diamond(1)
+        view.source = { [item] }
+        view.update(state: state(14.4))
+        let first = try #require(view.bodyContactPath(id: item.id))
+        view.update(state: state(14.6))
+        let sweep = try #require(view.bodyContactPath(id: item.id))
+        let center = (first.end + sweep.end) / 2
+        let body = AvatarDiamondContactCapsule(start: center - [0, 0.25, 0],
+                                             end: center + [0, 0.25, 0], radius: 0.05)
+        #expect(!body.overlaps(center: first.end, radius: first.radius))
+        #expect(!body.overlaps(center: sweep.end, radius: sweep.radius))
+        #expect(body.overlaps(sweep))
+        let alongside = AvatarDiamondContactCapsule(start: body.start + [1, 0, 0],
+                                                    end: body.end + [1, 0, 0], radius: body.radius)
+        #expect(!alongside.overlaps(sweep), "a diamond still misses if it passes beside the player")
+        view.update(state: state(item.exit))
+        #expect(view.bodyContactPath(id: item.id) == nil)
+    }
+
     @Test func gemFacetsBrightenDuringThePickupWindow() async throws {
         let scene = try await scene()
         let view = NormalDiamondPresentation(scene: scene)

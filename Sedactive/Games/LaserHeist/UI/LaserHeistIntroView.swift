@@ -9,6 +9,7 @@ import SwiftUI
 /// The placement check button asks LaserInputFlow to start camera setup.
 struct LaserHeistIntroView: View {
     let flow: LaserInputFlow
+    @Environment(GameplayHighScore.self) private var highScore
     /// DEBUG: opens the real-camera game scene preview (Edo's PR #31 route,
     /// owned by `ContentView`); `nil` hides the entry.
     var onInGameCamera: (() -> Void)? = nil
@@ -27,7 +28,7 @@ struct LaserHeistIntroView: View {
         ZStack {
             switch screen {
             case .home:
-                HomeView(bestScore: nil, onStart: {
+                HomeView(highScore: highScore.highScore, onStart: {
                     flow.cancelLeanTutorialReplay()
                     show(.introVideo)
                 }, onReplayTutorial: {
@@ -56,18 +57,16 @@ struct LaserHeistIntroView: View {
         .preferredColorScheme(.dark)
         .onAppear {
             AudioService.shared.setMusic(.menu)
-            #if DEBUG
-            // The legacy Help visual fixture opens directly on its Home entry point.
-            if ProcessInfo.processInfo.arguments.contains("-homeHelpFTUEPreview"),
-               !FTUEOnboardingPreview.isRequested { return }
-            #endif
-            let returnsToPlacement = flow.consumePlacementReturn()
-            let offersOnboarding = flow.offerLaunchOnboarding()
-            if returnsToPlacement || offersOnboarding { screen = .setup }
+            if flow.consumePlacementReturn() { screen = .setup }
         }
         .onChange(of: flow.tutorialReplayRequested) { _, pending in
             if !pending, flow.route == .selection { screen = .home }
         }
+        #if DEBUG
+        .onChange(of: developerTools.isEnabled) { _, enabled in
+            if !enabled, !HomeView.showsDebugTools { flow.selectPlayerMode(soloPractice: false) }
+        }
+        #endif
         .onDisappear { flow.cancelLeanTutorialReplay() }
     }
 
@@ -94,23 +93,20 @@ struct LaserHeistIntroView: View {
             return
         }
         #endif
+        #if DEBUG
+        if !developerTools.isEnabled, !HomeView.showsDebugTools {
+            flow.selectPlayerMode(soloPractice: false)
+        }
+        #endif
         // In the mode chosen on Home (TEMPORARY selector; always co-op in Release).
         Task { await flow.startSelectedSetup() }
     }
 
     /// The flow's other choices and its messages (e.g. a camera that could not
     /// start), kept small under the Sketch layout rather than redesigning it.
-    private var showsDeveloperTools: Bool {
-        #if DEBUG
-        developerTools.isEnabled
-        #else
-        false
-        #endif
-    }
-
     private var homeOptions: some View {
         VStack(spacing: 10) {
-            if let message = flow.homeMessage(showsDeveloperTools: showsDeveloperTools) {
+            if let message = flow.message {
                 Label(message, systemImage: "info.circle")
                     .font(.callout)
                     .foregroundStyle(LaserHeistDesign.cream)
@@ -119,24 +115,24 @@ struct LaserHeistIntroView: View {
                     .accessibilityIdentifier("inputFlowMessage")
             }
             #if DEBUG
-            // TEMPORARY player-mode selector for testing (remove with `LaserInputFlow`'s selector
-            // section). Chosen here before starting; the setup and round keep it.
-            if developerTools.isEnabled, flow.canSelectPlayerMode || flow.selectsSoloPractice {
-                Picker("Players", selection: Binding(get: { flow.selectsSoloPractice },
-                                                     set: { flow.selectPlayerMode(soloPractice: $0) })) {
-                    Text("2 Players · Co-op").tag(false)
-                    Text("1 Player · Solo Practice").tag(true)
+            if developerTools.isEnabled || HomeView.showsDebugTools {
+                // TEMPORARY player-mode selector for testing (remove with `LaserInputFlow`'s selector
+                // section). Chosen here before starting; the setup and round keep it.
+                if flow.canSelectPlayerMode || flow.selectsSoloPractice {
+                    Picker("Players", selection: Binding(get: { flow.selectsSoloPractice },
+                                                         set: { flow.selectPlayerMode(soloPractice: $0) })) {
+                        Text("2 Players · Co-op").tag(false)
+                        Text("1 Player · Solo Practice").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 420)
+                    .disabled(!flow.canSelectPlayerMode)
+                    .accessibilityIdentifier("playerModeSelector")
+                    .accessibilityHint("Temporary testing option. Start begins camera setup in this mode.")
                 }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 420)
-                .disabled(!flow.canSelectPlayerMode)
-                .accessibilityIdentifier("playerModeSelector")
-                .accessibilityHint("Temporary testing option. Start begins camera setup in this mode.")
             }
-            #endif
-            HStack(spacing: 24) {
-                #if DEBUG
-                if developerTools.isEnabled {
+            if HomeView.showsDebugTools {
+                HStack(spacing: 24) {
                     Button {
                         AudioService.shared.play(.uiTap)
                         flow.showReplay()
@@ -154,12 +150,12 @@ struct LaserHeistIntroView: View {
                             .accessibilityIdentifier("chooseInGameCamera")
                     }
                 }
-                #endif
+                .buttonStyle(.plain)
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .foregroundStyle(LaserHeistDesign.cream.opacity(0.85))
+                .disabled(!flow.canStartLive)
             }
-            .buttonStyle(.plain)
-            .font(.system(size: 17, weight: .semibold, design: .rounded))
-            .foregroundStyle(LaserHeistDesign.cream.opacity(0.85))
-            .disabled(!flow.canStartLive)
+            #endif
         }
         .padding(.bottom, 28)
     }

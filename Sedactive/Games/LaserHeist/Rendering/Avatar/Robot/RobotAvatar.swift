@@ -593,6 +593,10 @@ struct RobotRetargeter {
 /// own `jointTransforms`, written once per player per new body frame.
 @MainActor
 final class RobotAvatarLayer {
+    #if DEBUG
+    /// `-perfLog` live-instance count (DEBUG only, Kevin 22 November 2026).
+    private let perfToken = PerfAliveToken("RobotAvatarLayer")
+    #endif
     struct Robot {
         let container: Entity
         let model: ModelEntity
@@ -837,36 +841,52 @@ final class RobotAvatarLayer {
 
     /// Ends every HIT reaction at once (a new round, a stop, the avatars' removal): the mascots
     /// show their plain live pose again and no effect stays on screen.
+    /// A mascot playing the team defeat keeps its HIT: the defeat builds on it (the round's end
+    /// clears feedback in the same moment the defeat starts); `cancelDefeats()` ends both.
     func cancelHitReactions() {
-        let players = Array(hits.keys)
-        hits = [:]
-        unreactedJoints = [:]
-        for zap in zaps.values { zap.hide() }
-        for board in hoverboards.values { board.cancelReaction() }
-        for player in players { applyScripted(player); restoreBodyMaterials(player) }
+        let players = PlayerID.allCases.filter { defeats[$0] == nil }
+        for player in players {
+            hits[player] = nil
+            unreactedJoints[player] = nil
+            zaps[player]?.hide()
+            hoverboards[player]?.cancelReaction()
+        }
+        for player in players where robots[player] != nil { applyScripted(player); restoreBodyMaterials(player) }
     }
 
     /// Each struck mascot's own materials as authored, kept while a HIT tints them.
     private var restMaterials: [PlayerID: [any RealityKit.Material]] = [:]
-    /// The (flash, charge) last applied, so an unchanged tint is not re-assigned.
-    private var shownCharge: [PlayerID: SIMD2<Float>] = [:]
+    /// The (flash, charge, soot) last applied, so an unchanged surface is not re-assigned.
+    private var shownCharge: [PlayerID: SIMD3<Float>] = [:]
 
     /// The zap ON the mascot: its own surface emits the impact flash, then the coral charge
     /// (`LaserHitZap.bodyTint`), over its authored colours. Only the emission changes, so
     /// Lemon and Tangerine stay recognisable; the authored materials come back exactly after.
-    private func showBodyCharge(_ player: PlayerID, robot: Robot, frame: LaserHitReaction.Frame) {
-        guard frame.bodyFlash > 0.002 || frame.charge > 0.002 else { restoreBodyMaterials(player); return }
+    /// The defeat's soot (`MascotDefeat.sootTint`) darkens the authored colour a little: never
+    /// black, so Lemon stays yellow and Tangerine orange.
+    private func showBodySurface(_ player: PlayerID, robot: Robot, frame: LaserHitReaction.Frame, soot: Float) {
+        let charged = frame.bodyFlash > 0.002 || frame.charge > 0.002
+        guard charged || soot > 0.002 else { restoreBodyMaterials(player); return }
         guard var model = robot.model.model else { return }
-        let value = SIMD2(frame.bodyFlash, frame.charge)
+        let value = SIMD3(frame.bodyFlash, frame.charge, soot)
         if let shown = shownCharge[player], simd_distance(shown, value) < 0.004 { return }
         let authored = restMaterials[player] ?? model.materials
         restMaterials[player] = authored
         shownCharge[player] = value
         let tint = LaserHitZap.bodyTint(flash: frame.bodyFlash, charge: frame.charge)
+        let sooted = SIMD3<Float>(repeating: 1) + (MascotDefeat.sootTint - 1) * max(0, min(1, soot))
         model.materials = authored.map { material in
             guard var surface = material as? PhysicallyBasedMaterial else { return material }
-            surface.emissiveColor = .init(color: tint.color)
-            surface.emissiveIntensity = tint.intensity
+            if charged {
+                surface.emissiveColor = .init(color: tint.color)
+                surface.emissiveIntensity = tint.intensity
+            }
+            if soot > 0.002 {
+                var r: CGFloat = 1, g: CGFloat = 1, b: CGFloat = 1, a: CGFloat = 1
+                surface.baseColor.tint.getRed(&r, green: &g, blue: &b, alpha: &a)
+                surface.baseColor.tint = UIColor(red: r * CGFloat(sooted.x), green: g * CGFloat(sooted.y),
+                                                 blue: b * CGFloat(sooted.z), alpha: a)
+            }
             return surface
         }
         robot.model.model = model
@@ -888,6 +908,13 @@ final class RobotAvatarLayer {
     /// frame and ending it after `LaserHitReaction.duration`.
     private func advanceHit(_ player: PlayerID, time: Double) -> (LaserHitReaction, LaserHitReaction.Frame, Double)? {
         guard var hit = hits[player] else { return nil }
+        #if DEBUG
+        if hit.start == nil, LaserPerfMonitor.isEnabled {
+            // `-perfLog`: the zap's first animated frame (host clock), to set against `[LaserZapTiming]`.
+            LaserPerfMonitor.emit(String(format: "[HitOnset] %@ first zap frame · host %.3f · avatar time %.3f",
+                                         player.rawValue, CACurrentMediaTime(), time))
+        }
+        #endif
         let start = hit.start ?? time
         hit.start = start
         let tau = time - start
@@ -931,6 +958,196 @@ final class RobotAvatarLayer {
         var contact = hit.contact
         contact.x = robot.container.position.x
         zap.show(reaction, frame: frame, at: tau, body: body, contact: contact)
+    }
+
+    // MARK: Defeat (`MascotDefeat`, `MascotDefeatFX`; presentation only)
+
+    private struct ActiveDefeat {
+        let defeat: MascotDefeat
+        /// Render time of the first frame shown (one clock, the render loop's).
+        var start: Double?
+        /// The root X held from the defeat's first frame.
+        var anchorX: Float?
+        var frame = MascotDefeat.Frame()
+        /// Seconds into the defeat at its last shown frame.
+        var age = 0.0
+    }
+    /// Each mascot's last presentation: on its own clock, and when on the host clock.
+    private var presentedAt: [PlayerID: (time: Double, host: Double)] = [:]
+    private var defeats: [PlayerID: ActiveDefeat] = [:]
+    private var defeatFX: [PlayerID: MascotDefeatFX] = [:]
+    #if DEBUG
+    /// DEBUG previews without body data: mascots keep their tracked look (not dimmed).
+    static var previewShowsTracked = false
+    #endif
+
+    /// Plays one mascot's part in the team defeat (`MascotDefeat`; health is shared, so every
+    /// mascot falls): `.struck` for a player whose HIT emptied the shared health (call it in the
+    /// HIT's frame, after `startHitReaction`, which it builds on), `.teammate` for the other.
+    /// `spreads: false` for a teammate when no single player was struck (every board fails at
+    /// once). Start every mascot in the same frame: their boards explode on one shared beat. Once
+    /// per player until `cancelDefeats()`: a second call is ignored.
+    func startDefeat(_ player: PlayerID, as role: MascotDefeat.Role, spreads: Bool = true) {
+        guard let robot = robots[player], defeats[player] == nil else { return }
+        // Where the mascot lands: the corridor floor below its deck.
+        let floorDrop = hoverboards[player].map { -$0.floorY }
+            ?? (robot.container.parent.map { $0.position.y - (scene?.layout.corridorFloorY ?? -MascotDefeat.defaultFloorDrop) }
+                ?? MascotDefeat.defaultFloorDrop)
+        let defeat = MascotDefeat(role: role, side: player == .player1 ? -1 : 1, reduceMotion: Self.hitsReduceMotion,
+                                  spreads: spreads, floorDrop: floorDrop)
+        defeats[player] = ActiveDefeat(defeat: defeat)
+        prepareDefeatFX(player, robot: robot)
+    }
+
+    /// The whole team's defeat in one frame (one shared boom): every mascot shown, `cast.struck`
+    /// as struck, the others as teammates. Idempotent: mascots already falling are left alone.
+    func startTeamDefeat(_ cast: TeamDefeatCast) {
+        #if DEBUG
+        if defeats.isEmpty {
+            let names = cast.struck.map(\.rawValue).sorted().joined(separator: "+")
+            print(String(format: "[TeamDefeat] round lost · struck %@ · host %.3f", names.isEmpty ? "none (shared)" : names,
+                         CACurrentMediaTime()))
+        }
+        #endif
+        for player in PlayerID.allCases where robots[player] != nil {
+            startDefeat(player, as: cast.struck.contains(player) ? .struck : .teammate, spreads: !cast.struck.isEmpty)
+        }
+    }
+
+    /// Whether any mascot is playing the team defeat.
+    var isPlayingDefeat: Bool { !defeats.isEmpty }
+
+    /// Builds a mascot's defeat effects ahead of time (round load), so the fatal HIT's frame never
+    /// pays for them. Hidden until a defeat shows them; reused by every later defeat.
+    private func prepareDefeatFX(_ player: PlayerID, robot: Robot) {
+        guard defeatFX[player] == nil, let lane = robot.container.parent else { return }
+        let fx = MascotDefeatFX()
+        fx.root.name = "player.\(player.rawValue).defeatFX"
+        lane.addChild(fx.root)
+        defeatFX[player] = fx
+    }
+
+    /// The defeat a mascot plays, and its frame now (tests, previews).
+    func defeat(_ player: PlayerID) -> MascotDefeat? { defeats[player]?.defeat }
+    func defeatFrame(_ player: PlayerID) -> MascotDefeat.Frame? { defeats[player]?.frame }
+
+    /// How far the team defeat has played (the least advanced mascot, seconds); nil while none
+    /// plays or before each has shown its first frame. Clock-agnostic (`TeamDefeatGate`).
+    var defeatAge: Double? {
+        let ages = defeats.values.compactMap { $0.start == nil ? nil : $0.age }
+        guard !ages.isEmpty, ages.count == defeats.count else { return nil }
+        return ages.min()
+    }
+
+    /// Off for a driver that renders every frame on its own clock (the DEBUG defeat preview).
+    var drivesDefeatOnItsOwn = true
+
+    /// Keeps a playing team defeat moving on frames where nothing else presents the mascots (a
+    /// replay's presentation stops with the round), continuing the clock each was last shown on.
+    /// Call once per rendered frame, after the live avatars' own refresh: while that feed presents
+    /// the mascots every frame, this does nothing.
+    func keepDefeatMoving() {
+        guard drivesDefeatOnItsOwn else { return }
+        let host = CACurrentMediaTime()
+        for player in Array(defeats.keys) {
+            guard let last = presentedAt[player], host - last.host > 0.004 else { continue }
+            present(player, k: smoothing.map { Float(1 - exp(-(host - last.host) / max($0, 1e-4))) } ?? 1,
+                    time: last.time + (host - last.host))
+        }
+    }
+
+    /// The render time from which Results may show: every playing defeat has reached its
+    /// finishing pose. Nil while none plays or before each has shown its first frame.
+    var defeatResultsTime: Double? {
+        let ends = defeats.values.compactMap { d in d.start.map { $0 + d.defeat.resultsTime } }
+        guard !ends.isEmpty, ends.count == defeats.count else { return nil }
+        return ends.max()
+    }
+
+    /// Ends every defeat at once (exit, Play Again, the avatars' removal): plain live mascots and
+    /// boards again, no effect left on screen. The pop's entities are kept hidden for reuse.
+    func cancelDefeats() {
+        let players = Array(defeats.keys)
+        defeats = [:]
+        for fx in defeatFX.values { fx.hide() }
+        for board in hoverboards.values where board.defeat != nil { board.defeat = nil }
+        for player in players { applyScripted(player); restoreBodyMaterials(player) }
+    }
+
+    private func advanceDefeat(_ player: PlayerID, time: Double) -> (MascotDefeat, MascotDefeat.Frame)? {
+        guard var active = defeats[player] else { return nil }
+        let start = active.start ?? time
+        active.start = start
+        active.age = time - start
+        active.frame = active.defeat.frame(at: active.age)
+        defeats[player] = active
+        return (active.defeat, active.frame)
+    }
+
+    /// Seated-pose geometry from the rig's bind pose (model units): the crouch's and the seat's
+    /// pelvis drops, and how far forward the feet go when seated.
+    private func seatGeometry(_ robot: Robot) -> (crouch: Float, seat: Float, reach: Float) {
+        let skeleton = robot.solver.skeleton
+        let bind = skeleton.world(skeleton.bind).position
+        let legLength = robot.solver.legLength
+        let hipY = skeleton("Thigh_L").map { bind[$0].y } ?? legLength
+        let ankleY = skeleton("Foot_L").map { bind[$0].y } ?? 0
+        let seatedHip: Float = 0.09
+        let dy = seatedHip - ankleY
+        // The knees stay a little bent; the duck articulation moves the hips back by 12 % of a leg.
+        let reach = max(0, ((0.94 * legLength) * (0.94 * legLength) - dy * dy).squareRoot() - 0.12 * legLength)
+        return (0.16 * legLength, max(0, hipY - seatedHip), reach)
+    }
+
+    /// The defeat on the pose targets: a teammate's look and startle added to the live pose, then
+    /// the scripted pose blended over it.
+    private func applyDefeat(_ f: MascotDefeat.Frame, _ defeat: MascotDefeat, to t: inout RobotPoseTargets, robot: Robot) {
+        t.lean += f.addLean; t.headRoll += f.addHeadRoll; t.headYaw += f.addHeadYaw; t.shoulderShrug += f.addShrug
+        func mix(_ a: Float, _ b: Float, _ w: Float) -> Float { a + (b - a) * w }
+        func mix(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ w: Float) -> SIMD3<Float> {
+            let v = a * (1 - w) + b * w
+            return simd_length(v) > 1e-4 ? simd_normalize(v) : b
+        }
+        let u = f.upperWeight, l = f.lowerWeight
+        t.lean = mix(t.lean, f.lean, u)
+        t.headRoll = mix(t.headRoll, f.headRoll, u)
+        t.headYaw = mix(t.headYaw, f.headYaw, u)
+        t.shoulderShrug = mix(t.shoulderShrug, f.shoulderShrug, u)
+        for side in RobotPoseTargets.Side.allCases {
+            guard let arm = f.arms[side], f.armWeight > 0 else { continue }
+            let w = f.armWeight
+            let live = t.armWeight[side] ?? (t.upperArm[side] == nil ? 0 : 1)
+            if let upper = t.upperArm[side], live > 0.01 {
+                t.upperArm[side] = mix(upper, arm.upper, w)
+                t.forearm[side] = mix(t.forearm[side] ?? upper, arm.fore, w)
+                t.armWeight[side] = mix(live, 1, w)
+            } else {
+                // From the bind pose: the solver slerps from bind by the weight.
+                t.upperArm[side] = arm.upper
+                t.forearm[side] = arm.fore
+                t.armWeight[side] = w
+            }
+        }
+        guard l > 0 else { return }
+        let seat = seatGeometry(robot)
+        t.pelvisDrop = mix(t.pelvisDrop, max(f.crouch * seat.crouch, f.seat * seat.seat), l)
+        for side in RobotPoseTargets.Side.allCases {
+            let sign: Float = side == .right ? 1 : -1
+            t.footShift[side] = mix(t.footShift[side] ?? 0, sign * 0.05 * f.seat, l)
+            t.footLift[side] = mix(t.footLift[side] ?? 0, f.footTuck / Self.modelScale, l)
+            t.footForward[side] = f.seat * seat.reach * l
+        }
+    }
+
+    /// The top of a mascot's head as drawn, in its lane's space.
+    private func headTop(_ robot: Robot, lane: Entity) -> SIMD3<Float> {
+        let skeleton = robot.solver.skeleton
+        guard let head = skeleton("Head") else { return robot.container.position + [0, Self.standingHeight, 0] }
+        let pose = skeleton.world(robot.model.jointTransforms)
+        let bind = skeleton.world(skeleton.bind)
+        let top = SIMD3<Float>(bind.position[head].x, RobotSkeleton.modelHeight, bind.position[head].z)
+        let offset = bind.rotation[head].inverse.act(top - bind.position[head])
+        return robot.model.convert(position: pose.position[head] + pose.rotation[head].act(offset), to: lane)
     }
 
     /// The pose diamond contact reads: the live tracked pose, never a HIT reaction's offsets
@@ -1187,6 +1404,11 @@ final class RobotAvatarLayer {
     init(scene: LaserScene, players: Set<PlayerID>, references: [PlayerID: AvatarReference] = [:],
          templates: [PlayerID: Entity], hoverboard: Entity? = nil, withBoards: Bool = true) {
         self.scene = scene
+        // The HIT zap's shared textures, built here (round load) instead of in the first HIT's
+        // impact frame, where they cost 32 ms on the iPad (23 November 2026). Once per app run.
+        _ = LaserHitZap.Resources.shared
+        // The team defeat's textures too (`MascotDefeatFX`), never in the fatal HIT's frame.
+        _ = MascotDefeatFX.Resources.shared
         let hoverboard = withBoards ? hoverboard ?? PlayerHoverboard.loadedTemplate : nil
         for player in PlayerID.allCases where players.contains(player) {
             guard let entity = scene.players[player], let template = templates[player] else { continue }
@@ -1226,6 +1448,7 @@ final class RobotAvatarLayer {
             apply(player, time: 0)
         }
         if let robot = robots.values.first { arm = Self.arm(of: robot) }
+        for (player, robot) in robots { prepareDefeatFX(player, robot: robot) }
         // Consoles only where mascots ride boards and can steer to a dock; without boards the
         // approved zones and the wrist cursors stay as they were.
         consoles = hoverboards.isEmpty ? [:] : Self.makeConsoles(scene: scene, players: Set(robots.keys), arm: arm)
@@ -1368,11 +1591,14 @@ final class RobotAvatarLayer {
         robot.retargeter.leanSteerGain = hoverboards[player] != nil ? RobotRetargeter.boardLeanSteerGain : 0
         robot.planner = RobotFootPlanner(rest: robot.planner.rest)
         robots[player] = robot
-        shown[player] = nil
+        // A mascot in the team defeat eases out of its last live pose instead of snapping to
+        // neutral when the round's feed stops.
+        let falling = defeats[player] != nil
+        if !falling { shown[player] = nil }
         walkingPositions[player] = nil
         plantAnchor[player] = nil
         footDiagnostics[player] = nil
-        present(player, k: 1, time: now)
+        present(player, k: falling ? Float(1 - exp(-1.0 / 60 / max(smoothing ?? 0.03, 1e-4))) : 1, time: now)
     }
 
     #if DEBUG
@@ -2007,6 +2233,13 @@ final class RobotAvatarLayer {
                 walkingPositions[player] = position
             }
         }
+        // A defeat holds the mascot (and its board) where it began, easing the steering out.
+        let defeat = advanceDefeat(player, time: time)
+        if let defeat, defeat.1.anchor > 0 {
+            let held = defeats[player]?.anchorX ?? rootX
+            defeats[player]?.anchorX = held
+            rootX += (held - rootX) * defeat.1.anchor
+        }
         // The board carries the mascot sideways, the feet planted ON the board (board space), so
         // a lean or a step moves both together, no sliding.
         let plantsFeet = walksInVault || footPlanting
@@ -2035,6 +2268,7 @@ final class RobotAvatarLayer {
         }
         trackedRoot[player] = [rootX, s.lift, 0]
         // After smoothing and foot planning, just before the solve: presentation targets only.
+        if let defeat { applyDefeat(defeat.1, defeat.0, to: &t, robot: robot) }
         if Self.headClearance { MascotPoseEnvelope.apply(to: &t) }
         // The board follows what is shown: lean, root and lift (cosmetic; `PlayerHoverboard`).
         // It glides under the stance (both feet's centre), so a side step carries it along.
@@ -2043,6 +2277,7 @@ final class RobotAvatarLayer {
         if !walksInVault {
             hoverboards[player]?.input = .init(lean: t.lean, centerX: rootX, stanceX: stanceX, lift: s.lift,
                                                available: r.isAvailable, ride: footPlanting ? ride : nil)
+            if let defeat, defeat.1.drivesBoard { hoverboards[player]?.defeat = defeat.1 }
         }
         var solved = robot.solver.solveDetailed(t)
         if !walksInVault, consolesActive, let console = consoles[player],
@@ -2050,6 +2285,7 @@ final class RobotAvatarLayer {
             solved = robot.solver.solveDetailed(t)
         }
         lastPresented[player] = time
+        presentedAt[player] = (time, CACurrentMediaTime())
         let hit = advanceHit(player, time: time)
         if let frame = hit?.1, !frame.isRest {
             // The zap adds to the live pose (never replaces it); diamond contact keeps the pose without it.
@@ -2072,9 +2308,17 @@ final class RobotAvatarLayer {
         #endif
         applyScripted(player)
         showHandGlow(player, robot: robot, time: time)
-        if let hit {
-            showZap(player, robot: robot, reaction: hit.0, frame: hit.1, tau: hit.2)
-            showBodyCharge(player, robot: robot, frame: hit.1)
+        if let hit { showZap(player, robot: robot, reaction: hit.0, frame: hit.1, tau: hit.2) }
+        if hit != nil || defeat != nil {
+            showBodySurface(player, robot: robot, frame: hit?.1 ?? .rest, soot: defeat?.1.soot ?? 0)
+        }
+        if let defeat, let fx = defeatFX[player], let lane = robot.container.parent {
+            let board = hoverboards[player].map { $0.model.position(relativeTo: lane) } ?? [rootX, 0, 0]
+            // The energy arc runs to the teammate's board (in this lane's space).
+            let teammate = defeat.1.spreadAge == nil ? nil : defeats.first { $0.key != player && $0.value.defeat.role == .teammate }
+                .flatMap { hoverboards[$0.key]?.model.position(relativeTo: lane) }
+            fx.show(defeat.0, frame: defeat.1, board: board, floorY: -defeat.0.floorDrop, root: robot.container.position,
+                    headTop: headTop(robot, lane: lane), spreadTo: teammate)
         }
         #if DEBUG
         logSteering(player, time: time, trunk: t.lean, bank: hoverboards[player]?.motion.bank ?? 0, tracked: r.isAvailable)
@@ -2111,27 +2355,38 @@ final class RobotAvatarLayer {
         let hit = hits[player]?.frame ?? .rest
         // Riding the board's verdict lift (`PlayerHoverboard.reactionLift`, cosmetic): the feet stay
         // planted on the deck while it surges or sags. Contacts read the tracked root, never this.
-        let ride = hoverboards[player]?.reactionLift ?? 0
+        // A defeat adds its fall, tilt and squash on top (`MascotDefeat`), after the HIT's; while it
+        // drives the board, the mascot rides the defeat's own board lift (one clock, even once the
+        // board is gone and no longer steps).
+        let defeat = defeats[player]?.frame ?? MascotDefeat.Frame()
+        let ride = defeat.drivesBoard ? defeat.boardLift : hoverboards[player]?.reactionLift ?? 0
         let travel = gateTravel[player] ?? .zero
-        robot.container.position = base + move.offset + hit.rootOffset + SIMD3(0, ride, 0) + travel
+        robot.container.position = base + move.offset + hit.rootOffset + defeat.rootOffset + SIMD3(0, ride, 0) + travel
         let tilt = simd_quatf(angle: hit.roll, axis: [0, 0, 1]) * simd_quatf(angle: hit.pitch, axis: [1, 0, 0])
+            * simd_quatf(angle: defeat.roll, axis: [0, 0, 1]) * simd_quatf(angle: defeat.pitch, axis: [1, 0, 0])
         if robot.container.orientation != tilt { robot.container.orientation = tilt }
-        let squash = max(0.05, move.squash * hit.squash).squareRoot()
+        let squash = max(0.05, move.squash * hit.squash * defeat.squash).squareRoot()
         robot.container.scale = SIMD3(move.scale / squash, move.scale * squash, move.scale / squash) * Self.modelScale
         // Translucent while tracked, dimmed further exactly while the player is not tracked (the
         // pose itself fades separately). The board is never dimmed by this. A HIT on THIS mascot
         // lifts it to fully opaque on the reaction's own clock (one timeline per player: a repeat
         // HIT restarts it, the end lands exactly on the baseline); never while untracked, so a
         // dimmed mascot stays dimmed.
-        let opacity = Self.shownOpacity(tracked: robot.retargeter.isAvailable, solidity: hit.solidity, scripted: move.opacity)
+        // A mascot in the team defeat keeps its tracked look even after the round's camera stops.
+        var isTracked = robot.retargeter.isAvailable || defeats[player] != nil
+        #if DEBUG
+        isTracked = isTracked || Self.previewShowsTracked
+        #endif
+        let opacity = Self.shownOpacity(tracked: isTracked, solidity: max(hit.solidity, defeat.solidity), scripted: move.opacity)
         if robot.container.components[OpacityComponent.self]?.opacity != opacity {
             robot.container.components.set(OpacityComponent(opacity: opacity))
         }
         robot.container.isEnabled = opacity > 0.001
         if let board = hoverboards[player] {
             if board.root.position != travel { board.root.position = travel }
-            let shown = max(0, min(1, move.boardOpacity))
-            board.root.isEnabled = shown > 0.001
+            // A defeat's board swells, then vanishes inside the boom (or fades, under Reduce Motion).
+            let shown = max(0, min(1, move.boardOpacity * defeat.boardOpacity))
+            board.root.isEnabled = shown > 0.001 && defeat.boardScale > 0.001
             if shown >= 1 { board.root.components.remove(OpacityComponent.self) }
             else if board.root.components[OpacityComponent.self]?.opacity != shown {
                 board.root.components.set(OpacityComponent(opacity: shown))
@@ -2203,6 +2458,10 @@ final class RobotAvatarLayer {
         for player in Array(restMaterials.keys) { restoreBodyMaterials(player) }
         for zap in zaps.values { zap.root.removeFromParent() }
         zaps = [:]
+        defeats = [:]
+        presentedAt = [:]
+        for fx in defeatFX.values { fx.root.removeFromParent() }
+        defeatFX = [:]
         removeHandGlows()
         robots = [:]
         shown = [:]

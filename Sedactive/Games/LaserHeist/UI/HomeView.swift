@@ -8,14 +8,13 @@
 import SwiftUI
 
 /// Home (Sketch "Hi-Fi Revisi 6 NOV" › Home Screen, artboard "Home Copy 27"):
-/// the vault frame, the DIDI logo, START MISSION! and the best score.
+/// the vault frame, the DIDI logo, START MISSION! and the high score.
 struct HomeView: View {
-    /// The team's best score. PENDING: nothing records one yet (no owner or
-    /// store); without it the line is left out rather than showing a made-up value.
-    var bestScore: Int?
+    let highScore: Int
     let onStart: () -> Void
     var onReplayTutorial: (() -> Void)? = nil
     #if DEBUG
+    static let showsDebugTools = ProcessInfo.processInfo.arguments.contains("-showHomeDebugTools")
     @State private var showsSFXReplayLab = false
     @Environment(\.developerTools) private var developerTools
     #endif
@@ -55,33 +54,27 @@ struct HomeView: View {
             .sketchFrame(x: 197.6, y: 482, width: 816.3, height: 121.7, k: k)
             .accessibilityIdentifier("startMission")
 
-            if let bestScore {
-                Text("BEST SCORE: \(bestScore)")
-                    .font(.system(size: 24.4 * k, weight: .medium, design: .monospaced))
-                    .tracking(8.78 * k)
-                    .foregroundStyle(LaserHeistDesign.cream)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .frame(width: 1210 * k)
-                    .offset(y: 621 * k)
-                    .accessibilityIdentifier("bestScore")
-            }
+            Text("HIGH SCORE: \(highScore, format: .number.grouping(.never))")
+                .font(.system(size: 24.4 * k, weight: .medium, design: .monospaced))
+                .tracking(8.78 * k)
+                .foregroundStyle(LaserHeistDesign.cream)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(width: LaserHeistDesign.artboard.width * k)
+                .offset(y: 621 * k)
+                .accessibilityIdentifier("homeHighScore")
         }
         #if DEBUG
         .overlay(alignment: .topLeading) {
-            if developerTools.isEnabled {
-                VStack(alignment: .trailing, spacing: 12) {
-                    Button("Developer Mode · Turn off") { developerTools.toggleEnabled() }
-                        .accessibilityIdentifier("disableDeveloperMode")
-                    Button("SFX Replay Lab", systemImage: "waveform") {
-                        AudioService.shared.play(.uiTap)
-                        showsSFXReplayLab = true
-                    }
-                    .accessibilityIdentifier("openSFXReplayLab")
+            if Self.showsDebugTools {
+                Button("SFX Replay Lab", systemImage: "waveform") {
+                    AudioService.shared.play(.uiTap)
+                    showsSFXReplayLab = true
                 }
                 .buttonStyle(.bordered)
                 .tint(LaserHeistDesign.cream)
                 .padding()
+                .accessibilityIdentifier("openSFXReplayLab")
             }
         }
         .fullScreenCover(isPresented: $showsSFXReplayLab) { SFXReplayLabView() }
@@ -120,5 +113,5 @@ struct StartMissionButtonStyle: ButtonStyle {
 }
 
 #Preview(traits: .landscapeLeft) {
-    HomeView(bestScore: 930, onStart: {}, onReplayTutorial: {})
+    HomeView(highScore: 0, onStart: {}, onReplayTutorial: {})
 }

@@ -97,7 +97,7 @@ import Testing
         #expect(!tutorial.canExploreLean(in: session))
     }
 
-    @Test func leanHandoffDoesNotRevealReadySetupDuringBindingFlicker() async throws {
+    @Test func tutorialShowsStandingWarningOnlyAfterTrackingIsLost() async throws {
         let rig = try Self.rig(), session = rig.session
         session.setPreRoundTutorialPending(true)
         let time = try await Self.linkAndCalibrate(rig)
@@ -115,14 +115,14 @@ import Testing
         session.advanceSetupAutomatically()
         #expect(session.canStartLiveRound)
         #expect(!tutorial.canExploreLean(in: session))
-        #expect(!ContentView.showsLeanSetupRecovery(tutorial: tutorial, session: session))
+        #expect(LaserTrackingWarning(tutorial: tutorial, session: session) == nil)
         #expect(session.state == nil && tutorial.generation == generation)
         for i in 1...6 {
             try await rig.send(next + Double(i) * 0.125, bad: "unbound")
             session.advanceSetupAutomatically()
         }
         #expect(!session.canStartLiveRound)
-        #expect(ContentView.showsLeanSetupRecovery(tutorial: tutorial, session: session))
+        #expect(LaserTrackingWarning(tutorial: tutorial, session: session)?.detail.contains("tutorial") == true)
         await session.stop()
     }
 

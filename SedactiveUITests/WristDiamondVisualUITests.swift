@@ -5,7 +5,7 @@ final class WristDiamondVisualUITests: XCTestCase {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
-        app.launchArguments = ["-showDebugTools", "-replay","--synthetic-gameplay-preview","--wrist-diamond-preview"]
+        app.launchArguments = ["-replay", "--synthetic-gameplay-preview", "--wrist-diamond-preview", "-showDiamondFlightDiagnostics"]
         app.launch()
         let meshes = app.staticTexts["wristFixtureMeshes"]
         let generation = app.staticTexts["wristFixtureGeneration"]
@@ -59,6 +59,11 @@ final class WristDiamondVisualUITests: XCTestCase {
         capture("06 — Bonus pickup plus domain replacement, HUD 50")
         tap("wristDeadline")
         XCTAssertTrue(app.buttons["retryRound"].waitForExistence(timeout:20))
+        let finalScore = app.descendants(matching: .any).matching(identifier: "resultsScore").firstMatch
+        XCTAssertEqual(finalScore.value as? String, "50", "Results must match the final HUD score")
+        XCTAssertEqual(app.staticTexts["resultsTitle"].label, "GREAT JOB AGENTS!")
+        XCTAssertTrue(app.staticTexts["resultsHighScore"].label.hasPrefix("HIGH SCORE:"),
+                      "A synthetic preview must not set a record")
         capture("07 — Domain phase deadline and Results")
         XCTAssertFalse(app.staticTexts["wristFixtureError"].exists)
         app.terminate()

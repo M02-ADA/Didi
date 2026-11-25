@@ -25,13 +25,16 @@ import UIKit
 /// and is hidden by the wall before the camera's push, and by the camera's own field of view
 /// at its end.
 ///
-/// Pixel values are measured in the imported art (Asset 42 at 2048 × 1073; Asset 43 at the
-/// same scale, 23.5 px wider on each side).
+/// Pixel values are measured in the imported art (Asset 42 at 2048 × 1073) and scale with the
+/// art's width. The current art (Images A and B, 23 November 2026, 2000 × 1048) is the same vault
+/// at the same place on the canvas: its doorway measures (999.6, 524.9), radius 260.3 px, where
+/// these values put it at (1000, 523.2), 261.7 px.
 nonisolated enum FinalVaultDoorArtwork {
     /// The imported Asset 42.
     static let size = SIMD2<Float>(2048, 1073)
-    /// Asset 43's extra width on each side, at the same scale.
-    static let openInset: Float = 23.5
+    /// The open art's extra width on each side, at the same scale: none, Image B shares Image A's
+    /// canvas (Asset 43 was 23.5 px wider on each side).
+    static let openInset: Float = 0
     /// The doorway: Asset 43's opaque hole edge, which is also where Asset 42's door meets its
     /// frame ring (the colours match from here outward).
     static let center = SIMD2<Float>(1024, 535.75)

@@ -31,6 +31,14 @@ nonisolated struct GameClock: Sendable {
 
     mutating func pause(at sourceTime: Double) throws { try advance(to: sourceTime); isRunning = false }
 
+    /// Discard time advanced after the last committed game update when input stalls.
+    mutating func restorePausedTime(to committedTime: Double) throws {
+        guard !isRunning, committedTime.isFinite, (0...gameTime).contains(committedTime) else {
+            throw GameClockError.invalidSourceTime
+        }
+        gameTime = committedTime
+    }
+
     mutating func resume(at sourceTime: Double) throws {
         try advance(to: sourceTime)
         guard !isRunning else { return }

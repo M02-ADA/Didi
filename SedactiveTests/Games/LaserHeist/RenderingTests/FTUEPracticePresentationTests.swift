@@ -56,13 +56,15 @@ import Testing
         try practice.feedbackFinished(attempt: practice.attemptID, generation: practice.generation)
         var attempts: Set<UUID> = []
         let failures: [(Double, Set<PlayerID>, FTUELaserPractice.Outcome)] = [
-            (1100, [.player2], .unavailable), (1200, [], .hit)
+            (1100, [.player2], .unavailable), (1200, [], .hit), (1300, [], .hit)
         ]
         for (start, unavailable, expected) in failures {
             let attempt = practice.attemptID
             #expect(attempts.insert(attempt).inserted)
             try FTUELaserPracticeTests.run(&practice, clear: unavailable.isEmpty ? [.player2] : roster,
-                                          unavailable: unavailable, start: start)
+                                          unavailable: unavailable, start: start, earlyDuck: unavailable.isEmpty)
+            #expect(practice.canFinishDuckRetryFeedback(in: practice.context))
+            #expect(!practice.canFinishDuckRetryFeedback(in: nil))
             renderer.update(scene: scene, practice: practice, callouts: callouts, suspended: false)
             #expect(practice.outcome == expected)
             let serial = try #require(callouts.shown?.serial)
@@ -75,12 +77,13 @@ import Testing
             let finished = try #require(renderer.finishedAttempt(callouts))
             try practice.feedbackFinished(attempt: finished, generation: practice.generation)
             renderer.update(scene: scene, practice: practice, callouts: callouts, suspended: false)
+            #expect(!practice.canFinishDuckRetryFeedback(in: practice.context))
             #expect(root.parent == nil && callouts.shown == nil)
             #expect(scene.root.children.filter { $0.name.hasPrefix("ftue.practice.") }.count == 1)
         }
         let final = practice.attemptID
         #expect(attempts.insert(final).inserted)
-        try FTUELaserPracticeTests.run(&practice, clear: roster, start: 1300)
+        try FTUELaserPracticeTests.run(&practice, clear: roster, start: 1400)
         renderer.update(scene: scene, practice: practice, callouts: callouts, suspended: false)
         #expect(callouts.shown?.kind == .perfect)
         callouts.finish(try #require(callouts.shown?.serial))
@@ -113,7 +116,9 @@ import Testing
             tutorial.synchronizePractice(p, generation: p.generation)
         }
         #expect(tutorial.stage == .progressExplanation(.bar) && !tutorial.isCompleted)
-        LeanTutorialTests.Fixture().finishProgress(tutorial, generation: p.generation)
+        var fixture = LeanTutorialTests.Fixture()
+        fixture.roster = p.roster
+        fixture.finishProgress(tutorial, generation: p.generation)
         #expect(tutorial.stage == .completed && tutorial.isCompleted)
         tutorial.prepare(generation: UUID(), roster: p.roster)
         #expect(tutorial.stage == .completed)

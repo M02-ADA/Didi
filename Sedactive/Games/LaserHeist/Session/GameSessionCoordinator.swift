@@ -7,7 +7,6 @@
 
 import Foundation
 import Observation
-import UIKit
 
 /// Scene/update ownership only. This token is not player identity or capture generation.
 nonisolated struct LaserLiveFrameAttachment: Equatable, Sendable {
@@ -17,6 +16,10 @@ nonisolated struct LaserLiveFrameAttachment: Equatable, Sendable {
 /// One CP1 consumer per round. Replay uses synthetic time; configured live rounds use host-time readiness.
 @MainActor @Observable
 final class GameSessionCoordinator {
+    #if DEBUG
+    /// `-perfLog` live-instance count (DEBUG only, Kevin 22 November 2026).
+    private let perfToken = PerfAliveToken("GameSessionCoordinator")
+    #endif
     private(set) var configuration: LaserRoundConfiguration?
     private(set) var encounters: [LaserEncounter]
     let inputConfiguration: BodyInputConfiguration
@@ -48,13 +51,6 @@ final class GameSessionCoordinator {
     var activityDuration: Double { replayDriver?.script.activityDuration ?? configuration?.activityDuration ?? 0 }
     private(set) var phase: SessionState = .idle {
         didSet {
-            switch phase {
-            case .countdown, .running, .paused:
-                if displayWakeLock == nil { displayWakeLock = RoundDisplayWakeLock() }
-            case .idle, .starting, .awaitingSetup, .restartRequired, .finished, .failed:
-                displayWakeLock?.release()
-                displayWakeLock = nil
-            }
             #if DEBUG
             if oldValue != phase {
                 print(String(format: "[LaserState] t %.3f · session %@ → %@ · readiness %@ · setup %@", ProcessInfo.processInfo.systemUptime,
@@ -63,7 +59,6 @@ final class GameSessionCoordinator {
             #endif
         }
     }
-    @ObservationIgnored private var displayWakeLock: RoundDisplayWakeLock?
     private(set) var state: LaserGameState?
     /// How far the current stage has run toward its gate, 0…1, for the HUD's continuous progress
     /// (`GameplayHUDModel`); nil outside a stage's activity and gate. From the live director's own
@@ -99,10 +94,15 @@ final class GameSessionCoordinator {
         return boundary - time
     }
     private(set) var laserPractice: FTUELaserPractice?
+    var isPresentingFTUEDuckRetry: Bool {
+        lifetime != nil && preRoundTutorialPending && phase == .awaitingSetup
+            && laserPractice?.canFinishDuckRetryFeedback(in: inputContext) == true
+    }
+
     func updateFTUELaserPractice(at now: Double, generation: UUID, suspended: Bool) {
         guard generation == inputConfiguration.sessionGeneration, lifetime != nil, preRoundTutorialPending,
               phase == .awaitingSetup, game == nil, let configuration, let context = inputContext else { return }
-        let eligible = !suspended && canStartLiveRound && pairInPlay
+        let eligible = !suspended && ((canStartLiveRound && pairInPlay) || isPresentingFTUEDuckRetry)
         if laserPractice == nil, eligible {
             let accepted = provider.acceptedCalibrations.filter { inputConfiguration.roster.contains($0.key) }
             let input = inputConfiguration.replacingCalibrations(accepted)
@@ -1496,7 +1496,17 @@ final class GameSessionCoordinator {
                 }
             default:
                 if game != nil || phase == .countdown || phase == .paused {
-                    try pauseLiveGame(at: readiness.gameTime)
+                    var pauseTime = readiness.gameTime
+                    if phase != .paused, readiness.phase == .paused,
+                       let blocker = readiness.blocker,
+                       [.source, .binding, .calibration, .measurements, .staleEvidence].contains(blocker),
+                       let game, game.roundPhase == .vault {
+                        // A stalled source can jump past the vault deadline on the very tick
+                        // that detects tracking loss. Only spend time the vault had processed.
+                        pauseTime = game.gameTime
+                        try liveReadiness?.restorePausedTime(to: pauseTime)
+                    }
+                    try pauseLiveGame(at: pauseTime)
                 }
             }
         } catch {
@@ -1714,37 +1724,5 @@ nonisolated struct LaserStageProgress: Equatable, Sendable {
         guard let raw else { value = nil; return }
         high = max(high, min(1, max(0, raw)))
         value = high
-    }
-}
-
-
-/// Keeps the app-wide idle timer disabled while any round holds a lock.
-@MainActor
-private final class RoundDisplayWakeLock {
-    private static var activeIDs: Set<UUID> = []
-    private static var previousSetting = false
-    private let id = UUID()
-
-    init() {
-        let application = UIApplication.shared
-        if Self.activeIDs.isEmpty {
-            Self.previousSetting = application.isIdleTimerDisabled
-            application.isIdleTimerDisabled = true
-        }
-        Self.activeIDs.insert(id)
-    }
-
-    func release() {
-        Self.release(id)
-    }
-
-    deinit {
-        let id = id
-        Task { @MainActor in Self.release(id) }
-    }
-
-    private static func release(_ id: UUID) {
-        guard activeIDs.remove(id) != nil, activeIDs.isEmpty else { return }
-        UIApplication.shared.isIdleTimerDisabled = previousSetting
     }
 }

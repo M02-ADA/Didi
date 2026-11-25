@@ -9,26 +9,12 @@ final class LaserInputFlow {
     private(set) var session: GameSessionCoordinator?
     private(set) var isStarting = false
     private(set) var isClosing = false
-    private static let cameraSetupEndedNotice = "Camera setup has ended. You can start a fresh setup or use the replay demo."
     private(set) var message: String?
-
-    func homeMessage(showsDeveloperTools: Bool) -> String? {
-        if message == Self.cameraSetupEndedNotice, !showsDeveloperTools { return nil }
-        return message
-    }
 
     private(set) var returnsToPlacement = false
     let leanTutorial: LeanTutorial
     private var operation: UUID?
-    private var offeredLaunchOnboarding = false
 
-    /// Offer placement once per app process. An incomplete visit can be started again
-    /// from Home, and a new process reads the same stored completion record.
-    func offerLaunchOnboarding() -> Bool {
-        guard route == .selection, !offeredLaunchOnboarding else { return false }
-        offeredLaunchOnboarding = true
-        return !leanTutorial.isCompleted
-    }
     /// Explicit Home intent, consumed by exactly one setup generation; never persisted.
     private(set) var tutorialReplayRequested = false
     @discardableResult func requestLeanTutorialReplay() -> Bool {
@@ -168,7 +154,6 @@ final class LaserInputFlow {
         #if DEBUG
         print("[LaserSetupRestart] flow: stopping session \(Self.tag(session)) (phase \(String(describing: session?.phase)), round \(session?.summary != nil ? "ended" : session?.state != nil ? "running" : "not started"))")
         #endif
-        let finishedTutorial = leanTutorial.stage == .completed && session?.preRoundTutorialPending == true
         await session?.stop()
         #if DEBUG
         print("[LaserSetupRestart] flow: session \(Self.tag(session)) stopped")
@@ -182,7 +167,7 @@ final class LaserInputFlow {
         returnsToPlacement = returnToPlacement
         route = .selection
         automaticRestarts = 0
-        message = finishedTutorial ? nil : Self.cameraSetupEndedNotice
+        message = nil
     }
 
     /// Explicit user intent only. The same App-retained provider gets a new coordinator/generation.
@@ -207,7 +192,7 @@ final class LaserInputFlow {
     /// Restarts setup by itself when the current one can no longer link the players, before
     /// any round has started. Bounded; then the players choose "Restart setup".
     func restartAutomaticallyIfNeeded() async {
-        guard route == .liveSetup, !isStarting, !isClosing, message == nil,
+        guard route == .liveSetup, !isStarting, !isClosing, message == nil, !leanTutorial.isActive,
               automaticRestarts < Self.maximumAutomaticRestarts, let session, session.automaticSetup,
               session.state == nil, session.summary == nil,
               session.phase == .restartRequired || session.setup?.phase == .restartRequired else { return }
@@ -266,7 +251,7 @@ final class LaserInputFlow {
         case is CancellationError:
             "Camera setup was stopped. You can start a fresh setup when ready."
         default:
-            "Camera setup could not continue. Try a fresh setup, or use the replay demo."
+            "Camera setup could not continue. Try a fresh setup."
         }
     }
 }

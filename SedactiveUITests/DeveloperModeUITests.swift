@@ -11,22 +11,30 @@ final class DeveloperModeUITests: XCTestCase {
         return app
     }
 
-    func testHomeStartsCleanAndLongPressEnablesToolsUntilRelaunch() {
+    func testHomeExposesOnlyThePlayerSelectorInDeveloperMode() {
         let app = launch()
+        let picker = app.segmentedControls["playerModeSelector"]
+        let logo = app.images["homeLogo"]
         XCTAssertTrue(app.buttons["startMission"].waitForExistence(timeout: 20))
-        XCTAssertFalse(app.buttons["openSFXReplayLab"].exists)
-        XCTAssertFalse(app.buttons["cameraDiagnostics"].exists)
-        XCTAssertFalse(app.buttons["chooseReplay"].exists)
-        XCTAssertFalse(app.segmentedControls["playerModeSelector"].exists)
+        XCTAssertFalse(picker.exists)
 
-        app.images["homeLogo"].press(forDuration: 3.2)
-        XCTAssertTrue(app.buttons["openSFXReplayLab"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["cameraDiagnostics"].exists)
-        XCTAssertTrue(app.buttons["chooseReplay"].exists)
+        logo.press(forDuration: 3.2)
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        for id in ["openSFXReplayLab", "chooseReplay", "cameraDiagnostics", "chooseInGameCamera", "resetLeanTutorial"] {
+            XCTAssertFalse(app.buttons[id].exists, id)
+        }
+
+        picker.buttons["1 Player · Solo Practice"].tap()
+        logo.press(forDuration: 3.2)
+        XCTAssertTrue(picker.waitForNonExistence(timeout: 5))
+        logo.press(forDuration: 3.2)
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        XCTAssertTrue(picker.buttons["2 Players · Co-op"].isSelected)
+
         app.terminate()
         app.launch()
         XCTAssertTrue(app.buttons["startMission"].waitForExistence(timeout: 20))
-        XCTAssertFalse(app.buttons["openSFXReplayLab"].exists)
+        XCTAssertFalse(picker.exists)
     }
 
     func testCleanCameraSetupAndReturnHomeHaveNoDebugCopy() {
@@ -46,57 +54,23 @@ final class DeveloperModeUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["inputFlowMessage"].exists)
     }
 
-    func testXcodeOptInCanBeTurnedOff() {
-        let app = launch(["-showDebugTools"])
-        XCTAssertTrue(app.buttons["openSFXReplayLab"].waitForExistence(timeout: 20))
-        app.buttons["disableDeveloperMode"].tap()
-        XCTAssertFalse(app.buttons["openSFXReplayLab"].exists)
-        XCTAssertFalse(app.buttons["cameraDiagnostics"].exists)
-        XCTAssertFalse(app.buttons["chooseReplay"].exists)
-    }
-
-    func testRoundToolsOpenFromPauseAndCloseWithoutLeavingAPill() {
-        // The existing pause preview supplies a deterministic menu without camera calibration.
-        let app = launch(["-replay", "-showDebugTools", "-hudPauseMenu", "-hideDebugOverlay"])
-        XCTAssertTrue(app.buttons["openDeveloperTools"].waitForExistence(timeout: 60))
-        XCTAssertFalse(app.otherElements["debugRoundControls"].exists)
-        XCTAssertFalse(app.buttons["timingSelector"].exists)
-        let flights = app.staticTexts["diamondFlightDiagnostics"]
-        XCTAssertFalse(flights.exists)
-        app.buttons["openDeveloperTools"].tap()
-        XCTAssertTrue(app.otherElements["debugRoundControls"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["timingSelector"].exists)
-        XCTAssertTrue(flights.exists)
-        app.buttons["debugClose"].tap()
-        XCTAssertTrue(app.otherElements["debugRoundControls"].waitForNonExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["debugExpand"].exists)
-        XCTAssertFalse(app.buttons["timingSelector"].exists)
-        XCTAssertFalse(flights.exists)
-        XCTAssertTrue(app.buttons["leaveReplay"].isHittable)
-    }
-
-    func testHideKeepsTheSkipTargetsAndRemovesDiagnostics() {
+    func testDeveloperRoundPanelContainsOnlyTheTwoSkips() {
+        // Replay supplies the same panel and a deterministic Pause menu without a camera.
         let app = launch(["-replay", "-showDebugTools", "-hudPauseMenu", "-hideDebugOverlay"])
         let open = app.buttons["openDeveloperTools"]
+        let panel = app.otherElements["debugRoundControls"]
         XCTAssertTrue(open.waitForExistence(timeout: 60))
+        XCTAssertFalse(panel.exists)
         open.tap()
 
-        let nextGate = app.buttons["debugSkipToNextGate"]
-        let diamondTime = app.buttons["debugSkipToDiamondTime"]
-        let hide = app.buttons["debugHide"]
-        XCTAssertTrue(hide.waitForExistence(timeout: 5))
-        XCTAssertTrue(nextGate.exists && diamondTime.exists)
-        let gateFrame = nextGate.frame
-        let diamondFrame = diamondTime.frame
-        hide.tap()
-
-        XCTAssertTrue(hide.waitForNonExistence(timeout: 5))
-        XCTAssertTrue(nextGate.exists && diamondTime.exists)
-        XCTAssertEqual(nextGate.frame, gateFrame)
-        XCTAssertEqual(diamondTime.frame, diamondFrame)
-        XCTAssertFalse(app.buttons["debugClose"].exists)
+        XCTAssertTrue(panel.waitForExistence(timeout: 5))
+        XCTAssertEqual(Set(panel.buttons.allElementsBoundByIndex.map(\.identifier)),
+                       ["debugSkipToNextGate", "debugSkipToDiamondTime", "debugClose"])
         XCTAssertFalse(app.buttons["timingSelector"].exists)
         XCTAssertFalse(app.staticTexts["diamondFlightDiagnostics"].exists)
-        XCTAssertTrue(app.buttons["leaveReplay"].isHittable)
+
+        app.buttons["debugClose"].tap()
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["debugExpand"].exists)
     }
 }
