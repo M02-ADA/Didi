@@ -136,7 +136,7 @@ final class GameplayScenePresenter {
     ///     the pool's expected peak (encounters added later are still shown).
     ///   - showsDebugMarkers: replay body and band-edge markers (Debug aid).
     init(scene: LaserScene, configuration: LaserRoundConfiguration, encounters: [LaserEncounter],
-         showsDebugMarkers: Bool = false) {
+         showsDebugMarkers: Bool = false, usesDoorwayAlphaCutout: Bool = false) {
         self.scene = scene
         self.configuration = configuration
         capacity = Self.capacity(for: encounters, configuration: configuration,
@@ -144,7 +144,7 @@ final class GameplayScenePresenter {
         vault = VaultPresentation(scene: scene, configuration: configuration)
         diamondTime = DiamondTimePresentation(scene: scene)
         normalDiamonds = NormalDiamondPresentation(scene: scene)
-        finalVault = FinalVaultPresentation(scene: scene)
+        finalVault = FinalVaultPresentation(scene: scene, usesDoorwayAlphaCutout: usesDoorwayAlphaCutout)
         verticalLasers = VerticalLaserLayer(scene: scene)
         // The verdict feedback comes from the presenter's own `targetJudged` events, for every move.
         verticalLasers.reportsOutcomes = false

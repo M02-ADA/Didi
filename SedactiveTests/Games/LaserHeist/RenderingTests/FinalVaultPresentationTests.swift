@@ -280,6 +280,28 @@ struct FinalVaultPresentationTests {
         #expect(!sleeve.isEnabled)
     }
 
+    @Test func tutorialDoorwayDiscardsTransparentTexelsOnBothLayers() async throws {
+        let tutorialScene = try await scene()
+        let normalScene = try await scene()
+        let tutorial = FinalVaultPresentation(scene: tutorialScene, usesDoorwayAlphaCutout: true)
+        let normal = FinalVaultPresentation(scene: normalScene)
+        let timeline = LaserFinalVaultTimeline(roster: PlayerID.allCases)
+        let crossing = FinalVaultPresentation.Stage.entry(timeline, elapsed: 3.45)
+        tutorial.update(crossing)
+        normal.update(crossing)
+
+        func material(_ scene: LaserScene, _ name: String) throws -> UnlitMaterial {
+            let surface = try #require(scene.root.findEntity(named: name) as? ModelEntity)
+            return try #require(surface.model?.materials.first as? UnlitMaterial)
+        }
+        for layer in ["finalVault.wallFront", "finalVault.open"] {
+            let tutorialMaterial = try material(tutorialScene, layer)
+            let normalMaterial = try material(normalScene, layer)
+            #expect(tutorialMaterial.opacityThreshold == 0.02)
+            #expect(normalMaterial.opacityThreshold == nil)
+        }
+    }
+
     @Test func eachJumpPassesThroughTheDoorway() async throws {
         let scene = try await scene()
         let vault = FinalVaultPresentation(scene: scene)
