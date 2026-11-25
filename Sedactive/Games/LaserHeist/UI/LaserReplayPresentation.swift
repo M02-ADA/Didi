@@ -441,7 +441,7 @@ final class LaserReplayPresentation {
                                    scene: LaserScene, running: Bool) {
         if presenter == nil {
             presenter = GameplayScenePresenter(scene: scene, configuration: round.inputs.configuration,
-                                               encounters: [], showsDebugMarkers: false)
+                                               encounters: [], usesDoorwayAlphaCutout: true)
             presenter?.onSound = { AudioService.shared.play($0) }
         }
         let state = round.state(health: nil)
