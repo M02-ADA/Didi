@@ -233,39 +233,38 @@ struct LaserTrackingWarningScreen: View {
     static let cream = Color(red: 254 / 255, green: 229 / 255, blue: 187 / 255)
 
     var body: some View {
-        ZStack {
+        SketchArtboard {
             LinearGradient(colors: [Self.frameTop, Self.frameBottom], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
-            VStack(spacing: 18) {
-                Image("LaserHeistUI/Recalibrate")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .accessibilityLabel("Please fix your standing position")
-                    .accessibilityHint(warning.detail)
-                    .accessibilityIdentifier("trackingWarning")
-                    .layoutPriority(1)
-                HStack(spacing: 14) {
-                    switch warning.primary {
-                    case .recalibrate:
-                        Button("Recalibrate", action: recalibrate)
-                            .buttonStyle(.borderedProminent).tint(.orange).foregroundStyle(.black)
-                            .accessibilityIdentifier("trackingWarningRecalibrate")
-                    case .continueRound:
-                        Button("Continue", action: continueRound)
-                            .buttonStyle(.borderedProminent).tint(.orange).foregroundStyle(.black)
-                            .accessibilityIdentifier("trackingWarningContinue")
-                        Button("Recalibrate", action: recalibrate).buttonStyle(.bordered).tint(Self.cream)
-                    case nil:
-                        // Never a trap: the players can always choose a fresh setup instead of waiting.
-                        Button("Recalibrate", action: recalibrate).buttonStyle(.bordered).tint(Self.cream)
-                            .accessibilityIdentifier("trackingWarningRecalibrate")
-                    }
-                    Button("Leave", role: .cancel, action: leave).buttonStyle(.bordered).tint(Self.cream)
+        } content: { k in
+            Image("LaserHeistUI/Recalibrate")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .sketchFrame(x: 0, y: -28, width: 1210, height: 834, k: k)
+                .accessibilityLabel("Please fix your standing position")
+                .accessibilityHint(warning.detail)
+                .accessibilityIdentifier("trackingWarning")
+            HStack(spacing: 14) {
+                switch warning.primary {
+                case .recalibrate:
+                    Button("Recalibrate", action: recalibrate)
+                        .buttonStyle(.borderedProminent).tint(.orange).foregroundStyle(.black)
+                        .accessibilityIdentifier("trackingWarningRecalibrate")
+                case .continueRound:
+                    Button("Continue", action: continueRound)
+                        .buttonStyle(.borderedProminent).tint(.orange).foregroundStyle(.black)
+                        .accessibilityIdentifier("trackingWarningContinue")
+                    Button("Recalibrate", action: recalibrate).buttonStyle(.bordered).tint(Self.cream)
+                case nil:
+                    // Never a trap: the players can always choose a fresh setup instead of waiting.
+                    Button("Recalibrate", action: recalibrate).buttonStyle(.bordered).tint(Self.cream)
+                        .accessibilityIdentifier("trackingWarningRecalibrate")
                 }
-                .controlSize(.large)
-                .disabled(busy)
+                Button("Leave", role: .cancel, action: leave).buttonStyle(.bordered).tint(Self.cream)
             }
-            .padding(.horizontal, 32).padding(.vertical, 24)
+            .controlSize(.large)
+            .disabled(busy)
+            // Keep the controls below the frame without shrinking the artwork.
+            .sketchFrame(x: 0, y: 744, width: 1210, height: 60, k: k)
         }
         .preferredColorScheme(.dark)
     }
