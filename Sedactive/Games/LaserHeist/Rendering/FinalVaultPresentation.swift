@@ -17,11 +17,16 @@ struct FinalVaultArt {
     let closed: TextureResource
     let inside: TextureResource
     let door: FinalVaultDoorArt
+    /// The corridor's end wall beside the art: Asset 42's own navy background, without its band
+    /// (`endWallProfile`).
+    let wall: TextureResource
 
-    /// Asset 42, width over height (6636 × 3476 source).
-    static let closedAspect: Float = 6636.0 / 3476.0
-    /// Asset 43 is wider than 42 at the same scale (6787 source pixels against 6636).
-    static let openWidthShare: Float = 6787.0 / 6636.0
+    /// The closed vault (Image A, 23 November 2026: 2000 × 1048), width over height.
+    static let closedAspect: Float = 2000.0 / 1048.0
+    /// The open vault (Image B) shares the closed vault's canvas exactly (2000 × 1048, the same
+    /// frame, doorway and anchor), so it is drawn at the same width. Asset 43 was 6787 px wide
+    /// against Asset 42's 6636 and needed this to be 6787 / 6636.
+    static let openWidthShare: Float = 1
     /// The doorway in Asset 43, measured on its alpha: centred across, its centre
     /// 50.98 % down from the top, radius 829 px, as a share of 42's width.
     static let doorwayCenterFromTop: Float = 1772.0 / 3476.0
@@ -43,11 +48,12 @@ struct FinalVaultArt {
             async let closed = texture(closedImage, "final-vault-closed")
             async let inside = texture(insideImage, "final-vault-inside")
             async let door = FinalVaultDoorArt.load(closed: closedImage, open: openImage)
-            guard let closed = await closed, let inside = await inside, let door = await door else {
+            async let wall = wallTexture(closedImage)
+            guard let closed = await closed, let inside = await inside, let door = await door, let wall = await wall else {
                 print("FinalVaultArt: Ending Vault textures could not be made, the final vault is not shown")
                 return nil
             }
-            return FinalVaultArt(closed: closed, inside: inside, door: door)
+            return FinalVaultArt(closed: closed, inside: inside, door: door, wall: wall)
         }
         loading = task
         let art = await task.value
@@ -61,6 +67,48 @@ struct FinalVaultArt {
 
     private static func texture(_ image: CGImage, _ name: String) async -> TextureResource? {
         try? await TextureResource(image: image, withName: "finalVault.\(name)", options: .init(semantic: .color))
+    }
+
+    /// Columns (from each edge) of the closed vault's plain navy margin, clear of the corner marks
+    /// (they start about 50 px in) on every row (measured on Image A).
+    static let navyColumns = 4..<40
+
+    /// The corridor's end wall beside the art (`profileWidth` × the art's height): each row the mean
+    /// of the art's own navy margin at that row, both sides. END WALL (Kevin, 23 November 2026): the
+    /// corridor is wider than the art (8.82 m against 6.3 m); the wall beside it is the art's own
+    /// background carried on, so the vault's frame ends where Theo drew it, set in a plain wall.
+    static func endWallProfile(_ image: CGImage) -> CGImage? {
+        let width = image.width, height = image.height
+        guard width > 2 * navyColumns.upperBound,
+              let source = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                     space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let target = CGContext(data: nil, width: profileWidth, height: height, bitsPerComponent: 8, bytesPerRow: profileWidth * 4,
+                                     space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let pixels = source.data?.assumingMemoryBound(to: UInt8.self),
+              let out = target.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+        source.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let columns = navyColumns.flatMap { [$0, width - 1 - $0] }
+        for row in 0..<height {
+            var sum = SIMD3<Int>.zero
+            for x in columns {
+                let i = (row * width + x) * 4
+                sum &+= SIMD3(Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2]))
+            }
+            let c = (sum &+ columns.count / 2) / columns.count
+            for x in 0..<profileWidth {
+                let o = (row * profileWidth + x) * 4
+                (out[o], out[o + 1], out[o + 2], out[o + 3]) = (UInt8(c.x), UInt8(c.y), UInt8(c.z), 255)
+            }
+        }
+        return target.makeImage()
+    }
+    static let profileWidth = 4
+
+    private static func wallTexture(_ image: CGImage) async -> TextureResource? {
+        guard let profile = endWallProfile(image) else { return nil }
+        // Uncompressed: a smooth gradient this subtle would band under block compression.
+        return try? await TextureResource(image: profile, withName: "finalVault.endWall",
+                                          options: .init(semantic: .color, compression: .none))
     }
 }
 
@@ -224,11 +272,11 @@ final class FinalVaultPresentation {
         wall.addChild(jamb)
         wall.addChild(mechanism.root)
         wall.addChild(closed)
-        // The corridor is wider than the art (`LaserWorldLayout.environmentWidth`): the wall carries
-        // on to the side walls with Asset 42's own outer edge, so the vault still closes the corridor.
+        // The corridor is wider than the art (`LaserWorldLayout.environmentWidth`): a plain end wall of
+        // the art's own navy closes it out to the side walls, so the vault still closes the corridor.
         // The art, its doorway and the room keep their size.
         for side: Float in [-1, 1] {
-            guard let extension_ = Self.wallExtension(art.closed, side: side, from: wallWidth / 2,
+            guard let extension_ = Self.wallExtension(art.wall, side: side, from: wallWidth / 2,
                                                       to: layout.environmentWidth / 2, height: wallHeight) else { continue }
             wall.addChild(extension_)
         }
@@ -607,16 +655,15 @@ final class FinalVaultPresentation {
 
     // MARK: - Helpers
 
-    /// A strip from the art's edge (`from`, wall half-width) out to `to`, painted with Asset 42's
-    /// outermost column on that side (its bands carry straight on), tucked 1 cm under the art.
+    /// The end wall beside the art, from just under the art's edge (`from`, wall half-width) out to
+    /// `to`: the art's navy background (`FinalVaultArt.endWallProfile`), at the art's own height.
     private static func wallExtension(_ texture: TextureResource, side: Float, from inner: Float, to outer: Float,
                                       height: Float) -> ModelEntity? {
         guard outer > inner + 0.001 else { return nil }
-        let u: Float = side < 0 ? 3 / FinalVaultDoorArtwork.size.x : 1 - 3 / FinalVaultDoorArtwork.size.x
         let a = side * (inner - 0.01), b = side * outer, h = height / 2
         var descriptor = MeshDescriptor(name: "finalVault.wallExtension")
         descriptor.positions = MeshBuffers.Positions([[a, -h, 0], [b, -h, 0], [b, h, 0], [a, h, 0]])
-        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates([[u, 0], [u, 0], [u, 1], [u, 1]])
+        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates([[0.5, 0], [0.5, 0], [0.5, 1], [0.5, 1]])
         descriptor.primitives = .triangles([0, 1, 2, 0, 2, 3])
         guard let mesh = try? MeshResource.generate(from: [descriptor]) else { return nil }
         var material = UnlitMaterial(applyPostProcessToneMap: false)
@@ -624,6 +671,7 @@ final class FinalVaultPresentation {
         material.faceCulling = .none
         let strip = ModelEntity(mesh: mesh, materials: [material])
         strip.name = side < 0 ? "finalVault.wallExtensionLeft" : "finalVault.wallExtensionRight"
+        // Tucked 1 cm under the art, behind it: the art's own edge stays the boundary.
         strip.position.z = 0.004
         return strip
     }

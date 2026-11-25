@@ -94,6 +94,9 @@ nonisolated struct RobotPoseTargets: Equatable, Sendable {
     /// metres: where the foot planner keeps a planted foot while the pelvis
     /// moves, or carries a stepping foot.
     var footShift: [Side: Float] = [:]
+    /// Each foot's offset forward (−Z, away from the camera) from its bind position, metres:
+    /// only the defeat's seated pose (`MascotDefeat`) moves it; 0 everywhere else.
+    var footForward: [Side: Float] = [:]
     /// How much of each arm's aimed pose to show (0 = bind pose, 1 = aimed);
     /// missing means 1 when a direction is present. Fades instead of snapping.
     var armWeight: [Side: Float] = [:]
@@ -122,6 +125,9 @@ nonisolated struct RobotPoseTargets: Equatable, Sendable {
             out.forearm[side] = dir(forearm[side], target.forearm[side])
             out.footLift[side] = mix(footLift[side] ?? 0, target.footLift[side] ?? 0)
             out.footShift[side] = mix(footShift[side] ?? 0, target.footShift[side] ?? 0)
+            if footForward[side] != nil || target.footForward[side] != nil {
+                out.footForward[side] = mix(footForward[side] ?? 0, target.footForward[side] ?? 0)
+            }
             let from = armWeight[side] ?? (upperArm[side] == nil ? 0 : 1)
             let to = target.armWeight[side] ?? (target.upperArm[side] == nil ? 0 : 1)
             out.armWeight[side] = mix(from, to)
@@ -207,7 +213,8 @@ nonisolated struct RobotPoseSolver: Sendable {
             var hip = bindWorld.position[leg.thigh]
             hip.y -= t.pelvisDrop
             let ankle = bindWorld.position[leg.foot]
-            let target = SIMD3<Float>(ankle.x + (t.footShift[leg.side] ?? 0), ankle.y + (t.footLift[leg.side] ?? 0), ankle.z)
+            let target = SIMD3<Float>(ankle.x + (t.footShift[leg.side] ?? 0), ankle.y + (t.footLift[leg.side] ?? 0),
+                                      ankle.z - (t.footForward[leg.side] ?? 0))
             let horizontal = (target.x - hip.x) * (target.x - hip.x) + (target.z - hip.z) * (target.z - hip.z)
             guard horizontal < leg.reach * leg.reach else { continue }
             drop = max(drop, (hip.y - target.y) - sqrt(leg.reach * leg.reach - horizontal))
@@ -315,7 +322,8 @@ nonisolated struct RobotPoseSolver: Sendable {
                 // Hip position with the pelvis already posed.
                 let hip = (s.parent[i].map { position[$0] } ?? .zero) + parentWorld(i).act(local[i].translation)
                 let bindAnkle = bindWorld.position[footIndex]
-                let target = SIMD3<Float>(bindAnkle.x + (t.footShift[side(n)] ?? 0), bindAnkle.y + (t.footLift[side(n)] ?? 0), bindAnkle.z)
+                let target = SIMD3<Float>(bindAnkle.x + (t.footShift[side(n)] ?? 0), bindAnkle.y + (t.footLift[side(n)] ?? 0),
+                                          bindAnkle.z - (t.footForward[side(n)] ?? 0))
                 var toAnkle = target - hip
                 let reach = min(simd_length(toAnkle), legLength - 1e-4)
                 shortfall[side(n)] = max(0, simd_length(toAnkle) - legLength)
