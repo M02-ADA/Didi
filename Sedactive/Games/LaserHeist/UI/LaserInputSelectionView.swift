@@ -11,7 +11,7 @@ struct LaserInputSelectionView: View {
                     .font(.headline).foregroundStyle(.orange)
                 Text("Make your next move.")
                     .font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
-                Text("Choose camera setup for two players, or explore the sample round.")
+                Text("Choose camera setup for two players.")
                     .font(.title3).foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 16) {
                     Button {
@@ -24,14 +24,18 @@ struct LaserInputSelectionView: View {
                     .disabled(!flow.canStartLive).accessibilityIdentifier("chooseLive")
                     Text("Place the iPad securely in landscape, then stand side by side facing it with room to move. Movement checks must be ready before a round can start.")
                         .foregroundStyle(.secondary)
-                    Divider()
-                    Button { flow.showReplay() } label: {
-                        Label("Replay demo", systemImage: "play.rectangle")
-                            .frame(maxWidth: .infinity, minHeight: 44)
+                    #if DEBUG
+                    if HomeView.showsDebugTools {
+                        Divider()
+                        Button { flow.showReplay() } label: {
+                            Label("Replay demo", systemImage: "play.rectangle")
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.bordered).accessibilityIdentifier("chooseReplay")
+                        Text("A sample round with no camera. You can return here at any time.")
+                            .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.bordered).accessibilityIdentifier("chooseReplay")
-                    Text("A sample round with no camera. You can return here at any time.")
-                        .foregroundStyle(.secondary)
+                    #endif
                 }
                 .controlSize(.large)
                 .padding(24).background(.white.opacity(0.06), in: .rect(cornerRadius: 20))
@@ -40,9 +44,11 @@ struct LaserInputSelectionView: View {
                         .font(.callout).accessibilityIdentifier("inputFlowMessage")
                 }
                 #if DEBUG
-                Button("Camera diagnostics") { flow.showDiagnostics() }
-                    .buttonStyle(.bordered).controlSize(.large)
-                    .disabled(!flow.canStartLive).accessibilityIdentifier("cameraDiagnostics")
+                if HomeView.showsDebugTools {
+                    Button("Camera diagnostics") { flow.showDiagnostics() }
+                        .buttonStyle(.bordered).controlSize(.large)
+                        .disabled(!flow.canStartLive).accessibilityIdentifier("cameraDiagnostics")
+                }
                 #endif
             }
             .frame(maxWidth: 620, alignment: .leading)

@@ -32,6 +32,10 @@ final class RoundSmokeUITests: XCTestCase {
         for round in 1...1 {
             XCTAssertTrue(end.waitForExistence(timeout: timeout), "round \(round) did not start")
             XCTAssertTrue(health.waitForExistence(timeout: timeout), "round \(round) has no HUD")
+            XCTAssertFalse(app.buttons["leaveReplay"].exists)
+            XCTAssertFalse(app.buttons["timingSelector"].exists)
+            XCTAssertFalse(app.staticTexts["diamondFlightDiagnostics"].exists)
+            XCTAssertFalse(app.otherElements["debugRoundControls"].exists)
             end.tap()
             XCTAssertTrue(retry.waitForExistence(timeout: timeout), "round \(round) showed no results")
             XCTAssertFalse(end.exists, "round \(round) is still running behind its results")
@@ -42,6 +46,7 @@ final class RoundSmokeUITests: XCTestCase {
 
     func testInputSelectionCanOpenReplayAndReturnWithoutStartingCamera() {
         let app = XCUIApplication()
+        app.launchArguments += ["-showHomeDebugTools", "-showGameplayDebugTools"]
         app.launch()
         let replay = app.buttons["chooseReplay"]
         let camera = app.buttons["startMission"]   // Sketch Home: camera setup follows the two Set Up steps

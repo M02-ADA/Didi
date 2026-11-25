@@ -57,7 +57,7 @@ struct LaserInputFlowTests {
         await start.value
         #expect(flow.route == .selection && flow.session == nil && !flow.isStarting && !flow.isClosing)
         #expect(input.currentContext?.isActive == false && flow.canStartLive)
-        #expect(flow.message?.contains("setup has ended") == true)
+        #expect(flow.message == nil)
     }
 
     @Test func backgroundStopsLiveSetupWithoutAutomaticReentry() async throws {

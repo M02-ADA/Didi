@@ -94,19 +94,22 @@ import SwiftUI
                 }
             }
             if current.receipt == nil {
-                let sphere = diamonds?.bodyContactSphere(id: spawn.id) ?? heart?.bodyContactSphere
+                let sphere = heart?.bodyContactSphere
+                let path = diamonds?.bodyContactPath(id: spawn.id) ?? sphere.map {
+                    AvatarDiamondContactCapsule(start: $0.center, end: $0.center, radius: $0.radius)
+                }
                 if time >= spawn.entry, time < spawn.exit {
-                    if contactReady, let sphere, sphere.radius > 0 {
+                    if contactReady, let path, path.radius > 0 {
                         let overlaps = readyPlayers.filter { player in
-                            bodies[player]?.contains { $0.overlaps(center: sphere.center, radius: sphere.radius) } == true
+                            bodies[player]?.contains { $0.overlaps(path) } == true
                         }
                         try current.collect(overlaps, context: context)
                         #if DEBUG
                         if Self.diagnostics {
                             contactWindow.eligible += 1
                             if overlaps.isEmpty { contactWindow.noOverlap += 1 }
-                            contactWindow.target = sphere.center
-                            contactWindow.radius = sphere.radius
+                            contactWindow.target = path.end
+                            contactWindow.radius = path.radius
                             for player in input.roster {
                                 if let torso = bodies[player]?.first {
                                     contactWindow.eligibleByPlayer[player, default: 0] += 1

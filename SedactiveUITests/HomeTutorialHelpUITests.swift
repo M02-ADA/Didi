@@ -173,7 +173,15 @@ final class HomeTutorialHelpUITests: XCTestCase {
             add(attachment)
         }
 
+        func assertNoDebugControls() {
+            XCTAssertFalse(app.otherElements["debugRoundControls"].exists)
+            XCTAssertFalse(app.buttons["leaveReplay"].exists)
+            XCTAssertFalse(app.buttons["timingSelector"].exists)
+            XCTAssertFalse(app.staticTexts["diamondFlightDiagnostics"].exists)
+        }
+
         func assertTutorialHUD() {
+            assertNoDebugControls()
             XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.949")
             XCTAssertEqual(app.images.matching(identifier: "ftueCenterCheckpoint").count, 1)
             XCTAssertFalse(countdown.exists)
@@ -208,6 +216,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.containing(banner).firstMatch.exists)
         XCTAssertEqual(bar.value as? String, "Tutorial fill endpoint 0.500")
         XCTAssertFalse(diamond.exists)
+        assertNoDebugControls()
         capture("synthetic-vault-practice")
         if !solo {
             waitForPractice(1, opened: false)
@@ -264,7 +273,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
         }
         for help in [false, true] {
             let prefix = help ? "home-help-solo" : "first-play-coop"
-            app.launchArguments = help ? ["-homeHelpFTUEPreview", "-leanFTUESolo"]
+            app.launchArguments = help ? ["-homeHelpFTUEPreview", "-leanFTUESolo", "-showHomeDebugTools"]
                 : ["-replay", "-leanFTUEPreview", "-leanFTUEReset", "-leanFTUEBoundary", "-hideDebugOverlay"]
             app.launch()
             if help {
@@ -360,7 +369,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
-        app.launchArguments = ["-homeHelpFTUEPreview", "-leanFTUESolo", "-ftueCollectibleDiagnostics"]
+        app.launchArguments = ["-homeHelpFTUEPreview", "-leanFTUESolo", "-ftueCollectibleDiagnostics", "-showHomeDebugTools", "-showGameplayDebugTools"]
         app.launch()
         let help = app.buttons["replayTutorial"]
         XCTAssertTrue(help.waitForExistence(timeout: 30))
@@ -417,7 +426,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
         let overlay = app.descendants(matching: .any)["ftueCollectiblesTitle"]
 
         for (solo, moves) in [(false, true), (true, true), (false, false), (true, false)] {
-            app.launchArguments = ["-homeHelpFTUEPreview"]
+            app.launchArguments = ["-homeHelpFTUEPreview", "-showHomeDebugTools"]
                 + (solo ? ["-leanFTUESolo"] : []) + (moves ? [] : ["-leanFTUENoMotion"])
             app.launch()
             let help = app.buttons["replayTutorial"]
@@ -560,7 +569,7 @@ final class HomeTutorialHelpUITests: XCTestCase {
         for solo in [false, true] {
             let mode = solo ? "solo" : "coop"
             // Home starts normally; only finishing the setup instruction enters the fixture.
-            app.launchArguments = ["-homeHelpFTUEPreview"] + (solo ? ["-leanFTUESolo"] : [])
+            app.launchArguments = ["-homeHelpFTUEPreview", "-showHomeDebugTools", "-showGameplayDebugTools"] + (solo ? ["-leanFTUESolo"] : [])
             app.launch()
             let help = app.buttons["replayTutorial"]
             XCTAssertTrue(help.waitForExistence(timeout: 30))

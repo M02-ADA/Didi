@@ -20,6 +20,10 @@ final class LaserHeistJourneyUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.buttons["startMission"].waitForExistence(timeout: timeout))
+        for id in ["openSFXReplayLab", "chooseReplay", "resetLeanTutorial", "cameraDiagnostics", "chooseInGameCamera"] {
+            XCTAssertFalse(app.buttons[id].exists)
+        }
+        XCTAssertFalse(app.segmentedControls["playerModeSelector"].exists)
         expectation(for: NSPredicate { _, _ in app.frame.width > app.frame.height }, evaluatedWith: app)
         waitForExpectations(timeout: 10)
     }
@@ -53,7 +57,7 @@ final class LaserHeistJourneyUITests: XCTestCase {
     func testHomeSetUpCameraSetupReplayResultsAndBackToHome() {
         let app = XCUIApplication()
         LaserHeistJourney.markTutorialCompleted(app)
-        app.launchArguments += ["-LaserHeist.highScore", "1625"]
+        app.launchArguments += ["-showHomeDebugTools", "-LaserHeist.highScore", "1625"]
         app.launch()
         let start = app.buttons["startMission"]
         let next = app.buttons["setupNext"]

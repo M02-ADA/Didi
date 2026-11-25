@@ -348,9 +348,9 @@ final class LaserReplayPresentation {
         var contacts: [UUID: Set<PlayerID>] = [:]
         for target in active {
             let id = target.spawn.id
-            guard let sphere = presenter.normalDiamonds.bodyContactSphere(id: id), sphere.radius > 0 else { continue }
+            guard let path = presenter.normalDiamonds.bodyContactPath(id: id) else { continue }
             for player in target.spawn.eligiblePlayers where bodies[player]?.contains(where: {
-                $0.overlaps(center: sphere.center, radius: sphere.radius)
+                $0.overlaps(path)
             }) == true {
                 contacts[id, default: []].insert(player)
             }

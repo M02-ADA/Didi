@@ -835,19 +835,19 @@ private struct ReplayRoundView: View {
             }
         }
         .coordinateSpace(name: DiamondHUDFlightModel.space)
-        .safeAreaInset(edge: .bottom) {
-            // Results carry their own Back to Home (the same `leave`).
-            // It stays (not usable) through the team defeat, like the HUD, and leaves with it.
-            if onExit != nil, objects.defeatGate.showsHUD(session?.summary), !hasTutorialOverlay {
+        #if DEBUG
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            // A shortcut for explicit replay QA; players leave through the HUD or Results.
+            if DebugRoundControls.gameplayToolsRequested, suppliedSession == nil,
+               onExit != nil, objects.defeatGate.showsHUD(session?.summary), !hasTutorialOverlay {
                 Button("Back to input selection", systemImage: "chevron.backward") { leave() }
-                .buttonStyle(.borderedProminent).controlSize(.large)
-                .disabled(leaving).accessibilityIdentifier("leaveReplay")
-                .allowsHitTesting(session?.summary == nil)
-                .padding(.bottom, 8)
-                .transition(.opacity)
+                    .buttonStyle(.borderedProminent).controlSize(.large)
+                    .disabled(leaving).accessibilityIdentifier("leaveReplay")
+                    .allowsHitTesting(session?.summary == nil)
+                    .padding(.bottom, 8)
+                    .transition(.opacity)
             }
         }
-        #if DEBUG
         // A scene that failed to start never attaches the live frame host, so the setup stage (in
         // front of this view) waits on "Get ready!" with no visible reason: say why in the log.
         .onChange(of: startupError) { _, error in
@@ -922,13 +922,14 @@ private struct ReplayRoundView: View {
         }
         #if DEBUG
         .overlay(alignment: .bottomTrailing) {
-            GeometryReader { geometry in
-                VStack { Spacer(); HStack { Spacer()
-                    if !HeartAnimationPreview.isRequested, !hasTutorialOverlay {
-                        TimingIndicatorControls(session: session, scene: scene, retry: retry, viewport: geometry.size)
-                    }
-                } }
-            }.ignoresSafeArea()
+            if (TimingIndicatorControls.isComparison || DebugRoundControls.gameplayToolsRequested),
+               !HeartAnimationPreview.isRequested, !hasTutorialOverlay {
+                GeometryReader { geometry in
+                    TimingIndicatorControls(session: session, scene: scene, retry: retry, viewport: geometry.size)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                }
+                .ignoresSafeArea()
+            }
         }
         #endif
         .task(id: activeTutorial?.isActive == true) {
@@ -1463,8 +1464,6 @@ private struct ReplayRoundView: View {
                     scene.robotAvatars?.steeringReading($0)
                 }
         }
-        let trackedPlayers = Set(value?.players.keys.map { $0 } ?? [])
-        let players = contactPlayers.map { trackedPlayers.intersection($0) } ?? trackedPlayers
         if tutorial.isPractising {
             #if DEBUG
             if RobotAvatarLayer.debugTestSteer != nil {
@@ -1477,6 +1476,14 @@ private struct ReplayRoundView: View {
             } else { tutorial.observe(nil, generation: generation, at: now) }
             tutorial.advancePractice(generation: generation, at: now, ready: allowed)
         } else if let kind = tutorial.collection, let context, let configuration {
+            let trackedPlayers: Set<PlayerID>
+            if kind == .diamond, let frame = scene.liveAvatars?.lastAppliedFrame {
+                trackedPlayers = Set(LeanMovementObservation.posedPlayers(in: frame, context: context,
+                    generation: generation, roster: tutorial.roster, now: now) ?? [])
+            } else {
+                trackedPlayers = Set(value?.players.keys.map { $0 } ?? [])
+            }
+            let players = contactPlayers.map { trackedPlayers.intersection($0) } ?? trackedPlayers
             if let receipt = collectiblePresentation.update(scene: scene, kind: kind,
                 configuration: configuration, input: input, context: context, at: now,
                 ready: allowed, contactsFrom: players, heartArt: tutorialHeartArt) {

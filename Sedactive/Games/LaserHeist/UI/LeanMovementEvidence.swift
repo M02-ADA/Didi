@@ -14,10 +14,10 @@ import Foundation
     let context: BodyInputContext
     let players: [PlayerID: Reading]
 
-    static func make(frame: AvatarPoseFrame, context: BodyInputContext?, generation: UUID,
-                     roster: [PlayerID], eligible: Bool, now: Double, bounds: ClosedRange<Float>? = nil,
-                     reading: (PlayerID) -> RobotAvatarLayer.SteeringReading?) -> Self? {
-        guard eligible, let context, context.isActive, let binding = context.wristContact,
+    /// Players with a current, source-correlated avatar pose, independent of steering.
+    static func posedPlayers(in frame: AvatarPoseFrame, context: BodyInputContext?, generation: UUID,
+                             roster: [PlayerID], now: Double) -> [PlayerID]? {
+        guard let context, context.isActive, let binding = context.wristContact,
               context.sessionGeneration == generation, frame.source.context.generation == generation,
               context.cameraGeometryRevision == frame.source.context.geometryRevision,
               binding.sourceEpoch == frame.source.context.epoch,
@@ -26,13 +26,23 @@ import Foundation
               frame.source.capturedAt > binding.bindingCapturedAt,
               now.isFinite, frame.source.capturedAt.isFinite, now >= frame.source.capturedAt,
               now - frame.source.capturedAt <= LiveAvatarPresenter.maximumPoseAge else { return nil }
-        var values: [PlayerID: Reading] = [:]
-        for player in roster {
+        return roster.filter { player in
             guard case .available(let pose) = frame.slot(player), let reference = pose.capability.reference,
                   reference.calibrationRevision == context.calibrationRevisions[player],
-                  let cut = context.cutovers[player], frame.source.frameID > cut.frameID,
-                  frame.source.capturedAt > cut.capturedAt,
-                  let value = reading(player), value.tracked, let age = value.poseAge,
+                  let cut = context.cutovers[player] else { return false }
+            return frame.source.frameID > cut.frameID && frame.source.capturedAt > cut.capturedAt
+        }
+    }
+
+    static func make(frame: AvatarPoseFrame, context: BodyInputContext?, generation: UUID,
+                     roster: [PlayerID], eligible: Bool, now: Double, bounds: ClosedRange<Float>? = nil,
+                     reading: (PlayerID) -> RobotAvatarLayer.SteeringReading?) -> Self? {
+        guard eligible, let context else { return nil }
+        guard let posed = posedPlayers(in: frame, context: context, generation: generation, roster: roster, now: now)
+        else { return nil }
+        var values: [PlayerID: Reading] = [:]
+        for player in posed {
+            guard let value = reading(player), value.tracked, let age = value.poseAge,
                   age >= 0, age <= LiveAvatarPresenter.maximumPoseAge,
                   value.leanSpeed.isFinite, value.targetSpeed == value.leanSpeed,
                   value.velocity.isFinite, value.appliedX.isFinite else { continue }

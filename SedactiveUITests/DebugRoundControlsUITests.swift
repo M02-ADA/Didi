@@ -14,7 +14,7 @@ final class DebugRoundControlsUITests: XCTestCase {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
-        app.launchArguments = ["-replay", "-liveButtonLayout", "-hideDebugOverlay", "-debugRoundControlsPreview"]
+        app.launchArguments = ["-replay", "-liveButtonLayout", "-hideDebugOverlay", "-debugRoundControlsPreview", "-showGameplayDebugTools"]
         app.launch()
         XCUIDevice.shared.orientation = .landscapeLeft
 

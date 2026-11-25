@@ -102,45 +102,45 @@ struct LaserHeistIntroView: View {
                     .accessibilityIdentifier("inputFlowMessage")
             }
             #if DEBUG
-            // TEMPORARY player-mode selector for testing (remove with `LaserInputFlow`'s selector
-            // section). Chosen here before starting; the setup and round keep it.
-            if flow.canSelectPlayerMode || flow.selectsSoloPractice {
-                Picker("Players", selection: Binding(get: { flow.selectsSoloPractice },
-                                                     set: { flow.selectPlayerMode(soloPractice: $0) })) {
-                    Text("2 Players · Co-op").tag(false)
-                    Text("1 Player · Solo Practice").tag(true)
+            if HomeView.showsDebugTools {
+                // TEMPORARY player-mode selector for testing (remove with `LaserInputFlow`'s selector
+                // section). Chosen here before starting; the setup and round keep it.
+                if flow.canSelectPlayerMode || flow.selectsSoloPractice {
+                    Picker("Players", selection: Binding(get: { flow.selectsSoloPractice },
+                                                         set: { flow.selectPlayerMode(soloPractice: $0) })) {
+                        Text("2 Players · Co-op").tag(false)
+                        Text("1 Player · Solo Practice").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 420)
+                    .disabled(!flow.canSelectPlayerMode)
+                    .accessibilityIdentifier("playerModeSelector")
+                    .accessibilityHint("Temporary testing option. Start begins camera setup in this mode.")
                 }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 420)
-                .disabled(!flow.canSelectPlayerMode)
-                .accessibilityIdentifier("playerModeSelector")
-                .accessibilityHint("Temporary testing option. Start begins camera setup in this mode.")
+                HStack(spacing: 24) {
+                    Button {
+                        AudioService.shared.play(.uiTap)
+                        flow.showReplay()
+                    } label: {
+                        Label("Replay demo", systemImage: "play.rectangle")
+                    }
+                    .accessibilityIdentifier("chooseReplay")
+                    .accessibilityHint("A sample round with no camera.")
+                    Button("Reset Lean tutorial") { flow.leanTutorial.resetForNextPlay() }
+                        .accessibilityIdentifier("resetLeanTutorial")
+                    Button("Camera diagnostics") { flow.showDiagnostics() }
+                        .accessibilityIdentifier("cameraDiagnostics")
+                    if let onInGameCamera {
+                        Button("Real camera · game scene preview", action: onInGameCamera)
+                            .accessibilityIdentifier("chooseInGameCamera")
+                    }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .foregroundStyle(LaserHeistDesign.cream.opacity(0.85))
+                .disabled(!flow.canStartLive)
             }
             #endif
-            HStack(spacing: 24) {
-                Button {
-                    AudioService.shared.play(.uiTap)
-                    flow.showReplay()
-                } label: {
-                    Label("Replay demo", systemImage: "play.rectangle")
-                }
-                .accessibilityIdentifier("chooseReplay")
-                .accessibilityHint("A sample round with no camera.")
-                #if DEBUG
-                Button("Reset Lean tutorial") { flow.leanTutorial.resetForNextPlay() }
-                    .accessibilityIdentifier("resetLeanTutorial")
-                Button("Camera diagnostics") { flow.showDiagnostics() }
-                    .accessibilityIdentifier("cameraDiagnostics")
-                if let onInGameCamera {
-                    Button("Real camera · game scene preview", action: onInGameCamera)
-                        .accessibilityIdentifier("chooseInGameCamera")
-                }
-                #endif
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 17, weight: .semibold, design: .rounded))
-            .foregroundStyle(LaserHeistDesign.cream.opacity(0.85))
-            .disabled(!flow.canStartLive)
         }
         .padding(.bottom, 28)
     }
