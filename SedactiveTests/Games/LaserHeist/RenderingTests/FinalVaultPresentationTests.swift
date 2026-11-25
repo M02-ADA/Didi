@@ -1,6 +1,7 @@
 import Foundation
 import RealityKit
 import Testing
+import UIKit
 @testable import Sedactive
 
 /// The final vault (Ending Vault assets 42, 43 and Inside Vault) at the end of the
@@ -22,6 +23,83 @@ struct FinalVaultPresentationTests {
 
     private func entity(_ scene: LaserScene, _ name: String) throws -> Entity {
         try #require(scene.root.findEntity(named: name))
+    }
+
+    /// END WALL (23 November 2026): the corridor (8.82 m) is wider than the art (6.3 m). The art's wall
+    /// band used to be stretched out to the side walls; now the art ends where Theo drew it and a plain
+    /// wall of its own navy background (its gradient, no band) closes the corridor beside it.
+    @Test func theCorridorBesideTheArtIsAPlainWallOfTheArtsNavy() async throws {
+        let image = try #require(UIImage(named: "LaserHeistVault/final-vault-closed")?.cgImage)
+        let profile = try #require(FinalVaultArt.endWallProfile(image))
+        #expect(profile.width == FinalVaultArt.profileWidth && profile.height == image.height)
+        func pixels(_ image: CGImage) -> [UInt8] {
+            var data = [UInt8](repeating: 0, count: image.width * image.height * 4)
+            let context = CGContext(data: &data, width: image.width, height: image.height, bitsPerComponent: 8,
+                                    bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            return data
+        }
+        let art = pixels(image), wall = pixels(profile)
+        func artPixel(_ row: Int, _ x: Int) -> SIMD3<Int> {
+            let i = (row * image.width + x) * 4
+            return SIMD3(Int(art[i]), Int(art[i + 1]), Int(art[i + 2]))
+        }
+        func wallPixel(_ row: Int) -> SIMD3<Int> {
+            let i = (row * FinalVaultArt.profileWidth + 1) * 4
+            return SIMD3(Int(wall[i]), Int(wall[i + 1]), Int(wall[i + 2]))
+        }
+        // Every row: the art's own navy margin at that row, on either side (the wall carries it on).
+        var worst = 0
+        for row in 0..<image.height {
+            for x in [10, 30, image.width - 11, image.width - 31] {
+                let d = artPixel(row, x) &- wallPixel(row)
+                worst = max(worst, abs(d.x), abs(d.y), abs(d.z))
+            }
+        }
+        #expect(worst <= 3, "the end wall is the art's margin, row for row (largest difference \(worst)/255)")
+        // A plain wall: no corner marks or bands copied into it (only the margin's gentle gradient).
+        // (The art's own outermost pixel rows differ by a few levels: its edge, kept as it is.)
+        let rows = (1..<(image.height - 1)).map { wallPixel($0) }
+        let jump = zip(rows, rows.dropFirst()).map { a, b in max(abs(a.x - b.x), abs(a.y - b.y), abs(a.z - b.z)) }.max() ?? 0
+        #expect(jump <= 3, "no marks or bands in the wall (largest step between rows \(jump))")
+        let scene = try await scene()
+        let vault = FinalVaultPresentation(scene: scene)
+        #expect(vault.hasArt)
+        for side in ["Left", "Right"] {
+            let strip = try #require(scene.root.findEntity(named: "finalVault.wallExtension\(side)") as? ModelEntity)
+            let bounds = strip.visualBounds(relativeTo: strip.parent)
+            let edge = scene.layout.corridorWidth / 2
+            #expect(abs(min(abs(bounds.min.x), abs(bounds.max.x)) - edge) < 0.02, "\(side): from the art's edge")
+            #expect(abs(max(abs(bounds.min.x), abs(bounds.max.x)) - scene.layout.environmentWidth / 2) < 0.01, "\(side): to the side wall")
+            #expect(strip.position.z < 0.005, "\(side): behind the art, so the art's own edge is the boundary")
+        }
+    }
+
+    /// NEW ART (23 November 2026): Image A (closed) and Image B (open) share one canvas, and Image B's
+    /// doorway is exactly where the door mechanism cuts Image A's door out, so opening never shifts.
+    @Test func theOpenArtsDoorwayIsWhereTheDoorIsCutFromTheClosedArt() throws {
+        let closed = try #require(UIImage(named: "LaserHeistVault/final-vault-closed")?.cgImage)
+        let open = try #require(UIImage(named: "LaserHeistVault/final-vault-open")?.cgImage)
+        #expect(open.width == closed.width && open.height == closed.height, "one canvas")
+        #expect(FinalVaultArt.openWidthShare == 1 && FinalVaultDoorArtwork.openInset == 0)
+        #expect(abs(Float(closed.width) / Float(closed.height) - FinalVaultArt.closedAspect) < 0.001, "drawn at the art's own aspect")
+        var data = [UInt8](repeating: 0, count: open.width * open.height * 4)
+        let context = try #require(CGContext(data: &data, width: open.width, height: open.height, bitsPerComponent: 8,
+                                             bytesPerRow: open.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.translateBy(x: 0, y: CGFloat(open.height))
+        context.scaleBy(x: 1, y: -1) // row 0 = top, as the artwork's pixel values are measured
+        context.draw(open, in: CGRect(x: 0, y: 0, width: open.width, height: open.height))
+        var count = 0, sx = 0.0, sy = 0.0
+        for y in 0..<open.height { for x in 0..<open.width where data[(y * open.width + x) * 4 + 3] < 128 {
+            count += 1; sx += Double(x); sy += Double(y)
+        } }
+        let k = Double(open.width) / Double(FinalVaultDoorArtwork.size.x)
+        let center = SIMD2(sx / Double(count), sy / Double(count)), radius = (Double(count) / .pi).squareRoot()
+        #expect(abs(center.x - Double(FinalVaultDoorArtwork.center.x) * k) < 3 && abs(center.y - Double(FinalVaultDoorArtwork.center.y) * k) < 3,
+                "the doorway's centre \(center)")
+        #expect(abs(radius - Double(FinalVaultDoorArtwork.radius) * k) < 3, "the doorway's radius \(radius)")
     }
 
     @Test func theVaultComesUpTheCorridorToItsStopAndOpens() async throws {

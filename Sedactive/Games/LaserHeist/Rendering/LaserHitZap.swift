@@ -359,7 +359,7 @@ final class LaserHitZap {
             return t * t * (3 - 2 * t)
         }
 
-        private static func material(_ image: CGImage?) -> UnlitMaterial {
+        static func material(_ image: CGImage?) -> UnlitMaterial {
             var material = UnlitMaterial(applyPostProcessToneMap: false)
             if let image, let texture = try? TextureResource(image: image, options: .init(semantic: .color)) {
                 material.color = .init(tint: .white, texture: .init(texture))
@@ -371,7 +371,7 @@ final class LaserHitZap {
 
         /// A small premultiplied texture from `shade(x, y)`: x across the image and y up it,
         /// each from −1 to 1 (so a quad's centre is (0, 0)).
-        private static func shaded(_ height: Int, width: Int? = nil,
+        static func shaded(_ height: Int, width: Int? = nil,
                                    _ shade: (Float, Float) -> (LaserGateArt.RGB, Float)) -> CGImage? {
             let w = width ?? height, h = height
             var pixels = [UInt8](repeating: 0, count: w * h * 4)

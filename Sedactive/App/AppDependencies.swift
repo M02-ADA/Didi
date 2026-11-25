@@ -26,6 +26,7 @@ import Foundation
   let camera: CameraPipeline
   let bodyInput: BodyInputService
   let visionPoseBridge: VisionNumericPoseBridge
+  let highScore = GameplayHighScore()
   let inputFlow: LaserInputFlow
   #if DEBUG
   let cameraDiagnostics: LiveInputDiagnosticsModel

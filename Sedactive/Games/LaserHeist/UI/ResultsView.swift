@@ -21,6 +21,7 @@ struct ResultsView: View {
 
     @State private var celebrating: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(GameplayHighScore.self) private var highScores: GameplayHighScore?
 
     /// How long the celebration shows before the score. Presentation only;
     /// Sketch gives no duration. A tap skips it.
@@ -76,7 +77,15 @@ struct ResultsView: View {
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.35)) { celebrating = false }
     }
 
-    private var isGameOver: Bool { summary.outcome == .healthDepleted }
+    private var record: GameplayHighScore.Record? {
+        highScores?.record(for: summary.sessionGeneration)
+    }
+
+    private var isNewHighScore: Bool { record?.isNew == true }
+    private var isGameOver: Bool { summary.outcome == .healthDepleted && !isNewHighScore }
+    private var showsHighScore: Bool {
+        GameplayHighScore.isEligible(summary.outcome)
+    }
 
     private var scoreCard: some View {
         SketchArtboard {
@@ -88,12 +97,13 @@ struct ResultsView: View {
                 if isGameOver {
                     GameOverMascots()
                 } else {
+                    if isNewHighScore || summary.outcome == .completed { ResultsEdgeDiamonds() }
                     ResultsMascots()
                 }
             }
         } content: { k in
 
-            Text(title)
+            Text(Self.title(for: summary.outcome, isNewHighScore: isNewHighScore))
                 .textCase(.uppercase)
                 .font(.system(size: 43 * k, weight: .bold))
                 .foregroundStyle(LaserHeistDesign.cream)
@@ -106,13 +116,22 @@ struct ResultsView: View {
 
             ZStack(alignment: .top) {
                 scorePanel(k)
-                if isGameOver {
-                    // The app does not record a best score yet.
-                    Text("HIGH SCORE: —")
-                        .font(.system(size: 24.4 * k, weight: .medium, design: .monospaced))
-                        .tracking(8.78 * k)
-                        .foregroundStyle(LaserHeistDesign.cream)
-                        .offset(y: 268 * k)
+                if showsHighScore {
+                    Group {
+                        if isNewHighScore {
+                            Text("NEW HIGH SCORE!")
+                        } else {
+                            Text("HIGH SCORE: \(record?.highScore ?? highScores?.highScore ?? 0, format: .number.grouping(.never))")
+                        }
+                    }
+                    .font(.system(size: 24.4 * k, weight: .medium, design: .monospaced))
+                    .tracking(8.78 * k)
+                    .foregroundStyle(LaserHeistDesign.cream)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .frame(maxWidth: 555 * k)
+                    .offset(y: 268 * k)
+                    .accessibilityIdentifier("resultsHighScore")
                 }
             }
             .sketchFrame(x: 307, y: 239, width: 597, height: 328, k: k)
@@ -122,7 +141,7 @@ struct ResultsView: View {
                     Button(action: onHome) {
                         Label("Back to Home", systemImage: "house.fill")
                             .font(.system(size: 25 * k, weight: .bold, design: .rounded))
-                            .foregroundStyle(LaserHeistDesign.cream.opacity(isGameOver ? 0.72 : 1))
+                            .foregroundStyle(LaserHeistDesign.cream.opacity(showsHighScore && (summary.outcome != .vaultFailed || isNewHighScore) ? 0.72 : 1))
                     }
                     .buttonStyle(GradientCapsuleButtonStyle(top: Color(sketch: 0x6561A4), bottom: Color(sketch: 0x4D4778),
                                                             edgeTop: Color(sketch: 0x948ECA), edgeBottom: Color(sketch: 0x3B3765),
@@ -164,23 +183,25 @@ struct ResultsView: View {
                 .frame(height: 29 * k)
                 .offset(x: 4.4 * k, y: 30 * k)
             Text(summary.teamScore, format: .number.grouping(.never))
-                .font(.system(size: (isGameOver ? 225 : 263.2) * k, weight: .bold))
+                .font(.system(size: (showsHighScore ? 225 : 263.2) * k, weight: .bold))
                 .foregroundStyle(LaserHeistDesign.cream)
                 .shadow(color: .black.opacity(0.37), radius: 0, x: 8 * k, y: 12 * k)
                 .lineLimit(1)
                 .minimumScaleFactor(0.4)
-                .frame(width: 560 * k, height: (isGameOver ? 220 : 273) * k)
-                .offset(y: (isGameOver ? 52 : 27) * k)
+                .frame(width: 560 * k, height: (showsHighScore ? 220 : 273) * k)
+                .offset(y: (showsHighScore ? 52 : 27) * k)
                 .accessibilityIdentifier("teamScore")
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Your score")
         .accessibilityValue("\(summary.teamScore)")
+        .accessibilityIdentifier("resultsScore")
     }
 
-    private var title: String {
-        switch summary.outcome {
-        case .completed: "Great Job Agents!"
+    static func title(for outcome: LaserRoundOutcome, isNewHighScore: Bool) -> String {
+        if isNewHighScore { return "CONGRATULATIONS" }
+        return switch outcome {
+        case .completed: "GREAT JOB AGENTS!"
         case .healthDepleted: "TRY AGAIN AGENTS"
         case .vaultFailed: "Vault timed out"
         case .aborted: "Round ended early"
@@ -380,5 +401,33 @@ private struct GameOverMascots: View {
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+
+/// The successful and record cards share two cropped diamonds at the screen edges.
+private struct ResultsEdgeDiamonds: View {
+    var body: some View {
+        GeometryReader { proxy in
+            let artboard = LaserHeistDesign.artboard
+            let k = min(proxy.size.width / artboard.width, proxy.size.height / artboard.height)
+            let top = (proxy.size.height - artboard.height * k) / 2
+            diamond(k, rotation: 19)
+                .position(x: 8 * k, y: top + 193 * k)
+            diamond(k, rotation: -19)
+                .position(x: proxy.size.width - 8 * k, y: top + 259 * k)
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func diamond(_ k: CGFloat, rotation: Double) -> some View {
+        Image("LaserHeistUI/diamond")
+            .resizable()
+            .scaledToFit()
+            .frame(width: 102 * k)
+            .rotationEffect(.degrees(rotation))
+            .shadow(color: .white.opacity(0.35), radius: 20 * k)
     }
 }
