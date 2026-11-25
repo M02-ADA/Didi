@@ -185,7 +185,6 @@ struct GameplayHUD: View {
     /// `-hudPauseMenu` opens the menu at launch, for reviewing its layout (Debug
     /// only). Without a session pause it is a labelled preview: the round runs on.
     @Environment(\.developerTools) private var developerTools
-    @State private var restorePauseMenuOnClose = false
     @State private var menuShown = GameplayHUDActions.previewsPauseMenu
     #else
     @State private var menuShown = false
@@ -217,14 +216,6 @@ struct GameplayHUD: View {
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
         }
         .ignoresSafeArea()
-        #if DEBUG
-        .onChange(of: developerTools.showsRoundPanel) { _, isOpen in
-            if !isOpen, restorePauseMenuOnClose {
-                restorePauseMenuOnClose = false
-                menuShown = true
-            }
-        }
-        #endif
         .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: model.banner)
         .onChange(of: model.diamondSecondsLeft) { previous, current in
             AudioService.shared.playDiamondTimeTick(from: previous, to: current)
@@ -448,6 +439,11 @@ struct GameplayHUD: View {
 
     // MARK: - Pause menu
 
+    private func resumeFromPause() {
+        actions.resume?()
+        menuShown = false
+    }
+
     /// Sketch Game 1 pause state, shown only once the session has paused the
     /// round (`actions.pause`); Resume asks the session to resume and Leave Game
     /// ends the round. A Debug preview without a session pause says so.
@@ -468,20 +464,15 @@ struct GameplayHUD: View {
                            style: LayeredPillButtonStyle(top: Color(sketch: 0xEAA551), bottom: Color(sketch: 0xE97434),
                                                          rim: Color(sketch: 0xFFC73A), base: Color(sketch: 0xD75C41),
                                                          rimHeight: 3 * k, baseHeight: 2 * k)) {
-                    #if DEBUG
-                    restorePauseMenuOnClose = false
-                    #endif
-                    actions.resume?()
-                    menuShown = false
+                    resumeFromPause()
                 }
                 .accessibilityIdentifier("resume")
                 #if DEBUG
-                if developerTools.isEnabled {
+                if developerTools.isEnabled, !isFTUEActive {
                     Button("Developer Tools",
                            systemImage: "wrench.and.screwdriver") {
-                        restorePauseMenuOnClose = actions.canPause
                         developerTools.openRoundPanel()
-                        menuShown = false
+                        resumeFromPause()
                     }
                     .font(.title3.bold())
                     .foregroundStyle(Self.cream)

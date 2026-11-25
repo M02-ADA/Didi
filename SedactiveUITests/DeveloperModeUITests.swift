@@ -64,6 +64,7 @@ final class DeveloperModeUITests: XCTestCase {
         open.tap()
 
         XCTAssertTrue(panel.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["resume"].exists)
         XCTAssertEqual(Set(panel.buttons.allElementsBoundByIndex.map(\.identifier)),
                        ["debugSkipToNextGate", "debugSkipToDiamondTime", "debugClose"])
         XCTAssertFalse(app.buttons["timingSelector"].exists)
@@ -71,6 +72,7 @@ final class DeveloperModeUITests: XCTestCase {
 
         app.buttons["debugClose"].tap()
         XCTAssertTrue(panel.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["resume"].exists)
         XCTAssertFalse(app.buttons["debugExpand"].exists)
     }
 }
