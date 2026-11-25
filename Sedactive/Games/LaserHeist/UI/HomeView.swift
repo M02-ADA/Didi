@@ -8,11 +8,9 @@
 import SwiftUI
 
 /// Home (Sketch "Hi-Fi Revisi 6 NOV" › Home Screen, artboard "Home Copy 27"):
-/// the vault frame, the DIDI logo, START MISSION! and the best score.
+/// the vault frame, the DIDI logo, START MISSION! and the high score.
 struct HomeView: View {
-    /// The team's best score. PENDING: nothing records one yet (no owner or
-    /// store); without it the line is left out rather than showing a made-up value.
-    var bestScore: Int?
+    let highScore: Int
     let onStart: () -> Void
     var onReplayTutorial: (() -> Void)? = nil
     #if DEBUG
@@ -50,17 +48,15 @@ struct HomeView: View {
             .sketchFrame(x: 197.6, y: 482, width: 816.3, height: 121.7, k: k)
             .accessibilityIdentifier("startMission")
 
-            if let bestScore {
-                Text("BEST SCORE: \(bestScore)")
-                    .font(.system(size: 24.4 * k, weight: .medium, design: .monospaced))
-                    .tracking(8.78 * k)
-                    .foregroundStyle(LaserHeistDesign.cream)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .frame(width: 1210 * k)
-                    .offset(y: 621 * k)
-                    .accessibilityIdentifier("bestScore")
-            }
+            Text("HIGH SCORE: \(highScore, format: .number.grouping(.never))")
+                .font(.system(size: 24.4 * k, weight: .medium, design: .monospaced))
+                .tracking(8.78 * k)
+                .foregroundStyle(LaserHeistDesign.cream)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(width: LaserHeistDesign.artboard.width * k)
+                .offset(y: 621 * k)
+                .accessibilityIdentifier("homeHighScore")
         }
         #if DEBUG
         .overlay(alignment: .topLeading) {
@@ -111,5 +107,5 @@ struct StartMissionButtonStyle: ButtonStyle {
 }
 
 #Preview(traits: .landscapeLeft) {
-    HomeView(bestScore: 930, onStart: {}, onReplayTutorial: {})
+    HomeView(highScore: 0, onStart: {}, onReplayTutorial: {})
 }
