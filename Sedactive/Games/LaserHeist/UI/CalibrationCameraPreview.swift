@@ -27,8 +27,7 @@ struct CalibrationCameraPreview: UIViewRepresentable {
         let view = PreviewView()
         // Layout selects fill only after proving full source height / guide visibility.
         view.previewLayer.videoGravity = fillsViewport ? .resizeAspectFill : .resizeAspect
-        view.previewLayer.session = session
-        view.levelWithHorizon()
+        view.attach(to: session)
         #if DEBUG
         print(String(format: "[LaserState] t %.3f · camera preview ATTACHED", CACurrentMediaTime()))
         #endif
@@ -39,8 +38,7 @@ struct CalibrationCameraPreview: UIViewRepresentable {
         let gravity: AVLayerVideoGravity = fillsViewport ? .resizeAspectFill : .resizeAspect
         if view.previewLayer.videoGravity != gravity { view.previewLayer.videoGravity = gravity }
         if view.previewLayer.session !== session {
-            view.previewLayer.session = session
-            view.levelWithHorizon()
+            view.attach(to: session)
         }
     }
 
@@ -60,8 +58,17 @@ struct CalibrationCameraPreview: UIViewRepresentable {
         private var rotationObservation: NSKeyValueObservation?
         private var started: (any NSObjectProtocol)?
 
+        func attach(to session: AVCaptureSession) {
+            // The session can start delivering frames before the main queue
+            // receives didStartRunning. Keep its default rotation offscreen.
+            alpha = 0
+            stopWatchingSession()
+            previewLayer.session = session
+            levelWithHorizon()
+        }
+
         /// Keeps the preview level as the iPad turns, and unmirrored.
-        func levelWithHorizon() {
+        private func levelWithHorizon() {
             stopObserving()
             watchSession()
             if let connection = previewLayer.connection, connection.isVideoMirroringSupported {
@@ -86,7 +93,7 @@ struct CalibrationCameraPreview: UIViewRepresentable {
             apply(coordinator.videoRotationAngleForHorizonLevelPreview)
             rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelPreview, options: [.new]) { [weak self] _, change in
                 guard let angle = change.newValue else { return }
-                Task { @MainActor [weak self] in self?.apply(angle) }
+                MainActor.assumeIsolated { self?.apply(angle) }
             }
         }
 
@@ -114,6 +121,7 @@ struct CalibrationCameraPreview: UIViewRepresentable {
         private func apply(_ angle: CGFloat) {
             guard let connection = previewLayer.connection, connection.isVideoRotationAngleSupported(angle) else { return }
             connection.videoRotationAngle = angle
+            if alpha == 0 { alpha = 1 }
         }
     }
 }
