@@ -13,35 +13,29 @@ struct SoloAvatarPreviewView: View {
     @State private var isLeaving = false
 
     var body: some View {
-        HStack(spacing: 2) {
-            panel("Live camera", identifier: "soloAvatarCameraPanel") {
-                if let capture = bodyInput.camera.previewSession {
-                    CalibrationCameraPreview(session: capture)
-                        .environment(\.calibrationPreviewFill, true)
-                        .scaleEffect(x: -1, y: 1)
+        VStack(spacing: 0) {
+            controls
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+            HStack(spacing: 2) {
+                panel("Live camera", identifier: "soloAvatarCameraPanel") {
+                    if let capture = bodyInput.camera.previewSession {
+                        CalibrationCameraPreview(session: capture)
+                            .environment(\.calibrationPreviewFill, true)
+                            .scaleEffect(x: -1, y: 1)
+                    }
                 }
-            }
-            .overlay { standingGuide }
+                .overlay { cameraGuide }
 
-            panel("Live avatar", identifier: "soloAvatarStagePanel") {
-                if flow.message == nil, !flow.isStarting, !flow.isClosing,
-                   let session = flow.session, session.isSoloPractice, session.inputContext?.isActive == true {
-                    SoloAvatarStage(session: session, bodyInput: bodyInput, bridge: bridge)
-                        .id(session.inputConfiguration.sessionGeneration)
+                panel("Live avatar", identifier: "soloAvatarStagePanel") {
+                    if flow.message == nil, !flow.isStarting, !flow.isClosing,
+                       let session = flow.session, session.isSoloPractice, session.inputContext?.isActive == true {
+                        SoloAvatarStage(session: session, bodyInput: bodyInput, bridge: bridge)
+                            .id(session.inputConfiguration.sessionGeneration)
+                    }
                 }
             }
-        }
-        .ignoresSafeArea()
-        .overlay(alignment: .top) { controls.padding(16) }
-        .overlay(alignment: .bottom) {
-            Text(status)
-                .font(.callout)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 14).padding(.vertical, 8)
-                .background(LaserHeistDesign.panel, in: Capsule())
-                .padding(16)
-                .allowsHitTesting(false)
-                .accessibilityIdentifier("soloAvatarPreviewStatus")
+            .ignoresSafeArea(.container, edges: [.horizontal, .bottom])
         }
         .foregroundStyle(LaserHeistDesign.cream)
         .background(LaserHeistDesign.night.ignoresSafeArea())
@@ -50,74 +44,92 @@ struct SoloAvatarPreviewView: View {
     }
 
     private var controls: some View {
-        HStack {
-            Button("Back", systemImage: "chevron.left") {
-                isLeaving = true
-                Task {
-                    await flow.closeLiveSetup()
-                    onExit()
-                }
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+                backButton
+                Spacer(minLength: 0)
+                previewTitle
+                Spacer(minLength: 0)
+                restartButton
             }
-            .buttonStyle(.bordered)
-            .disabled(isLeaving || flow.isClosing)
-            .accessibilityIdentifier("closeSoloAvatarPreview")
-
-            Spacer()
-            Text("Avatar Preview")
-                .font(.title2.bold())
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityIdentifier("soloAvatarPreviewTitle")
-            Spacer()
-
-            Button("Restart Camera", systemImage: "arrow.clockwise") {
-                Task {
-                    if flow.canStartSolo { await flow.startLiveSetup(solo: true) }
-                    else { await flow.retryLiveSetup() }
-                }
+            HStack(spacing: 8) {
+                backButton.labelStyle(.iconOnly)
+                Spacer(minLength: 0)
+                previewTitle
+                Spacer(minLength: 0)
+                restartButton.labelStyle(.iconOnly)
             }
-            .buttonStyle(.bordered)
-            .disabled(isLeaving || flow.isStarting || flow.isClosing)
-            .accessibilityIdentifier("restartSoloAvatarPreview")
         }
-        .padding(8)
-        .background(LaserHeistDesign.panel.opacity(0.9), in: .rect(cornerRadius: 16))
+        .buttonStyle(.bordered)
+        .controlSize(.large)
     }
 
-    private var standingGuide: some View {
+    private var previewTitle: some View {
+        Text("Avatar Preview")
+            .font(.title2.bold())
+            .lineLimit(1)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("soloAvatarPreviewTitle")
+    }
+
+    private var backButton: some View {
+        Button("Back", systemImage: "chevron.left") {
+            isLeaving = true
+            Task {
+                await flow.closeLiveSetup()
+                onExit()
+            }
+        }
+        .disabled(isLeaving || flow.isClosing)
+        .accessibilityIdentifier("closeSoloAvatarPreview")
+    }
+
+    private var restartButton: some View {
+        Button("Restart Camera", systemImage: "arrow.clockwise") {
+            Task {
+                if flow.canStartSolo { await flow.startLiveSetup(solo: true) }
+                else { await flow.retryLiveSetup() }
+            }
+        }
+        .disabled(isLeaving || flow.isStarting || flow.isClosing)
+        .accessibilityIdentifier("restartSoloAvatarPreview")
+    }
+
+    private var cameraGuide: some View {
         GeometryReader { geometry in
+            let viewport = geometry.size
             let aspect = bodyInput.camera.negotiated.map {
                 Double($0.outputWidth) / Double(max(1, $0.outputHeight))
             } ?? PlayerAcquisitionZones.builtInImageAspect
-            let source = CalibrationStageLayout.contentRect(in: geometry.size, aspect: aspect, fill: true)
-            let box = PlayerAcquisitionZones.box(.player1, solo: true, imageAspect: aspect)
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(LaserHeistDesign.cream, style: StrokeStyle(lineWidth: 2, dash: [10, 6]))
-                .frame(width: min(geometry.size.width * 0.86, source.width * (box.upperBound - box.lowerBound)),
-                       height: geometry.size.height * 0.76)
-                .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+            let box = SoloAvatarStandingGuide.box(in: viewport, imageAspect: aspect)
+            if let message = flow.message {
+                ContentUnavailableView("Camera unavailable", systemImage: "video.slash", description: Text(message))
+            } else if !isLeaving, !flow.isClosing {
+                if let session = flow.session, let calibration = bodyInput.acceptedCalibrations[.player1],
+                   session.inputContext?.calibrationRevisions[.player1] == calibration.revision {
+                    TimelineView(.periodic(from: .now, by: 0.15)) { _ in
+                        let zone = CalibrationStageLayout.sourceRect(for: box, in: viewport, aspect: aspect, fill: true)
+                        if SoloAvatarStandingGuide.needsCorrection(session: session, calibration: calibration, zone: zone) {
+                            ZStack {
+                                LinearGradient(colors: [LaserTrackingWarningScreen.frameTop, LaserTrackingWarningScreen.frameBottom],
+                                               startPoint: .top, endPoint: .bottom)
+                                Image("LaserHeistUI/Recalibrate")
+                                    .resizable()
+                                    .scaledToFit()
+                                    .accessibilityLabel("Please fix your standing position")
+                                    .accessibilityIdentifier("soloAvatarStandingWarning")
+                            }
+                        }
+                    }
+                } else {
+                    CalibrationGuideBox(player: .player1, status: flow.session?.presence.players[.player1] ?? .searching,
+                                        k: box.height / CalibrationStageLayout.boxSize.height)
+                        .frame(width: box.width, height: box.height)
+                        .position(x: box.midX, y: box.midY)
+                }
+            }
         }
         .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-
-    private var status: String {
-        if isLeaving || flow.isClosing { return "Stopping camera…" }
-        if let message = flow.message { return message }
-        if flow.isStarting { return "Starting camera…" }
-        guard let session = flow.session else { return "Tap Restart Camera to start again." }
-        if session.phase == .restartRequired || session.setup?.phase == .restartRequired {
-            return "Tracking lost. Tap Restart Camera and stand in the box."
-        }
-        if session.hasLiveRoundPlan {
-            return session.liveReadiness?.phase == .ready
-                ? "Lean left or right, duck, or jump."
-                : "Stand in the box with your whole body in view."
-        }
-        let copy = LaserAutomaticSetupCopy(.init(sessionPhase: session.phase, setupPhase: session.setup?.phase,
-                                                  presence: session.presence, solo: true,
-                                                  restartsAutomatically: false))
-        if copy.action == .tryAgain { return "\(copy.instruction) Tap Restart Camera to try again." }
-        return copy.instruction
     }
 
     private func panel<Content: View>(_ label: String, identifier: String,
@@ -128,6 +140,36 @@ struct SoloAvatarPreviewView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(label)
             .accessibilityIdentifier(identifier)
+    }
+}
+
+@MainActor enum SoloAvatarStandingGuide {
+    static func box(in viewport: CGSize, imageAspect: Double) -> CGRect {
+        let content = CalibrationStageLayout.contentRect(in: viewport, aspect: imageAspect, fill: true)
+        let soloBox = PlayerAcquisitionZones.box(.player1, solo: true, imageAspect: imageAspect)
+        let shapeAspect = CalibrationStageLayout.boxSize.width / CalibrationStageLayout.boxSize.height
+        let width = min(viewport.width * 0.86, viewport.height * 0.84 * shapeAspect,
+                        content.width * (soloBox.upperBound - soloBox.lowerBound))
+        let height = width / shapeAspect
+        return CGRect(x: (viewport.width - width) / 2, y: (viewport.height - height) / 2, width: width, height: height)
+    }
+
+    static func needsCorrection(session: GameSessionCoordinator, calibration: PlayerCalibration, zone: CGRect) -> Bool {
+        let layout = session.inputConfiguration.playerPlaneLayout
+        let snapshot = session.latestSnapshot
+        if let snapshot, session.inputContext?.accepts(snapshot, playerID: .player1) == true,
+           let player = snapshot.players[.player1], player.trackingStatus == .reliable,
+           player.geometry.centerX.validity == .valid, let center = player.geometry.centerX.value {
+            let mapping = calibration.mapping
+            let imageX = mapping.originImageX + (center - layout.centerX(for: .player1))
+                / (mapping.imageAspectRatio * layout.gameUnitsPerImageHeight)
+            return outsideZone(imageX, zone: zone)
+        }
+        return session.debugSoloTrackingLost || [.source, .binding, .staleEvidence].contains(session.liveReadiness?.blocker)
+    }
+
+    static func outsideZone(_ imageX: Double, zone: CGRect) -> Bool {
+        imageX < zone.minX || imageX > zone.maxX
     }
 }
 

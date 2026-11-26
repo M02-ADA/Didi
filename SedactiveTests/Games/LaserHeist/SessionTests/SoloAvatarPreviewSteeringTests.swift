@@ -1,4 +1,5 @@
 #if DEBUG
+import CoreGraphics
 import Testing
 @testable import Sedactive
 
@@ -61,6 +62,17 @@ import Testing
         let evidence = SoloAvatarPreviewSteering.avatarEvidence(context: context, snapshot: snapshot, capturedAt: 10)
         #expect(evidence?.airborne == true && evidence?.lowerSoleY == 0.25)
         #expect(SoloAvatarPreviewSteering.avatarEvidence(context: context, snapshot: snapshot, capturedAt: 11) == nil)
+    }
+
+    @Test func standingGuideUsesTheVisibleMirroredCameraBox() {
+        let viewport = CGSize(width: 604, height: 745)
+        let aspect = PlayerAcquisitionZones.builtInImageAspect
+        let box = SoloAvatarStandingGuide.box(in: viewport, imageAspect: aspect)
+        let zone = CalibrationStageLayout.sourceRect(for: box, in: viewport, aspect: aspect, fill: true)
+        #expect(abs(box.width / box.height - CalibrationStageLayout.boxSize.width / CalibrationStageLayout.boxSize.height) < 0.001)
+        #expect(!SoloAvatarStandingGuide.outsideZone(0.5, zone: zone))
+        #expect(SoloAvatarStandingGuide.outsideZone(zone.minX - 0.01, zone: zone))
+        #expect(SoloAvatarStandingGuide.outsideZone(zone.maxX + 0.01, zone: zone))
     }
 }
 #endif

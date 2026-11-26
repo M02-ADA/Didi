@@ -44,15 +44,19 @@ final class DeveloperModeUITests: XCTestCase {
         XCTAssertTrue(open.waitForExistence(timeout: 20))
         open.tap()
 
-        XCTAssertTrue(app.staticTexts["soloAvatarPreviewTitle"].waitForExistence(timeout: 10))
+        let title = app.staticTexts["soloAvatarPreviewTitle"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
         let camera = app.descendants(matching: .any)["soloAvatarCameraPanel"]
         let lemon = app.descendants(matching: .any)["soloAvatarStagePanel"]
         XCTAssertTrue(camera.exists && lemon.exists)
         XCTAssertLessThan(camera.frame.midX, lemon.frame.midX)
         XCTAssertEqual(camera.frame.midY, lemon.frame.midY, accuracy: 1)
         let window = app.windows.firstMatch.frame
-        XCTAssertGreaterThan(camera.frame.height, window.height * 0.9)
-        XCTAssertGreaterThan(lemon.frame.height, window.height * 0.9)
+        XCTAssertGreaterThan(camera.frame.height, window.height * 0.75)
+        XCTAssertGreaterThan(lemon.frame.height, window.height * 0.75)
+        XCTAssertLessThanOrEqual(title.frame.maxY, camera.frame.minY)
+        XCTAssertLessThanOrEqual(app.buttons["restartSoloAvatarPreview"].frame.maxY, lemon.frame.minY)
+        XCTAssertFalse(app.staticTexts["soloAvatarPreviewStatus"].exists)
         XCTAssertFalse(app.staticTexts["Camera"].exists)
         XCTAssertFalse(app.staticTexts["Lemon"].exists)
         XCTAssertFalse(app.buttons["pauseMenu"].exists)
