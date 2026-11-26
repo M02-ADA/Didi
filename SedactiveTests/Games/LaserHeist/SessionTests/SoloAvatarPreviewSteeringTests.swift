@@ -40,5 +40,27 @@ import Testing
         #expect(steering.update(now: 12, context: context, snapshot: last, calibration: calibration) == staleX)
         #expect(steering.update(now: 12, context: nil, snapshot: last, calibration: calibration) == nil)
     }
+
+    @Test func theAvatarReceivesAirborneEvidenceWithValidSoles() throws {
+        let script = try LaserReplayScript.load()
+        let input = script.input.configuration
+        let calibration = try #require(input.calibrations[.player1])
+        let context = BodyInputContext(sessionGeneration: input.sessionGeneration,
+                                       cameraGeometryRevision: script.input.cameraGeometryRevision,
+                                       calibrationRevisions: [.player1: calibration.revision],
+                                       cutovers: [:], isActive: true)
+        let sole = try EstimatedScalar(value: 0.25, validity: .valid)
+        let absent = try EstimatedScalar(value: nil, validity: .missingLandmarks)
+        let player = PlayerBodySample(playerID: .player1, calibrationRevision: calibration.revision,
+                                      trackingStatus: .reliable,
+                                      geometry: .init(crownY: absent, leftWristY: absent, rightWristY: absent,
+                                                      leftSoleY: sole, rightSoleY: sole, centerX: absent),
+                                      jumpState: .init(phase: .airborne, validity: .valid))
+        let snapshot = BodySnapshot(sessionGeneration: context.sessionGeneration, frameID: 1, capturedAt: 10,
+                                    cameraGeometryRevision: context.cameraGeometryRevision, players: [.player1: player])
+        let evidence = SoloAvatarPreviewSteering.avatarEvidence(context: context, snapshot: snapshot, capturedAt: 10)
+        #expect(evidence?.airborne == true && evidence?.lowerSoleY == 0.25)
+        #expect(SoloAvatarPreviewSteering.avatarEvidence(context: context, snapshot: snapshot, capturedAt: 11) == nil)
+    }
 }
 #endif

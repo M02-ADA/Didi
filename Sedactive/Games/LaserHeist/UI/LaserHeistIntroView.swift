@@ -44,11 +44,16 @@ struct LaserHeistIntroView: View {
                     .overlay(alignment: .topLeading) {
                         if developerTools.isEnabled, let onSoloAvatarPreview {
                             Button(action: onSoloAvatarPreview) {
-                                Label("Avatar Preview", systemImage: "person.crop.rectangle")
+                                Image(systemName: "person.crop.rectangle")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(LaserHeistDesign.cream)
+                                    .frame(width: 44, height: 44)
+                                    .background(LaserHeistDesign.panel, in: Circle())
+                                    .overlay { Circle().strokeBorder(GameplayHUD.rim, lineWidth: 1.5) }
+                                    .contentShape(Circle())
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.large)
-                            .tint(LaserHeistDesign.cream)
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Avatar Preview")
                             .padding()
                             .disabled(!flow.canStartSolo)
                             .accessibilityIdentifier("openSoloAvatarPreview")

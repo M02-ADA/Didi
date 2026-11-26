@@ -45,11 +45,16 @@ final class DeveloperModeUITests: XCTestCase {
         open.tap()
 
         XCTAssertTrue(app.staticTexts["soloAvatarPreviewTitle"].waitForExistence(timeout: 10))
-        let camera = app.staticTexts["soloAvatarCameraPanel"]
-        let lemon = app.staticTexts["soloAvatarStagePanel"]
+        let camera = app.descendants(matching: .any)["soloAvatarCameraPanel"]
+        let lemon = app.descendants(matching: .any)["soloAvatarStagePanel"]
         XCTAssertTrue(camera.exists && lemon.exists)
         XCTAssertLessThan(camera.frame.midX, lemon.frame.midX)
         XCTAssertEqual(camera.frame.midY, lemon.frame.midY, accuracy: 1)
+        let window = app.windows.firstMatch.frame
+        XCTAssertGreaterThan(camera.frame.height, window.height * 0.9)
+        XCTAssertGreaterThan(lemon.frame.height, window.height * 0.9)
+        XCTAssertFalse(app.staticTexts["Camera"].exists)
+        XCTAssertFalse(app.staticTexts["Lemon"].exists)
         XCTAssertFalse(app.buttons["pauseMenu"].exists)
 
         app.buttons["closeSoloAvatarPreview"].tap()

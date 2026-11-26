@@ -18,7 +18,7 @@ import Testing
 struct LiveRepeatedCalibrationTests {
     /// The camera worker's role: one frame at a time through the gate, on its own task.
     nonisolated final class FrameFeeder: Sendable {
-        enum Mode: Sendable { case pair, player1Only, player2Only, soloCentered, nobody, paused }
+        enum Mode: Sendable { case pair, player1Only, player2Only, soloCentered, soloLeanLeft, soloLeanRight, nobody, paused }
         /// Head-top offset (image heights) for a player's n-th calibration sample of the session:
         /// estimator jitter as the iPad showed it (18 November 2026), on an otherwise still body.
         typealias Jitter = @Sendable (_ sample: Int, _ player: PlayerID) -> Double
@@ -94,6 +94,18 @@ struct LiveRepeatedCalibrationTests {
                 keep: partial ? [.leftShoulder, .rightShoulder, .leftWrist, .rightWrist, .nose] : nil)
         }
 
+        private static func soloCandidate(lean: Double) -> PoseCandidate {
+            let standing = Self.shifted(LiveVisionFixtures.standingPair.first { $0.candidateID == 10 }!, by: -0.25)
+            var joints = standing.joints
+            for joint: BodyJoint in [.leftShoulder, .rightShoulder, .nose, .leftEar, .rightEar] {
+                if let point = joints[joint] {
+                    joints[joint] = .init(x: point.x + lean, y: point.y, confidence: point.confidence)
+                }
+            }
+            return .init(candidateID: standing.candidateID, joints: joints, maskTopImageY: nil, maskBottomImageY: nil,
+                         leftFootBottomImageY: nil, rightFootBottomImageY: nil, maskAssociation: .unavailable)
+        }
+
         private static func pose(_ id: UInt64, candidates: [PoseCandidate], context: CameraSourceContext) throws -> CameraPoseResult {
             let time = CameraHostClock.now() - 0.005
             let metadata = CameraFrameMetadata(context: context, frameID: id, capturedAt: time,
@@ -126,7 +138,8 @@ struct LiveRepeatedCalibrationTests {
             case .pair: LiveVisionFixtures.standingPair
             case .player1Only: LiveVisionFixtures.standingPair.filter { $0.candidateID == 10 }
             case .player2Only: LiveVisionFixtures.standingPair.filter { $0.candidateID == 20 }
-            case .soloCentered: [Self.shifted(LiveVisionFixtures.standingPair.first { $0.candidateID == 10 }!, by: -0.25)]
+            case .soloCentered, .soloLeanLeft, .soloLeanRight:
+                [Self.soloCandidate(lean: mode == .soloLeanLeft ? 0.045 : mode == .soloLeanRight ? -0.045 : 0)]
             case .nobody, .paused: []
             }
             if let bystander, mode != .paused { candidates.append(bystander) }
@@ -551,6 +564,46 @@ struct LiveRepeatedCalibrationTests {
         #expect(next !== tired && next.presence.attempts == 0 && !next.presence.retryPending)
         try await rig.calibrate(next)
         #expect(next.presence.attempts == 1)
+        await rig.flow.closeLiveSetup()
+    }
+
+    @Test func soloPreviewGetsCalibratedMotionWithoutStartingARound() async throws {
+        let rig = try Rig(solo: true)
+        await rig.flow.startLiveSetup()
+        let session = try #require(rig.flow.session)
+        guard try await rig.calibrate(session) != nil else { await rig.flow.closeLiveSetup(); return }
+
+        try await rig.run(session, seconds: 3) {
+            guard let context = session.inputContext, let sample = session.latestSnapshot,
+                  context.accepts(sample, playerID: .player1),
+                  let player = sample.players[.player1] else { return false }
+            return player.trackingStatus == .reliable && player.geometry.trunkLeanX?.validity == .valid
+        }
+        let snapshot = try #require(session.latestSnapshot)
+        let player = try #require(snapshot.players[.player1])
+        let context = try #require(session.inputContext)
+        let calibration = try #require(rig.provider.acceptedCalibrations[.player1])
+        let steering = SoloAvatarPreviewSteering(layout: session.inputConfiguration.playerPlaneLayout)
+        #expect(player.geometry.trunkLeanX?.validity == .valid)
+        let startX = try #require(steering.update(now: snapshot.capturedAt + 0.01, context: context,
+                                                   snapshot: snapshot, calibration: calibration))
+        var leftX = startX
+        try await rig.run(session, seconds: 2, mode: .soloLeanLeft) {
+            leftX = steering.update(now: CameraHostClock.now(), context: session.inputContext,
+                                    snapshot: session.latestSnapshot, calibration: calibration) ?? leftX
+            return leftX < startX - 0.2
+        }
+        #expect(leftX < startX - 0.2)
+        var rightX = leftX
+        try await rig.run(session, seconds: 2, mode: .soloLeanRight) {
+            rightX = steering.update(now: CameraHostClock.now(), context: session.inputContext,
+                                     snapshot: session.latestSnapshot, calibration: calibration) ?? rightX
+            return rightX > leftX + 0.2
+        }
+        #expect(rightX > leftX + 0.2)
+        #expect(SoloAvatarPreviewSteering.avatarEvidence(context: context, snapshot: snapshot,
+                                                         capturedAt: snapshot.capturedAt)?.lowerSoleY != nil)
+        #expect(session.phase == .awaitingSetup && session.state == nil && !session.liveFrameHostReady)
         await rig.flow.closeLiveSetup()
     }
 
