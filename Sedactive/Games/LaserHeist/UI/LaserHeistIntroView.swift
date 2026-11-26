@@ -13,6 +13,7 @@ struct LaserHeistIntroView: View {
     /// DEBUG: opens the real-camera game scene preview (Edo's PR #31 route,
     /// owned by `ContentView`); `nil` hides the entry.
     var onInGameCamera: (() -> Void)? = nil
+    var onCalibrationEntrance: (Bool) -> Void = { _ in }
     @State private var screen: Screen = .home
 
     enum Screen: Equatable {
@@ -72,7 +73,7 @@ struct LaserHeistIntroView: View {
         show(.home)
     }
 
-    private func startCalibration() {
+    private func startCalibration(showsMascot: Bool) {
         guard flow.canStartLive else { return }
         AudioService.shared.play(.uiTap)
         #if DEBUG
@@ -86,6 +87,7 @@ struct LaserHeistIntroView: View {
         }
         #endif
         // In the mode chosen on Home (TEMPORARY selector; always co-op in Release).
+        onCalibrationEntrance(showsMascot)
         Task { await flow.startSelectedSetup() }
     }
 
