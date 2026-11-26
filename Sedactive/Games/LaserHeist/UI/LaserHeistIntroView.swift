@@ -14,6 +14,7 @@ struct LaserHeistIntroView: View {
     /// owned by `ContentView`); `nil` hides the entry.
     var onInGameCamera: (() -> Void)? = nil
     var onCalibrationEntrance: (Bool) -> Void = { _ in }
+    var onSoloAvatarPreview: (() -> Void)? = nil
     @State private var screen: Screen = .home
     #if DEBUG
     @Environment(\.developerTools) private var developerTools
@@ -39,6 +40,21 @@ struct LaserHeistIntroView: View {
                     show(.setup)
                 })
                     .overlay(alignment: .bottom) { homeOptions }
+                    #if DEBUG
+                    .overlay(alignment: .topLeading) {
+                        if developerTools.isEnabled, let onSoloAvatarPreview {
+                            Button(action: onSoloAvatarPreview) {
+                                Label("Avatar Preview", systemImage: "person.crop.rectangle")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.large)
+                            .tint(LaserHeistDesign.cream)
+                            .padding()
+                            .disabled(!flow.canStartSolo)
+                            .accessibilityIdentifier("openSoloAvatarPreview")
+                        }
+                    }
+                    #endif
                     .transition(.opacity)
             case .introVideo:
                 // The video has its own sound: menu music pauses for it and resumes after.

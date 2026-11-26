@@ -31,6 +31,7 @@ struct ContentView: View {
   }
   #if DEBUG
   @Environment(\.developerTools) private var developerTools
+  @State private var showingSoloAvatarPreview = false
   @State private var showingLiveWrist = InGameCameraPreviewView.wristRequested(ProcessInfo.processInfo.arguments)
   @State private var showingGameCamera = InGameCameraPreviewView.requested(ProcessInfo.processInfo.arguments)
   #endif
@@ -38,7 +39,10 @@ struct ContentView: View {
     let flow = dependencies.inputFlow
     Group {
       #if DEBUG
-      if ProcessInfo.processInfo.arguments.contains("-setupStagePreview") {
+      if showingSoloAvatarPreview {
+        SoloAvatarPreviewView(flow: flow, camera: dependencies.camera, bridge: dependencies.visionPoseBridge,
+                             onExit: { showingSoloAvatarPreview = false })
+      } else if ProcessInfo.processInfo.arguments.contains("-setupStagePreview") {
         SetupStagePreview()
       } else if LiveAvatarSmokeModel.requested(ProcessInfo.processInfo.arguments) {
         LiveAvatarSmokeView(flow:flow,service:dependencies.bodyInput,bridge:dependencies.visionPoseBridge)
@@ -108,7 +112,8 @@ struct ContentView: View {
         Group {
           #if DEBUG
           LaserHeistIntroView(flow: flow, onInGameCamera: { showingGameCamera = true },
-                             onCalibrationEntrance: holdPlacementInstructions)
+                             onCalibrationEntrance: holdPlacementInstructions,
+                             onSoloAvatarPreview: { showingSoloAvatarPreview = true })
           #else
           LaserHeistIntroView(flow: flow, onCalibrationEntrance: holdPlacementInstructions)
           #endif

@@ -17,6 +17,7 @@ final class DeveloperModeUITests: XCTestCase {
         let logo = app.images["homeLogo"]
         XCTAssertTrue(app.buttons["startMission"].waitForExistence(timeout: 20))
         XCTAssertFalse(picker.exists)
+        XCTAssertFalse(app.buttons["openSoloAvatarPreview"].exists)
 
         logo.press(forDuration: 3.2)
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
@@ -35,6 +36,25 @@ final class DeveloperModeUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["startMission"].waitForExistence(timeout: 20))
         XCTAssertFalse(picker.exists)
+    }
+
+    func testAvatarPreviewOpensSideBySideAndReturnsHome() {
+        let app = launch(["-showDebugTools"])
+        let open = app.buttons["openSoloAvatarPreview"]
+        XCTAssertTrue(open.waitForExistence(timeout: 20))
+        open.tap()
+
+        XCTAssertTrue(app.staticTexts["soloAvatarPreviewTitle"].waitForExistence(timeout: 10))
+        let camera = app.staticTexts["soloAvatarCameraPanel"]
+        let lemon = app.staticTexts["soloAvatarStagePanel"]
+        XCTAssertTrue(camera.exists && lemon.exists)
+        XCTAssertLessThan(camera.frame.midX, lemon.frame.midX)
+        XCTAssertEqual(camera.frame.midY, lemon.frame.midY, accuracy: 1)
+        XCTAssertFalse(app.buttons["pauseMenu"].exists)
+
+        app.buttons["closeSoloAvatarPreview"].tap()
+        XCTAssertTrue(open.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["startMission"].isEnabled)
     }
 
     func testCleanCameraSetupAndReturnHomeHaveNoDebugCopy() {
