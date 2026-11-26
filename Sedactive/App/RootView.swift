@@ -40,7 +40,7 @@ struct ContentView: View {
     Group {
       #if DEBUG
       if showingSoloAvatarPreview {
-        SoloAvatarPreviewView(flow: flow, camera: dependencies.camera, bridge: dependencies.visionPoseBridge,
+        SoloAvatarPreviewView(flow: flow, bodyInput: dependencies.bodyInput, bridge: dependencies.visionPoseBridge,
                              onExit: { showingSoloAvatarPreview = false })
       } else if ProcessInfo.processInfo.arguments.contains("-setupStagePreview") {
         SetupStagePreview()
