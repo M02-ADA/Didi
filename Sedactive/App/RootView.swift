@@ -12,6 +12,7 @@ struct ContentView: View {
   @Environment(\.scenePhase) private var scenePhase
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var homeExit: FTUEHomeExit?
+  @State private var heldPlacementIllustration: Bool?
 
   private enum FTUEHomeExit: Equatable {
     case covering(UUID)
@@ -71,6 +72,12 @@ struct ContentView: View {
       }
     }
     #endif
+    .onChange(of: flow.route) { _, route in
+      if route != .liveSetup { heldPlacementIllustration = nil }
+    }
+    .onChange(of: flow.message) { _, message in
+      if message != nil { heldPlacementIllustration = nil }
+    }
     .onChange(of: scenePhase) { _, phase in
       if phase == .background {
         if case let .covering(generation) = homeExit {
@@ -98,9 +105,10 @@ struct ContentView: View {
         // DEBUG, Home also offers PR #31's real-camera game scene preview.
         Group {
           #if DEBUG
-          LaserHeistIntroView(flow: flow, onInGameCamera: { showingGameCamera = true })
+          LaserHeistIntroView(flow: flow, onInGameCamera: { showingGameCamera = true },
+                             onCalibrationEntrance: holdPlacementInstructions)
           #else
-          LaserHeistIntroView(flow: flow)
+          LaserHeistIntroView(flow: flow, onCalibrationEntrance: holdPlacementInstructions)
           #endif
         }
         .task { revealHome() }
@@ -154,6 +162,8 @@ struct ContentView: View {
           // capture session and stalls frames 220–500 ms (iPad, 11 November 2026), which aborted
           // every countdown and, repeated, lost the player and restarted setup.
           liveSetupStage(flow, preview: cameraPreview)
+            .allowsHitTesting(heldPlacementIllustration == nil)
+            .accessibilityHidden(heldPlacementIllustration != nil)
             .opacity(stageShown ? 1 : 0)
             .allowsHitTesting(stageShown)
             .accessibilityHidden(!stageShown)
@@ -172,6 +182,13 @@ struct ContentView: View {
               leave: { Task { await flow.closeLiveSetup() } })
           } else if !stageShown, flow.leanTutorial.isActive, !flow.leanTutorial.isSuspended {
             LeanTutorialOverlay(tutorial: flow.leanTutorial, solo: flow.isSolo)
+          }
+          if stageShown, flow.message == nil, let heldPlacementIllustration {
+            SetupInstructionView(onBack: {
+              Task { await flow.closeLiveSetup(returnToPlacement: true) }
+            }, heldIllustration: heldPlacementIllustration, onNext: { _ in })
+              .transition(.opacity)
+              .zIndex(1)
           }
           #if DEBUG
           if DebugRoundControls.gameplayToolsRequested, !stageShown, let session = flow.session,
@@ -253,13 +270,24 @@ struct ContentView: View {
     if session.state != nil && session.summary == nil { return false }
     return session.phase != .countdown && session.phase != .running && session.summary == nil
   }
+  private func holdPlacementInstructions(_ showsMascot: Bool) {
+    if cameraPreview != nil { heldPlacementIllustration = showsMascot }
+  }
+
+  private func revealCalibrationPreview() {
+    guard heldPlacementIllustration != nil else { return }
+    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.275)) {
+      heldPlacementIllustration = nil
+    }
+  }
+
   /// The live camera image for the setup stage: the pipeline's one retained
   /// session, display only. Nil in the Simulator (no camera).
   private var cameraPreview: AnyView? {
     #if targetEnvironment(simulator)
     nil
     #else
-    dependencies.camera.previewSession.map { AnyView(CalibrationCameraPreview(session: $0)) }
+    dependencies.camera.previewSession.map { AnyView(CalibrationCameraPreview(session: $0, onPreviewReady: revealCalibrationPreview)) }
     #endif
   }
   @ViewBuilder private func replayView(flow: LaserInputFlow) -> some View {
