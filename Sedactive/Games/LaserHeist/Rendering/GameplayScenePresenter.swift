@@ -313,8 +313,9 @@ final class GameplayScenePresenter {
     private func soundVault(_ state: LaserGameState) {
         guard let current = state.vault, endedAt == nil else { return }
         let count = current.buttons.values.reduce(0) { $0 + $1.count }
-        // Only while the door is still shut: once it opens, buttons are no longer part of the task.
-        if let seen = vaultButtonsSeen, seen.id == current.id, count > seen.count, !current.opened, state.phase == .vault {
+        // The last accepted button can arrive in the same frame as the door opens.
+        if let seen = vaultButtonsSeen, seen.id == current.id, count > seen.count,
+           state.phase == .vault || current.opened {
             onSound?(.vaultButton)
         }
         vaultButtonsSeen = (current.id, count)
@@ -775,19 +776,22 @@ final class GameplayScenePresenter {
     }
 
     private func soundMovementBar(_ timing: LaserTimingPresentation?) {
-        guard scene.timingVariant == .converging, let timing, timing.showsArrowBar else { return }
+        guard scene.timingVariant == .converging,
+              let cue = Self.movementBarSound(timing),
+              cuedAttempts.insert(cue.key).inserted else { return }
+        onSound?(cue.sound)
+    }
+
+    static func movementBarSound(_ timing: LaserTimingPresentation?) -> (key: String, sound: SoundCue)? {
+        guard let timing, timing.showsArrowBar else { return nil }
 
         let key = "\(timing.attemptID)-\(timing.move)"
         if timing.gameTime < timing.arrowGoTime {
-            // Two READY pulses, spaced half a second apart, followed by GO.
             let beat = timing.gameTime < timing.arrowGoTime - LaserTimingPresentation.arrowBeatInterval ? 0 : 1
-            if cuedAttempts.insert("ready-\(beat)-\(key)").inserted {
-                onSound?(.movementReady)
-            }
-        } else if (timing.move == .jump || timing.evidenceWindow.contains(timing.gameTime)),
-                  cuedAttempts.insert("go-\(key)").inserted {
-            onSound?(.movementGo)
+            return ("ready-\(beat)-\(key)", .movementReady)
         }
+        guard timing.move == .jump || timing.evidenceWindow.contains(timing.gameTime) else { return nil }
+        return ("go-\(key)", .movementGo)
     }
 
     // MARK: - Vertical lasers and boards
