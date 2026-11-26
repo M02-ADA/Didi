@@ -440,6 +440,10 @@ final class LaserReplayPresentation {
     func renderTutorialDiamondTime(_ round: FTUEDiamondTimeSession, on content: RealityViewCameraContent,
                                    scene: LaserScene, running: Bool) {
         if presenter == nil {
+            guard running else { return }
+            playedFinalVaultTurn = false
+            AudioService.shared.preloadEffects()
+            AudioService.shared.setMusic(.diamondTimeEntry, fade: 0)
             presenter = GameplayScenePresenter(scene: scene, configuration: round.inputs.configuration,
                                                encounters: [], usesDoorwayAlphaCutout: true)
             presenter?.onSound = { AudioService.shared.play($0) }
@@ -451,9 +455,20 @@ final class LaserReplayPresentation {
                                 at: state.gameTime)
         presenter?.apply(state: state, events: round.events, snapshot: nil,
                          finalVault: round.entry, showsPawBoard: round.showsPawBoard)
+        if running {
+            soundFinalVaultTurn(round.entry)
+            AudioService.shared.startDiamondTimeMusicIfReady(isInside: round.showsPawBoard)
+        }
         applyPawShake(showsPaws: round.showsPawBoard, running: running, at: state.gameTime)
         renderPawBoard(on: content, scene: scene, state: round.showsPawBoard ? state : nil,
                        diamonds: round.game.diamonds)
+    }
+
+    private func soundFinalVaultTurn(_ entry: LaserFinalVaultEntry) {
+        guard !playedFinalVaultTurn,
+              entry.elapsed >= FinalVaultDoorMotion.start, entry.elapsed < FinalVaultDoorMotion.end else { return }
+        playedFinalVaultTurn = true
+        AudioService.shared.play(.finalVaultTurn)
     }
 
     private func render(scene: LaserScene, session: GameSessionCoordinator) {
@@ -472,11 +487,8 @@ final class LaserReplayPresentation {
                                 : session.liveVaultIn,
                              finalVault: session.finalVaultEntry, showsPawBoard: session.showsDiamondTimePaws)
         }
-        if !playedFinalVaultTurn, session.phase == .running, state.phase == .diamondTime,
-           let entry = session.finalVaultEntry,
-           entry.elapsed >= FinalVaultDoorMotion.start, entry.elapsed < FinalVaultDoorMotion.end {
-            playedFinalVaultTurn = true
-            AudioService.shared.play(.finalVaultTurn)
+        if session.phase == .running, state.phase == .diamondTime, let entry = session.finalVaultEntry {
+            soundFinalVaultTurn(entry)
         }
         PerfSpans.measure("dtMusic") {
             AudioService.shared.startDiamondTimeMusicIfReady(

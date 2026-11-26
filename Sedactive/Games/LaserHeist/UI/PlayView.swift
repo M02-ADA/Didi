@@ -1245,6 +1245,7 @@ private struct ReplayRoundView: View {
             } else if let failedAt = practice.failedAt,
                       state.gameTime - failedAt >= VaultPresentation.exitFadeDuration {
                 // Retry the same production opportunity after its failure feedback.
+                AudioService.shared.play(.roundFailure)
                 retireTutorialVaultPractice()
             }
         } catch {
@@ -1324,6 +1325,10 @@ private struct ReplayRoundView: View {
                     try round.update(at: now, snapshot: snapshot)
                     if round.isComplete {
                         tutorial.finishDiamondTime(round, generation: generation)
+                        if tutorial.stage == .completed {
+                            AudioService.shared.setMusic(nil, fade: 0.6)
+                            AudioService.shared.play(.roundSuccess)
+                        }
                         if tutorial.stage == .completed, let lastFrame, let onTutorialDiamondTimeFinished {
                             // Keep the last rendered scene and HUD until the root's cover is opaque.
                             diamondExitFrame = lastFrame
