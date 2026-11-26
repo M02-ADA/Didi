@@ -14,9 +14,11 @@ struct SetupInstructionView: View {
     @State private var showsMascot = false
 
     let onBack: () -> Void
-    let onNext: () -> Void
+    var heldIllustration: Bool? = nil
+    let onNext: (Bool) -> Void
 
     var body: some View {
+        let showsMascot = heldIllustration ?? self.showsMascot
         SketchArtboard {
             SunburstBackground()
         } content: { k in
@@ -49,11 +51,12 @@ struct SetupInstructionView: View {
             SketchBackButton(k: k, action: onBack)
                 .offset(x: 51 * k, y: 63 * k)
 
-            SetupNextButton(k: k, action: onNext)
+            SetupNextButton(k: k) { onNext(showsMascot) }
+                .disabled(heldIllustration != nil)
                 .sketchFrame(x: 1005, y: 663, width: 143, height: 110, k: k)
         }
         .task(id: scenePhase) {
-            guard scenePhase == .active else { return }
+            guard heldIllustration == nil, scenePhase == .active else { return }
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: .seconds(2))
@@ -61,7 +64,7 @@ struct SetupInstructionView: View {
                     return
                 }
                 guard !Task.isCancelled else { return }
-                showsMascot.toggle()
+                self.showsMascot.toggle()
             }
         }
     }
@@ -87,5 +90,5 @@ struct SetupNextButton: View {
 }
 
 #Preview("iPad placement", traits: .landscapeLeft) {
-    SetupInstructionView(onBack: {}, onNext: {})
+    SetupInstructionView(onBack: {}, onNext: { _ in })
 }

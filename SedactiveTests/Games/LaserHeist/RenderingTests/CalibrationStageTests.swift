@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import Testing
 @testable import Sedactive
@@ -15,6 +16,44 @@ struct CalibrationStageTests {
         presence.players = players
         presence.peopleInView = people
         return Copy(.init(sessionPhase: session, setupPhase: phase, presence: presence, solo: solo))
+    }
+
+    @Test func previewWaitsForARotationConnectionOnFirstAndReplacementSessions() {
+        let view = CalibrationCameraPreview.PreviewView()
+        defer { CalibrationCameraPreview.dismantleUIView(view, coordinator: ()) }
+
+        view.attach(to: AVCaptureSession())
+        #expect(view.previewLayer.connection == nil)
+        #expect(view.alpha == 0)
+
+        // Model a previously visible preview being reused for another session.
+        view.alpha = 1
+        view.attach(to: AVCaptureSession())
+        #expect(view.previewLayer.connection == nil)
+        #expect(view.alpha == 0)
+    }
+
+    @Test func previewRevealsOnlyAfterLandscapeRotationAndFreshFrames() {
+        typealias Startup = CalibrationCameraPreview.PreviewView.Startup
+        var startup = Startup()
+        let portraitAccepted = startup.prepare(angle: 90, allowsQuarterTurn: false)
+        #expect(!portraitAccepted)
+        let unconfiguredFrame = startup.update(isPreviewing: true)
+        #expect(unconfiguredFrame == nil)
+
+        let landscapeAccepted = startup.prepare(angle: 180, allowsQuarterTurn: false)
+        #expect(landscapeAccepted)
+        let oldFrame = startup.update(isPreviewing: true)
+        #expect(oldFrame == nil)
+        let drained = startup.update(isPreviewing: false)
+        #expect(drained == .resume(180))
+        let waitingForFrames = startup.update(isPreviewing: false)
+        #expect(waitingForFrames == nil)
+        #expect(!startup.isVisible)
+        let freshFrame = startup.update(isPreviewing: true)
+        #expect(freshFrame == .reveal)
+        let laterFrame = startup.update(isPreviewing: true)
+        #expect(laterFrame == nil)
     }
 
     // MARK: - Headline

@@ -12,11 +12,13 @@ import RealityKit
     private var attemptTravel: Float = 0
     private var originalVariant: TimingIndicatorVariant?
     private var presented = false
+    private var playedMovementCues: Set<String> = []
 
     func update(scene: LaserScene, practice: FTUELaserPractice, callouts: LaserTeamCalloutModel, suspended: Bool) {
         if originalTravel == nil { originalTravel = scene.travelOffset; originalVariant = scene.timingVariant; self.scene = scene }
         if attempt != practice.attemptID {
             beam?.root.removeFromParent(); scene.clearLaserFeedback(); callouts.clear()
+            playedMovementCues.removeAll()
             attempt = practice.attemptID; feedbackSerial = nil; presented = false; attemptTravel = scene.travelOffset
             beam = scene.makeHeartTrainingHazard()
             beam?.root.name = "ftue.practice.\(practice.move.rawValue).\(practice.attemptID)"
@@ -31,7 +33,12 @@ import RealityKit
         beam?.setDepth(GameplayScenePresenter.obstacleDepth(in: scene, crossingTime: practice.crossing, at: practice.elapsed))
         beam?.setState(practice.outcome == .hit ? .hit : .active)
         scene.setTimingPaused(suspended)
-        scene.setTimingPresentation(LaserTimingPresentation.make(state: practice.state, configuration: practice.configuration, paused: suspended))
+        let timing = LaserTimingPresentation.make(state: practice.state, configuration: practice.configuration, paused: suspended)
+        scene.setTimingPresentation(timing)
+        if !suspended, let cue = GameplayScenePresenter.movementBarSound(timing),
+           playedMovementCues.insert(cue.key).inserted {
+            AudioService.shared.play(cue.sound)
+        }
         callouts.setTutorialSuspended(suspended)
         guard !suspended, !presented, practice.requiresFailureFeedback || practice.outcome == .clear else { return }
         presented = true

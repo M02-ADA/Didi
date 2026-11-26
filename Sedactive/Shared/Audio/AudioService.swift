@@ -263,7 +263,8 @@ final class AudioService {
             }
         }
         if started, cue.ducksMusic {
-            let attack: TimeInterval = cue == .laserClear || cue.isCountdownTick ? 0.04 : 0.12
+            let movementCue = cue == .movementReady || cue == .movementGo
+            let attack: TimeInterval = cue == .laserClear || cue.isCountdownTick || movementCue ? 0.04 : 0.12
             duck(for: player.duration, attack: attack)
         }
     }
