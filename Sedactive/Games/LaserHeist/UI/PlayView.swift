@@ -690,18 +690,6 @@ private struct ReplayRoundView: View {
         return tutorial
     }
 
-    private var tutorialMusic: MusicMood? {
-        guard let tutorial = activeTutorial, tutorial.isActive, !tutorial.isSuspended,
-              scenePhase == .active, !leaving else { return nil }
-        switch tutorial.stage {
-        case .diamondTimeDemo: return nil // The vault presentation owns the music here.
-        case .freeLean, .collection(_), .heart(.hurt), .laserPractice(_), .vaultPractice:
-            return .tutorialPractice
-        default:
-            return .tutorialBriefing
-        }
-    }
-
     private var gameplaySurface: some View {
         world
         .blur(radius: (activeTutorial?.heartPhase?.usesOverlay == true || activeTutorial?.progressPhase != nil || activeTutorial?.stage == .vaultButtonIntroduction || activeTutorial?.stage == .collectiblesIntroduction || activeTutorial?.stage == .diamondCollectionIntroduction) && activeTutorial?.isSuspended == false ? 5 : 0)
@@ -948,12 +936,8 @@ private struct ReplayRoundView: View {
             guard activeTutorial?.isActive == true, tutorialHeartArt == nil else { return }
             tutorialHeartArt = try? await HeartArt.load()
         }
-        .onChange(of: tutorialMusic, initial: true) { _, mood in
-            if let mood {
-                AudioService.shared.setMusic(mood, fade: 0.35)
-            } else if activeTutorial?.stage != .diamondTimeDemo {
-                AudioService.shared.stopTutorialMusic()
-            }
+        .onChange(of: activeTutorial?.isActive == true, initial: true) { _, isActive in
+            if isActive { AudioService.shared.setMusic(nil, fade: 0) }
         }
         .onAppear { trainingSceneActive = scenePhase == .active }
         .onChange(of: scenePhase) { _, phase in
@@ -1015,7 +999,6 @@ private struct ReplayRoundView: View {
             #endif
         }
         .onDisappear {
-            AudioService.shared.stopTutorialMusic()
             pendingLiveStart?.cancel(); pendingLiveStart = nil
             objects.liveContent = nil
             objects.deferredAvatarFeed = nil
@@ -1346,7 +1329,6 @@ private struct ReplayRoundView: View {
                     if round.isComplete {
                         tutorial.finishDiamondTime(round, generation: generation)
                         if tutorial.stage == .completed {
-                            AudioService.shared.setMusic(nil, fade: 0.6)
                             AudioService.shared.play(.roundSuccess)
                         }
                         if tutorial.stage == .completed, let lastFrame, let onTutorialDiamondTimeFinished {

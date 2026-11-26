@@ -88,8 +88,6 @@ enum SoundCue: String, CaseIterable {
 /// The background track selected by the current screen or round.
 enum MusicMood: Hashable {
     case menu
-    case tutorialBriefing
-    case tutorialPractice
     case mission
     case diamondTimeEntry
     case diamondTime
@@ -97,7 +95,6 @@ enum MusicMood: Hashable {
     var gain: Float {
         switch self {
         case .menu: 1
-        case .tutorialBriefing, .tutorialPractice: 0.25
         case .diamondTime: 0.79 // About 4 dB above the mission music.
         case .mission, .diamondTimeEntry: 0.5
         }
@@ -105,8 +102,8 @@ enum MusicMood: Hashable {
 
     var resource: String? {
         switch self {
-        case .menu, .tutorialBriefing: "lh-music-60s-special-agent"
-        case .mission, .tutorialPractice: "lh-music-silky-spy"
+        case .menu: "lh-music-60s-special-agent"
+        case .mission: "lh-music-silky-spy"
         case .diamondTimeEntry: nil
         case .diamondTime: "lh-music-slick-spy"
         }
@@ -330,11 +327,6 @@ final class AudioService {
         Self.log.debug("music \(String(describing: mood), privacy: .public)")
         let fadeIn = mood == .mission ? max(fade, 2.5) : fade
         updateMusic(fade: fade, fadeIn: fadeIn)
-    }
-
-    func stopTutorialMusic() {
-        guard mood == .tutorialBriefing || mood == .tutorialPractice else { return }
-        setMusic(nil, fade: 0.35)
     }
 
     /// Called after presenting the room. Keep the entry sting audible until it ends.
