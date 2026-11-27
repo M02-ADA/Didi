@@ -78,6 +78,19 @@ struct NormalDiamondPresentationTests {
         #expect(view.bodyContactPath(id: item.id) == nil)
     }
 
+    @Test func normalGameplayAuraDoesNotWriteDepthOverMascots() async throws {
+        let scene = try await scene()
+        let presenter = GameplayScenePresenter(scene: scene, configuration: try configuration(), encounters: [])
+        presenter.normalDiamonds.source = { [diamond(1)] }
+        presenter.normalDiamonds.update(state: state(14.5))
+
+        let aura = try #require(scene.root.findEntity(named: "diamond.passageAura") as? ModelEntity)
+        let material = try #require(aura.model?.materials.first as? UnlitMaterial)
+        #expect(aura.isEnabled)
+        #expect(material.readsDepth)
+        #expect(!material.writesDepth)
+    }
+
     @Test func gemFacetsBrightenDuringThePickupWindow() async throws {
         let scene = try await scene()
         let view = NormalDiamondPresentation(scene: scene)
