@@ -21,7 +21,7 @@ import Testing
         let (rig, plan) = try await Self.readyRig()
         let session = rig.session
         #expect(session.hasLiveRoundPlan && session.encounters.isEmpty, "the director registers lasers as they come")
-        #expect(session.plannedEncounters.count == 50)
+        #expect(session.plannedEncounters.count == 73)
         let host = try session.attachLiveFrameHost(); session.advanceLive(frameHost: host)
         var time = 0.25
         // Settling: one second of steady, valid evidence before Start is offered.
@@ -88,7 +88,7 @@ import Testing
         })
         try await rig.start(installDeferredPlan: false)
         #expect(rig.session.hasLiveRoundPlan && rig.session.livePlanError == nil)
-        #expect(rig.session.plannedEncounters.count == 50 && rig.session.state == nil, "nothing runs before Start")
+        #expect(rig.session.plannedEncounters.count == 73 && rig.session.state == nil, "nothing runs before Start")
         let installs = calls
         try await rig.send(0.25)
         #expect(calls == installs, "installed once")

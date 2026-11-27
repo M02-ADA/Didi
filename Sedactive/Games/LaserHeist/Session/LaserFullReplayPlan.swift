@@ -48,7 +48,7 @@ nonisolated struct LaserFullReplayPlan: Sendable {
         let config = try roundConfiguration()
         let wave = try LaserWaveDirector().schedule(script: LaserWaveBeat.fiveMinuteScript(),
             calibrations: base.configuration.calibrations, layout: base.configuration.playerPlaneLayout, configuration: config)
-        try requireLaserValue(wave.deferred.isEmpty && wave.encounters.count == 50, "full replay wave plan")
+        try requireLaserValue(wave.deferred.isEmpty && wave.encounters.count == 73, "full replay wave plan")
         let layout = base.configuration.playerPlaneLayout
         let placements = try PlayerID.allCases.flatMap { player in
             guard let calibration = base.configuration.calibrations[player] else {

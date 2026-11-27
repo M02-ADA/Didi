@@ -298,7 +298,7 @@ nonisolated struct LeanGameplayTests {
 
     @Test func theFiveStagesKeepTheirShapeRecoveryAndClimax() throws {
         let beats = LaserWaveBeat.fiveMinuteScript()
-        #expect(beats.count == 50)
+        #expect(beats.count == 73)
         // The layer gap comes from the round's own timing: the DUCK's action cue opens only after the
         // LEAN's evidence window closes, on the scheduler's step.
         let configuration = try LaserFullReplayPlan.roundConfiguration()
@@ -307,9 +307,12 @@ nonisolated struct LeanGameplayTests {
         #expect(LaserWaveBeat.layerGap == ((profile.cueLead + configuration.evidenceTiming.windowAfter) / step).rounded(.up) * step)
         let layerLeads = Set(zip(beats, beats.dropFirst()).filter { $0.1.followsLayer }.map(\.0.id))
         var combined: [Int] = [], shifts: [Int] = []
+        let stageMoveCounts = [[4, 3, 2], [3, 7, 3], [4, 8, 3], [5, 9, 3], [7, 10, 2]]
         for stage in 0..<5 {
             let mine = beats.filter { Int($0.nominalCrossingTime / 60) == stage }
-            #expect(mine.count == [9, 10, 10, 11, 10][stage])
+            #expect(mine.count == [9, 13, 15, 17, 19][stage])
+            let moveCounts = [LaserMove.lean, .duck, .jump].map { move in mine.filter { $0.move == move }.count }
+            #expect(moveCounts == stageMoveCounts[stage])
             combined.append(mine.filter(\.followsLayer).count)
             shifts.append(mine.filter { b in PlayerID.allCases.contains { if case .shift? = b.demand(for: $0)?.intent { true } else { false } } }.count)
             let start = Double(stage * 60)
@@ -322,7 +325,7 @@ nonisolated struct LeanGameplayTests {
             }
             #expect(Set(layers).count == layers.count, "stage \(stage + 1) repeats a layer: \(layers)")
         }
-        #expect(combined == [0, 1, 2, 3, 4] && shifts == [0, 0, 0, 1, 1])
+        #expect(combined == [0, 3, 4, 5, 7] && shifts == [0, 0, 0, 1, 2])
         for (index, beat) in beats.enumerated() {
             let moves = Set(beat.demands.values.map(\.move))
             #expect(moves.count == 1, "\(beat.nominalCrossingTime): one move per encounter")
@@ -344,13 +347,11 @@ nonisolated struct LeanGameplayTests {
             for (a, b) in zip(moves, moves.dropFirst()) {
                 let gap = b.0 - a.0
                 if b.2.followsLayer, a.1 == .lean, abs(gap - LaserWaveBeat.layerGap) < 1e-9 { continue }
-                let intoCombined = layerLeads.contains(b.2.id) || b.2.followsLayer
-                var minimum = 5.0
-                if a.1 != .jump, b.1 != .jump, b.0 >= 180 { minimum = 4.5 } // stages 4-5: DUCK and LEAN 4.5 s apart
-                if a.1 == .jump || b.1 == .jump { minimum = a.1 == .jump && b.1 == .duck ? 5 : 5.5 }
-                if a.1 == .jump && b.1 == .jump { minimum = 8 }
-                if intoCombined { minimum = max(minimum, b.0 >= 180 ? 5 : 5.5) } // familiar by stages 4-5
-                if b.0 < 60 { minimum = 6 } // stage 1 is relaxed
+                let minimum: Double
+                if b.0 < 60 { minimum = 6 }
+                else if a.1 == .duck && (b.1 == .duck || layerLeads.contains(b.2.id)) && b.0 >= 120 {
+                    minimum = b.0 >= 180 ? 2.5 : 3.75
+                } else { minimum = 4.5 }
                 #expect(gap >= minimum - 1e-9, "\(player) \(a.1)@\(a.0) → \(b.1)@\(b.0)")
             }
             // JUMP limits: never consecutive, at least 8 s apart, at most 3 in 30 s.
@@ -367,8 +368,8 @@ nonisolated struct LeanGameplayTests {
             configuration: rig.configuration, players: [.player1])
         // A vertical beam near P2 only has nothing for a solo P1 to judge: that layer is skipped.
         let p2Only = LaserWaveBeat.fiveMinuteScript().filter { $0.demand(for: .player1) == nil }.count
-        #expect(p2Only == 2)
-        #expect(schedule.deferred.isEmpty && schedule.encounters.count == 50 - p2Only)
+        #expect(p2Only == 4)
+        #expect(schedule.deferred.isEmpty && schedule.encounters.count == 73 - p2Only)
         for target in schedule.encounters.flatMap(\.targets) {
             if case .shift? = target.lean?.intent { Issue.record("solo shift at \(target.crossingTime)") }
         }

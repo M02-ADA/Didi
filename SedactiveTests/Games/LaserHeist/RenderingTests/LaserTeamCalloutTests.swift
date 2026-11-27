@@ -140,9 +140,9 @@ struct LaserTeamCalloutTests {
     @Test func theCompleteReplayShowsOnePerfectPerLogicalEncounterInTheVerdictsFrame() async throws {
         let (session, watched, step) = try await play(.standard)
         #expect(session.summary?.vaultsOpened == 5)
-        // 50 lasers, 10 of them the DUCKs of combined sequences: 40 logical encounters, all cleared.
-        #expect(watched.callouts.count == 40 && watched.callouts.allSatisfy { $0.callout.kind == .perfect })
-        #expect(Set(watched.callouts.map(\.callout.groupID)).count == 40, "one callout per logical encounter")
+        // 73 lasers, 19 of them the DUCKs of combined sequences: 54 logical encounters, all cleared.
+        #expect(watched.callouts.count == 54 && watched.callouts.allSatisfy { $0.callout.kind == .perfect })
+        #expect(Set(watched.callouts.map(\.callout.groupID)).count == 54, "one callout per logical encounter")
         let verdicts = Self.verdictTimes(session)
         for (callout, _) in watched.callouts {
             // PERFECT! in the frame its last verdict is shown (never before, never a frame late).

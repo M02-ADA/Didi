@@ -24,7 +24,7 @@ struct StageProgressionRuntimeTests {
 
     @Test func fiveStagesHaveTheirSlotsAndCombinedSequencesWithoutCompoundCrossings() throws {
         let beats = LaserWaveBeat.fiveMinuteScript()
-        #expect(beats.count == 50)
+        #expect(beats.count == 73)
         var slots = [0, 0, 0, 0, 0], combined = [0, 0, 0, 0, 0]
         for (index, beat) in beats.enumerated() {
             let stage = Int(beat.nominalCrossingTime / 60)
@@ -40,8 +40,8 @@ struct StageProgressionRuntimeTests {
             #expect(layer.move == .lean && beat.move == .duck)
             #expect(LaserWaveBeat.layeredHorizontalIDs.contains(beat.id))
         }
-        #expect(slots == [9, 10, 10, 11, 10] && combined == [0, 1, 2, 3, 4])
-        #expect(LaserWaveBeat.layeredHorizontalIDs.count == 10)
+        #expect(slots == [9, 13, 15, 17, 19] && combined == [0, 3, 4, 5, 7])
+        #expect(LaserWaveBeat.layeredHorizontalIDs.count == 19)
 
         // As scheduled for real players: the DUCK is registered with its layer (both shown together),
         // and its action cue starts only after the LEAN's evidence window has closed (no LEAN + DUCK
@@ -126,7 +126,7 @@ struct StageProgressionRuntimeTests {
             byStage[Int(beat.nominalCrossingTime / 60)] += 1
         }
         print("COMBINED overlap s: " + shown.overlap.values.sorted().map { String(format: "%.1f", $0) }.joined(separator: " "))
-        #expect(byStage == [0, 1, 2, 3, 4], "combined sequences seen per stage: \(byStage)")
+        #expect(byStage == [0, 3, 4, 5, 7], "combined sequences seen per stage: \(byStage)")
         // Every horizontal laser, every frame: one gate, wall to wall, at one height.
         #expect(shown.horizontalFrames > 1000)
         #expect(shown.splitFrames == 0 && shown.partialSpanFrames == 0 && shown.wrongHeightFrames == 0,
@@ -140,7 +140,7 @@ struct StageProgressionRuntimeTests {
                 #expect(Set(judged.map(\.playerID)).count == judged.count && !judged.isEmpty)
             }
         }
-        #expect(results.count == 96 && results.allSatisfy { $0.judgement == .clear })
+        #expect(results.count == 138 && results.allSatisfy { $0.judgement == .clear })
     }
 
     // MARK: - The HUD progress
