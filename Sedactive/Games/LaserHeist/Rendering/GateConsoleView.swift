@@ -75,8 +75,9 @@ final class GateConsoleView {
     /// One metre along the button's axis (the mount's +Z) in the cap's parent space: the USD export
     /// may rotate the asset's parts, so the press is converted, never assumed to be the cap's own Z.
     private var capAxis = SIMD3<Float>(0, 0, 1)
-    /// The cap's model entities and their authored (red) materials, restored on reset.
-    private var capModels: [(entity: Entity, materials: [any RealityKit.Material])] = []
+    private var redCap: Entity?
+    private var greenCap: Entity?
+    private var feedbackTask: Task<Void, Never>?
     private var accents: [Entity] = []
     private let halo = ModelEntity()
     private let light = Entity()
@@ -137,6 +138,10 @@ final class GateConsoleView {
     /// A new gate: unpressed, and available (`ready`: the cap springs up) or still unavailable.
     func reset(ready: Bool = true, reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled) {
         self.reduceMotion = reduceMotion
+        feedbackTask?.cancel()
+        feedbackTask = nil
+        halo.stopAllAnimations()
+        halo.scale = .one
         presses = [:]
         opens = 0
         setSideComplete(false)
@@ -197,13 +202,13 @@ final class GateConsoleView {
              ending: Self.capSettled)
         setAccents(Palette.flash)
         // At the bottom of the press (50 ms) the red halo pops; the impact flash settles back to red.
-        Task { @MainActor [weak self] in
+        feedbackTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(50))
-            guard let self, self.state == .completed else { return }
+            guard !Task.isCancelled, let self, self.state == .completed else { return }
             self.setHalo(Palette.haloRed, opacity: Self.haloIdle)
             self.popHalo()
             try? await Task.sleep(for: .milliseconds(70))
-            guard self.state == .completed else { return }
+            guard !Task.isCancelled, self.state == .completed else { return }
             self.setAccents(Palette.accent)
         }
     }
@@ -223,6 +228,8 @@ final class GateConsoleView {
         #else
         guard state == .completed else { return }
         #endif
+        feedbackTask?.cancel()
+        feedbackTask = nil
         opens += 1
         guard !reduceMotion else { return apply(.opened) }
         state = .opened
@@ -232,12 +239,12 @@ final class GateConsoleView {
         popHalo()
         setLight(Self.lightIntensity * 1.6)
         setAccents(Palette.flash)
-        Task { @MainActor [weak self] in
+        feedbackTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(120))
-            guard let self, self.state == .opened else { return }
+            guard !Task.isCancelled, let self, self.state == .opened else { return }
             self.setAccents(Palette.success)
             try? await Task.sleep(for: .milliseconds(180))
-            guard self.state == .opened else { return }
+            guard !Task.isCancelled, self.state == .opened else { return }
             self.setLight(Self.lightIntensity)
         }
     }
@@ -297,18 +304,8 @@ final class GateConsoleView {
     /// The cap's own colour: its authored red, or green lit from within (face and sidewall).
     private func setCapGreen(_ green: Bool) {
         capIsGreen = green
-        for (entity, authored) in capModels {
-            guard var model = entity.components[ModelComponent.self] else { continue }
-            if green {
-                // The asset's cap lists its face first, its sidewall second.
-                model.materials = model.materials.indices.map { i in
-                    i == 0 ? Self.capGreen(Palette.capGreen) : Self.capGreen(Palette.capGreenSide)
-                }
-            } else {
-                model.materials = authored
-            }
-            entity.components.set(model)
-        }
+        redCap?.isEnabled = !green
+        greenCap?.isEnabled = green
     }
 
     private func setHalo(_ hex: UInt32, opacity: Float) {
@@ -412,12 +409,35 @@ final class GateConsoleView {
         model.findEntity(named: "Body")?.isEnabled = false
         buttonMount.addChild(model)
         usesAsset = asset
-        cap = model.findEntity(named: "Cap")
-        capBase = cap?.position ?? .zero
-        if let parent = cap?.parent {
+        cap = nil
+        redCap = nil
+        greenCap = nil
+        if let authoredCap = model.findEntity(named: "Cap"), let parent = authoredCap.parent {
+            // Keep each material on its own mesh. Resetting a borrowed console must
+            // hide the entire green cap, including after the asset replaces a stand-in.
+            let pivot = Entity()
+            pivot.transform = authoredCap.transform
+            authoredCap.removeFromParent()
+            authoredCap.transform = .identity
+            let openedCap = authoredCap.clone(recursive: true)
+            openedCap.name = "vault.console.cap.green"
+            for entity in Self.models(in: openedCap) {
+                guard var model = entity.components[ModelComponent.self] else { continue }
+                model.materials = model.materials.indices.map { index in
+                    Self.capGreen(index == 0 ? Palette.capGreen : Palette.capGreenSide)
+                }
+                entity.components.set(model)
+            }
+            openedCap.isEnabled = false
+            parent.addChild(pivot)
+            pivot.addChild(authoredCap)
+            pivot.addChild(openedCap)
+            cap = pivot
+            redCap = authoredCap
+            greenCap = openedCap
+            capBase = pivot.position
             capAxis = parent.convert(position: [0, 0, 1], from: buttonMount) - parent.convert(position: .zero, from: buttonMount)
         }
-        capModels = Self.models(in: cap).compactMap { e in e.components[ModelComponent.self].map { (e, $0.materials) } }
         accents = Self.models(in: model.findEntity(named: "Accents"))
         cap?.position = capBase + capAxis * Self.depth(state)
         setAccents(accentColor)
