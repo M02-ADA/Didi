@@ -143,7 +143,7 @@ final class GameplayScenePresenter {
                                  approachLead: Self.approachLead(in: scene))
         vault = VaultPresentation(scene: scene, configuration: configuration)
         diamondTime = DiamondTimePresentation(scene: scene)
-        normalDiamonds = NormalDiamondPresentation(scene: scene)
+        normalDiamonds = NormalDiamondPresentation(scene: scene, auraWritesDepth: false)
         finalVault = FinalVaultPresentation(scene: scene, usesDoorwayAlphaCutout: usesDoorwayAlphaCutout)
         verticalLasers = VerticalLaserLayer(scene: scene)
         // The verdict feedback comes from the presenter's own `targetJudged` events, for every move.

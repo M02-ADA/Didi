@@ -71,8 +71,11 @@ final class NormalDiamondPresentation {
     /// How far down the corridor a diamond can first be seen (its far end).
     var horizonZ: Float { scene.layout.corridorFarZ + 2 }
 
-    init(scene: LaserScene) {
+    private let auraWritesDepth: Bool
+
+    init(scene: LaserScene, auraWritesDepth: Bool = true) {
         self.scene = scene
+        self.auraWritesDepth = auraWritesDepth
     }
 
     /// Diamond ids with an entity in the scene (tests and debugging).
@@ -149,6 +152,7 @@ final class NormalDiamondPresentation {
             // First seen: only a pending diamond that has spawned and is in the corridor.
             guard item.outcome == .pending, time >= item.spawnedAt, z >= horizonZ, z <= nearCamera,
                   let diamond = scene.makeDiamond(passage: true) else { continue }
+            if !auraWritesDepth { diamond.disablePassageAuraDepthWrites() }
             var position = scene.mapping.playerPosition(item.lane, heightAboveFloor: item.heightAboveFloor)
             position.x += item.offsetX * scene.mapping.metersPerGameUnit
             position.z = z

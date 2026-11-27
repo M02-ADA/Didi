@@ -122,6 +122,15 @@ final class Diamond {
         return aura
     }()
 
+    /// The corridor aura is light, so even its transparent corners must not occlude a mascot.
+    func disablePassageAuraDepthWrites() {
+        guard let passageAura, var model = passageAura.model,
+              var material = model.materials.first as? UnlitMaterial else { return }
+        material.writesDepth = false
+        model.materials = [material]
+        passageAura.model = model
+    }
+
     private static func flashMaterial(_ entity: Entity) {
         if let model = entity as? ModelEntity {
             model.model?.materials = model.model?.materials.map { _ in

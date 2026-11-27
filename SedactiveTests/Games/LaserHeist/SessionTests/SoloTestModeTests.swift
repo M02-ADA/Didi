@@ -215,6 +215,7 @@ import Testing
                     case .heart: break
                 case .register(let encounter): try game.register(encounter); registered += 1
                 case .normalDiamond(let spawn, let boundary):
+                    #expect(spawn.eligiblePlayers == [.player1] && spawn.placementPlayer == nil)
                     try game.spawnNormalDiamonds([spawn], beforeVaultAt: boundary); diamonds.append(spawn)
                 case .openVault(let id, let zones):
                     #expect(zones.count == 1 && zones.allSatisfy { $0.playerID == .player1 }, "P1's one button only")

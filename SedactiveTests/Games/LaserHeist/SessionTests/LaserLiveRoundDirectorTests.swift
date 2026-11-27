@@ -14,6 +14,7 @@ import Testing
         var game: LaserGame
         var registered: [(time: Double, encounter: LaserEncounter)] = []
         var hearts: [LaserDiamondSpawn] = []
+        var diamonds: [LaserDiamondSpawn] = []
         var vault: (time: Double, id: UUID, zones: [LaserVaultZone])?
 
         init(segment: Double = 60) throws {
@@ -45,6 +46,7 @@ import Testing
                         try game.register(encounter); registered.append((game.gameTime, encounter))
                     case .normalDiamond(let spawn, let boundary):
                         try game.spawnNormalDiamonds([spawn], beforeVaultAt: boundary)
+                        diamonds.append(spawn)
                     case .openVault(let id, let zones):
                         try game.openVault(id: id, at: game.gameTime); vault = (game.gameTime, id, zones)
                     }
@@ -61,6 +63,80 @@ import Testing
                                   calibrationRevision: context.calibrationRevisions[$0.playerID]!)
             }, generation: context.sessionGeneration, at: time)
         }
+    }
+
+    private func scheduledDiamond(assignedTo player: PlayerID) throws -> LaserDiamondSpawn {
+        var rig = try Rig()
+        try rig.run(to: 58)
+        let spawn = try #require(rig.diamonds.first { $0.placementPlayer == player })
+        #expect(spawn.eligiblePlayers == Set(PlayerID.allCases))
+        #expect(rig.hearts.allSatisfy { $0.eligiblePlayers.count == 1 && $0.placementPlayer == nil })
+        let state = LaserDiamondState(spawn: spawn, lifetime: .passage)
+        let presentation = LaserReplayPresentation.normalDiamonds([spawn.id: state], layout: rig.input.playerPlaneLayout)
+        #expect(presentation.first?.lane == player)
+        return spawn
+    }
+
+    @Test(arguments: PlayerID.allCases, [false, true])
+    func scheduledCorridorDiamondAcceptsEitherPlayersWrist(assigned: PlayerID, assignedPlayerCollects: Bool) throws {
+        let spawn = try scheduledDiamond(assignedTo: assigned)
+        let collector = try #require(PlayerID.allCases.first { ($0 == assigned) == assignedPlayerCollects })
+        let hand = LaserContactHand(playerID: collector, wrist: .left)
+        let fixture = try WristGameplayFixture()
+        var game = try fixture.game()
+        try game.advance(to: spawn.spawnedAt)
+        try game.spawnNormalDiamonds([spawn], beforeVaultAt: 60)
+        var consumer = try LaserWristDiamondConsumer(configuration: fixture.plan(), context: fixture.context,
+                                                      lifetime: UUID(), afterCapturedAt: 100)
+        try game.advance(to: spawn.entry)
+        try consumer.refresh(game: game, context: fixture.context, atHostTime: 100 + spawn.entry)
+        let target = WristPlanePoint(x: spawn.position.x, y: spawn.position.y)
+        try fixture.send(&consumer, &game, frame: 3, capture: spawn.entry + 0.125,
+                         points: [hand: WristGameplayFixture.outside])
+        let accepted = try fixture.send(&consumer, &game, frame: 4, capture: spawn.entry + 0.25,
+                                        points: [hand: target])
+        #expect(accepted == [.init(targetID: spawn.id, hand: hand)])
+        #expect(game.teamScore == 25 && game.diamondsCollected == 1)
+    }
+
+    @Test(arguments: PlayerID.allCases)
+    func scheduledCorridorDiamondAcceptsOtherPlayersBody(assigned: PlayerID) throws {
+        let spawn = try scheduledDiamond(assignedTo: assigned)
+        let collector = try #require(PlayerID.allCases.first { $0 != assigned })
+        let fixture = try WristGameplayFixture()
+        var game = try fixture.game()
+        try game.advance(to: spawn.spawnedAt)
+        try game.spawnNormalDiamonds([spawn], beforeVaultAt: 60)
+        var consumer = try LaserWristDiamondConsumer(configuration: fixture.plan(), context: fixture.context,
+                                                      lifetime: UUID(), afterCapturedAt: 100)
+        try game.advance(to: spawn.entry)
+        try consumer.receiveBodyContacts([spawn.id: [collector]], context: fixture.context,
+                                         atHostTime: 100 + spawn.entry, game: &game)
+        #expect(game.diamonds[spawn.id]?.outcome == .collectedByBody(player: collector, at: spawn.entry))
+        #expect(game.teamScore == 25 && game.diamondsCollected == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func simultaneousSharedContactsRespectValidityAndDeadline(atDeadline: Bool) throws {
+        let spawn = try scheduledDiamond(assignedTo: .player2)
+        let fixture = try WristGameplayFixture()
+        var game = try fixture.game()
+        try game.advance(to: spawn.spawnedAt)
+        try game.spawnNormalDiamonds([spawn], beforeVaultAt: 60)
+        let hands = [WristGameplayFixture.left, WristGameplayFixture.p2]
+        let contacts = hands.map { LaserContactActivation(targetID: spawn.id, hand: $0) }
+        let bodies = [spawn.id: Set(PlayerID.allCases)]
+        let time = atDeadline ? spawn.exit : spawn.entry + 0.25
+        let invalid = try game.collectDiamonds(contacts, generation: fixture.context.sessionGeneration,
+            calibrationRevisions: [.player1: 99, .player2: 99], capturedAt: time, arrivedAt: time, bodyContacts: bodies)
+        #expect(invalid.isEmpty && game.teamScore == 0)
+        for _ in 0..<2 {
+            try game.collectDiamonds(contacts, generation: fixture.context.sessionGeneration,
+                calibrationRevisions: fixture.context.calibrationRevisions, capturedAt: time, arrivedAt: time,
+                bodyContacts: bodies)
+        }
+        #expect(game.teamScore == (atDeadline ? 0 : 25))
+        #expect(game.diamondsCollected == (atDeadline ? 0 : 1))
     }
 
     @Test func theLiveRoundUsesTheCompleteReplaySchedule() throws {
