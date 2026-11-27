@@ -541,7 +541,8 @@ final class LaserReplayPresentation {
         let display = display ?? diamondDisplay(scene: nil, layout: layout)
         return states.values.compactMap { state -> NormalDiamond? in
             guard case .passage = state.lifetime,
-                  let lane = PlayerID.allCases.first(where: { state.spawn.eligiblePlayers.contains($0) }) else { return nil }
+                  let lane = state.spawn.placementPlayer
+                    ?? PlayerID.allCases.first(where: { state.spawn.eligiblePlayers.contains($0) }) else { return nil }
             let outcome: NormalDiamond.Outcome = switch state.outcome {
             case nil: .pending
             case .collected, .collectedByBody: .collected

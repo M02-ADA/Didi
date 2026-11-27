@@ -253,7 +253,11 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
         // Show gems about 22 metres away at the default corridor speed
         // (3.7 s to entry plus half of the one-second pickup window).
         for spawn in try planner.normalMinute(minute, from: time, until: boundary, visualLead: 3.7) {
-            planned.append((spawn.spawnedAt, .normalDiamond(spawn, boundary: boundary)))
+            let corridorDiamond = roster.count == 1 ? spawn : try LaserDiamondSpawn(
+                id: spawn.id, position: spawn.position, eligiblePlayers: Set(roster),
+                spawnedAt: spawn.spawnedAt, entry: spawn.entry, exit: spawn.exit,
+                placementPlayer: spawn.eligiblePlayers.first)
+            planned.append((spawn.spawnedAt, .normalDiamond(corridorDiamond, boundary: boundary)))
         }
         let diamonds = planned.compactMap { item -> LaserDiamondSpawn? in
             if case .normalDiamond(let spawn, _) = item.1 { return spawn }
@@ -355,7 +359,7 @@ nonisolated struct LaserLiveRoundDirector: Sendable {
                 case .normalDiamond(let spawn, let boundary), .heart(let spawn, let boundary):
                     let next = try LaserDiamondSpawn(id: spawn.id, position: spawn.position,
                         eligiblePlayers: spawn.eligiblePlayers, spawnedAt: spawn.spawnedAt + delta,
-                        entry: spawn.entry + delta, exit: spawn.exit + delta)
+                        entry: spawn.entry + delta, exit: spawn.exit + delta, placementPlayer: spawn.placementPlayer)
                     if case .heart = item.action { moved.append((item.time + delta, .heart(next, boundary: boundary + delta))) }
                     else { moved.append((item.time + delta, .normalDiamond(next, boundary: boundary + delta))) }
                 case .openVault:

@@ -18,18 +18,21 @@ nonisolated struct LaserDiamondSpawn: Equatable, Sendable {
     let id: UUID
     let position: LaserDiamondPosition
     let eligiblePlayers: Set<PlayerID>
+    /// The original lane for a live corridor diamond with shared pickup eligibility.
+    let placementPlayer: PlayerID?
     let spawnedAt: Double
     let entry: Double
     /// Normal passage exit. Bonus eligibility uses the state's phase deadline.
     let exit: Double
 
     init(id: UUID, position: LaserDiamondPosition, eligiblePlayers: Set<PlayerID>,
-         spawnedAt: Double, entry: Double, exit: Double) throws {
+         spawnedAt: Double, entry: Double, exit: Double, placementPlayer: PlayerID? = nil) throws {
         try requireLaserValue(!eligiblePlayers.isEmpty && [spawnedAt, entry, exit].allSatisfy { $0.isFinite }
                               && spawnedAt >= 0 && spawnedAt <= entry && entry < exit, "diamond passage")
         self.id = id
         self.position = position
         self.eligiblePlayers = eligiblePlayers
+        self.placementPlayer = placementPlayer
         self.spawnedAt = spawnedAt
         self.entry = entry
         self.exit = exit
