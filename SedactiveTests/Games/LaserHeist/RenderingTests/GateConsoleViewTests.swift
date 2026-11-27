@@ -184,6 +184,9 @@ struct GateConsoleViewTests {
         #expect(view.lightLevel == GateConsoleView.lightIntensity && view.glowColor() == P.success)
         view.reset(ready: true, reduceMotion: true)
         #expect(red(), "a new gate: red again")
+        let redCap = try #require(view.root.findEntity(named: "Cap"))
+        let greenCap = try #require(view.root.findEntity(named: "vault.console.cap.green"))
+        #expect(redCap.isEnabled && !greenCap.isEnabled, "the actual green mesh is hidden on reset")
         view.setUnavailable()
         #expect(view.haloOpacity == 0 && !view.capIsGreen, "timed out: dark")
         // Animated: the press never turns it green, however long it is held closed.
@@ -193,6 +196,7 @@ struct GateConsoleViewTests {
         #expect(red() && view.glowColor() == P.accent, "the press's flash settles back to red")
         view.open(reduceMotion: false)
         #expect(view.capIsGreen && view.haloColor == P.haloGreen && view.lightLevel > GateConsoleView.lightIntensity, "green at once when open")
+        #expect(!redCap.isEnabled && greenCap.isEnabled, "the actual green mesh shows only on unlock")
         for _ in 0..<60 where view.glowColor() != P.success || view.lightLevel != GateConsoleView.lightIntensity {
             try await Task.sleep(for: .milliseconds(25))
         }

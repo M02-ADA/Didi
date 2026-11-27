@@ -51,7 +51,7 @@ nonisolated struct FullRoundReplayScenario: Sendable {
                                                 clearanceMargin: 0.005, diamondPoints: nil, scheduling: settings)
         let plan = try LaserWaveDirector().schedule(script: Self.horizontalScript(),
             calibrations: base.configuration.calibrations, layout: base.configuration.playerPlaneLayout, configuration: config)
-        try requireLaserValue(plan.deferred.isEmpty && plan.encounters.count == 50, "full-round plan must fit")
+        try requireLaserValue(plan.deferred.isEmpty && plan.encounters.count == 73, "full-round plan must fit")
         var steps: [Step] = []
         var frame: UInt64 = 0
         func add(_ time: Double, _ action: Action) {

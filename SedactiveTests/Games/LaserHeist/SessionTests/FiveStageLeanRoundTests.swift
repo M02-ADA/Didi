@@ -37,7 +37,7 @@ struct FiveStageLeanRoundTests {
                 #expect(abs((beam.centerX ?? .nan) - (expected.centerX ?? .nan)) < 0.01, "\(encounter.id) \(target.playerID)")
             }
         }
-        // The combined encounters actually played: 0 / 1 / 2 / 3 / 4 by stage, each a LEAN layer (both
+        // The combined encounters actually played: 0 / 3 / 4 / 5 / 7 by stage, each a LEAN layer (both
         // players' beams, or one near one player) then ONE full-width DUCK 1.75 s later, both players
         // judged on their own; and no horizontal laser is ever split between DUCK and JUMP.
         let beats = LaserWaveBeat.fiveMinuteScript()
@@ -56,12 +56,12 @@ struct FiveStageLeanRoundTests {
             }
             combinedByStage[Int(beat.nominalCrossingTime / 60)] += 1
         }
-        #expect(combinedByStage == [0, 1, 2, 3, 4])
+        #expect(combinedByStage == [0, 3, 4, 5, 7])
         for encounter in session.encounters {
             #expect(Set(encounter.targets.map(\.requiredMove)).count == 1, "one continuous beam")
         }
         // Every LEAN target is a real CLEAR (no voids, no UNAVAILABLE), as every DUCK and JUMP.
-        #expect(session.results.count == 96 && session.results.allSatisfy { $0.judgement == .clear })
+        #expect(session.results.count == 138 && session.results.allSatisfy { $0.judgement == .clear })
         // The boards are game state, published with it, inside the corridor and apart.
         let boards = try #require(session.state?.boards)
         let a = try #require(boards[.player1]?.x), b = try #require(boards[.player2]?.x)

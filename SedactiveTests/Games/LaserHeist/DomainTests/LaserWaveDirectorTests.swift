@@ -36,10 +36,10 @@ nonisolated struct LaserWaveDirectorTests {
             notBefore: notBefore)
     }
 
-    @Test func fullRoundHasFiftyTargetsAndStableIdentityAndTiming() throws {
+    @Test func fullRoundHasSeventyThreeTargetsAndStableIdentityAndTiming() throws {
         let first = try plan()
         #expect(first.deferred.isEmpty)
-        #expect(first.encounters.count == 50)
+        #expect(first.encounters.count == 73)
         // The five-stage design opens with LEAN OUT, LEAN IN, JUMP, DUCK (16 November 2026).
         #expect(first.encounters.prefix(4).map { $0.targets[0].requiredMove } == [.lean, .lean, .jump, .duck])
         func count(_ player: PlayerID, _ move: LaserMove) -> Int {
@@ -47,8 +47,8 @@ nonisolated struct LaserWaveDirectorTests {
         }
         let p1: [Int] = [count(.player1, .duck), count(.player1, .jump), count(.player1, .lean)]
         let p2: [Int] = [count(.player2, .duck), count(.player2, .jump), count(.player2, .lean)]
-        #expect(p1 == [20, 9, 19])
-        #expect(p2 == [20, 9, 19])
+        #expect(p1 == [37, 13, 19])
+        #expect(p2 == [37, 13, 19])
         // Horizontal lasers are one continuous beam: never DUCK for one player and JUMP for the other.
         for encounter in first.encounters {
             #expect(Set(encounter.targets.map(\.requiredMove)).count == 1, "\(encounter.id): one move per encounter")
@@ -58,7 +58,7 @@ nonisolated struct LaserWaveDirectorTests {
         #expect(first.encounters.map { $0.targets[0].crossingTime } == LaserWaveBeat.fiveMinuteScript().map(\.nominalCrossingTime))
         for _ in 0..<3 { #expect(try plan() == first) }
         #expect(first.encounters.map(\.id) == LaserWaveBeat.fiveMinuteScript().map(\.id))
-        for (minute, count) in [9, 10, 10, 11, 10].enumerated() {
+        for (minute, count) in [9, 13, 15, 17, 19].enumerated() {
             #expect(first.encounters.filter { Int($0.targets[0].crossingTime / 60) == minute }.count == count)
         }
     }
@@ -87,7 +87,8 @@ nonisolated struct LaserWaveDirectorTests {
                     if beat?.followsLayer == true, targets[index-1].requiredMove == .lean {
                         #expect(abs(gap - LaserWaveBeat.layerGap) < 1e-9 && target.requiredMove == .duck)
                     } else {
-                        #expect(gap >= profile.minimumTargetSpacing)
+                        let duckRecovery = targets[index - 1].requiredMove == .duck ? beat?.duckRecoverySpacing : nil
+                        #expect(gap >= min(profile.minimumTargetSpacing, duckRecovery ?? profile.minimumTargetSpacing))
                     }
                 }
                 if target.requiredMove == .jump {

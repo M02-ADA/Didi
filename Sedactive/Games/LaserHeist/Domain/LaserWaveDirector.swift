@@ -29,9 +29,11 @@ nonisolated struct LaserWaveBeat: Equatable, Sendable {
     /// The full-width horizontal laser of a COMBINED encounter: it crosses `layerGap` after its
     /// vertical LEAN layer (the beat before it), closer than ordinary spacing allows.
     let followsLayer: Bool
+    /// The shorter recovery applies only after a DUCK and before this beat.
+    let duckRecoverySpacing: Double?
 
     init(id: UUID, move: LaserMove, nominalCrossingTime: Double, segmentEnd: Double,
-         demands: [PlayerID: LaserBeatDemand]? = nil, followsLayer: Bool = false) {
+         demands: [PlayerID: LaserBeatDemand]? = nil, followsLayer: Bool = false, duckRecoverySpacing: Double? = nil) {
         let all = demands ?? Dictionary(uniqueKeysWithValues: PlayerID.allCases.map {
             ($0, LaserBeatDemand(move: move, intent: move == .lean ? .moreRoom : nil))
         })
@@ -41,51 +43,34 @@ nonisolated struct LaserWaveBeat: Equatable, Sendable {
         self.segmentEnd = segmentEnd
         self.demands = all
         self.followsLayer = followsLayer
+        self.duckRecoverySpacing = duckRecoverySpacing
     }
 
     /// This player's demand, or nil when the beat does not ask them (a one-player LEAN layer).
     func demand(for player: PlayerID) -> LaserBeatDemand? { demands[player] }
 
-    /// COMBINED ENCOUNTERS (corrected 16 November 2026): a vertical LEAN layer, then ONE continuous,
-    /// full-width horizontal DUCK laser `layerGap` later. Both are on screen together (the DUCK beam
-    /// appears at its warning while the vertical beams are still ahead), but the two movements never
-    /// share a crossing: the DUCK's action cue (`cueLead`, 1.4 s before its crossing) starts only
-    /// after the LEAN's evidence window has closed (`windowAfter`, 0.25 s after its crossing):
-    /// 1.4 + 0.25 = 1.65 s, on the scheduler's 0.25 s step = 1.75 s. A combined encounter takes two
-    /// of its stage's encounter slots (the vertical layer and the horizontal laser), so the 50 slots
-    /// and their judging are unchanged. The layer is always followed by a DUCK, never a JUMP: the
-    /// recovery rules ask 5.5 s between a LEAN and a JUMP, which no layer can give.
+    /// A combined encounter gives LEAN and DUCK separate crossings. The DUCK cue
+    /// starts after the LEAN evidence window closes.
     static let layerGap = 1.75
 
-    /// The five-stage level design: 9 / 10 / 10 / 11 / 10 = 50 encounter slots over five 60 s stages,
-    /// each closed by a gate, with 0 / 1 / 2 / 3 / 4 combined encounters (each `X>D`, two slots).
-    /// Codes: D duck, J jump (both players, one continuous beam); LO lean out (away from the partner),
-    /// LI lean in, LR lean toward more room, SR / SL shift right / left (both lean the same way, the
-    /// player on that side leads); `X>D` a combined encounter: LEAN layer X at the time given, the
-    /// full-width DUCK `layerGap` later; `1X>D` / `2X>D` the layer's vertical beam for P1 / P2 only.
-    /// Times are the first crossing, seconds from the stage's start. Recovery between one player's
-    /// crossings (outside a combined encounter) is at least: 6 s throughout stage 1; otherwise 5 s,
-    /// or 4.5 s between DUCK and LEAN moves in stages 4-5; 5.5 s into or out of a JUMP (5 s from a
-    /// JUMP into a DUCK); 5.5 s (stages 2-3) or 5 s (stages 4-5) into a combined encounter. JUMPs are
-    /// never consecutive, at least 8 s apart and at most 3 in 30 s. The first warning comes 2 s
-    /// (stage 1: 3 s) after the stage starts; the last crossing leaves at least 6 s before a gate and
-    /// 7 s before the Final Vault (10 s: a deliberate recovery after four minutes).
+    /// Five 60-second stages, each ending at a vault. D/J are DUCK/JUMP, LO/LI/LR are
+    /// lean out/in/toward room, SR/SL are coordinated shifts. A prefix chooses one
+    /// player for the vertical layer; `>D` adds a full-width DUCK 1.75 seconds later.
     static let fiveStages: [[(time: Double, code: String)]] = [
-        // 1 Get Moving: relaxed, one movement at a time, 6 s apart. Opens LEAN OUT, LEAN IN, JUMP, DUCK.
+        // Get Moving: 9 lasers, no combinations.
         [(6, "LO"), (12, "LI"), (18, "J"), (24, "D"), (30, "LO"), (36, "D"), (42, "J"), (48, "LI"), (54, "D")],
-        // 2 Switch It Up: a varied sequence, then the first combined encounter after five ordinary
-        // ones: both lean out of their beams, then both duck one full-width laser.
-        [(5, "D"), (10.5, "LO"), (16.5, "J"), (22, "D"), (27.5, "LI"), (33.5, "LO>D"), (40.75, "LR"), (46.75, "J"),
-         (52.25, "D")],
-        // 3 Double Trouble: a vertical beam near one player, then the full-width DUCK; first near P1,
-        // later near P2.
-        [(5, "D"), (11, "LO"), (17.5, "J"), (23.5, "D"), (30, "1LO>D"), (37.75, "LI"), (44.25, "J"), (50.75, "2LR>D")],
-        // 4 Security Alert: three combined encounters, each with both players' beams: lean in, the
-        // first shift (P2 leads right), then lean out, each followed by the full-width DUCK.
-        [(5, "D"), (10.5, "LO"), (17, "J"), (23.5, "LI>D"), (30.75, "LR"), (36.75, "SR>D"), (45, "J"), (51.5, "LO>D")],
-        // 5 Final Rush: four combined encounters out of six moments (a pair, near P1, a shift led by
-        // P1, near P2), one JUMP, then a calm DUCK and 10 s before the Final Vault.
-        [(5, "LO>D"), (14.75, "J"), (22.75, "1LR>D"), (32, "SL>D"), (41.25, "2LR>D"), (50, "D")],
+        // Switch It Up: 3 JUMPs separated by DUCKs and vertical-to-DUCK pairs.
+        [(5, "D"), (9.5, "J"), (14, "LO>D"), (20.25, "LI>D"), (26.5, "J"), (31, "LR>D"),
+         (37.25, "D"), (41.75, "D"), (46.25, "J"), (50.75, "D")],
+        // Double Trouble: faster DUCK recovery and one solo vertical layer per lane.
+        [(5, "D"), (9.5, "J"), (14, "D"), (17.75, "LO>D"), (23.25, "1LO>D"), (29.5, "J"),
+         (34, "LI>D"), (39.5, "2LR>D"), (45, "D"), (49.5, "J"), (54, "D")],
+        // Security Alert: 9 DUCKs, with the same recovery before and after each JUMP.
+        [(5, "D"), (9.5, "J"), (14, "LO>D"), (18.25, "D"), (20.75, "LI>D"), (25, "SR>D"),
+         (31.25, "J"), (35.75, "1LR>D"), (40, "D"), (42.5, "2LR>D"), (48.75, "J"), (53.25, "D")],
+        // Final Rush: 10 DUCKs and 2 JUMPs, ending 7.25 seconds before the Final Vault.
+        [(5, "D"), (9.5, "J"), (14, "LO>D"), (18.25, "1LO>D"), (22.5, "D"), (25, "2LO>D"),
+         (29.25, "SR>D"), (33.5, "D"), (36, "1LR>D"), (42.25, "J"), (46.75, "SL>D"), (51, "2LR>D")],
     ]
 
     /// The full-width horizontal lasers of the combined encounters (the `followsLayer` beats). Each
@@ -107,13 +92,14 @@ nonisolated struct LaserWaveBeat: Equatable, Sendable {
         }
     }
 
-    /// The whole round (50 beats), no random generator or wall-clock identities.
+    /// The whole round (73 beats), no random generator or wall-clock identities.
     static func fiveMinuteScript() -> [Self] {
         var beats: [Self] = []
-        func add(_ demands: [PlayerID: LaserBeatDemand], at time: Double, stage: Int, followsLayer: Bool = false) {
+        func add(_ demands: [PlayerID: LaserBeatDemand], at time: Double, stage: Int,
+                 followsLayer: Bool = false, duckRecoverySpacing: Double? = nil) {
             let id = UUID(uuidString: String(format: "15000000-0000-4000-8000-%012d", beats.count + 1))!
             beats.append(Self(id: id, move: demands.values.first!.move, nominalCrossingTime: Double(stage * 60) + time,
-                              segmentEnd: Double((stage + 1) * 60), demands: demands, followsLayer: followsLayer))
+                              segmentEnd: Double((stage + 1) * 60), demands: demands, followsLayer: followsLayer, duckRecoverySpacing: duckRecoverySpacing))
         }
         for (stage, slots) in fiveStages.enumerated() {
             for slot in slots {
@@ -124,11 +110,17 @@ nonisolated struct LaserWaveBeat: Equatable, Sendable {
                     players = [only == 1 ? .player1 : .player2]
                     lean.removeFirst()
                 }
-                add(Dictionary(uniqueKeysWithValues: players.map { ($0, demand(lean)) }), at: slot.time, stage: stage)
+                let usesShortRecovery = lean == "D" || parts.count == 2
+                let spacing: Double? = if usesShortRecovery && stage >= 3 { 2.5 }
+                    else if usesShortRecovery && stage == 2 { 3.75 }
+                    else { nil }
+                add(Dictionary(uniqueKeysWithValues: players.map { ($0, demand(lean)) }), at: slot.time, stage: stage,
+                    duckRecoverySpacing: spacing)
                 if parts.count > 1 {
                     let horizontal = demand(parts[1])
                     add(Dictionary(uniqueKeysWithValues: PlayerID.allCases.map { ($0, horizontal) }),
-                        at: slot.time + layerGap, stage: stage, followsLayer: true)
+                        at: slot.time + layerGap, stage: stage, followsLayer: true,
+                        duckRecoverySpacing: spacing.map { $0 + layerGap })
                 }
             }
         }
@@ -217,9 +209,15 @@ nonisolated struct LaserWaveDirector: Sendable {
                         || configuration.evidenceTiming.finalizationTime(crossing: time) >= beat.segmentEnd { fits = false; break }
                     // A combined encounter's horizontal laser follows its layer (the beat before it, a
                     // LEAN in the script) exactly `layerGap` later; anything else keeps the spacing.
-                    let spacing = beat.followsLayer
-                        && abs(time - (prior.last?.crossingTime ?? -.infinity) - LaserWaveBeat.layerGap) < 1e-9
-                        ? LaserWaveBeat.layerGap : profile.minimumTargetSpacing
+                    let spacing: Double
+                    if beat.followsLayer,
+                       abs(time - (prior.last?.crossingTime ?? -.infinity) - LaserWaveBeat.layerGap) < 1e-9 {
+                        spacing = LaserWaveBeat.layerGap
+                    } else if prior.last?.move == .duck, let shorter = beat.duckRecoverySpacing {
+                        spacing = min(profile.minimumTargetSpacing, shorter)
+                    } else {
+                        spacing = profile.minimumTargetSpacing
+                    }
                     if let last = prior.last, time - last.crossingTime < spacing - 1e-9 { fits = false; break }
                     if beat.demand(for: player)!.move == .jump {
                         let jumps = prior.filter { $0.move == .jump }

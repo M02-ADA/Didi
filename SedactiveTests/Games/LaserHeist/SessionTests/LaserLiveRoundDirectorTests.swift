@@ -141,8 +141,8 @@ import Testing
 
     @Test func theLiveRoundUsesTheCompleteReplaySchedule() throws {
         let rig = try Rig()
-        // The same five-minute script the complete replay schedules (50 encounters).
-        #expect(rig.director.baseEncounters.count == 50)
+        // The same five-minute script the complete replay schedules (73 encounters).
+        #expect(rig.director.baseEncounters.count == 73)
         for encounter in rig.director.baseEncounters {
             for target in encounter.targets {
                 #expect(target.calibrationRevision == rig.context.calibrationRevisions[target.playerID])
